@@ -1,11 +1,9 @@
 import { fetchSearchSuggestions, fetchEventBySlug } from "@/lib/api";
 import { fmtVol, hslColor } from "@/lib/math";
 import type { OrderBook } from "@/lib/ws";
-import { MarketWS } from "@/lib/ws";
+import { ConnectionStatus, MarketWS } from "@/lib/ws";
 import { draw, type DrawState, type MarketInfo } from "@/lib/renderer";
 import "@/styles/component.css";
-
-type Status = "live" | "err" | "conn";
 
 export class PolymarketCPV {
   private container: HTMLElement;
@@ -145,7 +143,7 @@ export class PolymarketCPV {
       this.reqDraw();
     } catch (err) {
       console.error(err);
-      this.setDot("err");
+      this.setDot(ConnectionStatus.Err);
       (this.refs.title as HTMLElement).textContent =
         "Error: " + (err as Error).message;
     }
@@ -185,13 +183,20 @@ export class PolymarketCPV {
     });
   }
 
-  private setDot(s: Status) {
+  private static readonly STATUS_DISPLAY: Record<
+    ConnectionStatus,
+    [string, string]
+  > = {
+    [ConnectionStatus.Live]: ["live", "live"],
+    [ConnectionStatus.Err]: ["err", "error"],
+    [ConnectionStatus.Conn]: ["conn", "connecting…"],
+  };
+
+  private setDot(s: ConnectionStatus) {
     const { dot, stxt } = this.refs;
-    (dot as HTMLElement).className =
-      "cpv-dot cpv-dot--" +
-      (s === "live" ? "live" : s === "err" ? "err" : "conn");
-    (stxt as HTMLElement).textContent =
-      s === "live" ? "live" : s === "err" ? "error" : "connecting…";
+    const [cls, txt] = PolymarketCPV.STATUS_DISPLAY[s];
+    (dot as HTMLElement).className = `cpv-dot cpv-dot--${cls}`;
+    (stxt as HTMLElement).textContent = txt;
   }
 
   private closeWS() {
@@ -224,7 +229,7 @@ export class PolymarketCPV {
         const vol = item.volume ? parseFloat(item.volume) : 0;
         div.innerHTML = `<span>${item.title}</span><span class="cpv-vol-tag">$${fmtVol(vol)}</span>`;
         div.addEventListener("click", () => {
-          this.setDot("conn");
+          this.setDot(ConnectionStatus.Conn);
           this.load(item.slug);
         });
         dropdown.appendChild(div);

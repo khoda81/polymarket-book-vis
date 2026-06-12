@@ -12,20 +12,24 @@ export interface OrderBook {
 
 export type BookUpdateCallback = (books: Record<string, OrderBook>) => void;
 
-type Status = "live" | "err" | "conn";
+export enum ConnectionStatus {
+  Live = "live",
+  Err = "err",
+  Conn = "conn",
+}
 
 export class MarketWS {
   private ws: WebSocket | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectIds: string[] = [];
-  private _status: Status = "conn";
-  private onStatus: (s: Status) => void;
+  private _status: ConnectionStatus = ConnectionStatus.Conn;
+  private onStatus: (s: ConnectionStatus) => void;
   private onUpdate: BookUpdateCallback;
   private books: Record<string, OrderBook> = {};
 
   constructor(
     ids: string[],
-    onStatus: (s: Status) => void,
+    onStatus: (s: ConnectionStatus) => void,
     onUpdate: BookUpdateCallback,
   ) {
     this.reconnectIds = ids;
@@ -34,11 +38,11 @@ export class MarketWS {
     this.connect(ids);
   }
 
-  get status(): Status {
+  get status(): ConnectionStatus {
     return this._status;
   }
 
-  private setDot(s: Status) {
+  private setDot(s: ConnectionStatus) {
     this._status = s;
     this.onStatus(s);
   }
@@ -47,13 +51,13 @@ export class MarketWS {
     try {
       this.ws = new WebSocket(WS_URL);
     } catch {
-      this.setDot("err");
+      this.setDot(ConnectionStatus.Err);
       return;
     }
-    this.setDot("conn");
+    this.setDot(ConnectionStatus.Conn);
 
     this.ws.onopen = () => {
-      this.setDot("live");
+      this.setDot(ConnectionStatus.Live);
       this.ws!.send(
         JSON.stringify({
           assets_ids: ids,
@@ -77,14 +81,14 @@ export class MarketWS {
     };
 
     this.ws.onclose = () => {
-      this.setDot("conn");
+      this.setDot(ConnectionStatus.Conn);
       if (this.pingTimer) clearInterval(this.pingTimer);
       setTimeout(() => {
         if (this.reconnectIds.length) this.connect(this.reconnectIds);
       }, 3000);
     };
 
-    this.ws.onerror = () => this.setDot("err");
+    this.ws.onerror = () => this.setDot(ConnectionStatus.Err);
   }
 
   private applyMsg(msg: unknown) {
