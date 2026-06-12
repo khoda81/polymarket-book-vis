@@ -186,7 +186,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     const combined = [...curve.bids.toReversed(), ...curve.asks];
     if (!combined.length) return;
 
-    const color = hslColor(idx)!;
+    const color = hslColor(idx);
     const dim = hovering;
 
     ctx.beginPath();
@@ -256,8 +256,8 @@ export function draw(state: DrawState, refs: DrawRefs): void {
       const sliceR = sliceCurveToY(cR, mShares);
 
       if (sliceL.length && sliceR.length) {
-        const colorL = hslColor(activeIdxs[startIdx])!;
-        const colorR = hslColor(activeIdxs[endIdx - 1])!;
+        const colorL = hslColor(activeIdxs[startIdx]);
+        const colorR = hslColor(activeIdxs[endIdx - 1]);
 
         // Filled region
         ctx.fillStyle = "rgba(100, 180, 255, 0.18)";

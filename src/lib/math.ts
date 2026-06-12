@@ -36,31 +36,9 @@ export function powerOf10Ticks(yMax: number, targetCount = 5): number[] {
   return ticks;
 }
 
-export function hslColor(idx: number): string | null {
-  if (isNaN(idx)) return null;
+export function hslColor(idx: number): string {
   const hue = (idx * 137.5) % 360;
   return `hsl(${hue}, 70%, 50%)`;
-}
-
-/**
- * Given a monotone ask curve (x increasing, y increasing from 0),
- * return the x value where y === targetY by linear interpolation.
- * Returns null if targetY is out of range.
- */
-export function getExactXAtY(curve: Point[], targetY: number): number | null {
-  if (!curve.length) return null;
-  if (targetY <= curve[0].y) return curve[0].x;
-  if (targetY >= curve[curve.length - 1].y) return curve[curve.length - 1].x;
-
-  for (let i = 1; i < curve.length; i++) {
-    if (curve[i].y >= targetY) {
-      const dy = curve[i].y - curve[i - 1].y;
-      if (dy === 0) return curve[i - 1].x;
-      const t = (targetY - curve[i - 1].y) / dy;
-      return curve[i - 1].x + t * (curve[i].x - curve[i - 1].x);
-    }
-  }
-  return curve[curve.length - 1].x;
 }
 
 /**
