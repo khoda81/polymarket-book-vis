@@ -399,9 +399,15 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     overlay.style.display = "block";
 
     const ovW = overlay.offsetWidth || 180;
-    const ovX = mx! + 16 + ovW > W ? mx! - ovW - 8 : mx! + 16;
+    const ovH = overlay.offsetHeight || 100;
+    // Center horizontally on cursor, clamp to chart bounds
+    const ovX = Math.max(PAD.l, Math.min(mx! - ovW / 2, W - PAD.r - ovW));
+    // Place above cursor for buys (positive y), below for sells (negative y)
+    const ovY = isBuy
+      ? Math.max(PAD.t, my! - ovH - 12)
+      : Math.min(my! + 12, H - PAD.b - ovH);
     overlay.style.left = ovX + "px";
-    overlay.style.top = Math.max(PAD.t, Math.min(my! - 20, H - 140)) + "px";
+    overlay.style.top = ovY + "px";
   } else {
     overlay.style.display = "none";
   }
