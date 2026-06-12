@@ -75,6 +75,19 @@ export function sliceCurveToY(curve: Point[], maxY: number): Point[] {
 }
 
 /**
+ * Compute USD area under a single monotone curve (y ascending).
+ * Area = ∫ x dy  (Riemann sum over the staircase segments).
+ * This is the cost in USD to take `curve[-1].y` shares.
+ */
+export function integrateCurve(curve: Point[]): number {
+  let area = 0;
+  for (let i = 1; i < curve.length; i++) {
+    area += curve[i - 1].x * (curve[i].y - curve[i - 1].y);
+  }
+  return area;
+}
+
+/**
  * Compute USD area between two ask-side curves sliced to the same y level.
  * Area = ∫ (xR - xL) dy  (Riemann sum over the staircase segments).
  */

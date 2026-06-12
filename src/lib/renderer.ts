@@ -7,7 +7,7 @@ import {
   hslColor,
   yAtX,
   sliceCurveToY,
-  calculateArea,
+  integrateCurve,
 } from "./math";
 import type { OrderBook } from "./ws";
 
@@ -215,22 +215,14 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     const takeShares = Math.min(absShares, absCurveAtPrice);
     const limitShares = Math.max(0, absShares - absCurveAtPrice);
 
-    // Take cost: area under the curve from 0 to takeShares
+    // Take cost: ∫ price dy under the curve from 0 to takeShares
     let takeCost = 0;
     if (takeShares > 0) {
       if (isBuy) {
-        const sliced = sliceCurveToY(curve.asks, takeShares);
-        takeCost = calculateArea(
-          [{ x: 0, y: 0 } as Point, ...sliced.map((p) => ({ x: p.x, y: p.y }))],
-          sliced,
-        );
+        takeCost = integrateCurve(sliceCurveToY(curve.asks, takeShares));
       } else {
         const negBids = curve.bids.map(({ x, y }) => ({ x, y: -y }));
-        const sliced = sliceCurveToY(negBids, takeShares);
-        takeCost = calculateArea(
-          [{ x: 1, y: 0 } as Point, ...sliced.map((p) => ({ x: p.x, y: p.y }))],
-          sliced,
-        );
+        takeCost = integrateCurve(sliceCurveToY(negBids, takeShares));
       }
     }
 
@@ -355,27 +347,23 @@ export function draw(state: DrawState, refs: DrawRefs): void {
 
     // --- Take region: area under curve from 0 to takeShares ---
     if (ho.takeShares > 0) {
+      ctx.fillStyle = "rgba(100, 180, 255, 0.18)";
+      ctx.beginPath();
       if (isBuy) {
         const sliced = sliceCurveToY(curve.asks, ho.takeShares);
-        ctx.fillStyle = "rgba(100, 180, 255, 0.18)";
-        ctx.beginPath();
         ctx.moveTo(cx(sliced[0].x), cy(0));
         for (const pt of sliced) ctx.lineTo(cx(pt.x), cy(pt.y));
-        // close back along y=0
         ctx.lineTo(cx(sliced[sliced.length - 1].x), cy(0));
-        ctx.closePath();
-        ctx.fill();
       } else {
+        // bids: y is negative. Slice in negated space, draw in original.
         const negBids = curve.bids.map(({ x, y }) => ({ x, y: -y }));
         const sliced = sliceCurveToY(negBids, ho.takeShares);
-        ctx.fillStyle = "rgba(100, 180, 255, 0.18)";
-        ctx.beginPath();
         ctx.moveTo(cx(sliced[0].x), cy(0));
         for (const pt of sliced) ctx.lineTo(cx(pt.x), cy(-pt.y));
         ctx.lineTo(cx(sliced[sliced.length - 1].x), cy(0));
-        ctx.closePath();
-        ctx.fill();
       }
+      ctx.closePath();
+      ctx.fill();
     }
 
     // --- Limit rectangle: from curveAtPrice to mShares at mPrice ---
