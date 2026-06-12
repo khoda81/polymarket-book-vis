@@ -57,7 +57,6 @@ export class PolymarketCPV {
       <div style="height:8px"></div>
       <div class="cpv-canvas-wrap" data-ref="canvasWrap">
         <canvas data-ref="canvas"></canvas>
-        <div class="cpv-tip" data-ref="tip"></div>
         <div class="cpv-overlay" data-ref="overlay"></div>
       </div>
     `;
