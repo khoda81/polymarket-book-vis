@@ -42,49 +42,120 @@ export function hslColor(idx: number): string {
 }
 
 /**
- * Read the y-value of a monotone step curve at a given x.
+ * A monotone step curve with y ≥ 0.
+ *
+ * Internally stores points in normalized form (positive y ascending).
+ * The `sign` field tracks whether this is an ask-side (+1) or bid-side (-1)
+ * curve, so callers never need to manually negate.
  */
-export function yAtX(curve: Point[], x: number): number {
-  if (!curve.length) return 0;
-  if (x <= curve[0].x) return curve[0].y;
-  for (let i = 1; i < curve.length; i++) {
-    if (curve[i].x >= x) return curve[i - 1].y;
-  }
-  return curve[curve.length - 1].y;
-}
+export class Curve {
+  readonly pts: Point[];
+  readonly sign: 1 | -1;
 
-/**
- * Slice a monotone curve (y ascending) to only include points with y <= maxY,
- * appending an interpolated endpoint exactly at maxY.
- */
-export function sliceCurveToY(curve: Point[], maxY: number): Point[] {
-  const out: Point[] = [];
-  for (const pt of curve) {
-    if (pt.y <= maxY) {
-      out.push(pt);
-    } else {
-      const prev = out[out.length - 1] ?? pt;
-      const dy = pt.y - prev.y;
-      const t = dy === 0 ? 0 : (maxY - prev.y) / dy;
-      out.push({ x: prev.x + t * (pt.x - prev.x), y: maxY });
-      return out;
+  constructor(pts: Point[], sign: 1 | -1 = 1) {
+    this.sign = sign;
+    // Normalize: store y as absolute values so the curve is always y ≥ 0 ascending
+    this.pts = sign === -1 ? pts.map(({ x, y }) => ({ x, y: -y })) : pts;
+  }
+
+  get length(): number {
+    return this.pts.length;
+  }
+
+  /** Total volume (the last y value in the normalized curve). */
+  get total(): number {
+    return this.pts.length ? this.pts[this.pts.length - 1].y : 0;
+  }
+
+  /** Read the signed y-value at a given price x. */
+  volumeAt(price: number): number {
+    return this.sign * this.yAtX(price);
+  }
+
+  /** Read the absolute y-value at a given price x. */
+  yAtX(x: number): number {
+    const pts = this.pts;
+    if (!pts.length) return 0;
+    if (x <= pts[0].x) return pts[0].y;
+    for (let i = 1; i < pts.length; i++) {
+      if (pts[i].x >= x) return pts[i - 1].y;
+    }
+    return pts[pts.length - 1].y;
+  }
+
+  /** Find the next price level after `x` (for rectangle width). */
+  nextPriceAfter(x: number): number {
+    for (let i = 1; i < this.pts.length; i++) {
+      if (this.pts[i].x > x) return this.pts[i].x;
+    }
+    return 1;
+  }
+
+  /**
+   * Slice the curve to only include points with y ≤ maxY,
+   * appending an interpolated endpoint exactly at maxY.
+   */
+  sliceToY(maxY: number): Point[] {
+    const out: Point[] = [];
+    for (const pt of this.pts) {
+      if (pt.y <= maxY) {
+        out.push(pt);
+      } else {
+        const prev = out[out.length - 1] ?? pt;
+        const dy = pt.y - prev.y;
+        const t = dy === 0 ? 0 : (maxY - prev.y) / dy;
+        out.push({ x: prev.x + t * (pt.x - prev.x), y: maxY });
+        return out;
+      }
+    }
+    out.push({ x: this.pts[this.pts.length - 1].x, y: maxY });
+    return out;
+  }
+
+  /**
+   * Compute USD cost to take `shares` through this curve.
+   * Area = ∫ x dy  (Riemann sum over the staircase segments).
+   */
+  takeCost(shares: number): number {
+    if (shares <= 0) return 0;
+    const sliced = this.sliceToY(shares);
+    let area = 0;
+    for (let i = 1; i < sliced.length; i++) {
+      area += sliced[i - 1].x * (sliced[i].y - sliced[i - 1].y);
+    }
+    return area;
+  }
+
+  /**
+   * Iterate over the points in signed form (original y values).
+   * Useful for drawing on the canvas where y < 0 is below the zero line.
+   */
+  *signedPoints(): Generator<Point> {
+    for (const pt of this.pts) {
+      yield { x: pt.x, y: this.sign * pt.y };
     }
   }
-  out.push({ x: curve[curve.length - 1].x, y: maxY });
-  return out;
-}
 
-/**
- * Compute USD area under a single monotone curve (y ascending).
- * Area = ∫ x dy  (Riemann sum over the staircase segments).
- * This is the cost in USD to take `curve[-1].y` shares.
- */
-export function integrateCurve(curve: Point[]): number {
-  let area = 0;
-  for (let i = 1; i < curve.length; i++) {
-    area += curve[i - 1].x * (curve[i].y - curve[i - 1].y);
+  /** Get all points in signed form as an array. */
+  signedArray(): Point[] {
+    return this.pts.map(({ x, y }) => ({ x, y: this.sign * y }));
   }
-  return area;
+
+  /** Get points in signed form, reversed. */
+  signedReversed(): Point[] {
+    return this.pts.map(({ x, y }) => ({ x, y: this.sign * y })).reverse();
+  }
+
+  /**
+   * Find the center x of the zero-crossing region.
+   * In the normalized curve, "zero crossing" means the first point (y=0 region).
+   */
+  zeroCrossingCenter(): number | null {
+    const zPts = this.pts.filter((p) => p.y === 0);
+    if (!zPts.length) return null;
+    if (zPts.length === 1) return zPts[0].x;
+    return (zPts[0].x + zPts[zPts.length - 1].x) / 2;
+  }
 }
 
 /**
