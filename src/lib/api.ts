@@ -40,5 +40,12 @@ export async function fetchEventBySlug(slug: string): Promise<GammaEvent> {
   if (!r.ok) throw new Error(`Gamma API returned ${r.status}`);
   const events: GammaEvent[] = await r.json();
   if (!events.length) throw new Error("Event not found");
-  return events[0];
+  const event = events[0];
+  // The API returns clobTokenIds as a JSON string, e.g. '["123","456"]'
+  for (const market of event.markets) {
+    if (typeof market.clobTokenIds === "string") {
+      market.clobTokenIds = JSON.parse(market.clobTokenIds);
+    }
+  }
+  return event;
 }

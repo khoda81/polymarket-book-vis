@@ -190,7 +190,6 @@ export function draw(state: DrawState, refs: DrawRefs): void {
 
   const hovering = false;
 
-  console.debug({ allCurves });
   // Draw market curves
   activeIdxs.forEach((idx, i) => {
     const curve = allCurves[i];
