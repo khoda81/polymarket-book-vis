@@ -48,14 +48,12 @@ export function hslColor(idx: number): string {
  * The `sign` field tracks whether this is an ask-side (+1) or bid-side (-1)
  * curve, so callers never need to manually negate.
  */
-export class Curve {
+export class MonotoneCurve {
   readonly pts: Point[];
-  readonly sign: 1 | -1;
 
-  constructor(pts: Point[], sign: 1 | -1 = 1) {
-    this.sign = sign;
+  constructor(pts: Point[]) {
     // Normalize: store y as absolute values so the curve is always y ≥ 0 ascending
-    this.pts = sign === -1 ? pts.map(({ x, y }) => ({ x, y: -y })) : pts;
+    this.pts = pts;
   }
 
   get length(): number {
@@ -68,34 +66,47 @@ export class Curve {
   }
 
   /** Read the signed y-value at a given price x. */
-  volumeAt(price: number): number {
-    return this.sign * this.yAtX(price);
+  volumeAt(x: number): number {
+    return this.yAtX(x);
   }
 
   /** Read the absolute y-value at a given price x. */
   yAtX(x: number): number {
     const pts = this.pts;
-    if (!pts.length) return 0;
-    if (x <= pts[0].x) return pts[0].y;
-    for (let i = 1; i < pts.length; i++) {
-      if (pts[i].x >= x) return pts[i - 1].y;
+    if (!pts.length) return -Infinity;
+    let lo = 0;
+    let hi = pts.length;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (pts[mid].x < x) lo = mid;
+      else hi = mid;
     }
-    return pts[pts.length - 1].y;
+    return pts[lo].y;
   }
 
   /** Find the next price level after `x` (for rectangle width). */
   nextPriceAfter(x: number): number {
-    for (let i = 1; i < this.pts.length; i++) {
-      if (this.pts[i].x > x) return this.pts[i].x;
+    // for (let i = 1; i < this.pts.length; i++) {
+    //   if (this.pts[i].x > x) return this.pts[i].x;
+    // }
+    // return 1;
+    const pts = this.pts;
+    if (!pts.length) return 1;
+    let lo = 0;
+    let hi = pts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (pts[mid].x < x) lo = mid + 1;
+      else hi = mid;
     }
-    return 1;
+    return pts[lo].x;
   }
 
   /**
    * Slice the curve to only include points with y ≤ maxY,
    * appending an interpolated endpoint exactly at maxY.
    */
-  sliceToY(maxY: number): Point[] {
+  sliceToY(maxY: number): MonotoneCurve {
     const out: Point[] = [];
     for (const pt of this.pts) {
       if (pt.y <= maxY) {
@@ -105,11 +116,11 @@ export class Curve {
         const dy = pt.y - prev.y;
         const t = dy === 0 ? 0 : (maxY - prev.y) / dy;
         out.push({ x: prev.x + t * (pt.x - prev.x), y: maxY });
-        return out;
+        return new MonotoneCurve(out);
       }
     }
     out.push({ x: this.pts[this.pts.length - 1].x, y: maxY });
-    return out;
+    return new MonotoneCurve(out);
   }
 
   /**
@@ -118,7 +129,7 @@ export class Curve {
    */
   takeCost(shares: number): number {
     if (shares <= 0) return 0;
-    const sliced = this.sliceToY(shares);
+    const sliced = this.sliceToY(shares).pts;
     let area = 0;
     for (let i = 1; i < sliced.length; i++) {
       area += sliced[i - 1].x * (sliced[i].y - sliced[i - 1].y);
@@ -127,34 +138,11 @@ export class Curve {
   }
 
   /**
-   * Iterate over the points in signed form (original y values).
-   * Useful for drawing on the canvas where y < 0 is below the zero line.
-   */
-  *signedPoints(): Generator<Point> {
-    for (const pt of this.pts) {
-      yield { x: pt.x, y: this.sign * pt.y };
-    }
-  }
-
-  /** Get all points in signed form as an array. */
-  signedArray(): Point[] {
-    return this.pts.map(({ x, y }) => ({ x, y: this.sign * y }));
-  }
-
-  /** Get points in signed form, reversed. */
-  signedReversed(): Point[] {
-    return this.pts.map(({ x, y }) => ({ x, y: this.sign * y })).reverse();
-  }
-
-  /**
    * Find the center x of the zero-crossing region.
    * In the normalized curve, "zero crossing" means the first point (y=0 region).
    */
-  zeroCrossingCenter(): number | null {
-    const zPts = this.pts.filter((p) => p.y === 0);
-    if (!zPts.length) return null;
-    if (zPts.length === 1) return zPts[0].x;
-    return (zPts[0].x + zPts[zPts.length - 1].x) / 2;
+  zero(): number {
+    return this.nextPriceAfter(0);
   }
 }
 

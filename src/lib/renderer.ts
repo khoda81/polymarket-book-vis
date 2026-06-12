@@ -1,7 +1,7 @@
 import { PAD } from "./constants";
 import {
   type Point,
-  Curve,
+  MonotoneCurve,
   fmtVol,
   fmtUsd,
   powerOf10Ticks,
@@ -40,20 +40,18 @@ export interface DrawRefs {
 export interface HoverOrder {
   price: number;
   shares: number;
-  takeShares: number;
-  limitShares: number;
-  takeCost: number;
-  limitCost: number;
-  marketIdx: number;
+  curveAtPrice: number;
+
+  curveIdx: number;
 }
 
 interface MarketCurve {
-  asks: Curve;
-  bids: Curve;
+  asks: MonotoneCurve;
+  bids: MonotoneCurve;
 }
 
 export function buildCurve(book: OrderBook | undefined): MarketCurve {
-  const empty = () => new Curve([]);
+  const empty = () => new MonotoneCurve([]);
 
   if (!book) return { asks: empty(), bids: empty() };
 
@@ -71,15 +69,15 @@ export function buildCurve(book: OrderBook | undefined): MarketCurve {
   const bidPts: Point[] = [];
   total = 0;
   for (const o of bidsSorted) {
-    bidPts.push({ x: +o.p, y: total });
+    bidPts.push({ x: 1 - +o.p, y: total });
     total -= o.s;
-    bidPts.push({ x: +o.p, y: total });
+    bidPts.push({ x: 1 - +o.p, y: total });
   }
   bidPts.push({ x: 0, y: total });
 
   return {
-    asks: new Curve(askPts, 1),
-    bids: new Curve(bidPts, -1),
+    asks: new MonotoneCurve(askPts),
+    bids: new MonotoneCurve(bidPts),
   };
 }
 
@@ -200,35 +198,21 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     my >= PAD.t &&
     my <= PAD.t + cH;
 
-  const mPrice = inChart ? (mx! - PAD.l) / cW : 0;
-  const mShares = inChart ? (((cy(0) - my!) * 2) / cH) * yAbsMax : 0;
-  const hovering = inChart && mShares !== 0 && allCurves.length > 0;
+  const price = inChart ? (mx! - PAD.l) / cW : 0;
+  const shares = inChart ? (((cy(0) - my!) * 2) / cH) * yAbsMax : 0;
+  const hovering = inChart && shares !== 0 && allCurves.length > 0;
 
   // Compute hover order preview
   let hoverOrder: HoverOrder | null = null;
   if (hovering) {
-    const curveIdx = 0;
+    const curveIdx = activeIdxs[0];
     const curve = allCurves[curveIdx];
-    const isBuy = mShares > 0;
-    const bookSide = isBuy ? curve.asks : curve.bids;
-    const curveAtPrice = bookSide.yAtX(mPrice);
+    const curveAtPrice =
+      price > curve.asks.zero()
+        ? curve.asks.yAtX(price)
+        : curve.bids.yAtX(1 - price);
 
-    const absShares = Math.abs(mShares);
-    const takeShares = Math.min(absShares, curveAtPrice);
-    const limitShares = Math.max(0, absShares - curveAtPrice);
-
-    const takeCost = bookSide.takeCost(takeShares);
-    const limitCost = limitShares * mPrice;
-
-    hoverOrder = {
-      price: mPrice,
-      shares: mShares,
-      takeShares,
-      limitShares,
-      takeCost,
-      limitCost,
-      marketIdx: activeIdxs[curveIdx],
-    };
+    hoverOrder = { price, shares, curveAtPrice, curveIdx };
   }
 
   // Draw market curves
@@ -249,14 +233,14 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     ctx.lineWidth = dim ? 1.5 : 2.5;
     ctx.globalAlpha = dim ? 0.35 : 1;
     ctx.lineJoin = "round";
-    for (const pt of curve.bids.signedReversed())
-      ctx.lineTo(cx(pt.x), cy(pt.y));
-    for (const pt of curve.asks.signedArray()) ctx.lineTo(cx(pt.x), cy(pt.y));
+    for (const pt of curve.bids.pts.toReversed())
+      ctx.lineTo(cx(1 - pt.x), cy(pt.y));
+    for (const pt of curve.asks.pts) ctx.lineTo(cx(pt.x), cy(pt.y));
     ctx.stroke();
     ctx.globalAlpha = 1;
 
     // Rotated zero-crossing label
-    const centerX = curve.asks.zeroCrossingCenter();
+    const centerX = curve.asks.zero();
     if (centerX !== null && !isNaN(centerX)) {
       const lx = cx(centerX);
       const ly = cy(0) - 12;
@@ -317,73 +301,88 @@ export function draw(state: DrawState, refs: DrawRefs): void {
   // Draw hover preview
   if (hovering && hoverOrder) {
     const ho = hoverOrder;
-    const isBuy = mShares > 0;
-    const curveIdx = 0;
-    const curve = allCurves[curveIdx];
-    const color = hslColor(activeIdxs[curveIdx]);
+    const isBuy = shares > 0;
+    const curve = allCurves[ho.curveIdx];
+    const color = hslColor(ho.curveIdx);
     const bookSide = isBuy ? curve.asks : curve.bids;
+    console.debug(ho);
+
+    // Draw point at price, shares, curveAtPrice
+    const pointX = cx(ho.price);
+    const pointY = cy(ho.curveAtPrice);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(pointX, pointY, 3, 0, 2 * Math.PI);
+    ctx.fill();
 
     // --- Take region: area under curve from 0 to takeShares ---
-    if (ho.takeShares > 0) {
-      const sliced = bookSide.sliceToY(ho.takeShares);
-      ctx.fillStyle = "rgba(100, 180, 255, 0.18)";
-      ctx.beginPath();
-      ctx.moveTo(cx(sliced[0].x), cy(0));
-      for (const pt of sliced) ctx.lineTo(cx(pt.x), cy(bookSide.sign * pt.y));
-      ctx.lineTo(cx(sliced[sliced.length - 1].x), cy(0));
-      ctx.closePath();
-      ctx.fill();
-    }
+    const deltaShares = Math.abs(ho.shares) - ho.curveAtPrice;
+    const sliced = bookSide.sliceToY(deltaShares).pts;
+    ctx.fillStyle = "rgba(100, 180, 255, 0.18)";
+    ctx.beginPath();
+    ctx.moveTo(cx(sliced[0].x), cy(0));
+    for (const pt of sliced) ctx.lineTo(cx(pt.x), cy(pt.y));
+    ctx.lineTo(cx(isBuy ? 1 : 0), cy(sliced[sliced.length - 1].y));
+    ctx.lineTo(cx(isBuy ? 1 : 0), cy(0));
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx(sliced[0].x), cy(0));
+    for (const pt of sliced) ctx.lineTo(cx(pt.x), cy(pt.y));
+    ctx.stroke();
 
     // --- Limit rectangle: from curveAtPrice to mShares at mPrice ---
-    if (ho.limitShares > 0) {
-      const curveAtPrice = bookSide.volumeAt(mPrice);
-      const xEnd = bookSide.nextPriceAfter(mPrice);
+    // if (ho.limitShares > 0) {
+    //   const curveAtPrice = bookSide.volumeAt(mPrice);
+    //   const xEnd = bookSide.nextPriceAfter(mPrice);
 
-      const px = cx(mPrice);
-      const pxEnd = cx(xEnd);
-      const pyCurve = cy(curveAtPrice);
-      const pyMouse = cy(mShares);
+    //   const px = cx(mPrice);
+    //   const pxEnd = cx(xEnd);
+    //   const pyCurve = cy(curveAtPrice);
+    //   const pyMouse = cy(mShares);
 
-      ctx.fillStyle = isBuy
-        ? "rgba(29, 158, 117, 0.2)"
-        : "rgba(226, 75, 74, 0.2)";
-      ctx.fillRect(
-        px,
-        Math.min(pyCurve, pyMouse),
-        pxEnd - px,
-        Math.abs(pyMouse - pyCurve),
-      );
+    //   ctx.fillStyle = isBuy
+    //     ? "rgba(29, 158, 117, 0.2)"
+    //     : "rgba(226, 75, 74, 0.2)";
+    //   ctx.fillRect(
+    //     px,
+    //     Math.min(pyCurve, pyMouse),
+    //     pxEnd - px,
+    //     Math.abs(pyMouse - pyCurve),
+    //   );
 
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 4]);
-      ctx.strokeRect(
-        px,
-        Math.min(pyCurve, pyMouse),
-        pxEnd - px,
-        Math.abs(pyMouse - pyCurve),
-      );
-      ctx.setLineDash([]);
-    }
+    //   ctx.strokeStyle = color;
+    //   ctx.lineWidth = 1.5;
+    //   ctx.setLineDash([4, 4]);
+    //   ctx.strokeRect(
+    //     px,
+    //     Math.min(pyCurve, pyMouse),
+    //     pxEnd - px,
+    //     Math.abs(pyMouse - pyCurve),
+    //   );
+    //   ctx.setLineDash([]);
+    // }
 
     // --- Dashed horizontal line at mShares level ---
     ctx.strokeStyle = isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.3)";
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.moveTo(PAD.l, cy(mShares));
-    ctx.lineTo(W - PAD.r, cy(mShares));
+    ctx.moveTo(PAD.l, cy(shares));
+    ctx.lineTo(W - PAD.r, cy(shares));
     ctx.stroke();
     ctx.setLineDash([]);
 
     // --- Overlay ---
     const side = isBuy ? "BUY" : "SELL";
     const totalCost = ho.takeCost + ho.limitCost;
-    const avgPrice = totalCost / Math.abs(mShares);
+    const avgPrice = totalCost / Math.abs(shares);
 
-    let html = `<div class="cpv-ov-label">${side} @ ${mPrice.toFixed(3)}</div>`;
-    html += `<div class="cpv-ov-row"><span>Shares</span><b>${fmtVol(Math.abs(mShares))}</b></div>`;
+    let html = `<div class="cpv-ov-label">${side} @ ${price.toFixed(3)}</div>`;
+    html += `<div class="cpv-ov-row"><span>Shares</span><b>${fmtVol(Math.abs(shares))}</b></div>`;
 
     if (ho.takeShares > 0) {
       html += `<div class="cpv-ov-row"><span>Take</span><b>${fmtVol(ho.takeShares)} @ ${fmtUsd(ho.takeCost)}</b></div>`;
@@ -401,7 +400,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     const ovW = overlay.offsetWidth || 180;
     const ovH = overlay.offsetHeight || 100;
     // Center horizontally on cursor, clamp to chart bounds
-    const ovX = Math.max(PAD.l, Math.min(mx! - ovW / 2, W - PAD.r - ovW));
+    const ovX = Math.max(PAD.l, Math.min(mx! - PAD.r - ovW, W - PAD.r - ovW));
     // Place above cursor for buys (positive y), below for sells (negative y)
     const ovY = isBuy
       ? Math.max(PAD.t, my! - ovH - 12)
