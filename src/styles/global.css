@@ -1,0 +1,35 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--color-background-primary, #fff);
+}
+
+.grid {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.card {
+  border: 0.5px solid var(--color-border-secondary, #ddd);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+@media (max-width: 700px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    --color-background-primary: #111;
+    --color-border-secondary: #333;
+  }
+}

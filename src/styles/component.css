@@ -1,0 +1,227 @@
+.cpv-wrap {
+  padding: 1rem;
+  font-family: var(--font-sans, sans-serif);
+  color: var(--color-text-primary, #333);
+}
+
+.cpv-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.cpv-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.cpv-title {
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 180px;
+}
+
+.cpv-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #888;
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+.cpv-dot--live {
+  background: #1d9e75;
+}
+.cpv-dot--err {
+  background: #e24b4a;
+}
+.cpv-dot--conn {
+  background: #ba7517;
+}
+
+.cpv-stxt {
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+}
+
+/* ── Controls ────────────────────────────────────────────────────────────── */
+
+.cpv-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 0.75rem;
+}
+
+.cpv-top-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.cpv-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+}
+.cpv-toggles label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+/* ── Search ──────────────────────────────────────────────────────────────── */
+
+.cpv-search-container {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-width: 200px;
+  max-width: 420px;
+}
+
+.cpv-search-input {
+  flex: 1;
+  padding: 5px 10px;
+  font-size: 12px;
+  border: 0.5px solid var(--color-border-secondary, #ccc);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-primary, #333);
+}
+.cpv-search-input:focus {
+  outline: none;
+  border-color: #1d9e75;
+}
+
+.cpv-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--color-background-primary, #fff);
+  border: 0.5px solid var(--color-border-secondary, #ccc);
+  border-radius: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 100;
+  margin-top: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: none;
+}
+
+.cpv-dropdown-item {
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-text-primary, #333);
+  border-bottom: 0.5px solid var(--color-border-tertiary, #eee);
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cpv-dropdown-item:hover {
+  background: var(--color-background-secondary, #eee);
+}
+.cpv-vol-tag {
+  color: #1d9e75;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* ── Canvas ──────────────────────────────────────────────────────────────── */
+
+.cpv-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 420px;
+  border: 0.5px solid var(--color-border-tertiary, #ddd);
+  border-radius: 8px;
+  overflow: hidden;
+  background: transparent;
+  cursor: crosshair;
+}
+
+.cpv-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Tooltip (old, unused but kept for compatibility) ────────────────────── */
+
+.cpv-tip {
+  position: absolute;
+  pointer-events: none;
+  display: none;
+}
+
+/* ── Hover overlay panel ─────────────────────────────────────────────────── */
+
+.cpv-overlay {
+  position: absolute;
+  pointer-events: none;
+  background: var(--color-background-primary, #fff);
+  border: 0.5px solid var(--color-border-secondary, #ccc);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  display: none;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  min-width: 170px;
+}
+
+.cpv-ov-label {
+  font-weight: 600;
+  font-size: 11px;
+  margin-bottom: 6px;
+  color: var(--color-text-primary, #111);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.cpv-ov-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--color-text-secondary, #555);
+}
+
+.cpv-ov-row b {
+  color: var(--color-text-primary, #111);
+}
+
+.cpv-ov-green {
+  color: #1d9e75 !important;
+}
+
+/* ── Dark mode ───────────────────────────────────────────────────────────── */
+
+@media (prefers-color-scheme: dark) {
+  .cpv-wrap {
+    --color-text-primary: #eee;
+    --color-text-secondary: #aaa;
+    --color-background-primary: #121212;
+    --color-background-secondary: #222;
+    --color-border-secondary: #444;
+    --color-border-tertiary: #333;
+  }
+}
