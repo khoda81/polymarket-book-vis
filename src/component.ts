@@ -2,7 +2,14 @@ import { fetchSearchSuggestions, fetchEventBySlug } from "@/lib/api";
 import { fmtVol, hslColor } from "@/lib/math";
 import type { OrderBook } from "@/lib/ws";
 import { ConnectionStatus, MarketWS } from "@/lib/ws";
-import { draw, type DrawState, type MarketInfo } from "@/lib/renderer";
+import { PAD } from "@/lib/constants";
+import {
+  draw,
+  type DrawState,
+  type MarketInfo,
+  type UserOrder,
+  type HoverOrder,
+} from "@/lib/renderer";
 import "@/styles/component.css";
 
 export class PolymarketCPV {
@@ -17,6 +24,7 @@ export class PolymarketCPV {
   private raf: number | null = null;
   private mx: number | null = null;
   private my: number | null = null;
+  private userOrders: UserOrder[] = [];
   private volZoom = 3.5;
   private searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -94,6 +102,13 @@ export class PolymarketCPV {
       this.reqDraw();
     });
 
+    (canvasWrap as HTMLElement).addEventListener("click", (e) => {
+      const r = (this.refs.canvas as HTMLCanvasElement).getBoundingClientRect();
+      const clickX = e.clientX - r.left;
+      const clickY = e.clientY - r.top;
+      this.placeOrder(clickX, clickY);
+    });
+
     (canvasWrap as HTMLElement).addEventListener(
       "wheel",
       (e) => {
@@ -114,6 +129,7 @@ export class PolymarketCPV {
       this.books = {};
       this.markets = [];
       this.activeMarkets.clear();
+      this.userOrders = [];
 
       const event = await fetchEventBySlug(slug);
 
@@ -247,6 +263,7 @@ export class PolymarketCPV {
       markets: this.markets,
       activeMarkets: this.activeMarkets,
       books: this.books,
+      userOrders: this.userOrders,
       volZoom: this.volZoom,
       mx: this.mx,
       my: this.my,
@@ -256,5 +273,41 @@ export class PolymarketCPV {
       overlay: this.refs.overlay as HTMLDivElement,
     };
     draw(state, refs);
+  }
+
+  private placeOrder(clickX: number, clickY: number) {
+    const activeIdxs = Array.from(this.activeMarkets);
+    if (!activeIdxs.length) return;
+
+    const canvas = this.refs.canvas as HTMLCanvasElement;
+    const wrap = canvas.parentElement!;
+    const W = wrap.clientWidth;
+    const H = wrap.clientHeight;
+    const cW = W - PAD.l - PAD.r;
+    const cH = H - PAD.t - PAD.b;
+    const yAbsMax = Math.pow(10, this.volZoom);
+    const cy = (v: number) => PAD.t + (1 - v / yAbsMax) * (cH / 2);
+
+    if (
+      clickX < PAD.l ||
+      clickX > W - PAD.r ||
+      clickY < PAD.t ||
+      clickY > PAD.t + cH
+    )
+      return;
+
+    const price = (clickX - PAD.l) / cW;
+    const shares = (((cy(0) - clickY) * 2) / cH) * yAbsMax;
+    if (shares === 0) return;
+
+    const order: UserOrder = {
+      id: crypto.randomUUID(),
+      price,
+      shares,
+      marketIdx: activeIdxs[0],
+    };
+
+    this.userOrders = [...this.userOrders, order];
+    this.reqDraw();
   }
 }

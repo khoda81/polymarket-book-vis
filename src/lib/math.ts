@@ -42,6 +42,18 @@ export function hslColor(idx: number): string {
 }
 
 /**
+ * Read the y-value of a monotone step curve at a given x.
+ */
+export function yAtX(curve: Point[], x: number): number {
+  if (!curve.length) return 0;
+  if (x <= curve[0].x) return curve[0].y;
+  for (let i = 1; i < curve.length; i++) {
+    if (curve[i].x >= x) return curve[i - 1].y;
+  }
+  return curve[curve.length - 1].y;
+}
+
+/**
  * Slice a monotone curve (y ascending) to only include points with y <= maxY,
  * appending an interpolated endpoint exactly at maxY.
  */
