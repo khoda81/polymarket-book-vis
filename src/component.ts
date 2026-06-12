@@ -8,7 +8,6 @@ import {
   type DrawState,
   type MarketInfo,
   type UserOrder,
-  type HoverOrder,
 } from "@/lib/renderer";
 import "@/styles/component.css";
 
