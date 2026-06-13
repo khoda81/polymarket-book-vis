@@ -1,3 +1,5 @@
+import type { OrderBook, Order } from "./ws";
+
 export interface Step {
   total: number;
   ratio: number;
@@ -42,144 +44,299 @@ export function hslColor(idx: number): string {
 }
 
 /**
- * A monotone step curve with y ≥ 0.
+ * A signed cumulative depth curve stored as two stacks from the spread.
  *
- * Internally stores points in normalized form (positive y ascending).
- * The `sign` field tracks whether this is an ask-side (+1) or bid-side (-1)
- * curve, so callers never need to manually negate.
+ * `asks` — price ascending from the best ask (index 0 = closest to spread).
+ *          Cumulative shares are positive and ascending.
+ * `bids` — price descending from the best bid (index 0 = closest to spread).
+ *          Cumulative shares are stored as positive absolute values, ascending
+ *          from the mid. At render time they're negated to show below zero.
+ *
+ * This layout makes operations near the spread (the common case) O(1) at the
+ * top of each stack, rather than requiring binary search into the middle of a
+ * flat array.
  */
 export class MarketCurve {
-  readonly pts: Step[];
+  readonly asks: Step[];
+  readonly bids: Step[];
 
-  constructor(pts: Step[]) {
-    // Normalize: store y as absolute values so the curve is always y ≥ 0 ascending
-    this.pts = pts;
+  constructor(asks: Step[], bids: Step[]) {
+    this.asks = asks;
+    this.bids = bids;
   }
 
   get length(): number {
-    return this.pts.length;
+    return this.asks.length + this.bids.length;
   }
 
-  /**
-   * Binary search: find the last index whose `key` field is < `value`.
-   * Returns the segment index `lo` such that pts[lo].key <= value < pts[lo+1].key.
-   */
-  private findSegmentIndex<K extends keyof Step>(
+  /** Price of the best ask, or -Infinity if none. */
+  get bestAsk(): number {
+    return this.asks.length ? this.asks[0].ratio : -Infinity;
+  }
+
+  /** Price of the best bid, or -Infinity if none. */
+  get bestBid(): number {
+    return this.bids.length ? this.bids[0].ratio : -Infinity;
+  }
+
+  /** Midpoint between best ask and best bid. */
+  get spreadPrice(): number {
+    if (this.asks.length && this.bids.length)
+      return (this.bestAsk + this.bestBid) / 2;
+    if (this.asks.length) return this.bestAsk;
+    if (this.bids.length) return this.bestBid;
+    return -Infinity;
+  }
+
+  // --- Binary search helpers ---
+
+  /** Find the last index in `arr` where arr[i].key < value. */
+  private static findSegment<K extends keyof Step>(
+    arr: Step[],
     key: K,
     value: number,
   ): number {
-    const pts = this.pts;
     let lo = 0;
-    let hi = pts.length;
+    let hi = arr.length;
     while (hi - lo > 1) {
       const mid = (lo + hi) >> 1;
-      if (pts[mid][key] < value) lo = mid;
+      if (arr[mid][key] < value) lo = mid;
       else hi = mid;
     }
     return lo;
   }
 
-  /**
-   * Binary search: find the lower-bound insertion index for `value` in `key`.
-   * Returns the first index where pts[i].key >= value.
-   */
-  private lowerBoundIndex<K extends keyof Step>(key: K, value: number): number {
-    const pts = this.pts;
+  /** Find the lower-bound insertion index: first i where arr[i].key >= value. */
+  private static lowerBound<K extends keyof Step>(
+    arr: Step[],
+    key: K,
+    value: number,
+  ): number {
     let lo = 0;
-    let hi = pts.length;
+    let hi = arr.length;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      if (pts[mid][key] < value) lo = mid + 1;
+      if (arr[mid][key] < value) lo = mid + 1;
       else hi = mid;
     }
     return lo;
   }
 
-  /** Cumulative shares at a given price. */
+  // --- Query methods ---
+
+  /**
+   * Signed cumulative shares at a given price.
+   * Positive = ask side, negative = bid side, 0 = in the spread.
+   */
   totalAtPrice(price: number): number {
-    if (!this.pts.length) return -Infinity;
-    return this.pts[this.findSegmentIndex("ratio", price)].total;
-  }
-
-  /** Price of the next step after the given price, or 1 if at the end. */
-  nextPriceAfter(price: number): number {
-    const pts = this.pts;
-    const idx = this.lowerBoundIndex("ratio", price);
-    if (idx < pts.length && pts[idx].ratio > price) return pts[idx].ratio;
-    if (idx + 1 < pts.length) return pts[idx + 1].ratio;
-    return 1;
-  }
-
-  /** Interpolated price at a given cumulative-share level. */
-  priceAtTotal(total: number): number {
-    const pts = this.pts;
-    if (!pts.length) return -Infinity;
-    const lo = this.findSegmentIndex("total", total);
-    const hi = Math.min(lo + 1, pts.length - 1);
-    return (
-      pts[lo].ratio +
-      ((total - pts[lo].total) / (pts[hi].total - pts[lo].total)) *
-        (pts[hi].ratio - pts[lo].ratio)
-    );
-  }
-
-  sliceTo(total: number): MarketCurve {
-    const out: Step[] = [];
-    for (const pt of this.pts) {
-      if (pt.total <= total) {
-        out.push(pt);
-      } else {
-        const prev = out[out.length - 1] ?? pt;
-        const dy = pt.total - prev.total;
-        const t = dy === 0 ? 0 : (total - prev.total) / dy;
-        out.push({
-          ratio: prev.ratio + t * (pt.ratio - prev.ratio),
-          total: total,
-        });
-        return new MarketCurve(out);
-      }
+    // In the spread: no cumulative volume
+    if (price >= this.bestAsk && price <= this.bestBid) return 0;
+    // Ask side (price > bestAsk)
+    if (price > this.bestAsk && this.asks.length) {
+      if (price >= this.asks[this.asks.length - 1].ratio)
+        return this.asks[this.asks.length - 1].total;
+      const idx = MarketCurve.findSegment(this.asks, "ratio", price);
+      return this.asks[idx].total;
     }
-    out.push({ ratio: this.pts[this.pts.length - 1].ratio, total: total });
-    return new MarketCurve(out);
+    // Bid side (price < bestBid)
+    if (price < this.bestBid && this.bids.length) {
+      if (price <= this.bids[this.bids.length - 1].ratio)
+        return -this.bids[this.bids.length - 1].total;
+      const idx = MarketCurve.findSegment(this.bids, "ratio", price);
+      return -this.bids[idx].total;
+    }
+    return 0;
+  }
+
+  /** Price of the next step after the given price on the same side, or boundary. */
+  nextPriceAfter(price: number): number {
+    if (price >= this.bestAsk) {
+      const idx = MarketCurve.lowerBound(this.asks, "ratio", price);
+      if (idx < this.asks.length && this.asks[idx].ratio > price)
+        return this.asks[idx].ratio;
+      if (idx + 1 < this.asks.length) return this.asks[idx + 1].ratio;
+      return 1;
+    }
+    if (price <= this.bestBid) {
+      const idx = MarketCurve.lowerBound(this.bids, "ratio", price);
+      if (idx < this.bids.length && this.bids[idx].ratio > price)
+        return this.bids[idx].ratio;
+      if (idx + 1 < this.bids.length) return this.bids[idx + 1].ratio;
+      return 0;
+    }
+    // In the spread — snap to the nearer side
+    return price - this.bestBid < this.bestAsk - price
+      ? this.bestBid
+      : this.bestAsk;
+  }
+
+  /** Interpolated price at a given signed cumulative-share level. */
+  priceAtTotal(total: number): number {
+    if (total > 0 && this.asks.length) {
+      const idx = MarketCurve.findSegment(this.asks, "total", total);
+      const hi = Math.min(idx + 1, this.asks.length - 1);
+      const dy = this.asks[hi].total - this.asks[idx].total;
+      if (dy === 0) return this.asks[idx].ratio;
+      return (
+        this.asks[idx].ratio +
+        ((total - this.asks[idx].total) / dy) *
+          (this.asks[hi].ratio - this.asks[idx].ratio)
+      );
+    }
+    if (total < 0 && this.bids.length) {
+      const absTotal = -total;
+      const idx = MarketCurve.findSegment(this.bids, "total", absTotal);
+      const hi = Math.min(idx + 1, this.bids.length - 1);
+      const dy = this.bids[hi].total - this.bids[idx].total;
+      if (dy === 0) return this.bids[idx].ratio;
+      return (
+        this.bids[idx].ratio +
+        ((absTotal - this.bids[idx].total) / dy) *
+          (this.bids[hi].ratio - this.bids[idx].ratio)
+      );
+    }
+    return this.spreadPrice;
   }
 
   /**
-   * Inserts a new order into the curve and returns a new MarketCurve.
-   * @param pt A Step where `ratio` is the order price and `total` is the order size.
+   * Flatten both stacks into a single sorted Step[] for rendering.
+   * Bid totals are negated so they appear below zero on the chart.
    */
-  insert(pt: Step): MarketCurve {
-    const price = pt.ratio;
-    const size = pt.total;
+  get pts(): Step[] {
+    const out: Step[] = [];
+    // Bids: stored price-desc, abs-total asc → emit price-asc, negated totals
+    for (let i = this.bids.length - 1; i >= 0; i--) {
+      out.push({ ratio: this.bids[i].ratio, total: -this.bids[i].total });
+    }
+    // Asks: already price-asc, positive totals
+    out.push(...this.asks);
+    return out;
+  }
 
-    // Zero-size orders don't modify the curve
+  /**
+   * Slice the curve up to a signed cumulative total.
+   * Returns a new MarketCurve truncated at that level.
+   */
+  sliceTo(total: number): MarketCurve {
+    if (total >= 0) {
+      const out: Step[] = [];
+      for (const pt of this.asks) {
+        if (pt.total <= total) {
+          out.push(pt);
+        } else {
+          const prev = out[out.length - 1] ?? pt;
+          const dy = pt.total - prev.total;
+          const t = dy === 0 ? 0 : (total - prev.total) / dy;
+          out.push({
+            ratio: prev.ratio + t * (pt.ratio - prev.ratio),
+            total,
+          });
+          return new MarketCurve(out, this.bids);
+        }
+      }
+      return new MarketCurve(out, this.bids);
+    } else {
+      const absTotal = -total;
+      const out: Step[] = [];
+      for (const pt of this.bids) {
+        if (pt.total <= absTotal) {
+          out.push(pt);
+        } else {
+          const prev = out[out.length - 1] ?? pt;
+          const dy = pt.total - prev.total;
+          const t = dy === 0 ? 0 : (absTotal - prev.total) / dy;
+          out.push({
+            ratio: prev.ratio + t * (pt.ratio - prev.ratio),
+            total: absTotal,
+          });
+          return new MarketCurve(this.asks, out);
+        }
+      }
+      return new MarketCurve(this.asks, out);
+    }
+  }
+
+  /**
+   * Insert an order into the curve and return a new MarketCurve.
+   * @param price Order price
+   * @param size  Order size (positive = add liquidity, negative = remove)
+   */
+  insert(price: number, size: number): MarketCurve {
     if (size === 0) return this;
 
-    const pts = this.pts;
-    if (pts.length === 0) {
-      return new MarketCurve([{ ratio: price, total: size }]);
+    if (
+      price >= this.bestAsk ||
+      (this.asks.length === 0 && price >= this.spreadPrice)
+    ) {
+      return new MarketCurve(
+        this.insertSide(this.asks, price, size),
+        this.bids,
+      );
+    }
+    if (
+      price <= this.bestBid ||
+      (this.bids.length === 0 && price <= this.spreadPrice)
+    ) {
+      return new MarketCurve(
+        this.asks,
+        this.insertSide(this.bids, price, size),
+      );
+    }
+    // In the spread — determine side by price position relative to mid
+    return price >= this.spreadPrice
+      ? new MarketCurve(this.insertSide(this.asks, price, size), this.bids)
+      : new MarketCurve(this.asks, this.insertSide(this.bids, price, size));
+  }
+
+  /** Insert into one side's stack. */
+  private insertSide(side: Step[], price: number, size: number): Step[] {
+    if (side.length === 0) {
+      return [{ ratio: price, total: Math.abs(size) }];
     }
 
-    const lo = this.lowerBoundIndex("ratio", price);
+    const lo = MarketCurve.lowerBound(side, "ratio", price);
+    const out = side.slice(0, lo);
+    const prevTotal = lo > 0 ? side[lo - 1].total : 0;
 
-    // Copy the untouched portion of the curve
-    const out = pts.slice(0, lo);
-    const prevTotal = lo > 0 ? pts[lo - 1].total : 0;
-
-    if (lo < pts.length && pts[lo].ratio === price) {
-      // Exact price level exists: update this level and all subsequent ones
-      for (let i = lo; i < pts.length; i++) {
-        out.push({ ratio: pts[i].ratio, total: pts[i].total + size });
+    if (lo < side.length && side[lo].ratio === price) {
+      for (let i = lo; i < side.length; i++) {
+        out.push({ ratio: side[i].ratio, total: side[i].total + size });
       }
     } else {
-      // New price level: insert it, then update all subsequent ones
       out.push({ ratio: price, total: prevTotal + size });
-      for (let i = lo; i < pts.length; i++) {
-        out.push({ ratio: pts[i].ratio, total: pts[i].total + size });
+      for (let i = lo; i < side.length; i++) {
+        out.push({ ratio: side[i].ratio, total: side[i].total + size });
       }
     }
-
-    return new MarketCurve(out);
+    return out;
   }
+}
+
+/**
+ * Build a MarketCurve from a raw order book.
+ * Asks are stored price-ascending (best ask at index 0).
+ * Bids are stored price-descending (best bid at index 0).
+ */
+export function buildCurve(book: OrderBook): MarketCurve {
+  const asks: Step[] = [];
+  let total = 0;
+  for (const o of book.asks.toSorted(
+    (a: Order, b: Order) => +a.price - +b.price,
+  )) {
+    total += o.size;
+    asks.push({ ratio: +o.price, total });
+  }
+
+  const bids: Step[] = [];
+  total = 0;
+  for (const o of book.bids.toSorted(
+    (a: Order, b: Order) => +b.price - +a.price,
+  )) {
+    total += o.size;
+    bids.push({ ratio: +o.price, total });
+  }
+
+  return new MarketCurve(asks, bids);
 }
 
 /**
