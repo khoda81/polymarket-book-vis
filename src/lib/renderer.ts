@@ -67,7 +67,7 @@ function drawTickLine(
   ctx.stroke();
 }
 
-/** Draw a staircase curve from its pts array. */
+/** Draw a staircase curve from its pts array. Handles zero crossings in both directions. */
 function drawStaircase(
   ctx: CanvasRenderingContext2D,
   pts: { ratio: number; total: number }[],
@@ -76,10 +76,17 @@ function drawStaircase(
 ) {
   let lastPoint = { ratio: 0, total: 0 };
   for (const pt of pts) {
-    if (lastPoint.total <= 0 && 0 < pt.total) {
-      ctx.lineTo(cx(lastPoint.ratio), cy(0));
-      ctx.lineTo(cx(pt.ratio), cy(0));
-      lastPoint = { ratio: pt.ratio, total: 0 };
+    // Detect zero crossing in either direction
+    if (
+      (lastPoint.total <= 0 && 0 < pt.total) ||
+      (lastPoint.total >= 0 && 0 > pt.total)
+    ) {
+      // Interpolate the crossing point
+      const d = pt.total - lastPoint.total;
+      const t = d === 0 ? 0 : -lastPoint.total / d;
+      const crossRatio = lastPoint.ratio + t * (pt.ratio - lastPoint.ratio);
+      ctx.lineTo(cx(crossRatio), cy(0));
+      lastPoint = { ratio: crossRatio, total: 0 };
     }
     ctx.lineTo(cx(lastPoint.ratio), cy(pt.total));
     ctx.lineTo(cx(pt.ratio), cy(pt.total));
@@ -288,16 +295,21 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     // Market curve value at the hover price
     const marketAtPrice = curve.totalAtPrice(ho.price);
 
-    // The order = cursor position minus user curve (signed: positive = bid, negative = ask)
-    const orderSize = ho.shares - userAtPrice;
+    // Side is determined by price vs spread, not cursor y-position
+    // Left of spread = bid (user curve goes positive), right = ask (goes negative)
+    const isBid = ho.price <= spreadPrice;
+
+    // Order size = distance from user curve to cursor, signed by side
+    const orderSize = isBid
+      ? Math.max(0, ho.shares - userAtPrice) // bid: cursor above user curve
+      : Math.min(0, ho.shares - userAtPrice); // ask: cursor below user curve (negative)
     const absOrder = Math.abs(orderSize);
 
     // Cancel: cursor between user curve and market (reducing user's position)
     // Take: cursor beyond market curve (filling market liquidity)
-    const cancelShares =
-      orderSize > 0
-        ? Math.max(0, Math.min(absOrder, userAtPrice - marketAtPrice))
-        : Math.max(0, Math.min(absOrder, marketAtPrice - userAtPrice));
+    const cancelShares = isBid
+      ? Math.max(0, Math.min(absOrder, userAtPrice - marketAtPrice))
+      : Math.max(0, Math.min(absOrder, marketAtPrice - userAtPrice));
     const takeShares = absOrder - cancelShares;
     const takeCost = takeShares * ho.price;
     const cancelCost = cancelShares * ho.price;
@@ -305,7 +317,6 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     const avgPrice = absOrder > 0 ? totalCost / absOrder : 0;
 
     // --- Bent user curve: insert the preview order ---
-    // orderSize is signed: positive = bid (left), negative = ask (right)
     const bentUserCurve = userCurve.insert(ho.price, orderSize, spreadPrice);
     ctx.beginPath();
     ctx.strokeStyle = "rgba(255,255,255,0.9)";
@@ -338,7 +349,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     ctx.setLineDash([]);
 
     // --- Overlay ---
-    const side = orderSize > 0 ? "BID" : "ASK";
+    const side = isBid ? "BID" : "ASK";
 
     let html = `<div class="cpv-ov-label">${side} @ ${ho.price.toFixed(3)}</div>`;
     html += `<div class="cpv-ov-row"><span>Shares</span><b>${fmtVol(absOrder)}</b></div>`;
