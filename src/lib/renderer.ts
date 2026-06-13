@@ -175,10 +175,10 @@ export function draw(state: DrawState, refs: DrawRefs): void {
 
   // Build user curves from placed orders — same MarketCurve, just drawn negated
   const allUserCurves = activeIdxs.map((idx) => {
-    let uc = new MarketCurve([], []);
+    const uc = new MarketCurve([], []);
     for (const o of state.userOrders) {
       if (o.marketIdx !== idx) continue;
-      uc = uc.insert(o.price, Math.abs(o.shares));
+      uc.insert(o.price, o.shares);
     }
     return uc;
   });
@@ -319,10 +319,9 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     const totalCost = takeCost + cancelCost;
     const avgPrice = absOrder > 0 ? totalCost / absOrder : 0;
 
-    // --- Bent user curve: insert the preview order ---
-    // In MarketCurve convention: bid side = negative insert, ask side = positive insert
-    const insertSize = isBid ? -orderSize : orderSize;
-    const bentUserCurve = userCurve.insert(ho.price, insertSize);
+    // --- Bent user curve: clone + insert preview order ---
+    const bentUserCurve = userCurve.clone();
+    bentUserCurve.insert(ho.price, orderSize);
     ctx.beginPath();
     ctx.strokeStyle = "rgba(255,255,255,0.9)";
     ctx.lineWidth = 2;

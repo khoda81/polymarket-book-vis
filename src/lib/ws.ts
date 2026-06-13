@@ -110,7 +110,7 @@ export class MarketWS {
     } else if (et === "price_change") {
       for (const pc of m.price_changes as Array<{
         asset_id: string;
-        side: string;
+        side: "BUY" | "SELL";
         price: string;
         size: string;
       }>) {
