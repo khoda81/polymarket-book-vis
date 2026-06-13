@@ -60,29 +60,62 @@ export class MarketCurve {
     return this.pts.length;
   }
 
-  xAt(ratio: number): number {
+  /**
+   * Binary search: find the last index whose `key` field is < `value`.
+   * Returns the segment index `lo` such that pts[lo].key <= value < pts[lo+1].key.
+   */
+  private findSegmentIndex<K extends keyof Step>(
+    key: K,
+    value: number,
+  ): number {
     const pts = this.pts;
-    if (!pts.length) return -Infinity;
     let lo = 0;
     let hi = pts.length;
     while (hi - lo > 1) {
       const mid = (lo + hi) >> 1;
-      if (pts[mid].ratio < ratio) lo = mid;
+      if (pts[mid][key] < value) lo = mid;
       else hi = mid;
     }
-    return pts[lo].total;
+    return lo;
   }
 
-  ratioAt(total: number): number {
+  /**
+   * Binary search: find the lower-bound insertion index for `value` in `key`.
+   * Returns the first index where pts[i].key >= value.
+   */
+  private lowerBoundIndex<K extends keyof Step>(key: K, value: number): number {
     const pts = this.pts;
-    if (!pts.length) return -Infinity;
     let lo = 0;
     let hi = pts.length;
-    while (hi - lo > 1) {
+    while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      if (pts[mid].total < total) lo = mid;
+      if (pts[mid][key] < value) lo = mid + 1;
       else hi = mid;
     }
+    return lo;
+  }
+
+  /** Cumulative shares at a given price. */
+  totalAtPrice(price: number): number {
+    if (!this.pts.length) return -Infinity;
+    return this.pts[this.findSegmentIndex("ratio", price)].total;
+  }
+
+  /** Price of the next step after the given price, or 1 if at the end. */
+  nextPriceAfter(price: number): number {
+    const pts = this.pts;
+    const idx = this.lowerBoundIndex("ratio", price);
+    if (idx < pts.length && pts[idx].ratio > price) return pts[idx].ratio;
+    if (idx + 1 < pts.length) return pts[idx + 1].ratio;
+    return 1;
+  }
+
+  /** Interpolated price at a given cumulative-share level. */
+  priceAtTotal(total: number): number {
+    const pts = this.pts;
+    if (!pts.length) return -Infinity;
+    const lo = this.findSegmentIndex("total", total);
+    const hi = Math.min(lo + 1, pts.length - 1);
     return (
       pts[lo].ratio +
       ((total - pts[lo].total) / (pts[hi].total - pts[lo].total)) *
@@ -110,7 +143,43 @@ export class MarketCurve {
     return new MarketCurve(out);
   }
 
-  insert(pt: Step): MarketCurve {}
+  /**
+   * Inserts a new order into the curve and returns a new MarketCurve.
+   * @param pt A Step where `ratio` is the order price and `total` is the order size.
+   */
+  insert(pt: Step): MarketCurve {
+    const price = pt.ratio;
+    const size = pt.total;
+
+    // Zero-size orders don't modify the curve
+    if (size === 0) return this;
+
+    const pts = this.pts;
+    if (pts.length === 0) {
+      return new MarketCurve([{ ratio: price, total: size }]);
+    }
+
+    const lo = this.lowerBoundIndex("ratio", price);
+
+    // Copy the untouched portion of the curve
+    const out = pts.slice(0, lo);
+    const prevTotal = lo > 0 ? pts[lo - 1].total : 0;
+
+    if (lo < pts.length && pts[lo].ratio === price) {
+      // Exact price level exists: update this level and all subsequent ones
+      for (let i = lo; i < pts.length; i++) {
+        out.push({ ratio: pts[i].ratio, total: pts[i].total + size });
+      }
+    } else {
+      // New price level: insert it, then update all subsequent ones
+      out.push({ ratio: price, total: prevTotal + size });
+      for (let i = lo; i < pts.length; i++) {
+        out.push({ ratio: pts[i].ratio, total: pts[i].total + size });
+      }
+    }
+
+    return new MarketCurve(out);
+  }
 }
 
 /**
