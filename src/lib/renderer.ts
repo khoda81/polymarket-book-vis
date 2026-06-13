@@ -1,7 +1,7 @@
 import { PAD } from "./constants";
 import {
-  type Point,
-  MonotoneCurve,
+  type Step,
+  MarketCurve,
   fmtVol,
   fmtUsd,
   powerOf10Ticks,
@@ -40,45 +40,29 @@ export interface DrawRefs {
 export interface HoverOrder {
   price: number;
   shares: number;
-  curveAtPrice: number;
+  curve: MarketCurve;
 
   curveIdx: number;
 }
 
-interface MarketCurve {
-  asks: MonotoneCurve;
-  bids: MonotoneCurve;
-}
+export function buildCurve(book: OrderBook): MarketCurve {
+  const points: Step[] = [];
 
-export function buildCurve(book: OrderBook | undefined): MarketCurve {
-  const empty = () => new MonotoneCurve([]);
-
-  if (!book) return { asks: empty(), bids: empty() };
-
-  const asksSorted = [...book.asks].sort((a, b) => +a.p - +b.p);
-  const askPts: Point[] = [];
   let total = 0;
-  for (const o of asksSorted) {
-    askPts.push({ x: +o.p, y: total });
-    total += o.s;
-    askPts.push({ x: +o.p, y: total });
+  for (const o of book.asks.toSorted((a, b) => +a.price - +b.price)) {
+    total += o.size;
+    points.push({ ratio: +o.price, total });
   }
-  askPts.push({ x: 1, y: total });
+  points.reverse();
 
-  const bidsSorted = [...book.bids].sort((a, b) => +b.p - +a.p);
-  const bidPts: Point[] = [];
   total = 0;
-  for (const o of bidsSorted) {
-    bidPts.push({ x: 1 - +o.p, y: total });
-    total -= o.s;
-    bidPts.push({ x: 1 - +o.p, y: total });
+  for (const o of book.bids.toSorted((b, a) => +a.price - +b.price)) {
+    total -= o.size;
+    points.push({ ratio: +o.price, total });
   }
-  bidPts.push({ x: 0, y: total });
+  points.reverse();
 
-  return {
-    asks: new MonotoneCurve(askPts),
-    bids: new MonotoneCurve(bidPts),
-  };
+  return new MarketCurve(points);
 }
 
 function drawTickLine(
@@ -207,18 +191,14 @@ export function draw(state: DrawState, refs: DrawRefs): void {
   if (hovering) {
     const curveIdx = activeIdxs[0];
     const curve = allCurves[curveIdx];
-    const curveAtPrice =
-      price > curve.asks.zero()
-        ? curve.asks.yAtX(price)
-        : curve.bids.yAtX(1 - price);
 
-    hoverOrder = { price, shares, curveAtPrice, curveIdx };
+    hoverOrder = { price, shares, curve, curveIdx };
   }
 
   // Draw market curves
   activeIdxs.forEach((idx, i) => {
     const curve = allCurves[i];
-    if (!curve.asks.length && !curve.bids.length) return;
+    if (!curve.length) return;
 
     const color = hslColor(idx);
     const dim = hovering;
@@ -233,14 +213,25 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     ctx.lineWidth = dim ? 1.5 : 2.5;
     ctx.globalAlpha = dim ? 0.35 : 1;
     ctx.lineJoin = "round";
-    for (const pt of curve.bids.pts.toReversed())
-      ctx.lineTo(cx(1 - pt.x), cy(pt.y));
-    for (const pt of curve.asks.pts) ctx.lineTo(cx(pt.x), cy(pt.y));
+    let lastPoint = { ratio: 0, total: 0 };
+    for (const pt of curve.pts) {
+      if (lastPoint.total <= 0 && 0 < pt.total) {
+        ctx.lineTo(cx(lastPoint.ratio), cy(0));
+        ctx.lineTo(cx(pt.ratio), cy(0));
+        lastPoint = { ratio: pt.ratio, total: 0 };
+      }
+
+      ctx.lineTo(cx(lastPoint.ratio), cy(pt.total));
+      ctx.lineTo(cx(pt.ratio), cy(pt.total));
+      lastPoint = pt;
+    }
+
+    ctx.lineTo(cx(1), cy(lastPoint.total));
     ctx.stroke();
     ctx.globalAlpha = 1;
 
     // Rotated zero-crossing label
-    const centerX = curve.asks.zero();
+    const centerX = curve.ratioAt(0);
     if (centerX !== null && !isNaN(centerX)) {
       const lx = cx(centerX);
       const ly = cy(0) - 12;
@@ -270,16 +261,14 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     if (curveIdx < 0) continue;
     const curve = allCurves[curveIdx];
     const color = hslColor(order.marketIdx);
-    const isBuy = order.shares > 0;
     const absShares = Math.abs(order.shares);
-    const bookSide = isBuy ? curve.asks : curve.bids;
 
-    const cumAtPrice = bookSide.yAtX(order.price);
+    const cumAtPrice = curve.xAt(order.price);
     const signedCum = isBuy ? cumAtPrice : -cumAtPrice;
     const y0 = signedCum;
     const y1 = isBuy ? cumAtPrice + absShares : -(cumAtPrice + absShares);
 
-    const xEnd = bookSide.nextPriceAfter(order.price);
+    const xEnd = bookSide.nextxAfter(order.price);
 
     const px = cx(order.price);
     const pxEnd = cx(xEnd);
@@ -301,38 +290,48 @@ export function draw(state: DrawState, refs: DrawRefs): void {
   // Draw hover preview
   if (hovering && hoverOrder) {
     const ho = hoverOrder;
-    const isBuy = shares > 0;
     const curve = allCurves[ho.curveIdx];
     const color = hslColor(ho.curveIdx);
-    const bookSide = isBuy ? curve.asks : curve.bids;
-    console.debug(ho);
+    const total = curve.xAt(ho.price);
 
-    // Draw point at price, shares, curveAtPrice
-    const pointX = cx(ho.price);
-    const pointY = cy(ho.curveAtPrice);
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(pointX, pointY, 3, 0, 2 * Math.PI);
-    ctx.fill();
-
+    // console.debug(bookSide);
     // --- Take region: area under curve from 0 to takeShares ---
-    const deltaShares = Math.abs(ho.shares) - ho.curveAtPrice;
-    const sliced = bookSide.sliceToY(deltaShares).pts;
+    const curveCopy = new MarketCurve(curve.pts);
+    const sliced = curve.sliceTo(total);
     ctx.fillStyle = "rgba(100, 180, 255, 0.18)";
     ctx.beginPath();
-    ctx.moveTo(cx(sliced[0].x), cy(0));
-    for (const pt of sliced) ctx.lineTo(cx(pt.x), cy(pt.y));
-    ctx.lineTo(cx(isBuy ? 1 : 0), cy(sliced[sliced.length - 1].y));
-    ctx.lineTo(cx(isBuy ? 1 : 0), cy(0));
+    ctx.moveTo(cx(ho.price), cy(total));
+    ctx.lineTo(cx(ho.price), cy(ho.shares));
+    ctx.lineTo(cx(total > 0 ? 1 : 0), cy(ho.shares));
+    ctx.lineTo(cx(total > 0 ? 1 : 0), cy(total));
     ctx.closePath();
     ctx.fill();
 
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(cx(sliced[0].x), cy(0));
-    for (const pt of sliced) ctx.lineTo(cx(pt.x), cy(pt.y));
+    let lastPoint = { ratio: 0, total: 0 };
+    for (const pt of sliced.pts) {
+      if (lastPoint.total <= 0 && 0 < pt.total) {
+        ctx.lineTo(cx(lastPoint.ratio), cy(0));
+        ctx.lineTo(cx(pt.ratio), cy(0));
+        lastPoint = { ratio: pt.ratio, total: 0 };
+      }
+
+      ctx.lineTo(cx(lastPoint.ratio), cy(pt.total));
+      ctx.lineTo(cx(pt.ratio), cy(pt.total));
+      lastPoint = pt;
+    }
+
+    ctx.lineTo(cx(1), cy(lastPoint.total));
     ctx.stroke();
+
+    const pointX = cx(ho.price);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(pointX, cy(ho.curveAtPrice), 3, 0, 2 * Math.PI);
+    ctx.arc(pointX, cy(ho.shares), 3, 0, 2 * Math.PI);
+    ctx.fill();
 
     // --- Limit rectangle: from curveAtPrice to mShares at mPrice ---
     // if (ho.limitShares > 0) {

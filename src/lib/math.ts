@@ -1,6 +1,6 @@
-export interface Point {
-  x: number;
-  y: number;
+export interface Step {
+  total: number;
+  ratio: number;
 }
 
 export function fmtVol(v: number): string {
@@ -48,10 +48,10 @@ export function hslColor(idx: number): string {
  * The `sign` field tracks whether this is an ask-side (+1) or bid-side (-1)
  * curve, so callers never need to manually negate.
  */
-export class MonotoneCurve {
-  readonly pts: Point[];
+export class MarketCurve {
+  readonly pts: Step[];
 
-  constructor(pts: Point[]) {
+  constructor(pts: Step[]) {
     // Normalize: store y as absolute values so the curve is always y ≥ 0 ascending
     this.pts = pts;
   }
@@ -60,114 +60,82 @@ export class MonotoneCurve {
     return this.pts.length;
   }
 
-  /** Total volume (the last y value in the normalized curve). */
-  get total(): number {
-    return this.pts.length ? this.pts[this.pts.length - 1].y : 0;
-  }
-
-  /** Read the signed y-value at a given price x. */
-  volumeAt(x: number): number {
-    return this.yAtX(x);
-  }
-
-  /** Read the absolute y-value at a given price x. */
-  yAtX(x: number): number {
+  xAt(ratio: number): number {
     const pts = this.pts;
     if (!pts.length) return -Infinity;
     let lo = 0;
     let hi = pts.length;
     while (hi - lo > 1) {
       const mid = (lo + hi) >> 1;
-      if (pts[mid].x < x) lo = mid;
+      if (pts[mid].ratio < ratio) lo = mid;
       else hi = mid;
     }
-    return pts[lo].y;
+    return pts[lo].total;
   }
 
-  /** Find the next price level after `x` (for rectangle width). */
-  nextPriceAfter(x: number): number {
-    // for (let i = 1; i < this.pts.length; i++) {
-    //   if (this.pts[i].x > x) return this.pts[i].x;
-    // }
-    // return 1;
+  ratioAt(total: number): number {
     const pts = this.pts;
-    if (!pts.length) return 1;
+    if (!pts.length) return -Infinity;
     let lo = 0;
-    let hi = pts.length - 1;
-    while (lo < hi) {
+    let hi = pts.length;
+    while (hi - lo > 1) {
       const mid = (lo + hi) >> 1;
-      if (pts[mid].x < x) lo = mid + 1;
+      if (pts[mid].total < total) lo = mid;
       else hi = mid;
     }
-    return pts[lo].x;
+    return (
+      pts[lo].ratio +
+      ((total - pts[lo].total) / (pts[hi].total - pts[lo].total)) *
+        (pts[hi].ratio - pts[lo].ratio)
+    );
   }
 
-  /**
-   * Slice the curve to only include points with y ≤ maxY,
-   * appending an interpolated endpoint exactly at maxY.
-   */
-  sliceToY(maxY: number): MonotoneCurve {
-    const out: Point[] = [];
+  sliceTo(total: number): MarketCurve {
+    const out: Step[] = [];
     for (const pt of this.pts) {
-      if (pt.y <= maxY) {
+      if (pt.total <= total) {
         out.push(pt);
       } else {
         const prev = out[out.length - 1] ?? pt;
-        const dy = pt.y - prev.y;
-        const t = dy === 0 ? 0 : (maxY - prev.y) / dy;
-        out.push({ x: prev.x + t * (pt.x - prev.x), y: maxY });
-        return new MonotoneCurve(out);
+        const dy = pt.total - prev.total;
+        const t = dy === 0 ? 0 : (total - prev.total) / dy;
+        out.push({
+          ratio: prev.ratio + t * (pt.ratio - prev.ratio),
+          total: total,
+        });
+        return new MarketCurve(out);
       }
     }
-    out.push({ x: this.pts[this.pts.length - 1].x, y: maxY });
-    return new MonotoneCurve(out);
+    out.push({ ratio: this.pts[this.pts.length - 1].ratio, total: total });
+    return new MarketCurve(out);
   }
 
-  /**
-   * Compute USD cost to take `shares` through this curve.
-   * Area = ∫ x dy  (Riemann sum over the staircase segments).
-   */
-  takeCost(shares: number): number {
-    if (shares <= 0) return 0;
-    const sliced = this.sliceToY(shares).pts;
-    let area = 0;
-    for (let i = 1; i < sliced.length; i++) {
-      area += sliced[i - 1].x * (sliced[i].y - sliced[i - 1].y);
-    }
-    return area;
-  }
-
-  /**
-   * Find the center x of the zero-crossing region.
-   * In the normalized curve, "zero crossing" means the first point (y=0 region).
-   */
-  zero(): number {
-    return this.nextPriceAfter(0);
-  }
+  insert(pt: Step): MarketCurve {}
 }
 
 /**
  * Compute USD area between two ask-side curves sliced to the same y level.
  * Area = ∫ (xR - xL) dy  (Riemann sum over the staircase segments).
  */
-export function calculateArea(sliceL: Point[], sliceR: Point[]): number {
+export function calculateArea(sliceL: Step[], sliceR: Step[]): number {
   const ys = [
-    ...new Set([...sliceL.map((p) => p.y), ...sliceR.map((p) => p.y)]),
+    ...new Set([...sliceL.map((p) => p.total), ...sliceR.map((p) => p.total)]),
   ].sort((a, b) => a - b);
 
-  function xAtY(curve: Point[], y: number): number | null {
+  function xAtY(curve: Step[], y: number): number | null {
     if (!curve.length) return null;
     for (let i = 1; i < curve.length; i++) {
-      if (curve[i].y >= y) {
-        const dy = curve[i].y - curve[i - 1].y;
-        if (dy === 0) return curve[i - 1].x;
+      if (curve[i].total >= y) {
+        const dy = curve[i].total - curve[i - 1].total;
+        if (dy === 0) return curve[i - 1].ratio;
         return (
-          curve[i - 1].x +
-          ((y - curve[i - 1].y) / dy) * (curve[i].x - curve[i - 1].x)
+          curve[i - 1].ratio +
+          ((y - curve[i - 1].total) / dy) *
+            (curve[i].ratio - curve[i - 1].ratio)
         );
       }
     }
-    return curve[curve.length - 1].x;
+    return curve[curve.length - 1].ratio;
   }
 
   let area = 0;

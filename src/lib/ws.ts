@@ -1,13 +1,13 @@
 import { WS_URL } from "./constants";
 
-export interface OrderBookEntry {
-  p: string;
-  s: number;
+export interface Order {
+  price: string;
+  size: number;
 }
 
 export interface OrderBook {
-  bids: OrderBookEntry[];
-  asks: OrderBookEntry[];
+  bids: Order[];
+  asks: Order[];
 }
 
 export type BookUpdateCallback = (books: Record<string, OrderBook>) => void;
@@ -101,10 +101,10 @@ export class MarketWS {
     if (et === "book") {
       this.books[m.asset_id as string] = {
         bids: ((m.bids as Array<{ price: string; size: string }>) ?? []).map(
-          (o) => ({ p: o.price, s: +o.size }),
+          (o) => ({ price: o.price, size: +o.size }),
         ),
         asks: ((m.asks as Array<{ price: string; size: string }>) ?? []).map(
-          (o) => ({ p: o.price, s: +o.size }),
+          (o) => ({ price: o.price, size: +o.size }),
         ),
       };
     } else if (et === "price_change") {
@@ -117,9 +117,9 @@ export class MarketWS {
         const book = this.books[pc.asset_id];
         if (!book) continue;
         const arr = pc.side === "BUY" ? book.bids : book.asks;
-        const idx = arr.findIndex((o) => o.p === pc.price);
-        if (idx >= 0) arr[idx].s = +pc.size;
-        else arr.push({ p: pc.price, s: +pc.size });
+        const idx = arr.findIndex((o) => o.price === pc.price);
+        if (idx >= 0) arr[idx].size = +pc.size;
+        else arr.push({ price: pc.price, size: +pc.size });
       }
     }
   }
