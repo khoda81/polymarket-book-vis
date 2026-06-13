@@ -1,7 +1,6 @@
 import { PAD } from "./constants";
 import {
   MarketCurve,
-  UserCurve,
   buildCurve,
   fmtVol,
   fmtUsd,
@@ -74,14 +73,17 @@ function drawStaircase(
   cx: (p: number) => number,
   cy: (v: number) => number,
 ) {
-  let lastPoint = { ratio: 0, total: 0 };
-  for (const pt of pts) {
-    // Detect zero crossing in either direction
+  if (!pts.length) return;
+  const first = pts[0];
+  ctx.moveTo(cx(0), cy(first.total));
+  ctx.lineTo(cx(first.ratio), cy(first.total));
+  let lastPoint = first;
+  for (let i = 1; i < pts.length; i++) {
+    const pt = pts[i];
     if (
       (lastPoint.total <= 0 && 0 < pt.total) ||
       (lastPoint.total >= 0 && 0 > pt.total)
     ) {
-      // Interpolate the crossing point
       const d = pt.total - lastPoint.total;
       const t = d === 0 ? 0 : -lastPoint.total / d;
       const crossRatio = lastPoint.ratio + t * (pt.ratio - lastPoint.ratio);
@@ -93,6 +95,13 @@ function drawStaircase(
     lastPoint = pt;
   }
   ctx.lineTo(cx(1), cy(lastPoint.total));
+}
+
+/** Negate all totals in a pts array (flip the curve vertically). */
+function negPts(
+  pts: { ratio: number; total: number }[],
+): { ratio: number; total: number }[] {
+  return pts.map((p) => ({ ratio: p.ratio, total: -p.total }));
 }
 
 export function draw(state: DrawState, refs: DrawRefs): void {
@@ -164,16 +173,12 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     return buildCurve(state.books[m.clobTokenIds[0]]);
   });
 
-  // Build user curves from placed orders
-  // UserCurve: bids are positive (left of spread), asks are negative (right of spread)
+  // Build user curves from placed orders — same MarketCurve, just drawn negated
   const allUserCurves = activeIdxs.map((idx) => {
-    let uc = new UserCurve([], []);
-    const spreadPrice = allCurves[activeIdxs.indexOf(idx)]?.spreadPrice ?? 0.5;
+    let uc = new MarketCurve([], []);
     for (const o of state.userOrders) {
       if (o.marketIdx !== idx) continue;
-      // UserOrder.shares: positive = buy → user bid (positive volume in UserCurve)
-      //                   negative = sell → user ask (negative volume in UserCurve)
-      uc = uc.insert(o.price, o.shares, spreadPrice);
+      uc = uc.insert(o.price, Math.abs(o.shares));
     }
     return uc;
   });
@@ -260,8 +265,8 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     }
   });
 
-  // Draw user curves (replaces the zero line)
-  // UserCurve is monotonically decreasing: positive on bid side, negative on ask side
+  // Draw user curves (negated MarketCurve — mirrors the market curve)
+  // The area between the market curve and the negated user curve = total liquidity
   activeIdxs.forEach((idx, i) => {
     const userCurve = allUserCurves[i];
 
@@ -275,7 +280,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
       ctx.moveTo(PAD.l, cy(0));
       ctx.lineTo(W - PAD.r, cy(0));
     } else {
-      drawStaircase(ctx, userCurve.pts, cx, cy);
+      drawStaircase(ctx, negPts(userCurve.pts), cx, cy);
     }
     ctx.stroke();
   });
@@ -288,25 +293,23 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     const color = hslColor(ho.curveIdx);
     const spreadPrice = curve.spreadPrice;
 
-    // User curve value at the hover price (before bending)
-    const userAtPrice = userCurve.length
-      ? userCurve.totalAtPrice(ho.price, spreadPrice)
+    // User curve value at the hover price (MarketCurve convention: asks +, bids -)
+    // Negated for display: asks -, bids +
+    const userAtPriceRaw = userCurve.length
+      ? userCurve.totalAtPrice(ho.price)
       : 0;
-    // Market curve value at the hover price
+    const userAtPrice = -userAtPriceRaw; // negated for display
     const marketAtPrice = curve.totalAtPrice(ho.price);
 
-    // Side is determined by price vs spread, not cursor y-position
-    // Left of spread = bid (user curve goes positive), right = ask (goes negative)
+    // Side is determined by price vs spread
     const isBid = ho.price <= spreadPrice;
 
     // Order size = distance from user curve to cursor, signed by side
     const orderSize = isBid
-      ? Math.max(0, ho.shares - userAtPrice) // bid: cursor above user curve
-      : Math.min(0, ho.shares - userAtPrice); // ask: cursor below user curve (negative)
+      ? Math.max(0, ho.shares - userAtPrice)
+      : Math.min(0, ho.shares - userAtPrice);
     const absOrder = Math.abs(orderSize);
 
-    // Cancel: cursor between user curve and market (reducing user's position)
-    // Take: cursor beyond market curve (filling market liquidity)
     const cancelShares = isBid
       ? Math.max(0, Math.min(absOrder, userAtPrice - marketAtPrice))
       : Math.max(0, Math.min(absOrder, marketAtPrice - userAtPrice));
@@ -317,7 +320,9 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     const avgPrice = absOrder > 0 ? totalCost / absOrder : 0;
 
     // --- Bent user curve: insert the preview order ---
-    const bentUserCurve = userCurve.insert(ho.price, orderSize, spreadPrice);
+    // In MarketCurve convention: bid side = negative insert, ask side = positive insert
+    const insertSize = isBid ? -orderSize : orderSize;
+    const bentUserCurve = userCurve.insert(ho.price, insertSize);
     ctx.beginPath();
     ctx.strokeStyle = "rgba(255,255,255,0.9)";
     ctx.lineWidth = 2;
@@ -326,7 +331,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
       ctx.moveTo(PAD.l, cy(0));
       ctx.lineTo(W - PAD.r, cy(0));
     } else {
-      drawStaircase(ctx, bentUserCurve.pts, cx, cy);
+      drawStaircase(ctx, negPts(bentUserCurve.pts), cx, cy);
     }
     ctx.stroke();
 
