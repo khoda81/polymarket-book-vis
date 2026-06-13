@@ -1,6 +1,7 @@
 import { PAD } from "./constants";
 import {
   MarketCurve,
+  UserCurve,
   buildCurve,
   fmtVol,
   fmtUsd,
@@ -40,7 +41,6 @@ export interface DrawRefs {
 export interface HoverOrder {
   price: number;
   shares: number;
-  curve: MarketCurve;
   curveIdx: number;
 }
 
@@ -65,6 +65,27 @@ function drawTickLine(
   ctx.moveTo(W - PAD.r, y);
   ctx.lineTo(W - PAD.r + 5, y);
   ctx.stroke();
+}
+
+/** Draw a staircase curve from its pts array. */
+function drawStaircase(
+  ctx: CanvasRenderingContext2D,
+  pts: { ratio: number; total: number }[],
+  cx: (p: number) => number,
+  cy: (v: number) => number,
+) {
+  let lastPoint = { ratio: 0, total: 0 };
+  for (const pt of pts) {
+    if (lastPoint.total <= 0 && 0 < pt.total) {
+      ctx.lineTo(cx(lastPoint.ratio), cy(0));
+      ctx.lineTo(cx(pt.ratio), cy(0));
+      lastPoint = { ratio: pt.ratio, total: 0 };
+    }
+    ctx.lineTo(cx(lastPoint.ratio), cy(pt.total));
+    ctx.lineTo(cx(pt.ratio), cy(pt.total));
+    lastPoint = pt;
+  }
+  ctx.lineTo(cx(1), cy(lastPoint.total));
 }
 
 export function draw(state: DrawState, refs: DrawRefs): void {
@@ -104,34 +125,20 @@ export function draw(state: DrawState, refs: DrawRefs): void {
   ctx.lineWidth = 1;
   ctx.strokeRect(PAD.l, PAD.t, cW, cH);
 
-  // Y-axis ticks (including zero)
+  // Y-axis ticks
   const yFracs = powerOf10Ticks(yAbsMax);
-  const allTicks = [0, ...yFracs];
-  for (const frac of allTicks) {
-    for (const sign of frac === 0 ? [1] : [1, -1]) {
+  for (const frac of yFracs) {
+    for (const sign of [1, -1]) {
       const y = cy(sign * frac * yAbsMax);
       if (y < PAD.t - 2 || y > PAD.t + cH + 2) continue;
 
-      const isZero = frac === 0;
-      if (isZero) {
-        ctx.strokeStyle = "rgba(128,128,128,0.8)";
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(PAD.l, y);
-        ctx.lineTo(W - PAD.r, y);
-        ctx.stroke();
-      }
       drawTickLine(ctx, y, W, gridC, axC);
 
       const absV = frac * yAbsMax;
       ctx.fillStyle = txtC;
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
-      ctx.fillText(
-        isZero ? "0" : (sign > 0 ? "" : "-") + fmtVol(absV),
-        PAD.l - 8,
-        y,
-      );
+      ctx.fillText((sign > 0 ? "" : "-") + fmtVol(absV), PAD.l - 8, y);
     }
   }
 
@@ -144,10 +151,24 @@ export function draw(state: DrawState, refs: DrawRefs): void {
 
   const activeIdxs = Array.from(state.activeMarkets);
 
-  // Build all curves once
+  // Build all market curves once
   const allCurves = activeIdxs.map((idx) => {
     const m = state.markets[idx];
     return buildCurve(state.books[m.clobTokenIds[0]]);
+  });
+
+  // Build user curves from placed orders
+  // UserCurve: bids are positive (left of spread), asks are negative (right of spread)
+  const allUserCurves = activeIdxs.map((idx) => {
+    let uc = new UserCurve([], []);
+    const spreadPrice = allCurves[activeIdxs.indexOf(idx)]?.spreadPrice ?? 0.5;
+    for (const o of state.userOrders) {
+      if (o.marketIdx !== idx) continue;
+      // UserOrder.shares: positive = buy → user bid (positive volume in UserCurve)
+      //                   negative = sell → user ask (negative volume in UserCurve)
+      uc = uc.insert(o.price, o.shares, spreadPrice);
+    }
+    return uc;
   });
 
   // Hover detection
@@ -182,7 +203,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
       }
     }
 
-    hoverOrder = { price, shares: rawShares, curve, curveIdx };
+    hoverOrder = { price, shares: rawShares, curveIdx };
   }
 
   // Draw market curves
@@ -203,20 +224,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     ctx.lineWidth = dim ? 1.5 : 2.5;
     ctx.globalAlpha = dim ? 0.35 : 1;
     ctx.lineJoin = "round";
-    let lastPoint = { ratio: 0, total: 0 };
-    for (const pt of curve.pts) {
-      if (lastPoint.total <= 0 && 0 < pt.total) {
-        ctx.lineTo(cx(lastPoint.ratio), cy(0));
-        ctx.lineTo(cx(pt.ratio), cy(0));
-        lastPoint = { ratio: pt.ratio, total: 0 };
-      }
-
-      ctx.lineTo(cx(lastPoint.ratio), cy(pt.total));
-      ctx.lineTo(cx(pt.ratio), cy(pt.total));
-      lastPoint = pt;
-    }
-
-    ctx.lineTo(cx(1), cy(lastPoint.total));
+    drawStaircase(ctx, curve.pts, cx, cy);
     ctx.stroke();
     ctx.globalAlpha = 1;
 
@@ -245,122 +253,71 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     }
   });
 
-  // Draw user order rectangles
-  for (const order of state.userOrders) {
-    const curveIdx = activeIdxs.indexOf(order.marketIdx);
-    if (curveIdx < 0) continue;
-    const curve = allCurves[curveIdx];
-    const color = hslColor(order.marketIdx);
-    const isBuy = order.shares > 0;
-    const absShares = Math.abs(order.shares);
+  // Draw user curves (replaces the zero line)
+  // UserCurve is monotonically decreasing: positive on bid side, negative on ask side
+  activeIdxs.forEach((idx, i) => {
+    const userCurve = allUserCurves[i];
 
-    const cumAtPrice = curve.totalAtPrice(order.price);
-    const y0 = cumAtPrice;
-    const y1 = isBuy ? cumAtPrice + absShares : cumAtPrice - absShares;
-
-    const xEnd = curve.nextPriceAfter(order.price);
-
-    const px = cx(order.price);
-    const pxEnd = cx(xEnd);
-    const py0 = cy(y0);
-    const py1 = cy(y1);
-
-    ctx.fillStyle = isBuy
-      ? "rgba(29, 158, 117, 0.25)"
-      : "rgba(226, 75, 74, 0.25)";
-    ctx.fillRect(px, py1, pxEnd - px, py0 - py1);
-
-    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(255,255,255,0.6)";
     ctx.lineWidth = 1.5;
-    ctx.setLineDash([3, 3]);
-    ctx.strokeRect(px, py1, pxEnd - px, py0 - py1);
-    ctx.setLineDash([]);
-  }
+    ctx.lineJoin = "round";
+
+    if (!userCurve.length) {
+      // No orders: flat line at y=0 across the chart
+      ctx.moveTo(PAD.l, cy(0));
+      ctx.lineTo(W - PAD.r, cy(0));
+    } else {
+      drawStaircase(ctx, userCurve.pts, cx, cy);
+    }
+    ctx.stroke();
+  });
 
   // Draw hover preview
   if (hovering && hoverOrder) {
     const ho = hoverOrder;
     const curve = allCurves[ho.curveIdx];
+    const userCurve = allUserCurves[ho.curveIdx];
     const color = hslColor(ho.curveIdx);
-    const isBuy = ho.shares > 0;
-    const absShares = Math.abs(ho.shares);
+    const spreadPrice = curve.spreadPrice;
 
+    // User curve value at the hover price (before bending)
+    const userAtPrice = userCurve.length
+      ? userCurve.totalAtPrice(ho.price, spreadPrice)
+      : 0;
     // Market curve value at the hover price
     const marketAtPrice = curve.totalAtPrice(ho.price);
 
-    // User's cumulative position at this price (sum of existing orders)
-    const userOrdersAtMarket = state.userOrders.filter(
-      (o) => o.marketIdx === activeIdxs[ho.curveIdx],
-    );
-    let userCum = 0;
-    for (const o of userOrdersAtMarket) {
-      if (isBuy && o.shares > 0 && o.price <= ho.price) userCum += o.shares;
-      else if (!isBuy && o.shares < 0 && o.price >= ho.price)
-        userCum += o.shares;
-    }
+    // The order = cursor position minus user curve (signed: positive = bid, negative = ask)
+    const orderSize = ho.shares - userAtPrice;
+    const absOrder = Math.abs(orderSize);
 
-    // The baseline for the new order is the user's existing curve
-    const baseline = isBuy
-      ? Math.max(marketAtPrice, userCum)
-      : Math.min(marketAtPrice, userCum);
-
-    // Order size = distance from cursor to baseline
-    const orderShares = isBuy
-      ? Math.max(0, ho.shares - baseline)
-      : Math.max(0, baseline - ho.shares);
-
-    // Cancel: portion that reduces existing orders (cursor between baseline and market)
-    // Take: portion that fills market liquidity (cursor beyond market curve)
-    const cancelShares = isBuy
-      ? Math.max(0, Math.min(orderShares, baseline - marketAtPrice))
-      : Math.max(0, Math.min(orderShares, marketAtPrice - baseline));
-    const takeShares = orderShares - cancelShares;
+    // Cancel: cursor between user curve and market (reducing user's position)
+    // Take: cursor beyond market curve (filling market liquidity)
+    const cancelShares =
+      orderSize > 0
+        ? Math.max(0, Math.min(absOrder, userAtPrice - marketAtPrice))
+        : Math.max(0, Math.min(absOrder, marketAtPrice - userAtPrice));
+    const takeShares = absOrder - cancelShares;
     const takeCost = takeShares * ho.price;
     const cancelCost = cancelShares * ho.price;
     const totalCost = takeCost + cancelCost;
-    const avgPrice = orderShares > 0 ? totalCost / orderShares : 0;
+    const avgPrice = absOrder > 0 ? totalCost / absOrder : 0;
 
-    // --- Take region: rectangle from baseline to cursor level ---
-    ctx.fillStyle = isBuy
-      ? "rgba(29, 158, 117, 0.18)"
-      : "rgba(226, 75, 74, 0.18)";
+    // --- Bent user curve: insert the preview order ---
+    // orderSize is signed: positive = bid (left), negative = ask (right)
+    const bentUserCurve = userCurve.insert(ho.price, orderSize, spreadPrice);
     ctx.beginPath();
-    ctx.moveTo(cx(ho.price), cy(baseline));
-    ctx.lineTo(cx(ho.price), cy(ho.shares));
-    ctx.lineTo(cx(isBuy ? 1 : 0), cy(ho.shares));
-    ctx.lineTo(cx(isBuy ? 1 : 0), cy(baseline));
-    ctx.closePath();
-    ctx.fill();
-
-    // --- Highlight the curve from spread to hover price ---
-    const sidePts = isBuy ? curve.asks : curve.bids;
-    const spreadEdge = isBuy ? curve.bestAsk : curve.bestBid;
-    if (sidePts.length > 0) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      // Start at the spread edge at zero volume
-      ctx.moveTo(cx(spreadEdge), cy(0));
-      let prevRatio = spreadEdge;
-      let prevTotal = 0;
-      for (const pt of sidePts) {
-        // Stop drawing past the hover price
-        if (isBuy ? pt.ratio > ho.price : pt.ratio < ho.price) {
-          const dr = pt.ratio - prevRatio;
-          const t = dr === 0 ? 0 : (ho.price - prevRatio) / dr;
-          const interpTotal = prevTotal + t * (pt.total - prevTotal);
-          ctx.lineTo(cx(ho.price), cy(isBuy ? interpTotal : -interpTotal));
-          break;
-        }
-        ctx.lineTo(cx(pt.ratio), cy(isBuy ? pt.total : -pt.total));
-        prevRatio = pt.ratio;
-        prevTotal = pt.total;
-      }
-      // Close back along the baseline
-      ctx.lineTo(cx(ho.price), cy(0));
-      ctx.closePath();
-      ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    if (!bentUserCurve.length) {
+      ctx.moveTo(PAD.l, cy(0));
+      ctx.lineTo(W - PAD.r, cy(0));
+    } else {
+      drawStaircase(ctx, bentUserCurve.pts, cx, cy);
     }
+    ctx.stroke();
 
     // --- Dots at key points ---
     const pointX = cx(ho.price);
@@ -368,9 +325,6 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     ctx.beginPath();
     ctx.arc(pointX, cy(marketAtPrice), 3, 0, 2 * Math.PI);
     ctx.arc(pointX, cy(ho.shares), 3, 0, 2 * Math.PI);
-    if (userCum !== 0) {
-      ctx.arc(pointX, cy(userCum), 3, 0, 2 * Math.PI);
-    }
     ctx.fill();
 
     // --- Dashed horizontal line at cursor level ---
@@ -384,10 +338,10 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     ctx.setLineDash([]);
 
     // --- Overlay ---
-    const side = isBuy ? "BUY" : "SELL";
+    const side = orderSize > 0 ? "BID" : "ASK";
 
     let html = `<div class="cpv-ov-label">${side} @ ${ho.price.toFixed(3)}</div>`;
-    html += `<div class="cpv-ov-row"><span>Shares</span><b>${fmtVol(orderShares)}</b></div>`;
+    html += `<div class="cpv-ov-row"><span>Shares</span><b>${fmtVol(absOrder)}</b></div>`;
 
     if (cancelShares > 0) {
       html += `<div class="cpv-ov-row"><span>Cancel</span><b>${fmtVol(cancelShares)} @ ${fmtUsd(cancelCost)}</b></div>`;
@@ -397,7 +351,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     }
 
     html += `<div class="cpv-ov-row"><span>Total</span><b class="cpv-ov-green">${fmtUsd(totalCost)}</b></div>`;
-    if (orderShares > 0) {
+    if (absOrder > 0) {
       html += `<div class="cpv-ov-row"><span>Avg&nbsp;p</span><b>${avgPrice.toFixed(3)}</b></div>`;
     }
 
@@ -406,12 +360,11 @@ export function draw(state: DrawState, refs: DrawRefs): void {
 
     const ovW = overlay.offsetWidth || 180;
     const ovH = overlay.offsetHeight || 100;
-    // Center horizontally on cursor, clamp to chart bounds
     const ovX = Math.max(PAD.l, Math.min(mx! - PAD.r - ovW, W - PAD.r - ovW));
-    // Place above cursor for buys (positive y), below for sells (negative y)
-    const ovY = isBuy
-      ? Math.max(PAD.t, my! - ovH - 12)
-      : Math.min(my! + 12, H - PAD.b - ovH);
+    const ovY =
+      ho.shares > 0
+        ? Math.max(PAD.t, my! - ovH - 12)
+        : Math.min(my! + 12, H - PAD.b - ovH);
     overlay.style.left = ovX + "px";
     overlay.style.top = ovY + "px";
   } else {

@@ -313,6 +313,130 @@ export class MarketCurve {
 }
 
 /**
+ * A monotonically decreasing user depth curve.
+ *
+ * Mirror of MarketCurve: user bids (left of spread) are positive volume,
+ * user asks (right of spread) are negative volume.
+ * The curve starts positive on the left, drops to 0 at the spread,
+ * and continues into the negative on the right.
+ *
+ * `bids` — price descending from spread (index 0 = best bid).
+ *          Cumulative absolute shares, ascending from spread.
+ *          Rendered as positive (above zero).
+ * `asks` — price ascending from spread (index 0 = best ask).
+ *          Cumulative absolute shares, ascending from spread.
+ *          Rendered as negative (below zero).
+ */
+export class UserCurve {
+  readonly bids: Step[];
+  readonly asks: Step[];
+
+  constructor(bids: Step[], asks: Step[]) {
+    this.bids = bids;
+    this.asks = asks;
+  }
+
+  get length(): number {
+    return this.bids.length + this.asks.length;
+  }
+
+  /** Value at a given price. Positive = bid side, negative = ask side. */
+  totalAtPrice(price: number, spreadPrice: number): number {
+    if (price <= spreadPrice && this.bids.length) {
+      // Bid side: walk from best bid outward (prices descending)
+      for (const pt of this.bids) {
+        if (pt.ratio <= price) return pt.total;
+      }
+      return 0;
+    }
+    if (price >= spreadPrice && this.asks.length) {
+      // Ask side: walk from best ask outward (prices ascending)
+      for (const pt of this.asks) {
+        if (pt.ratio >= price) return -pt.total;
+      }
+      return -(this.asks[this.asks.length - 1]?.total ?? 0);
+    }
+    return 0;
+  }
+
+  /**
+   * Insert a user order and return a new UserCurve.
+   * Positive size = bid (left of spread), negative size = ask (right of spread).
+   */
+  insert(price: number, size: number, spreadPrice: number): UserCurve {
+    if (size === 0) return this;
+
+    if (size > 0) {
+      // Bid: goes on the left side, positive volume
+      return new UserCurve(
+        this.insertSide(this.bids, price, size, true),
+        this.asks,
+      );
+    } else {
+      // Ask: goes on the right side, negative volume
+      return new UserCurve(
+        this.bids,
+        this.insertSide(this.asks, price, -size, false),
+      );
+    }
+  }
+
+  /** Insert into one side's stack. */
+  private insertSide(
+    side: Step[],
+    price: number,
+    absSize: number,
+    isBid: boolean,
+  ): Step[] {
+    if (side.length === 0) {
+      return [{ ratio: price, total: absSize }];
+    }
+
+    // Find insertion point: bids are price-desc, asks are price-asc
+    let lo = 0;
+    let hi = side.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (side[mid].ratio > price)
+        lo = mid + 1; // past this price (away from spread)
+      else hi = mid;
+    }
+
+    const out = side.slice(0, lo);
+    const prevTotal = lo > 0 ? side[lo - 1].total : 0;
+
+    if (lo < side.length && side[lo].ratio === price) {
+      for (let i = lo; i < side.length; i++) {
+        out.push({ ratio: side[i].ratio, total: side[i].total + absSize });
+      }
+    } else {
+      out.push({ ratio: price, total: prevTotal + absSize });
+      for (let i = lo; i < side.length; i++) {
+        out.push({ ratio: side[i].ratio, total: side[i].total + absSize });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Flatten into a single sorted Step[] for rendering.
+   * Bids emit positive totals (price ascending), asks emit negative totals.
+   */
+  get pts(): Step[] {
+    const out: Step[] = [];
+    // Bids: stored price-desc → emit price-asc, positive totals
+    for (let i = this.bids.length - 1; i >= 0; i--) {
+      out.push({ ratio: this.bids[i].ratio, total: this.bids[i].total });
+    }
+    // Asks: already price-asc, emit negative totals
+    for (const pt of this.asks) {
+      out.push({ ratio: pt.ratio, total: -pt.total });
+    }
+    return out;
+  }
+}
+
+/**
  * Build a MarketCurve from a raw order book.
  * Asks are stored price-ascending (best ask at index 0).
  * Bids are stored price-descending (best bid at index 0).
