@@ -170,6 +170,7 @@ export class PolymarketCPV {
     this.container.classList.remove("cpv-wrap");
   }
 
+  // TODO: These should be probably a dropdown and searchable cause making a checkbox for every market takes too much space
   private buildToggles() {
     const container = this.refs.toggles as HTMLElement;
     container.innerHTML = "";

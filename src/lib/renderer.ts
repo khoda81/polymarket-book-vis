@@ -1,17 +1,19 @@
 import { PAD } from "./constants";
+import type { OrderBook } from "./orderBook";
 import {
-  MarketCurve,
-  buildCurve,
+  // TODO: Use better human number rendering
   fmtVol,
   fmtUsd,
   powerOf10Ticks,
   hslColor,
+  buildCurve,
+  MarketCurve,
 } from "./math";
-import type { OrderBook } from "./ws";
 
 export interface MarketInfo {
   groupItemTitle: string;
   clobTokenIds: string[];
+  // TODO: This can be a datetime object
   endDate: string;
 }
 
@@ -67,7 +69,7 @@ function drawTickLine(
 }
 
 /** Draw a staircase curve from its pts array. Handles zero crossings in both directions. */
-function drawStaircase(
+function drawDepthBook(
   ctx: CanvasRenderingContext2D,
   pts: { ratio: number; total: number }[],
   cx: (p: number) => number,
@@ -175,7 +177,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
 
   // Build user curves from placed orders — same MarketCurve, just drawn negated
   const allUserCurves = activeIdxs.map((idx) => {
-    const uc = new MarketCurve([], []);
+    const uc = new MarketCurve();
     for (const o of state.userOrders) {
       if (o.marketIdx !== idx) continue;
       uc.insert(o.price, o.shares);
@@ -236,7 +238,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
     ctx.lineWidth = dim ? 1.5 : 2.5;
     ctx.globalAlpha = dim ? 0.35 : 1;
     ctx.lineJoin = "round";
-    drawStaircase(ctx, curve.pts, cx, cy);
+    drawDepthBook(ctx, curve.pts, cx, cy);
     ctx.stroke();
     ctx.globalAlpha = 1;
 
@@ -280,7 +282,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
       ctx.moveTo(PAD.l, cy(0));
       ctx.lineTo(W - PAD.r, cy(0));
     } else {
-      drawStaircase(ctx, negPts(userCurve.pts), cx, cy);
+      drawDepthBook(ctx, negPts(userCurve.pts), cx, cy);
     }
     ctx.stroke();
   });
@@ -330,7 +332,7 @@ export function draw(state: DrawState, refs: DrawRefs): void {
       ctx.moveTo(PAD.l, cy(0));
       ctx.lineTo(W - PAD.r, cy(0));
     } else {
-      drawStaircase(ctx, negPts(bentUserCurve.pts), cx, cy);
+      drawDepthBook(ctx, negPts(bentUserCurve.pts), cx, cy);
     }
     ctx.stroke();
 
