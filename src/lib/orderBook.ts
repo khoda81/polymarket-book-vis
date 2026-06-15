@@ -1,8 +1,23 @@
 export interface BookOrder {
+  /** How much "money" per 1 "item" */
   price: number;
-  size: number;
+  /** How much "money" are we swapping */
+  volume: number;
 }
 
+/**
+ * Represents a single "wing" (one side) of a limit order book.
+ * * By design, this data structure is asymmetrical and maintains only a single,
+ * strictly sorted list of orders. To represent a complete order book, you must
+ * instantiate two of these classes (e.g., one for the Bid wing, one for the Ask wing).
+ * * @remarks
+ * In complementary prediction markets (like Polymarket where Yes + No = 1),
+ * you can maintain a minimal state model by treating all orders as Asks.
+ * A Bid for a 'Yes' token is mathematically identical to an Ask for a 'No' token.
+ * This allows you to use two identical instances of this class to form the full
+ * book without needing custom bidirectional sorting logic.
+ * * @typeParam OrderKey - The unique identifier type for an order (e.g., string ID).
+ */
 export class OrderBook<OrderKey> {
   private orders: OrderKey[] = [];
   private index = new Map<OrderKey, BookOrder>();
@@ -17,24 +32,24 @@ export class OrderBook<OrderKey> {
    */
   getBestOrder(): BookOrder {
     const order = this.index.get(this.orders[0]);
-    return order ? order : { price: 0, size: 0 };
+    return order ? order : { price: 0, volume: 0 };
   }
 
   /**
    * Insert or replace an order. if the key already exists, it is removed first.
    */
-  insertOrder(key: OrderKey, price: number, size: number): boolean {
+  insertOrder(key: OrderKey, price: number, volume: number): boolean {
     const existing = this.index.get(key);
 
     if (existing) {
       if (existing.price === price) {
-        return this.updateSize(key, size);
+        return this.updateVolume(key, volume);
       }
       this.removeOrder(key);
     }
 
     const insertIdx = this.findInsertIndex(price);
-    const step: BookOrder = { price, size };
+    const step: BookOrder = { price, volume };
 
     this.orders.splice(insertIdx, 0, key);
     this.index.set(key, step);
@@ -43,14 +58,14 @@ export class OrderBook<OrderKey> {
   }
 
   /**
-   * Update the size of an existing order.
+   * Update the volume of an existing order.
    */
-  updateSize(key: OrderKey, size: number): boolean {
-    if (size <= 0) return this.removeOrder(key);
+  updateVolume(key: OrderKey, volume: number): boolean {
+    if (volume <= 0) return this.removeOrder(key);
 
     const existing = this.index.get(key);
     if (!existing) return false;
-    existing.size = size;
+    existing.volume = volume;
     return true;
   }
 
@@ -68,31 +83,31 @@ export class OrderBook<OrderKey> {
     return this.index.get(key);
   }
 
-  // Returns the raw sorted array for our aggregator
-  getSortedKeys(): OrderKey[] {
-    return this.orders;
+  entriesAscending(): BookOrder[] {
+    return this.orders
+      .map((key) => this.index.get(key))
+      .filter((order): order is BookOrder => order !== undefined)
+      .map((order) => ({ ...order }));
   }
 
   /**
-   * Return a new book representing the same liquidity in the inverse price
-   * domain (y -> x). Each block's area is preserved: newSize = oldSize * price.
+   * Flips the market perspective (e.g., from YES/NO to NO/YES).
+   * The old "Money" becomes the new "Item".
    */
   toInversePerspective(): OrderBook<OrderKey> {
     const inverted = new OrderBook<OrderKey>();
 
-    for (const key of this.orders.toReversed()) {
+    for (const key of this.orders) {
       const order = this.getOrder(key);
       if (!order) continue;
 
+      // New Price: How much old Item for 1 unit of old Money?
+      const invertedPrice = 1 / order.price;
 
-      inverted.index.set(key, {
-        // The inverted order has reciprocal of this price
-        price: 1 / order.price,
-        // The volume of this order is the size of inverted order
-        size: order.size * order.price
-      });
+      // New Volume: The total old items involved in this order
+      const invertedAmount = order.volume / order.price;
 
-      inverted.orders.push(key);
+      inverted.insertOrder(key, invertedPrice, invertedAmount);
     }
 
     // Reverse the order to maintain the correct order in the inverted book
@@ -115,5 +130,19 @@ export class OrderBook<OrderKey> {
     }
 
     return lo;
+  }
+}
+
+export class FullOrderBook<OrderKey> {
+  constructor(
+    public asks: OrderBook<OrderKey>,
+    public bids: OrderBook<OrderKey>,
+  ) {}
+
+  toInversePerspective(): FullOrderBook<OrderKey> {
+    return new FullOrderBook(
+      this.bids.toInversePerspective(),
+      this.asks.toInversePerspective(),
+    );
   }
 }

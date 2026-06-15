@@ -1,28 +1,25 @@
 import { fetchSearchSuggestions, fetchEventBySlug } from "@/lib/api";
 import { fmtVol, hslColor } from "@/lib/math";
-import type { OrderBook } from "@/lib/ws";
-import { ConnectionStatus, MarketWS } from "@/lib/ws";
-import { PAD } from "@/lib/constants";
+import { OrderBook } from "@/lib/orderBook";
 import {
-  draw,
-  type DrawState,
+  OrderBookPlotter,
+  type PlotDrawState,
   type MarketInfo,
   type UserOrder,
 } from "@/lib/renderer";
+import { ConnectionStatus, MarketWS } from "@/lib/ws";
 import "@/styles/component.css";
 
 export class PolymarketCPV {
   private container: HTMLElement;
   private refs!: Record<string, HTMLElement>;
-  private ctx!: CanvasRenderingContext2D;
+  private plotter!: OrderBookPlotter;
 
   private markets: MarketInfo[] = [];
   private activeMarkets = new Set<number>();
-  private books: Record<string, OrderBook> = {};
+  private books: Record<string, OrderBook<string>> = {};
   private ws: MarketWS | null = null;
   private raf: number | null = null;
-  private mx: number | null = null;
-  private my: number | null = null;
   private userOrders: UserOrder[] = [];
   private volZoom = 3.5;
   private searchTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -73,7 +70,11 @@ export class PolymarketCPV {
       this.refs[(el as HTMLElement).dataset.ref!] = el as HTMLElement;
     });
 
-    this.ctx = (this.refs.canvas as HTMLCanvasElement).getContext("2d")!;
+    this.plotter = new OrderBookPlotter(
+      this.refs.canvas as HTMLCanvasElement,
+      this.refs.overlay as HTMLDivElement,
+      () => this.reqDraw(),
+    );
   }
 
   private bindEvents() {
@@ -86,19 +87,6 @@ export class PolymarketCPV {
     document.addEventListener("click", (e) => {
       if (!(e.target as HTMLElement).closest(".cpv-search-container"))
         (dropdown as HTMLElement).style.display = "none";
-    });
-
-    (canvasWrap as HTMLElement).addEventListener("mousemove", (e) => {
-      const r = (this.refs.canvas as HTMLCanvasElement).getBoundingClientRect();
-      this.mx = e.clientX - r.left;
-      this.my = e.clientY - r.top;
-      this.reqDraw();
-    });
-
-    (canvasWrap as HTMLElement).addEventListener("mouseleave", () => {
-      this.mx = null;
-      this.my = null;
-      this.reqDraw();
     });
 
     (canvasWrap as HTMLElement).addEventListener("click", (e) => {
@@ -166,6 +154,7 @@ export class PolymarketCPV {
   destroy() {
     this.closeWS();
     if (this.raf) cancelAnimationFrame(this.raf);
+    this.plotter.destroy();
     this.container.innerHTML = "";
     this.container.classList.remove("cpv-wrap");
   }
@@ -259,45 +248,25 @@ export class PolymarketCPV {
   }
 
   private performDraw() {
-    const state: DrawState = {
+    const state: PlotDrawState = {
       markets: this.markets,
       activeMarkets: this.activeMarkets,
       books: this.books,
       userOrders: this.userOrders,
       volZoom: this.volZoom,
-      mx: this.mx,
-      my: this.my,
     };
-    const refs = {
-      canvas: this.refs.canvas as HTMLCanvasElement,
-      overlay: this.refs.overlay as HTMLDivElement,
-    };
-    draw(state, refs);
+    this.plotter.draw(state);
   }
 
   private placeOrder(clickX: number, clickY: number) {
     const activeIdxs = Array.from(this.activeMarkets);
     if (!activeIdxs.length) return;
 
-    const canvas = this.refs.canvas as HTMLCanvasElement;
-    const wrap = canvas.parentElement!;
-    const W = wrap.clientWidth;
-    const H = wrap.clientHeight;
-    const cW = W - PAD.l - PAD.r;
-    const cH = H - PAD.t - PAD.b;
-    const yAbsMax = Math.pow(10, this.volZoom);
-    const cy = (v: number) => PAD.t + (1 - v / yAbsMax) * (cH / 2);
+    const point = this.plotter.screenToDataPoint(clickX, clickY);
+    if (!point) return;
 
-    if (
-      clickX < PAD.l ||
-      clickX > W - PAD.r ||
-      clickY < PAD.t ||
-      clickY > PAD.t + cH
-    )
-      return;
-
-    const price = (clickX - PAD.l) / cW;
-    const shares = (((cy(0) - clickY) * 2) / cH) * yAbsMax;
+    const price = Math.max(0, Math.min(1, point.x));
+    const shares = point.y;
     if (shares === 0) return;
 
     const order: UserOrder = {
