@@ -13,30 +13,40 @@ export class OrderBook<OrderKey> {
   }
 
   /**
-   * Insert or replace an order. if the key already
-   * exists, it is removed first.
+   * Returns the best order in the book, or null order if the book is empty.
+   */
+  getBestOrder(): BookOrder {
+    const order = this.index.get(this.orders[0]);
+    return order ? order : { price: 0, size: 0 };
+  }
+
+  /**
+   * Insert or replace an order. if the key already exists, it is removed first.
    */
   insertOrder(key: OrderKey, price: number, size: number): boolean {
     const existing = this.index.get(key);
-    if (existing?.price === price) {
-      return this.updateSize(key, size);
+
+    if (existing) {
+      if (existing.price === price) {
+        return this.updateSize(key, size);
+      }
+      this.removeOrder(key);
     }
 
-    const exists = this.removeOrder(key);
     const insertIdx = this.findInsertIndex(price);
     const step: BookOrder = { price, size };
+
     this.orders.splice(insertIdx, 0, key);
     this.index.set(key, step);
-    return exists;
+
+    return !!existing;
   }
 
   /**
    * Update the size of an existing order.
    */
   updateSize(key: OrderKey, size: number): boolean {
-    if (size === 0)
-      // Remove the order from index, the order list will be cleaned up later
-      return this.index.delete(key);
+    if (size <= 0) return this.removeOrder(key);
 
     const existing = this.index.get(key);
     if (!existing) return false;
@@ -45,15 +55,22 @@ export class OrderBook<OrderKey> {
   }
 
   removeOrder(key: OrderKey): boolean {
-    return this.updateSize(key, 0)
+    if (!this.index.has(key)) return false;
+
+    this.index.delete(key);
+    const idx = this.orders.indexOf(key);
+    if (idx !== -1) this.orders.splice(idx, 1);
+
+    return true;
   }
 
   getOrder(key: OrderKey): BookOrder | undefined {
     return this.index.get(key);
   }
 
-  hasOrder(key: OrderKey): boolean {
-    return this.index.has(key);
+  // Returns the raw sorted array for our aggregator
+  getSortedKeys(): OrderKey[] {
+    return this.orders;
   }
 
   /**
@@ -63,17 +80,23 @@ export class OrderBook<OrderKey> {
   toInversePerspective(): OrderBook<OrderKey> {
     const inverted = new OrderBook<OrderKey>();
 
-    for (const key of this.orders) {
+    for (const key of this.orders.toReversed()) {
       const order = this.getOrder(key);
       if (!order) continue;
 
-      // The inverted order has reciprocal of this price
-      const invertedPrice = 1 / order.price;
 
-      // The volume of this order is the size of inverted order
-      const invertedSize = order.size * order.price;
-      inverted.insertOrder(key, invertedPrice, invertedSize);
+      inverted.index.set(key, {
+        // The inverted order has reciprocal of this price
+        price: 1 / order.price,
+        // The volume of this order is the size of inverted order
+        size: order.size * order.price
+      });
+
+      inverted.orders.push(key);
     }
+
+    // Reverse the order to maintain the correct order in the inverted book
+    inverted.orders.reverse();
 
     return inverted;
   }
@@ -81,16 +104,14 @@ export class OrderBook<OrderKey> {
   private findInsertIndex(price: number): number {
     let lo = 0;
     let hi = this.orders.length;
+
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
-      const midOrder = this.getOrder(this.orders[mid]);
-      const midPrice = midOrder?.price;
+      const midPrice = this.index.get(this.orders[mid])!.price;
 
-      // This shouldn't happen right? midPrice should never be undefined I think
-      if (midPrice === undefined || midPrice === price) return mid;
-
-      if (price < midPrice) hi = mid;
-      else lo = mid + 1;
+      if (midPrice === price) return mid;
+      if (price > midPrice) lo = mid + 1;
+      else hi = mid;
     }
 
     return lo;
