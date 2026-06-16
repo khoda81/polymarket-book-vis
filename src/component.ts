@@ -293,10 +293,6 @@ export class PolymarketCPV {
           );
         }
       }
-
-      if (signal) {
-        await stream.close();
-      }
     }
   }
 
