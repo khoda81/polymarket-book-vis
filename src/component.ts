@@ -1,6 +1,10 @@
 import { fmtVol, hslColor } from "@/lib/math";
 import { FullOrderBook, OrderBook } from "@/lib/orderBook";
-import { OrderBookPlotter, type PlotDrawState } from "@/lib/renderer";
+import {
+  OrderBookPlotter,
+  type PlotFrameConfig,
+  type MarketInfo,
+} from "@/lib/renderer";
 import "@/styles/component.css";
 import {
   createPublicClient,
@@ -15,6 +19,27 @@ enum ConnectionStatus {
   Connecting = "connecting",
   Live = "live",
 }
+
+export interface ChartTheme {
+  bg: string;
+  grid: string;
+  axis: string;
+  text: string;
+}
+
+const LIGHT_THEME: ChartTheme = {
+  bg: "#ffffff",
+  grid: "rgba(128,128,128,0.15)",
+  axis: "rgba(128,128,128,0.5)",
+  text: "#666666",
+};
+
+const DARK_THEME: ChartTheme = {
+  bg: "#121212",
+  grid: "rgba(255,255,255,0.1)",
+  axis: "rgba(255,255,255,0.3)",
+  text: "#aaaaaa",
+};
 
 export class PolymarketCPV {
   polyMarketClient = createPublicClient();
@@ -249,9 +274,35 @@ export class PolymarketCPV {
     this.raf = requestAnimationFrame(() => this.performDraw());
   }
 
-  private async performDraw() {
-    // this.plotter.draw(state);
-    this.raf = requestAnimationFrame(() => this.performDraw());
+  private toPlotState(): PlotFrameConfig {
+    const markets: MarketInfo[] = this.markets
+      .map((m) => {
+        const yesToken = m.outcomes.yes.tokenId;
+        if (!yesToken) return null;
+        return {
+          groupItemTitle: m.id ?? m.slug ?? "(untitled)",
+          clobTokenIds: [yesToken],
+          endDate: (m as any).endDate ?? "",
+        } as MarketInfo;
+      })
+      .filter((m): m is MarketInfo => m !== null);
+
+    return {
+      markets,
+      activeMarkets: new Set(this.activeMarkets),
+      books: this.books,
+      userOrders: [],
+      volZoom: this.volZoom,
+    };
+  }
+
+  private performDraw() {
+    this.raf = null;
+    const state = this.toPlotState();
+    this.plotter.beginFrame(state);
+    this.plotter.drawAxes();
+    // this.plotter.drawCurves();
+    // this.plotter.drawPointer();
   }
 
   private async readEvents(events: SubscriptionHandle<MarketEvent>) {
@@ -267,9 +318,6 @@ export class PolymarketCPV {
           bids.insertOrder(b.price, parseFloat(b.price), parseFloat(b.size));
         }
 
-        console.log(
-          `Creating event for tokenId: ${stream.payload.tokenId}, event: ${stream.type}`,
-        );
         this.books[stream.payload.tokenId] = new FullOrderBook(asks, bids);
       } else if (stream.type === "price_change") {
         for (const priceChange of stream.payload.priceChanges) {
@@ -286,11 +334,6 @@ export class PolymarketCPV {
             book.asks.insertOrder(price, parseFloat(price), parseFloat(size));
           else
             book.bids.insertOrder(price, parseFloat(price), parseFloat(size));
-
-          console.log(
-            `Received price change for tokenId: ${priceChange.tokenId}, side: ${priceChange.side}, book:`,
-            book,
-          );
         }
       }
     }

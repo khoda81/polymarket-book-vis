@@ -1,26 +1,12 @@
 import { PAD } from "./constants";
 import { FullOrderBook } from "./orderBook";
 import { fmtVol, hslColor, powerOf10Ticks } from "./math";
+import { o } from "node_modules/@polymarket/client/dist/sports-DNd7kOz2";
 
 export interface MarketInfo {
   groupItemTitle: string;
   clobTokenIds: string[];
   endDate: string;
-}
-
-export interface UserOrder {
-  id: string;
-  price: number;
-  shares: number;
-  marketIdx: number;
-}
-
-export interface PlotDrawState {
-  markets: MarketInfo[];
-  activeMarkets: Set<number>;
-  books: Record<string, FullOrderBook<string>>;
-  userOrders: UserOrder[];
-  volZoom: number;
 }
 
 interface ScreenPoint {
@@ -37,7 +23,7 @@ export class MarketCurve {
   asks: DepthPoint[];
   bids: DepthPoint[];
 
-  constructor(book: FullOrderBook<string>) {
+  constructor(book: FullOrderBook<unknown>) {
     this.asks = [];
     this.bids = [];
 
@@ -59,23 +45,20 @@ function toHsla(color: string, alpha: number): string {
   return color.replace("hsl(", "hsla(").replace(")", `, ${alpha})`);
 }
 
+type Colors = {
+  text: string;
+  grid: string;
+  axis: string;
+};
+
 export class OrderBookPlotter {
   private readonly ctx: CanvasRenderingContext2D;
   /** The absolute maximum y value for the data. */
-  private yAbsMax = 1;
   private pointer: ScreenPoint | null = null;
-
-  private dataToScreen = new DOMMatrix();
+  private padding = { l: 60, r: 16, t: 24, b: 24 } as const;
 
   private resizeObserver: ResizeObserver;
-  private readonly onMouseMove: (e: MouseEvent) => void;
-  private readonly onMouseLeave: () => void;
-
-  constructor(
-    private readonly canvas: HTMLCanvasElement,
-    private readonly overlay: HTMLDivElement,
-    private readonly onInteraction?: () => void,
-  ) {
+  constructor(private readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D canvas context is not available");
     this.ctx = ctx;
@@ -92,72 +75,36 @@ export class OrderBookPlotter {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      this.onInteraction?.();
     });
 
     this.resizeObserver.observe(this.canvas);
-
-    this.onMouseMove = (e: MouseEvent) => {
-      const rect = this.canvas.getBoundingClientRect();
-      this.pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      this.onInteraction?.();
-    };
-
-    this.onMouseLeave = () => {
-      this.pointer = null;
-      this.onInteraction?.();
-    };
-
-    this.canvas.addEventListener("mousemove", this.onMouseMove);
-    this.canvas.addEventListener("mouseleave", this.onMouseLeave);
   }
 
   destroy() {
     this.resizeObserver.disconnect();
-    this.canvas.removeEventListener("mousemove", this.onMouseMove);
-    this.canvas.removeEventListener("mouseleave", this.onMouseLeave);
   }
 
-  screenToDataPoint(screenPoint: DOMPoint): DOMPoint {
-    return screenPoint.matrixTransform(this.dataToScreen.inverse());
-  }
+  private computeDataTransform(yAbsMax: number): DOMMatrix {
+    const width = this.canvas.width - PAD.l - PAD.r;
+    const height = this.canvas.height - PAD.t - PAD.b;
 
-  private toScreenPoint(dataX: number, dataY: number): ScreenPoint {
-    const p = new DOMPoint(dataX, dataY).matrixTransform(
-      this.dataToScreen.inverse(),
-    );
-    return { x: p.x, y: p.y };
-  }
+    const scaleX = width;
+    const scaleY = height / (2 * yAbsMax);
 
-  private applyDataTransform(volZoom: number): { cW: number; cH: number } {
-    const cW = this.canvas.width - PAD.l - PAD.r;
-    const cH = this.canvas.height - PAD.t - PAD.b;
-
-    this.yAbsMax = Math.pow(10, volZoom);
-
-    const scaleX = cW;
-    const scaleY = cH / (2 * this.yAbsMax);
-
-    this.dataToScreen = new DOMMatrix()
-      .translateSelf(PAD.l, PAD.t + cH / 2)
+    const dataToScreen = new DOMMatrix()
+      .translateSelf(PAD.l, PAD.t + height / 2)
       .scaleSelf(scaleX, -scaleY);
 
-    return { cW, cH };
+    return dataToScreen;
   }
 
-  private drawAxes(
-    cW: number,
-    cH: number,
-    txtC: string,
-    gridC: string,
-    axC: string,
-  ) {
+  private drawAxes(dataToScreen: DOMMatrix, colors: Colors) {
     const ctx = this.ctx;
 
-    ctx.strokeStyle = axC;
+    ctx.strokeStyle = colors.axis;
     ctx.lineWidth = 1;
-    ctx.strokeRect(PAD.l, PAD.t, cW, cH);
+
+    ctx.strokeRect(PAD.l, PAD.t, width, height);
 
     const yFracs = powerOf10Ticks(this.yAbsMax);
     for (const frac of yFracs) {
@@ -240,61 +187,46 @@ export class OrderBookPlotter {
     ctx.stroke();
   }
 
-  draw(state: PlotDrawState): void {
-    const chart = this.applyDataTransform(state.volZoom);
-    if (!chart) return;
+  beginFrame({ volZoom }: { volZoom: number }) {
+    const yAbsMax = Math.pow(10, volZoom);
+    const transform = this.computeDataTransform(yAbsMax);
 
-    const { cW, cH } = chart;
+    this.ctx.resetTransform();
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.font = "11px var(--font-sans,sans-serif)";
 
+    return transform;
+  }
+
+  drawCurve(transform: DOMMatrix, book: FullOrderBook<unknown>): void {
     const ctx = this.ctx;
-    ctx.font = "11px var(--font-sans,sans-serif)";
-
-    const bodyStyle = window.getComputedStyle(document.body);
-    const isDark = bodyStyle.color === "rgb(238, 238, 238)";
-    const gridC = "rgba(128,128,128,0.15)";
-    const axC = "rgba(128,128,128,0.5)";
-    const txtC = isDark ? "#aaa" : "#666";
-
-    this.drawAxes(cW, cH, txtC, gridC, axC);
-
-    const activeIdxs = Array.from(state.activeMarkets);
 
     ctx.save();
-    ctx.transform(
-      this.dataToScreen.a,
-      this.dataToScreen.b,
-      this.dataToScreen.c,
-      this.dataToScreen.d,
-      this.dataToScreen.e,
-      this.dataToScreen.f,
-    );
+    ctx.setTransform(transform);
 
-    for (const idx of activeIdxs) {
-      const market = state.markets[idx];
-      const yesBook = state.books[market.clobTokenIds[0]];
-      const depth = new MarketCurve(yesBook);
-      this.drawDepth(depth, hslColor(idx), 0.9);
+    const depth = new MarketCurve(book);
+    this.drawDepth(depth, hslColor(idx), 0.9);
 
-      // const userDepth = buildUserDepth(state.userOrders, idx);
-      // this.drawDepth(userDepth, "hsl(0, 0%, 100%)", 0.65);
-    }
+    // const userDepth = buildUserDepth(state.userOrders, idx);
+    // this.drawDepth(userDepth, "hsl(0, 0%, 100%)", 0.65);
 
     ctx.restore();
+  }
 
-    const pointerData = this.screenToDataPoint(
-      new DOMPoint(this.pointer?.x, this.pointer?.y),
-    );
-    if (!this.pointer || !pointerData) {
+  drawPointer(pointer: DOMPoint | null): void {
+    if (!pointer) {
       this.overlay.style.display = "none";
       return;
     }
+
+    const ctx = this.ctx;
 
     ctx.strokeStyle = axC;
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.moveTo(this.pointer.x, PAD.t);
-    ctx.lineTo(this.pointer.x, PAD.t + cH);
+    ctx.moveTo(pointer.x, PAD.t);
+    ctx.lineTo(pointer.x, PAD.t + cH);
     ctx.stroke();
     ctx.setLineDash([]);
 
@@ -311,11 +243,11 @@ export class OrderBookPlotter {
     const ovH = this.overlay.offsetHeight || 80;
     const ovX = Math.max(
       PAD.l,
-      Math.min(this.pointer.x + 12, this.canvas.width - PAD.r - ovW),
+      Math.min(pointer.x + 12, this.canvas.width - PAD.r - ovW),
     );
     const ovY = Math.max(
       PAD.t,
-      Math.min(this.pointer.y + 12, this.canvas.height - PAD.b - ovH),
+      Math.min(pointer.y + 12, this.canvas.height - PAD.b - ovH),
     );
 
     this.overlay.style.left = `${ovX}px`;
@@ -325,6 +257,6 @@ export class OrderBookPlotter {
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     ctx.font = "10px var(--font-sans,sans-serif)";
-    ctx.fillText(clampedPrice.toFixed(2), this.pointer.x, PAD.t + cH + 8);
+    ctx.fillText(clampedPrice.toFixed(2), pointer.x, PAD.t + cH + 8);
   }
 }
