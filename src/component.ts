@@ -1,34 +1,46 @@
-import { fetchSearchSuggestions, fetchEventBySlug } from "@/lib/api";
 import { fmtVol, hslColor } from "@/lib/math";
-import { OrderBook } from "@/lib/orderBook";
-import {
-  OrderBookPlotter,
-  type PlotDrawState,
-  type MarketInfo,
-  type UserOrder,
-} from "@/lib/renderer";
-import { ConnectionStatus, MarketWS } from "@/lib/ws";
+import { FullOrderBook, OrderBook } from "@/lib/orderBook";
+import { OrderBookPlotter, type PlotDrawState } from "@/lib/renderer";
 import "@/styles/component.css";
+import {
+  createPublicClient,
+  Market,
+  Event,
+  OrderSide,
+} from "@polymarket/client";
+import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
+
+enum ConnectionStatus {
+  Error = "disconnected",
+  Connecting = "connecting",
+  Live = "live",
+}
 
 export class PolymarketCPV {
+  polyMarketClient = createPublicClient();
+
   private container: HTMLElement;
   private refs!: Record<string, HTMLElement>;
   private plotter!: OrderBookPlotter;
 
-  private markets: MarketInfo[] = [];
+  private markets: Market[] = [];
   private activeMarkets = new Set<number>();
-  private books: Record<string, OrderBook<string>> = {};
-  private ws: MarketWS | null = null;
+  private books: Record<string, FullOrderBook<string>> = {};
+  private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private raf: number | null = null;
-  private userOrders: UserOrder[] = [];
+  // private userOrders: UserOrder[] = [];
   private volZoom = 3.5;
   private searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(container: HTMLElement, opts: { slug?: string } = {}) {
+  private handleDocumentClick = (e: MouseEvent) => {
+    if (!(e.target as HTMLElement).closest(".cpv-search-container"))
+      (this.refs.dropdown as HTMLElement).style.display = "none";
+  };
+
+  constructor(container: HTMLElement) {
     this.container = container;
     this.buildDOM();
     this.bindEvents();
-    if (opts.slug) this.load(opts.slug);
   }
 
   private buildDOM() {
@@ -84,16 +96,13 @@ export class PolymarketCPV {
       this.onSearchInput(),
     );
 
-    document.addEventListener("click", (e) => {
-      if (!(e.target as HTMLElement).closest(".cpv-search-container"))
-        (dropdown as HTMLElement).style.display = "none";
-    });
+    document.addEventListener("click", this.handleDocumentClick);
 
     (canvasWrap as HTMLElement).addEventListener("click", (e) => {
       const r = (this.refs.canvas as HTMLCanvasElement).getBoundingClientRect();
       const clickX = e.clientX - r.left;
       const clickY = e.clientY - r.top;
-      this.placeOrder(clickX, clickY);
+      this.placeOrder(new DOMPoint(clickX, clickY));
     });
 
     (canvasWrap as HTMLElement).addEventListener(
@@ -110,45 +119,36 @@ export class PolymarketCPV {
     );
   }
 
-  async load(slug: string) {
-    try {
-      this.closeWS();
-      this.books = {};
-      this.markets = [];
-      this.activeMarkets.clear();
-      this.userOrders = [];
+  async load(event: Event) {
+    await this.closeWS();
+    this.setDot(ConnectionStatus.Connecting);
 
-      const event = await fetchEventBySlug(slug);
+    this.books = {};
+    this.markets = [];
+    this.activeMarkets.clear();
+    // this.userOrders = [];
 
-      (this.refs.title as HTMLElement).textContent = event.title;
-      (this.refs.searchInput as HTMLInputElement).value = event.slug;
-      (this.refs.dropdown as HTMLElement).style.display = "none";
+    (this.refs.title as HTMLElement).textContent = event.title ?? "(untitled)";
+    (this.refs.searchInput as HTMLInputElement).value =
+      event.slug ?? "(untitled)";
+    (this.refs.dropdown as HTMLElement).style.display = "none";
 
-      for (const market of event.markets) {
-        if (market.closed) continue;
-        this.markets.push(market);
-      }
+    this.markets = event.markets.filter((m) => !m.state.closed);
 
-      this.markets.sort(
-        (a, b) => Date.parse(a.endDate) - Date.parse(b.endDate),
-      );
+    this.buildToggles();
+    this.bookEventStream = await this.polyMarketClient.subscribe([
+      {
+        topic: "market",
+        tokenIds: this.markets
+          .map((m) => m.outcomes.yes.tokenId)
+          .filter((t) => t !== null),
+      },
+    ]);
 
-      this.buildToggles();
-      this.ws = new MarketWS(
-        this.markets.flatMap((m) => m.clobTokenIds),
-        (s) => this.setDot(s),
-        (b) => {
-          this.books = b;
-          this.reqDraw();
-        },
-      );
-      this.reqDraw();
-    } catch (err) {
-      console.error(err);
-      this.setDot(ConnectionStatus.Err);
-      (this.refs.title as HTMLElement).textContent =
-        "Error: " + (err as Error).message;
-    }
+    this.readEvents(this.bookEventStream);
+    this.setDot(ConnectionStatus.Live);
+
+    this.reqDraw();
   }
 
   destroy() {
@@ -157,6 +157,7 @@ export class PolymarketCPV {
     this.plotter.destroy();
     this.container.innerHTML = "";
     this.container.classList.remove("cpv-wrap");
+    document.removeEventListener("click", this.handleDocumentClick);
   }
 
   // TODO: These should be probably a dropdown and searchable cause making a checkbox for every market takes too much space
@@ -182,7 +183,7 @@ export class PolymarketCPV {
 
       lbl.appendChild(cb);
       lbl.appendChild(dot);
-      lbl.append(" " + m.groupItemTitle);
+      lbl.append(" " + m.outcomes.yes.label);
       container.appendChild(lbl);
     });
   }
@@ -192,8 +193,8 @@ export class PolymarketCPV {
     [string, string]
   > = {
     [ConnectionStatus.Live]: ["live", "live"],
-    [ConnectionStatus.Err]: ["err", "error"],
-    [ConnectionStatus.Conn]: ["conn", "connecting…"],
+    [ConnectionStatus.Error]: ["err", "error"],
+    [ConnectionStatus.Connecting]: ["conn", "connecting…"],
   };
 
   private setDot(s: ConnectionStatus) {
@@ -203,10 +204,10 @@ export class PolymarketCPV {
     (stxt as HTMLElement).textContent = txt;
   }
 
-  private closeWS() {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+  private async closeWS() {
+    if (this.bookEventStream) {
+      await this.bookEventStream.close();
+      this.bookEventStream = null;
     }
   }
 
@@ -219,25 +220,26 @@ export class PolymarketCPV {
     }
 
     this.searchTimeout = setTimeout(async () => {
-      const suggestions = await fetchSearchSuggestions(query);
-      if (!suggestions.length) {
+      const suggestions = this.polyMarketClient.search({
+        q: query,
+        pageSize: 20,
+      });
+      const page = await suggestions.firstPage();
+      if (!page.totalCount) {
         (this.refs.dropdown as HTMLElement).style.display = "none";
         return;
       }
 
       const dropdown = this.refs.dropdown as HTMLElement;
       dropdown.innerHTML = "";
-      suggestions.forEach((item) => {
+      for (const event of page.items.events) {
         const div = document.createElement("div");
         div.className = "cpv-dropdown-item";
-        const vol = item.volume ? parseFloat(item.volume) : 0;
-        div.innerHTML = `<span>${item.title}</span><span class="cpv-vol-tag">$${fmtVol(vol)}</span>`;
-        div.addEventListener("click", () => {
-          this.setDot(ConnectionStatus.Conn);
-          this.load(item.slug);
-        });
+        const vol = event.metrics.volume ? parseFloat(event.metrics.volume) : 0;
+        div.innerHTML = `<span>${event.title}</span><span class="cpv-vol-tag">$${fmtVol(vol)}</span>`;
+        div.addEventListener("click", () => this.load(event));
         dropdown.appendChild(div);
-      });
+      }
       dropdown.style.display = "block";
     }, 250);
   }
@@ -247,36 +249,78 @@ export class PolymarketCPV {
     this.raf = requestAnimationFrame(() => this.performDraw());
   }
 
-  private performDraw() {
-    const state: PlotDrawState = {
-      markets: this.markets,
-      activeMarkets: this.activeMarkets,
-      books: this.books,
-      userOrders: this.userOrders,
-      volZoom: this.volZoom,
-    };
-    this.plotter.draw(state);
+  private async performDraw() {
+    // this.plotter.draw(state);
+    this.raf = requestAnimationFrame(() => this.performDraw());
   }
 
-  private placeOrder(clickX: number, clickY: number) {
+  private async readEvents(events: SubscriptionHandle<MarketEvent>) {
+    for await (const stream of events) {
+      if (stream.type === "book") {
+        const asks = new OrderBook<string>();
+        for (const a of stream.payload.asks) {
+          asks.insertOrder(a.price, parseFloat(a.price), parseFloat(a.size));
+        }
+
+        const bids = new OrderBook<string>();
+        for (const b of stream.payload.bids) {
+          bids.insertOrder(b.price, parseFloat(b.price), parseFloat(b.size));
+        }
+
+        console.log(
+          `Creating event for tokenId: ${stream.payload.tokenId}, event: ${stream.type}`,
+        );
+        this.books[stream.payload.tokenId] = new FullOrderBook(asks, bids);
+      } else if (stream.type === "price_change") {
+        for (const priceChange of stream.payload.priceChanges) {
+          const book = this.books[priceChange.tokenId];
+          if (!book) {
+            // console.warn(
+            //   `Received price change for unknown tokenId: ${priceChange.tokenId}`,
+            // );
+            continue;
+          }
+
+          const { side, price, size } = priceChange;
+          if (side === OrderSide.BUY)
+            book.asks.insertOrder(price, parseFloat(price), parseFloat(size));
+          else
+            book.bids.insertOrder(price, parseFloat(price), parseFloat(size));
+
+          console.log(
+            `Received price change for tokenId: ${priceChange.tokenId}, side: ${priceChange.side}, book:`,
+            book,
+          );
+        }
+      }
+
+      if (signal) {
+        await stream.close();
+      }
+    }
+  }
+
+  private placeOrder(point: DOMPoint) {
     const activeIdxs = Array.from(this.activeMarkets);
     if (!activeIdxs.length) return;
 
-    const point = this.plotter.screenToDataPoint(clickX, clickY);
-    if (!point) return;
+    const dataPoint = this.plotter.screenToDataPoint(point);
+    if (!dataPoint) return;
 
-    const price = Math.max(0, Math.min(1, point.x));
+    const price = point.x;
     const shares = point.y;
+
+    console.debug({ price, shares });
     if (shares === 0) return;
 
-    const order: UserOrder = {
-      id: crypto.randomUUID(),
-      price,
-      shares,
-      marketIdx: activeIdxs[0],
-    };
+    // const order: UserOrder = {
+    //   id: crypto.randomUUID(),
+    //   price,
+    //   shares,
+    //   marketIdx: activeIdxs[0],
+    // };
 
-    this.userOrders = [...this.userOrders, order];
-    this.reqDraw();
+    // this.userOrders = [...this.userOrders, order];
+    // this.reqDraw();
   }
 }

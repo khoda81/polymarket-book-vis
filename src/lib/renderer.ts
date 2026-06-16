@@ -1,5 +1,5 @@
 import { PAD } from "./constants";
-import { FullOrderBook, OrderBook } from "./orderBook";
+import { FullOrderBook } from "./orderBook";
 import { fmtVol, hslColor, powerOf10Ticks } from "./math";
 
 export interface MarketInfo {
@@ -63,7 +63,6 @@ export class OrderBookPlotter {
   private readonly ctx: CanvasRenderingContext2D;
   /** The absolute maximum y value for the data. */
   private yAbsMax = 1;
-
   private pointer: ScreenPoint | null = null;
 
   private dataToScreen = new DOMMatrix();
