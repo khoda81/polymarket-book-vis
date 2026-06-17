@@ -307,13 +307,9 @@ export class PolymarketCPV {
   }
 
   private toPlotState(): RenderFrameConfig {
-    return {
-      volZoom: this.volZoom,
-      // TODO: Where do we get the theme from?
-      theme: this.theme,
-      // TODO: So we plan to store the pointer in state now?
-      pointer: this.pointer,
-    };
+    // TODO: My js isn't too good, is there a trick to do this cleaner?
+    const { volZoom, theme } = this;
+    return { volZoom, theme };
   }
 
   private performDraw() {
@@ -341,6 +337,8 @@ export class PolymarketCPV {
 
       this.plotter.drawCurve(frameCtx, book, this.tokenColor(i));
     }
+
+    if (this.pointer) this.plotter.drawPointer(frameCtx, this.pointer);
   }
 
   private tokenColor(id: number): string {

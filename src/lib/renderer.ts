@@ -10,16 +10,18 @@ export interface ChartTheme {
   text: string;
 }
 
+type Pointer = {
+  screen: DOMPoint;
+  data: DOMPoint;
+};
+
 export interface RenderFrameConfig {
   theme: ChartTheme;
   volZoom: number;
-  pointer: { screen: DOMPoint; data: DOMPoint } | null;
 }
 
 export interface FrameContext {
-  ctx: CanvasRenderingContext2D;
-  cW: number;
-  cH: number;
+  chart: { width: number; height: number };
   yAbsMax: number;
   dataToScreen: DOMMatrix;
   screenToData: DOMMatrix;
@@ -165,9 +167,7 @@ export class OrderBookPlotter {
     this.ctx.fillRect(0, 0, width, height);
 
     return {
-      ctx: this.ctx,
-      cW,
-      cH,
+      chart: { width: cW, height: cH },
       yAbsMax,
       dataToScreen,
       screenToData: this.latestScreenToData,
@@ -176,15 +176,20 @@ export class OrderBookPlotter {
   }
 
   drawAxes(fc: FrameContext) {
-    const { ctx, theme, cW, cH, yAbsMax, dataToScreen } = fc;
+    const { theme, chart, yAbsMax, dataToScreen } = fc;
 
-    ctx.strokeStyle = theme.axis;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(this.padding.l, this.padding.t, cW, cH);
+    this.ctx.strokeStyle = theme.axis;
+    this.ctx.lineWidth = 1;
+    this.ctx.strokeRect(
+      this.padding.l,
+      this.padding.t,
+      chart.width,
+      chart.height,
+    );
 
     const yFracs = powerOf10Ticks(yAbsMax);
-    ctx.font = "11px sans-serif";
-    ctx.textBaseline = "middle";
+    this.ctx.font = "11px sans-serif";
+    this.ctx.textBaseline = "middle";
 
     for (const frac of yFracs) {
       for (const sign of [1, -1]) {
@@ -193,26 +198,28 @@ export class OrderBookPlotter {
         const screenY = new DOMPoint(0, yVal).matrixTransform(dataToScreen).y;
 
         // Grid line
-        ctx.strokeStyle = theme.grid;
-        ctx.beginPath();
-        ctx.moveTo(this.padding.l, screenY);
-        ctx.lineTo(this.canvas.width - this.padding.r, screenY);
-        ctx.stroke();
+        this.ctx.strokeStyle = theme.grid;
+        this.ctx.beginPath();
+        this.ctx.moveTo(this.padding.l, screenY);
+        this.ctx.lineTo(this.canvas.width - this.padding.r, screenY);
+        this.ctx.stroke();
 
         // Tick mark
-        ctx.strokeStyle = theme.axis;
-        ctx.beginPath();
-        ctx.moveTo(this.padding.l - 5, screenY);
-        ctx.lineTo(this.padding.l, screenY);
-        ctx.moveTo(this.canvas.width - this.padding.r, screenY);
-        ctx.lineTo(this.canvas.width - this.padding.r + 5, screenY);
-        ctx.stroke();
+        this.ctx.strokeStyle = theme.axis;
+        this.ctx.beginPath();
+        this.ctx.moveTo(this.padding.l - 5, screenY);
+        this.ctx.lineTo(this.padding.l, screenY);
+        this.ctx.moveTo(this.canvas.width - this.padding.r, screenY);
+        this.ctx.lineTo(this.canvas.width - this.padding.r + 5, screenY);
+        this.ctx.stroke();
 
         // Label
         const absV = frac * yAbsMax;
-        ctx.fillStyle = theme.text;
-        ctx.textAlign = "right";
-        ctx.fillText(
+        this.ctx.fillStyle = theme.text;
+        this.ctx.textAlign = "right";
+        // FIX: This is not the correct place to decide the scale as 1k flips between 1k and 1000 every frame
+        // We should decide the scale once for the entire chart and use integers for all labels
+        this.ctx.fillText(
           (sign > 0 ? "" : "-") + fmtVol(absV),
           this.padding.l - 8,
           screenY,
@@ -224,25 +231,26 @@ export class OrderBookPlotter {
     const x0 = new DOMPoint(0, 0).matrixTransform(dataToScreen).x;
     const x1 = new DOMPoint(1, 0).matrixTransform(dataToScreen).x;
 
-    ctx.fillStyle = theme.text;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.fillText("0", x0, this.padding.t + cH + 8);
-    ctx.fillText("1", x1, this.padding.t + cH + 8);
+    this.ctx.fillStyle = theme.text;
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "top";
+    this.ctx.fillText("0", x0, this.padding.t + chart.height + 8);
+    this.ctx.fillText("1", x1, this.padding.t + chart.height + 8);
   }
 
   drawCurve(fc: FrameContext, book: EventBook<unknown>, color: string) {
-    const { ctx, dataToScreen } = fc;
+    // TODO: Make the lines not go out of the chart box
+    const { dataToScreen } = fc;
+
     const depth = new MarketCurve(book, dataToScreen);
 
-    ctx.save();
+    this.ctx.save();
 
-    ctx.beginPath();
-    ctx.strokeStyle = color; // Expecting HSLA string or HEX
-    // ctx.fillStyle = "red"; // Expecting HSLA string or HEX
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.lineWidth = 3;
+    this.ctx.beginPath();
+    this.ctx.strokeStyle = color; // Expecting HSLA string or HEX
+    this.ctx.lineJoin = "round";
+    this.ctx.lineCap = "round";
+    this.ctx.lineWidth = 3;
 
     const end = new DOMPoint(1, 0).matrixTransform(dataToScreen);
 
@@ -251,11 +259,11 @@ export class OrderBookPlotter {
     if (depth.buy.length) current.y = depth.buy[0].y;
 
     for (const point of depth.buy) {
-      ctx.lineTo(point.x, current.y); // Horizontal to the next price
-      ctx.lineTo(point.x, point.y); // Vertical drop to the lower volume
+      this.ctx.lineTo(point.x, current.y); // Horizontal to the next price
+      this.ctx.lineTo(point.x, point.y); // Vertical drop to the lower volume
       current = point;
     }
-    ctx.lineTo(current.x, end.y); // Horizontal to the next price
+    this.ctx.lineTo(current.x, end.y); // Horizontal to the next price
 
     current = depth.sell.length ? depth.sell[0] : end;
     this.ctx.lineTo(current.x, end.y);
@@ -266,26 +274,24 @@ export class OrderBookPlotter {
       this.ctx.lineTo(point.x, current.y);
     }
 
-    ctx.stroke();
-    ctx.restore();
+    this.ctx.stroke();
+    this.ctx.restore();
   }
 
-  drawPointer(fc: FrameContext, config: RenderFrameConfig) {
-    if (!config.pointer) return;
-
-    const { ctx, theme, cH } = fc;
-    const { screen, data } = config.pointer;
+  drawPointer(fc: FrameContext, pointer: Pointer) {
+    const { theme, chart } = fc;
+    const { screen, data } = pointer;
     const { width, height } = this.canvas;
 
     // 1. Crosshairs
-    ctx.strokeStyle = theme.axis;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(screen.x, this.padding.t);
-    ctx.lineTo(screen.x, this.padding.t + cH);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    this.ctx.strokeStyle = theme.axis;
+    this.ctx.lineWidth = 1;
+    this.ctx.setLineDash([4, 4]);
+    this.ctx.beginPath();
+    this.ctx.moveTo(screen.x, this.padding.t);
+    this.ctx.lineTo(screen.x, this.padding.t + chart.height);
+    this.ctx.stroke();
+    this.ctx.setLineDash([]);
 
     // 2. Pure Canvas Tooltip Box
     const boxW = 110;
@@ -300,21 +306,30 @@ export class OrderBookPlotter {
     if (boxY + boxH > height - this.padding.b) boxY = screen.y - boxH - offset;
 
     // Draw Box
-    ctx.fillStyle = theme.bg;
-    ctx.fillRect(boxX, boxY, boxW, boxH);
-    ctx.strokeStyle = theme.axis;
-    ctx.strokeRect(boxX, boxY, boxW, boxH);
+    this.ctx.fillStyle = theme.bg;
+    this.ctx.fillRect(boxX, boxY, boxW, boxH);
+    this.ctx.strokeStyle = theme.axis;
+    this.ctx.strokeRect(boxX, boxY, boxW, boxH);
 
+    // TODO: This text looks like shit
     // Draw Text inside box
-    ctx.fillStyle = theme.text;
-    ctx.font = "12px sans-serif";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(`Price: ${data.x.toFixed(3)}`, boxX + 8, boxY + 8);
-    ctx.fillText(`Vol:   ${fmtVol(Math.abs(data.y))}`, boxX + 8, boxY + 22);
+    this.ctx.fillStyle = theme.text;
+    this.ctx.font = "12px sans-serif";
+    this.ctx.textAlign = "left";
+    this.ctx.textBaseline = "top";
+    this.ctx.fillText(`Price: ${data.x.toFixed(3)}`, boxX + 8, boxY + 8);
+    this.ctx.fillText(
+      `Vol:   ${fmtVol(Math.abs(data.y))}`,
+      boxX + 8,
+      boxY + 22,
+    );
 
     // Bottom Axis Price Label
-    ctx.textAlign = "center";
-    ctx.fillText(data.x.toFixed(2), screen.x, this.padding.t + cH + 8);
+    this.ctx.textAlign = "center";
+    this.ctx.fillText(
+      data.x.toFixed(2),
+      screen.x,
+      this.padding.t + chart.height + 8,
+    );
   }
 }
