@@ -1,4 +1,4 @@
-import { FullOrderBook } from "./orderBook";
+import { EventBook } from "./orderBook";
 import { fmtVol, powerOf10Ticks } from "./math";
 
 // --- 1. Interfaces ---
@@ -26,26 +26,26 @@ export interface FrameContext {
   theme: ChartTheme;
 }
 
-interface DepthPoint {
-  price: number;
-  total: number;
-}
-
 export class MarketCurve {
-  asks: DepthPoint[] = [];
-  bids: DepthPoint[] = [];
+  sell: DOMPoint[] = [];
+  buy: DOMPoint[] = [];
 
-  constructor(book: FullOrderBook<unknown>) {
+  constructor(book: EventBook<unknown>, transform: DOMMatrix) {
     let total = 0;
-    for (const level of book.asks.entriesAscending()) {
-      total += level.volume;
-      this.asks.push({ price: level.price, total });
+    // this.sell.push(transform.transformPoint(new DOMPoint(0, total)));
+    for (const level of book.usdToYes.entriesDescending()) {
+      total += level.value / level.price;
+      this.buy.push(transform.transformPoint(new DOMPoint(level.price, total)));
     }
+    this.buy.push(transform.transformPoint(new DOMPoint(0, total)));
     total = 0;
-    for (const level of book.bids.entriesAscending()) {
-      total += level.volume;
-      this.bids.push({ price: 1 - level.price, total });
+    for (const level of book.yesToUsd.toInversePerspective()) {
+      total -= level.value / level.price;
+      this.sell.push(
+        transform.transformPoint(new DOMPoint(level.price, total)),
+      );
     }
+    this.sell.push(transform.transformPoint(new DOMPoint(1, total)));
   }
 }
 
@@ -138,10 +138,10 @@ export class OrderBookPlotter {
     }
 
     // 2. Math Setup
-    const width = this.canvas.width;
-    const height = this.canvas.height;
+    const { width, height } = this.canvas;
     const cW = width - this.padding.l - this.padding.r;
     const cH = height - this.padding.t - this.padding.b;
+
     // TODO: Instead of passing config.volZoom, pass the y-range
     const yAbsMax = Math.pow(10, config.volZoom);
 
@@ -151,7 +151,6 @@ export class OrderBookPlotter {
     const dataToScreen = new DOMMatrix()
       .translateSelf(this.padding.l, this.padding.t + cH / 2)
       .scaleSelf(scaleX, -scaleY);
-
     this.latestScreenToData = dataToScreen.inverse();
 
     // 4. Reset & Clear
@@ -229,51 +228,52 @@ export class OrderBookPlotter {
     ctx.fillText("1", x1, this.padding.t + cH + 8);
   }
 
-  drawCurve(fc: FrameContext, book: FullOrderBook<unknown>, color: string) {
+  drawCurve(fc: FrameContext, book: EventBook<unknown>, color: string) {
     const { ctx, dataToScreen } = fc;
-    const depth = new MarketCurve(book);
+    const depth = new MarketCurve(book, dataToScreen);
 
     ctx.save();
-    ctx.setTransform(dataToScreen);
 
     ctx.beginPath();
     ctx.strokeStyle = color; // Expecting HSLA string or HEX
+    // ctx.fillStyle = "red"; // Expecting HSLA string or HEX
     ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.lineWidth = 3;
 
-    // Scale line width inverse to the matrix so it stays 2px visually
-    const scaleY = Math.abs(dataToScreen.d);
-    ctx.lineWidth = 2 / scaleY;
+    const start = new DOMPoint(1, 0).matrixTransform(dataToScreen);
+    const end = new DOMPoint(0, 0).matrixTransform(dataToScreen);
 
-    const bidStart = depth.bids.length ? depth.bids[0].total : 0;
-    this.drawDepthStair(depth.bids, 0, 1, bidStart);
+    // TODO: debug draw:
+    // ctx.rect(0.0, 0, 0.0, 1000);
+    // ctx.rect(start.x, start.y, size.x - start.x, size.y - start.y);
 
-    const askStart = 0;
-    this.drawDepthStair(depth.asks, 0, 1, askStart);
+    depth.buy.reverse();
+    let current = depth.buy.length ? depth.buy[0] : start;
+
+    this.ctx.moveTo(current.x, current.y);
+    // this.drawDepthStair(depth.buy, bidStart);
+    // console.debug({ depth });
+    for (const point of depth.buy) {
+      this.ctx.lineTo(point.x, current.y);
+      current = point;
+      this.ctx.lineTo(point.x, current.y);
+    }
+    this.ctx.lineTo(current.x, start.y);
+
+    // this.ctx.stroke();
+    // this.ctx.beginPath();
+    current = depth.sell.length ? depth.sell[0] : start;
+    this.ctx.lineTo(current.x, start.y);
+
+    for (const point of depth.sell) {
+      this.ctx.lineTo(point.x, current.y);
+      current = point;
+      this.ctx.lineTo(point.x, current.y);
+    }
 
     ctx.stroke();
     ctx.restore();
-  }
-
-  private drawDepthStair(
-    points: DepthPoint[],
-    startX: number,
-    endX: number,
-    startY: number,
-  ) {
-    if (!points.length) {
-      this.ctx.moveTo(startX, startY);
-      this.ctx.lineTo(endX, startY);
-      return;
-    }
-    this.ctx.moveTo(startX, startY);
-    this.ctx.lineTo(points[0].price, startY);
-    let y = startY;
-    for (const point of points) {
-      this.ctx.lineTo(point.price, y);
-      y = point.total;
-      this.ctx.lineTo(point.price, y);
-    }
-    this.ctx.lineTo(endX, y);
   }
 
   drawPointer(fc: FrameContext, config: RenderFrameConfig) {

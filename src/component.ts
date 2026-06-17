@@ -1,5 +1,5 @@
 import { fmtVol, hslColor } from "@/lib/math";
-import { FullOrderBook, OrderBook } from "@/lib/orderBook";
+import { EventBook, OrderBook } from "@/lib/orderBook";
 import {
   FrameContext,
   OrderBookPlotter,
@@ -46,17 +46,19 @@ const DARK_THEME: ChartTheme = {
 export class PolymarketCPV {
   polyMarketClient = createPublicClient();
 
+  private theme: ChartTheme;
+  private themeQuery: MediaQueryList;
   private container: HTMLElement;
   private refs!: Record<string, HTMLElement>;
   private plotter!: OrderBookPlotter;
 
   private markets: Market[] = [];
-  private activeMarkets = new Set<number>();
-  private books: Record<string, FullOrderBook<string>> = {};
+  private activeTokens = new Set<TokenId>();
+  private books: Record<string, EventBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private raf: number | null = null;
   // private userOrders: UserOrder[] = [];
-  private volZoom = 3.5;
+  private volZoom = 4.5;
   private searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
   private handleDocumentClick = (e: MouseEvent) => {
@@ -68,7 +70,19 @@ export class PolymarketCPV {
     this.container = container;
     this.buildDOM();
     this.bindEvents();
+
+    // 1. Setup system theme listener
+    this.themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    this.theme = this.themeQuery.matches ? DARK_THEME : LIGHT_THEME;
+
+    // 2. Listen for OS-level toggles
+    this.themeQuery.addEventListener("change", this.handleThemeChange);
   }
+
+  private handleThemeChange = (e: MediaQueryListEvent) => {
+    this.theme = e.matches ? DARK_THEME : LIGHT_THEME;
+    this.reqDraw(); // Force a redraw immediately
+  };
 
   private buildDOM() {
     this.container.classList.add("cpv-wrap");
@@ -114,7 +128,7 @@ export class PolymarketCPV {
   }
 
   private bindEvents() {
-    const { searchInput, dropdown, canvasWrap } = this.refs;
+    const { searchInput, dropdown, canvasWrap, canvas } = this.refs;
 
     (searchInput as HTMLInputElement).addEventListener("input", () =>
       this.onSearchInput(),
@@ -133,10 +147,18 @@ export class PolymarketCPV {
       "wheel",
       (e) => {
         e.preventDefault();
-        let delta = e.deltaY;
-        if (e.deltaMode === 1) delta *= 16;
-        else if (e.deltaMode === 2) delta *= 100;
-        this.volZoom = Math.max(0, this.volZoom + delta * 0.002);
+        let delta = e.deltaY * 0.002;
+        // Handle different wheel modes (pixels, lines, pages)
+        if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+          const computedLineHeight =
+            parseFloat(getComputedStyle(canvasWrap).lineHeight) || 16;
+          const lineHeight = window.devicePixelRatio * computedLineHeight;
+          delta *= lineHeight;
+        } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+          // Use the container's height for a "page" scroll, or window.innerHeight
+          delta *= canvas.clientHeight;
+        }
+        this.volZoom = this.volZoom + delta;
         this.reqDraw();
       },
       { passive: false },
@@ -150,7 +172,7 @@ export class PolymarketCPV {
 
     this.books = {};
     this.markets = [];
-    this.activeMarkets.clear();
+    this.activeTokens.clear();
     // this.userOrders = [];
 
     (this.refs.title as HTMLElement).textContent = event.title ?? "(untitled)";
@@ -182,6 +204,7 @@ export class PolymarketCPV {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.plotter.destroy();
     this.container.innerHTML = "";
+    this.themeQuery.removeEventListener("change", this.handleThemeChange);
     this.container.classList.remove("cpv-wrap");
     document.removeEventListener("click", this.handleDocumentClick);
   }
@@ -193,7 +216,10 @@ export class PolymarketCPV {
 
     // this.markets.forEach((m, i) => {
     for (const [i, market] of this.markets.entries()) {
-      this.activeMarkets.add(i);
+      const yesToken = market.outcomes.yes.tokenId;
+      if (!yesToken) continue;
+
+      this.activeTokens.add(yesToken);
 
       const lbl = document.createElement("label");
       const cb = document.createElement("input");
@@ -201,7 +227,9 @@ export class PolymarketCPV {
       cb.type = "checkbox";
       cb.checked = true;
       cb.addEventListener("change", () => {
-        cb.checked ? this.activeMarkets.add(i) : this.activeMarkets.delete(i);
+        cb.checked
+          ? this.activeTokens.add(yesToken)
+          : this.activeTokens.delete(yesToken);
         this.reqDraw();
       });
 
@@ -294,26 +322,12 @@ export class PolymarketCPV {
     const state = this.toPlotState();
     const frameCtx = this.plotter.beginFrame(state);
     this.plotter.drawAxes(frameCtx);
-    // this.markets
-    //   .map((m) => {
-    //     const yesToken = m.outcomes.yes.tokenId;
-    //     if (!yesToken) return null;
-    //     return {
-    //       groupItemTitle: m.id ?? m.slug ?? "(untitled)",
-    //       clobTokenIds: [yesToken],
-    //       endDate: (m as any).endDate ?? "",
-    //     } as MarketInfo;
-    //   })
-    //   .filter((m): m is MarketInfo => m !== null);
 
-    for (const market of this.markets) {
-      const yesToken = market.outcomes.yes.tokenId;
-      if (!yesToken) continue;
-      const book = this.books[yesToken];
-      // TODO: Do we need to handle both book and noToken here?
-      if (!book) continue;
-
-      this.plotter.drawCurve(frameCtx, book, this.tokenColor(yesToken));
+    for (const tokenId of this.activeTokens) {
+      const book = this.books[tokenId]!;
+      if (!book)
+        console.error(`Could not find book for ${tokenId}:`, this.books);
+      this.plotter.drawCurve(frameCtx, book, this.tokenColor(tokenId));
     }
 
     // this.plotter.drawPointer();
@@ -326,17 +340,20 @@ export class PolymarketCPV {
   private async readEvents(events: SubscriptionHandle<MarketEvent>) {
     for await (const stream of events) {
       if (stream.type === "book") {
-        const asks = new OrderBook<string>();
-        for (const a of stream.payload.asks) {
-          asks.insertOrder(a.price, parseFloat(a.price), parseFloat(a.size));
-        }
-
-        const bids = new OrderBook<string>();
+        const usdToYes = new OrderBook<string>();
         for (const b of stream.payload.bids) {
-          bids.insertOrder(b.price, parseFloat(b.price), parseFloat(b.size));
+          const price = parseFloat(b.price);
+          usdToYes.insertOrder(b.price, price, parseFloat(b.size) * price);
         }
 
-        this.books[stream.payload.tokenId] = new FullOrderBook(asks, bids);
+        const yesToUsd = new OrderBook<string>();
+        for (const a of stream.payload.asks) {
+          const price = 1 / parseFloat(a.price);
+          // TODO: Should this be a multiply or divide?
+          yesToUsd.insertOrder(a.price, price, parseFloat(a.size));
+        }
+
+        this.books[stream.payload.tokenId] = new EventBook(usdToYes, yesToUsd);
       } else if (stream.type === "price_change") {
         for (const priceChange of stream.payload.priceChanges) {
           const book = this.books[priceChange.tokenId];
@@ -347,13 +364,15 @@ export class PolymarketCPV {
             continue;
           }
 
-          const { side, price, size } = priceChange;
+          const { side, price: id, size } = priceChange;
+          const price = parseFloat(id);
           if (side === OrderSide.BUY)
-            book.asks.insertOrder(price, parseFloat(price), parseFloat(size));
-          else
-            book.bids.insertOrder(price, parseFloat(price), parseFloat(size));
+            book.usdToYes.insertOrder(id, price, parseFloat(size) * price);
+          else book.yesToUsd.insertOrder(id, 1 / price, parseFloat(size));
         }
-      }
+      } else continue;
+
+      this.reqDraw();
     }
   }
 

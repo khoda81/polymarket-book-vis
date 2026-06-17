@@ -1,8 +1,8 @@
 export interface BookOrder {
-  /** How much "money" per 1 "item" */
+  /** Amount of get over amount of give */
   price: number;
-  /** How much "money" are we swapping */
-  volume: number;
+  /** Amount of get */
+  value: number;
 }
 
 /**
@@ -32,7 +32,7 @@ export class OrderBook<OrderKey> {
    */
   getBestOrder(): BookOrder {
     const order = this.index.get(this.orders[0]);
-    return order ? order : { price: 0, volume: 0 };
+    return order ? order : { price: 0, value: 0 };
   }
 
   /**
@@ -49,7 +49,7 @@ export class OrderBook<OrderKey> {
     }
 
     const insertIdx = this.findInsertIndex(price);
-    const step: BookOrder = { price, volume };
+    const step: BookOrder = { price, value: volume };
 
     this.orders.splice(insertIdx, 0, key);
     this.index.set(key, step);
@@ -65,7 +65,7 @@ export class OrderBook<OrderKey> {
 
     const existing = this.index.get(key);
     if (!existing) return false;
-    existing.volume = volume;
+    existing.value = volume;
     return true;
   }
 
@@ -83,19 +83,20 @@ export class OrderBook<OrderKey> {
     return this.index.get(key);
   }
 
-  entriesAscending(): BookOrder[] {
+  entriesDescending(): BookOrder[] {
     return this.orders
       .map((key) => this.index.get(key))
       .filter((order): order is BookOrder => order !== undefined)
-      .map((order) => ({ ...order }));
+      .map((order) => ({ ...order }))
+      .reverse();
   }
 
   /**
    * Flips the market perspective (e.g., from YES/NO to NO/YES).
    * The old "Money" becomes the new "Item".
    */
-  toInversePerspective(): OrderBook<OrderKey> {
-    const inverted = new OrderBook<OrderKey>();
+  toInversePerspective(): BookOrder[] {
+    const inverted = [];
 
     for (const key of this.orders) {
       const order = this.getOrder(key);
@@ -105,13 +106,12 @@ export class OrderBook<OrderKey> {
       const invertedPrice = 1 / order.price;
 
       // New Volume: The total old items involved in this order
-      const invertedAmount = order.volume / order.price;
+      const invertedValue = order.value * invertedPrice;
 
-      inverted.insertOrder(key, invertedPrice, invertedAmount);
+      inverted.push({ price: invertedPrice, value: invertedValue });
     }
 
-    // Reverse the order to maintain the correct order in the inverted book
-    inverted.orders.reverse();
+    inverted.reverse();
 
     return inverted;
   }
@@ -133,16 +133,11 @@ export class OrderBook<OrderKey> {
   }
 }
 
-export class FullOrderBook<OrderKey> {
+export class EventBook<OrderKey> {
   constructor(
-    public asks: OrderBook<OrderKey>,
-    public bids: OrderBook<OrderKey>,
+    /** The order book for Give USD, Get YES */
+    public usdToYes: OrderBook<OrderKey>,
+    /** The order book for Give YES, Get USD */
+    public yesToUsd: OrderBook<OrderKey>,
   ) {}
-
-  toInversePerspective(): FullOrderBook<OrderKey> {
-    return new FullOrderBook(
-      this.bids.toInversePerspective(),
-      this.asks.toInversePerspective(),
-    );
-  }
 }
