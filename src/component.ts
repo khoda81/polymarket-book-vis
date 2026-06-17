@@ -1,4 +1,4 @@
-import { fmtVol, hslColor } from "@/lib/math";
+import { fmtVol, idToColor } from "@/lib/math";
 import { EventBook, BuyOrders } from "@/lib/orderBook";
 import {
   FrameContext,
@@ -13,6 +13,7 @@ import {
   OrderSide,
   TokenId,
   GammaMarket,
+  TransportError,
 } from "@polymarket/client";
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
 
@@ -179,18 +180,29 @@ export class PolymarketCPV {
       event.slug ?? "(untitled)";
     (this.refs.dropdown as HTMLElement).style.display = "none";
 
+    if (event.display.sortBy === "descending") {
+      event.markets.sort((a, b) => b.id.localeCompare(a.id));
+    } else {
+      event.markets.sort((a, b) => a.id.localeCompare(b.id));
+    }
     this.markets = event.markets.filter((m) => !m.state.closed);
 
     this.buildToggles();
-    // TODO: Sort markets based on event.display.sortBy === "ascending";
-    this.bookEventStream = await this.polyMarketClient.subscribe([
-      {
-        topic: "market",
-        tokenIds: this.markets
-          .map((m) => m.outcomes.yes.tokenId)
-          .filter((t) => t !== null),
-      },
-    ]);
+    for (;;)
+      try {
+        this.bookEventStream = await this.polyMarketClient.subscribe([
+          {
+            topic: "market",
+            tokenIds: this.markets
+              .map((m) => m.outcomes.yes.tokenId)
+              .filter((t) => t !== null),
+          },
+        ]);
+        break;
+      } catch (err) {
+        if (!(err instanceof TransportError)) throw err;
+        console.error("Error connecting to websocket, retrying");
+      }
 
     this.readEvents(this.bookEventStream);
     this.setDot(ConnectionStatus.Live);
@@ -235,7 +247,7 @@ export class PolymarketCPV {
       const dot = document.createElement("span");
       const tokenId = market.outcomes.yes.tokenId;
       if (!tokenId) continue;
-      const color = this.tokenColor(tokenId);
+      const color = this.tokenColor(i);
       dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
 
       lbl.appendChild(cb);
@@ -322,19 +334,33 @@ export class PolymarketCPV {
     const frameCtx = this.plotter.beginFrame(state);
     this.plotter.drawAxes(frameCtx);
 
-    for (const tokenId of this.activeTokens) {
+    // Draw user line:
+    this.plotter.drawCurve(
+      frameCtx,
+      new EventBook(new BuyOrders<string>(), new BuyOrders<string>()),
+      "white",
+    );
+
+    for (const [i, market] of this.markets.entries()) {
+      const tokenId = market.outcomes.yes.tokenId;
+
+      if (tokenId === null) continue;
+      if (!this.activeTokens.has(tokenId)) continue;
+
       const book =
         this.books[tokenId] ??
         new EventBook(new BuyOrders<string>(), new BuyOrders<string>());
 
-      this.plotter.drawCurve(frameCtx, book, this.tokenColor(tokenId));
+      this.plotter.drawCurve(frameCtx, book, this.tokenColor(i));
     }
-
-    // this.plotter.drawPointer();
   }
 
-  private tokenColor(yesToken: TokenId): string {
-    return hslColor(BigInt(yesToken));
+  private tokenColor(id: number): string {
+    const tokenId = BigInt(id);
+    const PRIME = 2147483647n;
+    const color = idToColor(Number(tokenId % PRIME));
+    console.debug({ yesToken: id, color, id: Number(tokenId % PRIME) });
+    return color;
   }
 
   private async readEvents(events: SubscriptionHandle<MarketEvent>) {
@@ -357,12 +383,7 @@ export class PolymarketCPV {
       } else if (stream.type === "price_change") {
         for (const priceChange of stream.payload.priceChanges) {
           const book = this.books[priceChange.tokenId];
-          if (!book) {
-            // console.warn(
-            //   `Received price change for unknown tokenId: ${priceChange.tokenId}`,
-            // );
-            continue;
-          }
+          if (!book) continue;
 
           const { side, price: tick, size } = priceChange;
           const price = parseFloat(tick);
@@ -374,6 +395,8 @@ export class PolymarketCPV {
 
       this.reqDraw();
     }
+
+    this.setDot(ConnectionStatus.Error);
   }
 
   private placeOrder(point: DOMPoint) {

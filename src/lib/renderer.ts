@@ -240,10 +240,10 @@ export class OrderBookPlotter {
     ctx.lineCap = "round";
     ctx.lineWidth = 3;
 
-    const start = new DOMPoint(1, 0).matrixTransform(dataToScreen);
+    const end = new DOMPoint(1, 0).matrixTransform(dataToScreen);
 
     depth.buy.reverse();
-    let current = { ...start };
+    let current = { ...end };
     if (depth.buy.length) current.y = depth.buy[0].y;
 
     for (const point of depth.buy) {
@@ -251,10 +251,10 @@ export class OrderBookPlotter {
       ctx.lineTo(point.x, point.y); // Vertical drop to the lower volume
       current = point;
     }
-    ctx.lineTo(current.x, start.y); // Horizontal to the next price
+    ctx.lineTo(current.x, end.y); // Horizontal to the next price
 
-    current = depth.sell.length ? depth.sell[0] : start;
-    this.ctx.lineTo(current.x, start.y);
+    current = depth.sell.length ? depth.sell[0] : end;
+    this.ctx.lineTo(current.x, end.y);
 
     for (const point of depth.sell) {
       this.ctx.lineTo(point.x, current.y);
