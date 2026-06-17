@@ -18,7 +18,7 @@ export interface BookOrder {
  * book without needing custom bidirectional sorting logic.
  * * @typeParam OrderKey - The unique identifier type for an order (e.g., string ID).
  */
-export class OrderBook<OrderKey> {
+export class BuyOrders<OrderKey> {
   private orders: OrderKey[] = [];
   private index = new Map<OrderKey, BookOrder>();
 
@@ -28,28 +28,24 @@ export class OrderBook<OrderKey> {
   }
 
   /**
-   * Returns the best order in the book, or null order if the book is empty.
-   */
-  getBestOrder(): BookOrder {
-    const order = this.index.get(this.orders[0]);
-    return order ? order : { price: 0, value: 0 };
-  }
-
-  /**
    * Insert or replace an order. if the key already exists, it is removed first.
    */
-  insertOrder(key: OrderKey, price: number, volume: number): boolean {
+  insertBid(key: OrderKey, price: number, value: number): boolean {
     const existing = this.index.get(key);
 
     if (existing) {
-      if (existing.price === price) {
-        return this.updateVolume(key, volume);
-      }
+      if (existing.price === price) return this.updateVolume(key, value);
+      console.warn(
+        `Modifyin price of an existing order: `,
+        existing,
+        `to`,
+        price,
+      );
       this.removeOrder(key);
     }
 
     const insertIdx = this.findInsertIndex(price);
-    const step: BookOrder = { price, value: volume };
+    const step: BookOrder = { price, value: value };
 
     this.orders.splice(insertIdx, 0, key);
     this.index.set(key, step);
@@ -83,19 +79,16 @@ export class OrderBook<OrderKey> {
     return this.index.get(key);
   }
 
-  entriesDescending(): BookOrder[] {
+  ordersDescending(): [OrderKey, BookOrder][] {
     return this.orders
-      .map((key) => this.index.get(key))
-      .filter((order): order is BookOrder => order !== undefined)
-      .map((order) => ({ ...order }))
-      .reverse();
+      .toReversed()
+      .map((key) => [key, { ...this.index.get(key)! }]);
   }
 
   /**
-   * Flips the market perspective (e.g., from YES/NO to NO/YES).
-   * The old "Money" becomes the new "Item".
+   * Flips the market perspective. The old "Base" becomes the new "Quote".
    */
-  toInversePerspective(): BookOrder[] {
+  asSellOrders(): BookOrder[] {
     const inverted = [];
 
     for (const key of this.orders) {
@@ -136,8 +129,8 @@ export class OrderBook<OrderKey> {
 export class EventBook<OrderKey> {
   constructor(
     /** The order book for Give USD, Get YES */
-    public usdToYes: OrderBook<OrderKey>,
+    public usdToYes: BuyOrders<OrderKey>,
     /** The order book for Give YES, Get USD */
-    public yesToUsd: OrderBook<OrderKey>,
+    public yesToUsd: BuyOrders<OrderKey>,
   ) {}
 }

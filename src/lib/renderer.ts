@@ -32,14 +32,13 @@ export class MarketCurve {
 
   constructor(book: EventBook<unknown>, transform: DOMMatrix) {
     let total = 0;
-    // this.sell.push(transform.transformPoint(new DOMPoint(0, total)));
-    for (const level of book.usdToYes.entriesDescending()) {
+    for (const [_id, level] of book.usdToYes.ordersDescending()) {
       total += level.value / level.price;
       this.buy.push(transform.transformPoint(new DOMPoint(level.price, total)));
     }
     this.buy.push(transform.transformPoint(new DOMPoint(0, total)));
     total = 0;
-    for (const level of book.yesToUsd.toInversePerspective()) {
+    for (const level of book.yesToUsd.asSellOrders()) {
       total -= level.value / level.price;
       this.sell.push(
         transform.transformPoint(new DOMPoint(level.price, total)),
@@ -242,27 +241,18 @@ export class OrderBookPlotter {
     ctx.lineWidth = 3;
 
     const start = new DOMPoint(1, 0).matrixTransform(dataToScreen);
-    const end = new DOMPoint(0, 0).matrixTransform(dataToScreen);
-
-    // TODO: debug draw:
-    // ctx.rect(0.0, 0, 0.0, 1000);
-    // ctx.rect(start.x, start.y, size.x - start.x, size.y - start.y);
 
     depth.buy.reverse();
-    let current = depth.buy.length ? depth.buy[0] : start;
+    let current = { ...start };
+    if (depth.buy.length) current.y = depth.buy[0].y;
 
-    this.ctx.moveTo(current.x, current.y);
-    // this.drawDepthStair(depth.buy, bidStart);
-    // console.debug({ depth });
     for (const point of depth.buy) {
-      this.ctx.lineTo(point.x, current.y);
+      ctx.lineTo(point.x, current.y); // Horizontal to the next price
+      ctx.lineTo(point.x, point.y); // Vertical drop to the lower volume
       current = point;
-      this.ctx.lineTo(point.x, current.y);
     }
-    this.ctx.lineTo(current.x, start.y);
+    ctx.lineTo(current.x, start.y); // Horizontal to the next price
 
-    // this.ctx.stroke();
-    // this.ctx.beginPath();
     current = depth.sell.length ? depth.sell[0] : start;
     this.ctx.lineTo(current.x, start.y);
 

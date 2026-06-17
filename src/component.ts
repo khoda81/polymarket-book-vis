@@ -1,5 +1,5 @@
 import { fmtVol, hslColor } from "@/lib/math";
-import { EventBook, OrderBook } from "@/lib/orderBook";
+import { EventBook, BuyOrders } from "@/lib/orderBook";
 import {
   FrameContext,
   OrderBookPlotter,
@@ -166,7 +166,6 @@ export class PolymarketCPV {
   }
 
   async load(event: Event) {
-    console.log(event);
     await this.closeWS();
     this.setDot(ConnectionStatus.Connecting);
 
@@ -324,9 +323,10 @@ export class PolymarketCPV {
     this.plotter.drawAxes(frameCtx);
 
     for (const tokenId of this.activeTokens) {
-      const book = this.books[tokenId]!;
-      if (!book)
-        console.error(`Could not find book for ${tokenId}:`, this.books);
+      const book =
+        this.books[tokenId] ??
+        new EventBook(new BuyOrders<string>(), new BuyOrders<string>());
+
       this.plotter.drawCurve(frameCtx, book, this.tokenColor(tokenId));
     }
 
@@ -340,17 +340,17 @@ export class PolymarketCPV {
   private async readEvents(events: SubscriptionHandle<MarketEvent>) {
     for await (const stream of events) {
       if (stream.type === "book") {
-        const usdToYes = new OrderBook<string>();
+        const usdToYes = new BuyOrders<string>();
         for (const b of stream.payload.bids) {
           const price = parseFloat(b.price);
-          usdToYes.insertOrder(b.price, price, parseFloat(b.size) * price);
+          usdToYes.insertBid(b.price, price, parseFloat(b.size) * price);
         }
 
-        const yesToUsd = new OrderBook<string>();
+        const yesToUsd = new BuyOrders<string>();
         for (const a of stream.payload.asks) {
           const price = 1 / parseFloat(a.price);
           // TODO: Should this be a multiply or divide?
-          yesToUsd.insertOrder(a.price, price, parseFloat(a.size));
+          yesToUsd.insertBid(a.price, price, parseFloat(a.size));
         }
 
         this.books[stream.payload.tokenId] = new EventBook(usdToYes, yesToUsd);
@@ -364,11 +364,11 @@ export class PolymarketCPV {
             continue;
           }
 
-          const { side, price: id, size } = priceChange;
-          const price = parseFloat(id);
+          const { side, price: tick, size } = priceChange;
+          const price = parseFloat(tick);
           if (side === OrderSide.BUY)
-            book.usdToYes.insertOrder(id, price, parseFloat(size) * price);
-          else book.yesToUsd.insertOrder(id, 1 / price, parseFloat(size));
+            book.usdToYes.insertBid(tick, price, parseFloat(size) * price);
+          else book.yesToUsd.insertBid(tick, 1 / price, parseFloat(size));
         }
       } else continue;
 
