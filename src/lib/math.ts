@@ -19,8 +19,8 @@ export function powerOf10Ticks(yMax: number, targetCount = 5): number[] {
   return ticks;
 }
 
-export function hslColor(idx: number): string {
-  const hue = (idx * 137.5) % 360;
+export function hslColor(idx: bigint): string {
+  const hue = (idx * BigInt(275)) % 360n;
   return `hsl(${hue}, 70%, 50%)`;
 }
 

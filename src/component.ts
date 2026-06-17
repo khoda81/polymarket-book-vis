@@ -1,9 +1,9 @@
 import { fmtVol, hslColor } from "@/lib/math";
 import { FullOrderBook, OrderBook } from "@/lib/orderBook";
 import {
+  FrameContext,
   OrderBookPlotter,
-  type PlotFrameConfig,
-  type MarketInfo,
+  RenderFrameConfig,
 } from "@/lib/renderer";
 import "@/styles/component.css";
 import {
@@ -11,6 +11,8 @@ import {
   Market,
   Event,
   OrderSide,
+  TokenId,
+  GammaMarket,
 } from "@polymarket/client";
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
 
@@ -107,11 +109,8 @@ export class PolymarketCPV {
       this.refs[(el as HTMLElement).dataset.ref!] = el as HTMLElement;
     });
 
-    this.plotter = new OrderBookPlotter(
-      this.refs.canvas as HTMLCanvasElement,
-      this.refs.overlay as HTMLDivElement,
-      () => this.reqDraw(),
-    );
+    this.plotter = new OrderBookPlotter(this.refs.canvas as HTMLCanvasElement);
+    this.plotter.onZoom = (_delta) => this.reqDraw();
   }
 
   private bindEvents() {
@@ -145,6 +144,7 @@ export class PolymarketCPV {
   }
 
   async load(event: Event) {
+    console.log(event);
     await this.closeWS();
     this.setDot(ConnectionStatus.Connecting);
 
@@ -161,6 +161,7 @@ export class PolymarketCPV {
     this.markets = event.markets.filter((m) => !m.state.closed);
 
     this.buildToggles();
+    // TODO: Sort markets based on event.display.sortBy === "ascending";
     this.bookEventStream = await this.polyMarketClient.subscribe([
       {
         topic: "market",
@@ -190,12 +191,13 @@ export class PolymarketCPV {
     const container = this.refs.toggles as HTMLElement;
     container.innerHTML = "";
 
-    this.markets.forEach((m, i) => {
+    // this.markets.forEach((m, i) => {
+    for (const [i, market] of this.markets.entries()) {
       this.activeMarkets.add(i);
 
       const lbl = document.createElement("label");
-
       const cb = document.createElement("input");
+
       cb.type = "checkbox";
       cb.checked = true;
       cb.addEventListener("change", () => {
@@ -204,13 +206,16 @@ export class PolymarketCPV {
       });
 
       const dot = document.createElement("span");
-      dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${hslColor(i)}`;
+      const tokenId = market.outcomes.yes.tokenId;
+      if (!tokenId) continue;
+      const color = this.tokenColor(tokenId);
+      dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
 
       lbl.appendChild(cb);
       lbl.appendChild(dot);
-      lbl.append(" " + m.outcomes.yes.label);
+      lbl.append(" " + market.question);
       container.appendChild(lbl);
-    });
+    }
   }
 
   private static readonly STATUS_DISPLAY: Record<
@@ -274,35 +279,48 @@ export class PolymarketCPV {
     this.raf = requestAnimationFrame(() => this.performDraw());
   }
 
-  private toPlotState(): PlotFrameConfig {
-    const markets: MarketInfo[] = this.markets
-      .map((m) => {
-        const yesToken = m.outcomes.yes.tokenId;
-        if (!yesToken) return null;
-        return {
-          groupItemTitle: m.id ?? m.slug ?? "(untitled)",
-          clobTokenIds: [yesToken],
-          endDate: (m as any).endDate ?? "",
-        } as MarketInfo;
-      })
-      .filter((m): m is MarketInfo => m !== null);
-
+  private toPlotState(): RenderFrameConfig {
     return {
-      markets,
-      activeMarkets: new Set(this.activeMarkets),
-      books: this.books,
-      userOrders: [],
       volZoom: this.volZoom,
+      // TODO: Where do we get the theme from?
+      theme: this.theme,
+      // TODO: So we plan to store the pointer in state now?
+      pointer: this.pointer,
     };
   }
 
   private performDraw() {
     this.raf = null;
     const state = this.toPlotState();
-    this.plotter.beginFrame(state);
-    this.plotter.drawAxes();
-    // this.plotter.drawCurves();
+    const frameCtx = this.plotter.beginFrame(state);
+    this.plotter.drawAxes(frameCtx);
+    // this.markets
+    //   .map((m) => {
+    //     const yesToken = m.outcomes.yes.tokenId;
+    //     if (!yesToken) return null;
+    //     return {
+    //       groupItemTitle: m.id ?? m.slug ?? "(untitled)",
+    //       clobTokenIds: [yesToken],
+    //       endDate: (m as any).endDate ?? "",
+    //     } as MarketInfo;
+    //   })
+    //   .filter((m): m is MarketInfo => m !== null);
+
+    for (const market of this.markets) {
+      const yesToken = market.outcomes.yes.tokenId;
+      if (!yesToken) continue;
+      const book = this.books[yesToken];
+      // TODO: Do we need to handle both book and noToken here?
+      if (!book) continue;
+
+      this.plotter.drawCurve(frameCtx, book, this.tokenColor(yesToken));
+    }
+
     // this.plotter.drawPointer();
+  }
+
+  private tokenColor(yesToken: TokenId): string {
+    return hslColor(BigInt(yesToken));
   }
 
   private async readEvents(events: SubscriptionHandle<MarketEvent>) {

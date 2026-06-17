@@ -1,17 +1,29 @@
-import { PAD } from "./constants";
 import { FullOrderBook } from "./orderBook";
-import { fmtVol, hslColor, powerOf10Ticks } from "./math";
-import { o } from "node_modules/@polymarket/client/dist/sports-DNd7kOz2";
+import { fmtVol, powerOf10Ticks } from "./math";
 
-export interface MarketInfo {
-  groupItemTitle: string;
-  clobTokenIds: string[];
-  endDate: string;
+// --- 1. Interfaces ---
+
+export interface ChartTheme {
+  bg: string;
+  grid: string;
+  axis: string;
+  text: string;
 }
 
-interface ScreenPoint {
-  x: number;
-  y: number;
+export interface RenderFrameConfig {
+  theme: ChartTheme;
+  volZoom: number;
+  pointer: { screen: DOMPoint; data: DOMPoint } | null;
+}
+
+export interface FrameContext {
+  ctx: CanvasRenderingContext2D;
+  cW: number;
+  cH: number;
+  yAbsMax: number;
+  dataToScreen: DOMMatrix;
+  screenToData: DOMMatrix;
+  theme: ChartTheme;
 }
 
 interface DepthPoint {
@@ -20,19 +32,15 @@ interface DepthPoint {
 }
 
 export class MarketCurve {
-  asks: DepthPoint[];
-  bids: DepthPoint[];
+  asks: DepthPoint[] = [];
+  bids: DepthPoint[] = [];
 
   constructor(book: FullOrderBook<unknown>) {
-    this.asks = [];
-    this.bids = [];
-
     let total = 0;
     for (const level of book.asks.entriesAscending()) {
       total += level.volume;
       this.asks.push({ price: level.price, total });
     }
-
     total = 0;
     for (const level of book.bids.entriesAscending()) {
       total += level.volume;
@@ -41,107 +49,209 @@ export class MarketCurve {
   }
 }
 
-function toHsla(color: string, alpha: number): string {
-  return color.replace("hsl(", "hsla(").replace(")", `, ${alpha})`);
-}
-
-type Colors = {
-  text: string;
-  grid: string;
-  axis: string;
-};
+// --- 2. The Plotter ---
 
 export class OrderBookPlotter {
   private readonly ctx: CanvasRenderingContext2D;
-  /** The absolute maximum y value for the data. */
-  private pointer: ScreenPoint | null = null;
-  private padding = { l: 60, r: 16, t: 24, b: 24 } as const;
+  private readonly padding = { l: 60, r: 16, t: 24, b: 24 };
 
-  private resizeObserver: ResizeObserver;
+  // Opt-in hooks for the parent
+  public onZoom?: (delta: number) => void;
+  public onHover?: (
+    screenPoint: DOMPoint | null,
+    dataPoint: DOMPoint | null,
+  ) => void;
+
+  // Cached matrix for event handling outside of draw cycle
+  private latestScreenToData: DOMMatrix = new DOMMatrix();
+
   constructor(private readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D canvas context is not available");
     this.ctx = ctx;
 
-    this.resizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      const width = entry.contentRect.width;
-      const height = entry.contentRect.height;
-      const dpr = window.devicePixelRatio || 1;
-
-      this.canvas.width = Math.floor(width * dpr);
-      this.canvas.height = Math.floor(height * dpr);
-
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    });
-
-    this.resizeObserver.observe(this.canvas);
+    // Bind events locally, but pass data up
+    this.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
+    this.canvas.addEventListener("mousemove", this.handleMouseMove);
+    this.canvas.addEventListener("mouseleave", this.handleMouseLeave);
   }
 
   destroy() {
-    this.resizeObserver.disconnect();
+    this.canvas.removeEventListener("wheel", this.handleWheel);
+    this.canvas.removeEventListener("mousemove", this.handleMouseMove);
+    this.canvas.removeEventListener("mouseleave", this.handleMouseLeave);
+    this.onZoom = undefined;
+    this.onHover = undefined;
   }
 
-  private computeDataTransform(yAbsMax: number): DOMMatrix {
-    const width = this.canvas.width - PAD.l - PAD.r;
-    const height = this.canvas.height - PAD.t - PAD.b;
+  screenToDataPoint(point: DOMPoint) {
+    return point.matrixTransform(this.latestScreenToData);
+  }
 
-    const scaleX = width;
-    const scaleY = height / (2 * yAbsMax);
+  // --- Event Handlers ---
+  private handleWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    if (!this.onZoom) return;
 
+    let delta = e.deltaY;
+    switch (e.deltaMode) {
+      case WheelEvent.DOM_DELTA_LINE:
+        delta *= 16;
+        break;
+      case WheelEvent.DOM_DELTA_PAGE:
+        delta *= 100;
+        break;
+    }
+    this.onZoom(delta * 0.002);
+  };
+
+  private handleMouseMove = (e: MouseEvent) => {
+    if (!this.onHover) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+
+    const screenPoint = new DOMPoint(screenX, screenY);
+    const dataPoint = screenPoint.matrixTransform(this.latestScreenToData);
+
+    this.onHover(screenPoint, dataPoint);
+  };
+
+  private handleMouseLeave = () => {
+    if (this.onHover) this.onHover(null, null);
+  };
+
+  // --- Render Pipeline ---
+
+  beginFrame(config: RenderFrameConfig): FrameContext {
+    // 1. Synchronous Auto-Resize
+    const dpr = window.devicePixelRatio || 1;
+    const targetWidth = Math.floor(this.canvas.clientWidth * dpr);
+    const targetHeight = Math.floor(this.canvas.clientHeight * dpr);
+
+    if (
+      this.canvas.width !== targetWidth ||
+      this.canvas.height !== targetHeight
+    ) {
+      this.canvas.width = targetWidth;
+      this.canvas.height = targetHeight;
+    }
+
+    // 2. Math Setup
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    const cW = width - this.padding.l - this.padding.r;
+    const cH = height - this.padding.t - this.padding.b;
+    // TODO: Instead of passing config.volZoom, pass the y-range
+    const yAbsMax = Math.pow(10, config.volZoom);
+
+    // 3. Matrix Calculation
+    const scaleX = cW;
+    const scaleY = cH / (2 * yAbsMax);
     const dataToScreen = new DOMMatrix()
-      .translateSelf(PAD.l, PAD.t + height / 2)
+      .translateSelf(this.padding.l, this.padding.t + cH / 2)
       .scaleSelf(scaleX, -scaleY);
 
-    return dataToScreen;
+    this.latestScreenToData = dataToScreen.inverse();
+
+    // 4. Reset & Clear
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.clearRect(0, 0, width, height);
+
+    // Optional: Draw Background
+    this.ctx.fillStyle = config.theme.bg;
+    this.ctx.fillRect(0, 0, width, height);
+
+    return {
+      ctx: this.ctx,
+      cW,
+      cH,
+      yAbsMax,
+      dataToScreen,
+      screenToData: this.latestScreenToData,
+      theme: config.theme,
+    };
   }
 
-  private drawAxes(dataToScreen: DOMMatrix, colors: Colors) {
-    const ctx = this.ctx;
+  drawAxes(fc: FrameContext) {
+    const { ctx, theme, cW, cH, yAbsMax, dataToScreen } = fc;
 
-    ctx.strokeStyle = colors.axis;
+    ctx.strokeStyle = theme.axis;
     ctx.lineWidth = 1;
+    ctx.strokeRect(this.padding.l, this.padding.t, cW, cH);
 
-    ctx.strokeRect(PAD.l, PAD.t, width, height);
+    const yFracs = powerOf10Ticks(yAbsMax);
+    ctx.font = "11px sans-serif";
+    ctx.textBaseline = "middle";
 
-    const yFracs = powerOf10Ticks(this.yAbsMax);
     for (const frac of yFracs) {
       for (const sign of [1, -1]) {
-        const yVal = sign * frac * this.yAbsMax;
-        const { y } = this.toScreenPoint(0, yVal);
+        const yVal = sign * frac * yAbsMax;
+        // Transform just the Y coordinate
+        const screenY = new DOMPoint(0, yVal).matrixTransform(dataToScreen).y;
 
-        ctx.strokeStyle = gridC;
+        // Grid line
+        ctx.strokeStyle = theme.grid;
         ctx.beginPath();
-        ctx.moveTo(PAD.l, y);
-        ctx.lineTo(this.canvas.width - PAD.r, y);
+        ctx.moveTo(this.padding.l, screenY);
+        ctx.lineTo(this.canvas.width - this.padding.r, screenY);
         ctx.stroke();
 
-        ctx.strokeStyle = axC;
+        // Tick mark
+        ctx.strokeStyle = theme.axis;
         ctx.beginPath();
-        ctx.moveTo(PAD.l - 5, y);
-        ctx.lineTo(PAD.l, y);
-        ctx.moveTo(this.canvas.width - PAD.r, y);
-        ctx.lineTo(this.canvas.width - PAD.r + 5, y);
+        ctx.moveTo(this.padding.l - 5, screenY);
+        ctx.lineTo(this.padding.l, screenY);
+        ctx.moveTo(this.canvas.width - this.padding.r, screenY);
+        ctx.lineTo(this.canvas.width - this.padding.r + 5, screenY);
         ctx.stroke();
 
-        const absV = frac * this.yAbsMax;
-        ctx.fillStyle = txtC;
+        // Label
+        const absV = frac * yAbsMax;
+        ctx.fillStyle = theme.text;
         ctx.textAlign = "right";
-        ctx.textBaseline = "middle";
-        ctx.fillText((sign > 0 ? "" : "-") + fmtVol(absV), PAD.l - 8, y);
+        ctx.fillText(
+          (sign > 0 ? "" : "-") + fmtVol(absV),
+          this.padding.l - 8,
+          screenY,
+        );
       }
     }
 
-    const x0 = this.toScreenPoint(0, 0).x;
-    const x1 = this.toScreenPoint(1, 0).x;
+    // X-Axis Anchors
+    const x0 = new DOMPoint(0, 0).matrixTransform(dataToScreen).x;
+    const x1 = new DOMPoint(1, 0).matrixTransform(dataToScreen).x;
 
-    ctx.fillStyle = txtC;
+    ctx.fillStyle = theme.text;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.fillText("0", x0, PAD.t + cH + 8);
-    ctx.fillText("1", x1, PAD.t + cH + 8);
+    ctx.fillText("0", x0, this.padding.t + cH + 8);
+    ctx.fillText("1", x1, this.padding.t + cH + 8);
+  }
+
+  drawCurve(fc: FrameContext, book: FullOrderBook<unknown>, color: string) {
+    const { ctx, dataToScreen } = fc;
+    const depth = new MarketCurve(book);
+
+    ctx.save();
+    ctx.setTransform(dataToScreen);
+
+    ctx.beginPath();
+    ctx.strokeStyle = color; // Expecting HSLA string or HEX
+    ctx.lineJoin = "round";
+
+    // Scale line width inverse to the matrix so it stays 2px visually
+    const scaleY = Math.abs(dataToScreen.d);
+    ctx.lineWidth = 2 / scaleY;
+
+    const bidStart = depth.bids.length ? depth.bids[0].total : 0;
+    this.drawDepthStair(depth.bids, 0, 1, bidStart);
+
+    const askStart = 0;
+    this.drawDepthStair(depth.asks, 0, 1, askStart);
+
+    ctx.stroke();
+    ctx.restore();
   }
 
   private drawDepthStair(
@@ -155,108 +265,62 @@ export class OrderBookPlotter {
       this.ctx.lineTo(endX, startY);
       return;
     }
-
     this.ctx.moveTo(startX, startY);
     this.ctx.lineTo(points[0].price, startY);
-
     let y = startY;
     for (const point of points) {
       this.ctx.lineTo(point.price, y);
       y = point.total;
       this.ctx.lineTo(point.price, y);
     }
-
     this.ctx.lineTo(endX, y);
   }
 
-  private drawDepth(depth: MarketCurve, color: string, alpha = 1) {
-    const ctx = this.ctx;
+  drawPointer(fc: FrameContext, config: RenderFrameConfig) {
+    if (!config.pointer) return;
 
-    ctx.beginPath();
-    ctx.strokeStyle = toHsla(color, alpha);
-    ctx.lineJoin = "round";
-    const scaleY = Math.abs(this.dataToScreen.d);
-    ctx.lineWidth = 2 / scaleY;
+    const { ctx, theme, cH } = fc;
+    const { screen, data } = config.pointer;
+    const { width, height } = this.canvas;
 
-    const bidStart = depth.bids.length ? depth.bids[0].total : 0;
-    this.drawDepthStair(depth.bids, 0, 1, bidStart);
-
-    const askStart = 0;
-    this.drawDepthStair(depth.asks, 0, 1, askStart);
-
-    ctx.stroke();
-  }
-
-  beginFrame({ volZoom }: { volZoom: number }) {
-    const yAbsMax = Math.pow(10, volZoom);
-    const transform = this.computeDataTransform(yAbsMax);
-
-    this.ctx.resetTransform();
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    this.ctx.font = "11px var(--font-sans,sans-serif)";
-
-    return transform;
-  }
-
-  drawCurve(transform: DOMMatrix, book: FullOrderBook<unknown>): void {
-    const ctx = this.ctx;
-
-    ctx.save();
-    ctx.setTransform(transform);
-
-    const depth = new MarketCurve(book);
-    this.drawDepth(depth, hslColor(idx), 0.9);
-
-    // const userDepth = buildUserDepth(state.userOrders, idx);
-    // this.drawDepth(userDepth, "hsl(0, 0%, 100%)", 0.65);
-
-    ctx.restore();
-  }
-
-  drawPointer(pointer: DOMPoint | null): void {
-    if (!pointer) {
-      this.overlay.style.display = "none";
-      return;
-    }
-
-    const ctx = this.ctx;
-
-    ctx.strokeStyle = axC;
+    // 1. Crosshairs
+    ctx.strokeStyle = theme.axis;
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.moveTo(pointer.x, PAD.t);
-    ctx.lineTo(pointer.x, PAD.t + cH);
+    ctx.moveTo(screen.x, this.padding.t);
+    ctx.lineTo(screen.x, this.padding.t + cH);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const clampedPrice = pointerData.x;
-    const overlayHtml = [
-      `<div class="cpv-ov-label">Price: ${clampedPrice.toFixed(3)}</div>`,
-      `<div class="cpv-ov-row"><span>Amount</span><b>${fmtVol(pointerData.y)}</b></div>`,
-    ].join("");
+    // 2. Pure Canvas Tooltip Box
+    const boxW = 110;
+    const boxH = 40;
+    const offset = 12;
 
-    this.overlay.innerHTML = overlayHtml;
-    this.overlay.style.display = "block";
+    let boxX = screen.x + offset;
+    let boxY = screen.y + offset;
 
-    const ovW = this.overlay.offsetWidth || 180;
-    const ovH = this.overlay.offsetHeight || 80;
-    const ovX = Math.max(
-      PAD.l,
-      Math.min(pointer.x + 12, this.canvas.width - PAD.r - ovW),
-    );
-    const ovY = Math.max(
-      PAD.t,
-      Math.min(pointer.y + 12, this.canvas.height - PAD.b - ovH),
-    );
+    // Screen bounds checking
+    if (boxX + boxW > width - this.padding.r) boxX = screen.x - boxW - offset;
+    if (boxY + boxH > height - this.padding.b) boxY = screen.y - boxH - offset;
 
-    this.overlay.style.left = `${ovX}px`;
-    this.overlay.style.top = `${ovY}px`;
+    // Draw Box
+    ctx.fillStyle = theme.bg;
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+    ctx.strokeStyle = theme.axis;
+    ctx.strokeRect(boxX, boxY, boxW, boxH);
 
-    ctx.fillStyle = txtC;
-    ctx.textAlign = "center";
+    // Draw Text inside box
+    ctx.fillStyle = theme.text;
+    ctx.font = "12px sans-serif";
+    ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.font = "10px var(--font-sans,sans-serif)";
-    ctx.fillText(clampedPrice.toFixed(2), pointer.x, PAD.t + cH + 8);
+    ctx.fillText(`Price: ${data.x.toFixed(3)}`, boxX + 8, boxY + 8);
+    ctx.fillText(`Vol:   ${fmtVol(Math.abs(data.y))}`, boxX + 8, boxY + 22);
+
+    // Bottom Axis Price Label
+    ctx.textAlign = "center";
+    ctx.fillText(data.x.toFixed(2), screen.x, this.padding.t + cH + 8);
   }
 }
