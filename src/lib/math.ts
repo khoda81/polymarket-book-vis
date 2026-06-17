@@ -19,16 +19,13 @@ export function powerOf10Ticks(yMax: number, targetCount = 5): number[] {
   return ticks;
 }
 
-export function idToColor(idx: number): string {
-  // TODO: Select from a chromatically uniform color space instead of HSL?
-  // const hue = (idx * BigInt(GOLDEN_ANGLE)) % 360n;
-  // return `hsl(${hue}, 70%, 50%)`;
+export function idToColor(idx: number, offset: number = 56.234): string {
   const GOLDEN_ANGLE = 137.50776405003785;
 
   const L = 0.72;
   const C = 0.16;
 
-  const hue = (idx * GOLDEN_ANGLE) % 360;
+  const hue = (idx * GOLDEN_ANGLE + offset) % 360;
 
   return `oklch(${L} ${C} ${hue})`;
 }

@@ -1,10 +1,6 @@
 import { fmtVol, idToColor } from "@/lib/math";
 import { EventBook, BuyOrders } from "@/lib/orderBook";
-import {
-  FrameContext,
-  OrderBookPlotter,
-  RenderFrameConfig,
-} from "@/lib/renderer";
+import { OrderBookPlotter, RenderFrameConfig } from "@/lib/renderer";
 import "@/styles/component.css";
 import {
   createPublicClient,
@@ -12,7 +8,6 @@ import {
   Event,
   OrderSide,
   TokenId,
-  GammaMarket,
   TransportError,
 } from "@polymarket/client";
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
@@ -52,6 +47,7 @@ export class PolymarketCPV {
   private container: HTMLElement;
   private refs!: Record<string, HTMLElement>;
   private plotter!: OrderBookPlotter;
+  private pointer: { screen: DOMPoint; data: DOMPoint } | null = null;
 
   private markets: Market[] = [];
   private activeTokens = new Set<TokenId>();
@@ -125,7 +121,16 @@ export class PolymarketCPV {
     });
 
     this.plotter = new OrderBookPlotter(this.refs.canvas as HTMLCanvasElement);
-    this.plotter.onZoom = (_delta) => this.reqDraw();
+    this.plotter.onZoom = (delta) => {
+      this.volZoom = this.volZoom + delta;
+      this.reqDraw();
+    };
+    this.plotter.onHover = (point) => {
+      this.pointer = point
+        ? { screen: point, data: this.plotter.screenToDataPoint(point)! }
+        : null;
+      this.reqDraw();
+    };
   }
 
   private bindEvents() {
@@ -138,32 +143,15 @@ export class PolymarketCPV {
     document.addEventListener("click", this.handleDocumentClick);
 
     (canvasWrap as HTMLElement).addEventListener("click", (e) => {
-      const r = (this.refs.canvas as HTMLCanvasElement).getBoundingClientRect();
-      const clickX = e.clientX - r.left;
-      const clickY = e.clientY - r.top;
-      this.placeOrder(new DOMPoint(clickX, clickY));
-    });
+      const rect = (
+        this.refs.canvas as HTMLCanvasElement
+      ).getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const screenX = (e.clientX - rect.left) * dpr;
+      const screenY = (e.clientY - rect.top) * dpr;
 
-    (canvasWrap as HTMLElement).addEventListener(
-      "wheel",
-      (e) => {
-        e.preventDefault();
-        let delta = e.deltaY * 0.002;
-        // Handle different wheel modes (pixels, lines, pages)
-        if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
-          const computedLineHeight =
-            parseFloat(getComputedStyle(canvasWrap).lineHeight) || 16;
-          const lineHeight = window.devicePixelRatio * computedLineHeight;
-          delta *= lineHeight;
-        } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
-          // Use the container's height for a "page" scroll, or window.innerHeight
-          delta *= canvas.clientHeight;
-        }
-        this.volZoom = this.volZoom + delta;
-        this.reqDraw();
-      },
-      { passive: false },
-    );
+      this.placeOrder(new DOMPoint(screenX, screenY));
+    });
   }
 
   async load(event: Event) {
@@ -400,14 +388,14 @@ export class PolymarketCPV {
   }
 
   private placeOrder(point: DOMPoint) {
-    const activeIdxs = Array.from(this.activeMarkets);
+    const activeIdxs = Array.from(this.activeTokens);
     if (!activeIdxs.length) return;
 
     const dataPoint = this.plotter.screenToDataPoint(point);
     if (!dataPoint) return;
 
-    const price = point.x;
-    const shares = point.y;
+    const price = dataPoint.x;
+    const shares = dataPoint.y;
 
     console.debug({ price, shares });
     if (shares === 0) return;

@@ -49,7 +49,6 @@ export class MarketCurve {
 }
 
 // --- 2. The Plotter ---
-
 export class OrderBookPlotter {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly padding = { l: 60, r: 16, t: 24, b: 24 };
@@ -89,26 +88,31 @@ export class OrderBookPlotter {
 
   // --- Event Handlers ---
   private handleWheel = (e: WheelEvent) => {
-    e.preventDefault();
     if (!this.onZoom) return;
 
-    let delta = e.deltaY;
-    switch (e.deltaMode) {
-      case WheelEvent.DOM_DELTA_LINE:
-        delta *= 16;
-        break;
-      case WheelEvent.DOM_DELTA_PAGE:
-        delta *= 100;
-        break;
+    e.preventDefault();
+    let delta = e.deltaY * 0.002;
+    // Handle different wheel modes (pixels, lines, pages)
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+      const computedLineHeight =
+        parseFloat(getComputedStyle(this.canvas).lineHeight) || 16;
+      const lineHeight = window.devicePixelRatio * computedLineHeight;
+      delta *= lineHeight;
+    } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+      // Use the container's height for a "page" scroll, or window.innerHeight
+      delta *= this.canvas.clientHeight;
     }
-    this.onZoom(delta * 0.002);
+
+    this.onZoom(delta);
   };
 
   private handleMouseMove = (e: MouseEvent) => {
     if (!this.onHover) return;
     const rect = this.canvas.getBoundingClientRect();
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
+
+    const dpr = window.devicePixelRatio || 1;
+    const screenX = (e.clientX - rect.left) * dpr;
+    const screenY = (e.clientY - rect.top) * dpr;
 
     const screenPoint = new DOMPoint(screenX, screenY);
     const dataPoint = screenPoint.matrixTransform(this.latestScreenToData);
