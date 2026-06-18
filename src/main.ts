@@ -3,6 +3,7 @@ import { PolymarketCPV } from "./component";
 import { createPublicClient } from "@polymarket/client";
 
 const client = createPublicClient();
+console.debug(client);
 
 const events = [
   client.fetchEvent({

@@ -9,8 +9,23 @@ import {
   OrderSide,
   TokenId,
   TransportError,
+  GammaMarket,
+  Client,
+  PublicClient,
+  GammaEvent,
+  MarketId,
 } from "@polymarket/client";
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
+
+// Accept the client as the first argument
+export async function getMarketTitles(
+  client: any,
+  event: Event,
+): Promise<Record<string, string>> {
+  const titles: Record<string> = {};
+
+  return titles;
+}
 
 enum ConnectionStatus {
   Error = "disconnected",
@@ -48,10 +63,11 @@ export class PolymarketCPV {
   private refs!: Record<string, HTMLElement>;
   private plotter!: OrderBookPlotter;
   private pointer: Pointer | null = null;
+  private titles: Record<MarketId, string> = {};
 
   private event: Event | undefined;
   private activeTokens = new Set<TokenId>();
-  private books: Record<string, TokenBook<string>> = {};
+  private books: Record<TokenId, TokenBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private raf: number | null = null;
   // private userOrders: UserOrder[] = [];
@@ -114,6 +130,7 @@ export class PolymarketCPV {
     `;
 
     this.refs = {};
+    // TODO: Generate the html and store typed refs instead
     this.container.querySelectorAll("[data-ref]").forEach((el) => {
       this.refs[(el as HTMLElement).dataset.ref!] = el as HTMLElement;
     });
@@ -152,6 +169,7 @@ export class PolymarketCPV {
     this.setDot(ConnectionStatus.Connecting);
 
     this.books = {};
+    this.titles = {};
     this.activeTokens.clear();
     // this.userOrders = [];
 
@@ -159,6 +177,18 @@ export class PolymarketCPV {
     (this.refs.searchInput as HTMLInputElement).value =
       event.slug ?? "(untitled)";
     this.refs.dropdown.style.display = "none";
+
+    // TODO: This is a hack until the groupItemTitle is available in the SDK
+    // This makes the HTTP request using the SDK's exact internal fetcher.
+    const req = await this.polyMarketClient.gamma.get(`/events/${event.id}`);
+    const res = req.value;
+    if (!res.ok) throw new Error(`Gamma API returned status ${res.status}`);
+
+    // Parse the raw fetch response stream
+    const rawEvent = await res.json();
+    for (const market of rawEvent.markets ?? []) {
+      if (market.groupItemTitle) this.titles[market.id] = market.groupItemTitle;
+    }
 
     // TODO: Find a better compare funcition
     // const compareFn = (a: Market, b: Market) =>
@@ -170,7 +200,6 @@ export class PolymarketCPV {
     if (event.display.sortBy === "descending") {
       event.markets.reverse();
     }
-    console.debug(event);
 
     this.buildToggles(event);
     for (;;)
@@ -241,7 +270,7 @@ export class PolymarketCPV {
 
       lbl.appendChild(cb);
       lbl.appendChild(dot);
-      lbl.append(" " + market.question);
+      lbl.append(this.titles[market.id] ?? market.question);
       container.appendChild(lbl);
     }
   }
