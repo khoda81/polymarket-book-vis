@@ -11,10 +11,9 @@
     "isolatedModules": true,
     "noEmit": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-    },
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["src"],
 }

@@ -9,16 +9,11 @@ import {
   OrderSide,
   TokenId,
   TransportError,
-  GammaMarket,
-  Client,
-  PublicClient,
-  GammaEvent,
   MarketId,
 } from "@polymarket/client";
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
 
 // Accept the client as the first argument
-
 enum ConnectionStatus {
   Error = "disconnected",
   Connecting = "connecting",
@@ -172,7 +167,9 @@ export class PolymarketCPV {
 
     // TODO: This is a hack until the groupItemTitle is available in the SDK
     // This makes the HTTP request using the SDK's exact internal fetcher.
-    const req = await this.polyMarketClient.gamma.get(`/events/${event.id}`);
+    const req = await (this.polyMarketClient as any).gamma.get(
+      `/events/${event.id}`,
+    );
     const res = req.value;
     if (!res.ok) throw new Error(`Gamma API returned status ${res.status}`);
 
@@ -186,7 +183,7 @@ export class PolymarketCPV {
     // const compareFn = (a: Market, b: Market) =>
     //   parseFloat(a.outcomes.yes.price) - parseFloat(b.outcomes.yes.price);
     const compareFn = (a: Market, b: Market) =>
-      Date.parse(a.state.endDate) - Date.parse(b.state.endDate);
+      Date.parse(a.state.endDate!) - Date.parse(b.state.endDate!);
 
     event.markets.sort(compareFn);
     if (event.display.sortBy === "descending") {
