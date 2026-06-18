@@ -117,6 +117,7 @@ export class PolymarketCPV {
     this.container.querySelectorAll("[data-ref]").forEach((el) => {
       this.refs[(el as HTMLElement).dataset.ref!] = el as HTMLElement;
     });
+    this.refs.dropdown.setAttribute("role", "listbox");
 
     this.plotter = new OrderBookPlotter(this.refs.canvas as HTMLCanvasElement);
     this.plotter.onZoom = (delta) => {
@@ -294,7 +295,10 @@ export class PolymarketCPV {
       for (const event of page.items.events) {
         const div = document.createElement("div");
         div.className = "cpv-dropdown-item";
+        div.setAttribute("role", "option"); // Tells screen readers this is a choice
+        div.setAttribute("tabindex", "0"); // Makes it focusable via keyboard
         const vol = event.metrics.volume ? parseFloat(event.metrics.volume) : 0;
+
         const title = document.createTextNode(event.title ?? "(no title)");
         div.appendChild(title);
         div.innerHTML += `<span class="cpv-vol-tag">$${fmtVol(vol)}</span>`;
