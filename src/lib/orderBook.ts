@@ -90,12 +90,12 @@ export class HalfBook<OrderKey> {
       if (order.price <= 0) break;
 
       // New Price: How much old Item for 1 unit of old Money?
-      const invertedPrice = 1 / order.price;
+      const price = 1 / order.price;
 
       // New Volume: The total old items involved in this order
-      const invertedValue = order.value * invertedPrice;
+      const value = order.value * price;
 
-      yield { price: invertedPrice, value: invertedValue };
+      yield { price, value };
     }
 
     yield { price: Infinity, value: 0 };

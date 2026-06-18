@@ -25,7 +25,7 @@ export interface FrameContext {
   theme: ChartTheme;
 }
 
-function halfbookToCurve(
+export function halfbookToDepth(
   orders: Iterable<BookOrder>,
   maxDepth: number = Infinity,
 ) {
@@ -136,7 +136,6 @@ export class OrderBookPlotter {
     }
 
     // 2. Math Setup
-    // this.ctx.resetTransform();
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale context, not coordinates
     const { clientWidth: width, clientHeight: height } = this.canvas;
     const cW = width - this.padding.l - this.padding.r;
@@ -154,7 +153,6 @@ export class OrderBookPlotter {
     this.latestScreenToData = dataToScreen.inverse();
 
     // 4. Reset & Clear
-
     this.ctx.clearRect(0, 0, width, height);
 
     // Optional: Draw Background
@@ -246,11 +244,8 @@ export class OrderBookPlotter {
     this.ctx.lineWidth = 2;
 
     const { x: right, y: mid } = new DOMPoint(1, 0).matrixTransform(transform);
-    const { x: left, y: bottom } = new DOMPoint(0, -yAbsMax).matrixTransform(
-      transform,
-    );
 
-    const usdToYes = halfbookToCurve(book.usdToYes.asOrders(), yAbsMax);
+    const usdToYes = halfbookToDepth(book.usdToYes.asOrders(), yAbsMax);
     usdToYes.reverse();
     const buy = usdToYes.map((p) => transform.transformPoint(p));
 
@@ -262,8 +257,8 @@ export class OrderBookPlotter {
       this.ctx.lineTo(point.x, point.y); // Horizontal to the current price
       current = point;
     }
-    this.ctx.lineTo(current.x, mid); // Vertical to the mid
     current.y = mid;
+    this.ctx.lineTo(current.x, mid); // Vertical to the mid
 
     const invTransform = transform.scale(1, -1, 1, 0, 0);
 
@@ -271,7 +266,7 @@ export class OrderBookPlotter {
       ...o,
       price: Math.min(o.price, 1.0),
     }));
-    const yesToUsd = halfbookToCurve(orders, yAbsMax);
+    const yesToUsd = halfbookToDepth(orders, yAbsMax);
     const sell = yesToUsd.map((p) => invTransform.transformPoint(p));
 
     if (isNaN(sell[0].y)) console.debug({ sell, yesToUsd });
@@ -285,12 +280,7 @@ export class OrderBookPlotter {
     this.ctx.restore();
   }
 
-  drawFilled(
-    fc: FrameContext,
-    book: HalfBook<unknown>,
-    color: string,
-    cut: number,
-  ) {
+  drawFilled(fc: FrameContext, book: HalfBook<unknown>, color: string) {
     // TODO:
   }
 

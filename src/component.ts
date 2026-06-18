@@ -10,6 +10,7 @@ import {
   TokenId,
   TransportError,
   MarketId,
+  PublicClient,
 } from "@polymarket/client";
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
 
@@ -42,7 +43,7 @@ const DARK_THEME = {
 } satisfies ChartTheme;
 
 export class PolymarketCPV {
-  polyMarketClient = createPublicClient();
+  polyMarketClient: PublicClient;
 
   private theme: ChartTheme;
   private themeQuery: MediaQueryList;
@@ -66,7 +67,8 @@ export class PolymarketCPV {
       this.refs.dropdown.style.display = "none";
   };
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, polyMarketClient: PublicClient) {
+    this.polyMarketClient = polyMarketClient;
     this.container = container;
     this.buildDOM();
     this.bindEvents();

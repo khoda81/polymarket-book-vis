@@ -3,27 +3,23 @@ import { PolymarketCPV } from "./component";
 import { createPublicClient, Event } from "@polymarket/client";
 
 const grid = document.getElementById("grid")!;
+const client = createPublicClient();
 
-async function createCard(event: Event) {
+function createCard(event: Event) {
   const card = document.createElement("div")!;
   card.classList.add("card");
-  const chart = new PolymarketCPV(card);
-  await chart.load(event);
-
+  const chart = new PolymarketCPV(card, client);
   grid.appendChild(card);
+
+  chart.load(event);
 }
 
-const client = createPublicClient();
 const events = [
-  client.fetchEvent({
-    slug: "claude-fable-5-restored-for-us-customers-by-20260613193753196",
-  }),
-  client.fetchEvent({
-    slug: "israel-closes-its-airspace-by",
-  }),
+  "claude-fable-5-restored-for-us-customers-by-20260613193753196",
+  "israel-closes-its-airspace-by",
 ];
 
-events.forEach(async (e) => createCard(await e));
+events.forEach(async (slug) => createCard(await client.fetchEvent({ slug })));
 
 const extraEvents = client.listEvents({
   featured: true,
@@ -33,5 +29,5 @@ const extraEvents = client.listEvents({
 
 for await (const eventPage of extraEvents) {
   const events = eventPage.items;
-  events.forEach(async (e) => createCard(e));
+  events.forEach((e) => createCard(e));
 }
