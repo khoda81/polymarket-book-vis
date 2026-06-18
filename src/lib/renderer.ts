@@ -106,9 +106,8 @@ export class OrderBookPlotter {
     if (!this.onHover) return;
     const rect = this.canvas.getBoundingClientRect();
 
-    const dpr = window.devicePixelRatio || 1;
-    const screenX = (e.clientX - rect.left) * dpr;
-    const screenY = (e.clientY - rect.top) * dpr;
+    const screenX = e.clientX - rect.left; // CSS pixels, context handles the rest
+    const screenY = e.clientY - rect.top;
 
     const screen = new DOMPoint(screenX, screenY);
     const data = screen.matrixTransform(this.latestScreenToData);
@@ -137,7 +136,9 @@ export class OrderBookPlotter {
     }
 
     // 2. Math Setup
-    const { width, height } = this.canvas;
+    // this.ctx.resetTransform();
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale context, not coordinates
+    const { clientWidth: width, clientHeight: height } = this.canvas;
     const cW = width - this.padding.l - this.padding.r;
     const cH = height - this.padding.t - this.padding.b;
 
@@ -153,7 +154,7 @@ export class OrderBookPlotter {
     this.latestScreenToData = dataToScreen.inverse();
 
     // 4. Reset & Clear
-    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+
     this.ctx.clearRect(0, 0, width, height);
 
     // Optional: Draw Background
@@ -263,9 +264,9 @@ export class OrderBookPlotter {
     this.ctx.lineTo(current.x, midRight.y);
 
     for (const point of depth.sell) {
-      this.ctx.lineTo(point.x, current.y);
+      this.ctx.lineTo(point.x, current.y); // horizontal
+      this.ctx.lineTo(point.x, point.y); // vertical
       current = point;
-      this.ctx.lineTo(point.x, current.y);
     }
 
     this.ctx.stroke();

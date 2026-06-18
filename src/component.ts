@@ -25,19 +25,19 @@ export interface ChartTheme {
   text: string;
 }
 
-const LIGHT_THEME: ChartTheme = {
+const LIGHT_THEME = {
   bg: "#ffffff",
   grid: "rgba(128,128,128,0.15)",
   axis: "rgba(128,128,128,0.5)",
   text: "#666666",
-};
+} satisfies ChartTheme;
 
-const DARK_THEME: ChartTheme = {
+const DARK_THEME = {
   bg: "#121212",
   grid: "rgba(255,255,255,0.1)",
   axis: "rgba(255,255,255,0.3)",
   text: "#aaaaaa",
-};
+} satisfies ChartTheme;
 
 export class PolymarketCPV {
   polyMarketClient = createPublicClient();
@@ -49,7 +49,7 @@ export class PolymarketCPV {
   private plotter!: OrderBookPlotter;
   private pointer: Pointer | null = null;
 
-  private markets: Market[] = [];
+  private event: Event | undefined;
   private activeTokens = new Set<TokenId>();
   private books: Record<string, TokenBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
@@ -87,32 +87,30 @@ export class PolymarketCPV {
       <h2 class="cpv-sr-only">Polymarket signed cumulative price-volume</h2>
 
       <div class="cpv-header">
-        <div class="cpv-title" data-ref="title">Loading…</div>
+        <h5 class="cpv-title" data-ref="title">Loading…</h5>
         <div class="cpv-dot cpv-dot--conn" data-ref="dot"></div>
         <span class="cpv-stxt" data-ref="stxt">connecting…</span>
       </div>
 
-      <div class="cpv-controls">
-        <div class="cpv-top-controls">
-          <div class="cpv-search-container">
-            <input
-              type="text"
-              class="cpv-search-input"
-              data-ref="searchInput"
-              placeholder="Search event or paste slug…"
-              autocomplete="off"
-            />
-            <div class="cpv-dropdown" data-ref="dropdown"></div>
-          </div>
+      <div class="cpv-top-controls">
+        <div class="cpv-search-container">
+          <input
+            type="text"
+            class="cpv-search-input"
+            data-ref="searchInput"
+            placeholder="Search event or paste slug…"
+            autocomplete="off"
+          />
+          <div class="cpv-dropdown" data-ref="dropdown"></div>
         </div>
-        <div class="cpv-toggles" data-ref="toggles"></div>
       </div>
 
-      <div style="height:8px"></div>
       <div class="cpv-canvas-wrap" data-ref="canvasWrap">
         <canvas data-ref="canvas"></canvas>
         <div class="cpv-overlay" data-ref="overlay"></div>
       </div>
+
+      <div class="cpv-toggles" data-ref="toggles"></div>
     `;
 
     this.refs = {};
@@ -153,7 +151,6 @@ export class PolymarketCPV {
     this.setDot(ConnectionStatus.Connecting);
 
     this.books = {};
-    this.markets = [];
     this.activeTokens.clear();
     // this.userOrders = [];
 
@@ -162,21 +159,25 @@ export class PolymarketCPV {
       event.slug ?? "(untitled)";
     this.refs.dropdown.style.display = "none";
 
-    if (event.display.sortBy === "descending") {
-      event.markets.sort((a, b) => b.id.localeCompare(a.id));
-    } else {
-      // Sort the markets anyways, even if not specified. Cause why not?
-      event.markets.sort((a, b) => a.id.localeCompare(b.id));
-    }
-    this.markets = event.markets.filter((m) => !m.state.closed);
+    // TODO: Find a better compare funcition
+    // const compareFn = (a: Market, b: Market) =>
+    //   parseFloat(a.outcomes.yes.price) - parseFloat(b.outcomes.yes.price);
+    const compareFn = (a: Market, b: Market) =>
+      Date.parse(a.state.endDate) - Date.parse(b.state.endDate);
 
-    this.buildToggles();
+    event.markets.sort(compareFn);
+    if (event.display.sortBy === "descending") {
+      event.markets.reverse();
+    }
+    console.debug(event);
+
+    this.buildToggles(event);
     for (;;)
       try {
         this.bookEventStream = await this.polyMarketClient.subscribe([
           {
             topic: "market",
-            tokenIds: this.markets
+            tokenIds: event.markets
               .map((m) => m.outcomes.yes.tokenId)
               .filter((t) => t !== null),
           },
@@ -186,6 +187,8 @@ export class PolymarketCPV {
         if (!(err instanceof TransportError)) throw err;
         console.error("Error connecting to websocket, retrying...");
       }
+
+    this.event = event;
 
     this.readEvents(this.bookEventStream);
     this.setDot(ConnectionStatus.Live);
@@ -204,22 +207,26 @@ export class PolymarketCPV {
   }
 
   // TODO: These should be probably a dropdown and searchable cause making a checkbox for every market takes too much space
-  private buildToggles() {
+  private buildToggles(event: Event) {
     const container = this.refs.toggles;
     container.innerHTML = "";
 
     // this.markets.forEach((m, i) => {
-    for (const [i, market] of this.markets.entries()) {
+    for (const [i, market] of event.markets.entries()) {
       const yesToken = market.outcomes.yes.tokenId;
       if (!yesToken) continue;
+      if (!market.state.acceptingOrders) continue;
 
-      this.activeTokens.add(yesToken);
+      const isClosed = market.state.closed ?? true;
 
       const lbl = document.createElement("label");
       const cb = document.createElement("input");
 
       cb.type = "checkbox";
-      cb.checked = true;
+      cb.checked = !isClosed;
+
+      if (cb.checked) this.activeTokens.add(yesToken);
+
       cb.addEventListener("change", () => {
         cb.checked
           ? this.activeTokens.add(yesToken)
@@ -228,7 +235,7 @@ export class PolymarketCPV {
       });
 
       const dot = document.createElement("span");
-      const color = this.tokenColor(i);
+      const color = this.tokenColor(i, event);
       dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
 
       lbl.appendChild(cb);
@@ -281,6 +288,7 @@ export class PolymarketCPV {
       }
 
       const dropdown = this.refs.dropdown;
+      clearTimeout(this.searchTimeout);
       dropdown.innerHTML = "";
       // TODO: We should be able to navigate to the items by using Tab
       for (const event of page.items.events) {
@@ -315,7 +323,8 @@ export class PolymarketCPV {
       "white",
     );
 
-    for (const [i, market] of this.markets.entries()) {
+    const markets = this.event?.markets ?? [];
+    for (const [i, market] of markets.entries()) {
       const tokenId = market.outcomes.yes.tokenId;
 
       if (tokenId === null) continue;
@@ -325,14 +334,15 @@ export class PolymarketCPV {
         this.books[tokenId] ??
         new TokenBook(new HalfBook<string>(), new HalfBook<string>());
 
-      this.plotter.drawCurve(frameCtx, book, this.tokenColor(i));
+      this.plotter.drawCurve(frameCtx, book, this.tokenColor(i, this.event!));
     }
 
     if (this.pointer) this.plotter.drawPointer(frameCtx, this.pointer);
   }
 
-  private tokenColor(index: number): string {
-    return idToColor(index);
+  private tokenColor(index: number, event: Event): string {
+    const offset = parseInt(event.id);
+    return idToColor(index + offset);
   }
 
   private async readEvents(events: SubscriptionHandle<MarketEvent>) {
@@ -341,14 +351,14 @@ export class PolymarketCPV {
         const usdToYes = new HalfBook<string>();
         for (const b of stream.payload.bids) {
           const price = parseFloat(b.price);
-          usdToYes.insertBid(b.price, price, parseFloat(b.size) * price);
+          usdToYes.setLevel(b.price, price, parseFloat(b.size) * price);
         }
 
         const yesToUsd = new HalfBook<string>();
         for (const a of stream.payload.asks) {
           const price = 1 / parseFloat(a.price);
           // TODO: Should this be a multiply or divide?
-          yesToUsd.insertBid(a.price, price, parseFloat(a.size));
+          yesToUsd.setLevel(a.price, price, parseFloat(a.size));
         }
 
         this.books[stream.payload.tokenId] = new TokenBook(usdToYes, yesToUsd);
@@ -360,9 +370,12 @@ export class PolymarketCPV {
           const { side, price: tick, size } = priceChange;
           const price = parseFloat(tick);
           if (side === OrderSide.BUY)
-            book.usdToYes.insertBid(tick, price, parseFloat(size) * price);
-          else book.yesToUsd.insertBid(tick, 1 / price, parseFloat(size));
+            book.usdToYes.setLevel(tick, price, parseFloat(size) * price);
+          else book.yesToUsd.setLevel(tick, 1 / price, parseFloat(size));
         }
+      } else if (stream.type === "market_resolved") {
+        for (const tokenId of stream.payload.tokenIds ?? [])
+          this.activeTokens.delete(tokenId);
       } else continue;
 
       this.reqDraw();

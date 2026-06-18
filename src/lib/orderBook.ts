@@ -10,7 +10,8 @@ export interface BookOrder {
  * * By design, this data structure is asymmetrical and maintains only a single,
  * strictly sorted list of orders. To represent a complete order book, you must
  * instantiate two of these classes (e.g., one for the Bid wing, one for the Ask wing).
- * * @typeParam OrderKey - The unique identifier type for an order (e.g., string ID).
+ *
+ * @typeParam OrderKey - The unique identifier type for an order (e.g., string ID).
  */
 export class HalfBook<OrderKey> {
   private orders: OrderKey[] = [];
@@ -24,13 +25,13 @@ export class HalfBook<OrderKey> {
   /**
    * Insert or replace an order. if the key already exists, it is removed first.
    *
-   * @returns if the order key existed.
+   * @returns `true` if the order key existed. Otherwise, `false`.
    */
-  insertBid(key: OrderKey, price: number, value: number): boolean {
+  setLevel(key: OrderKey, price: number, value: number): boolean {
     const existing = this.index.get(key);
 
     if (existing) {
-      if (existing.price === price) return this.updateVolume(key, value);
+      if (existing.price === price) return this.updateValue(key, value);
       console.warn(
         `Modifyin price of an existing order: `,
         existing,
@@ -52,7 +53,7 @@ export class HalfBook<OrderKey> {
   /**
    * Update the volume of an existing order.
    */
-  updateVolume(key: OrderKey, volume: number): boolean {
+  updateValue(key: OrderKey, volume: number): boolean {
     if (volume <= 0) return this.removeOrder(key);
 
     const existing = this.index.get(key);
@@ -75,6 +76,7 @@ export class HalfBook<OrderKey> {
     return this.index.get(key);
   }
 
+  // TODO: This can be a generator function
   ordersDescending(): [OrderKey, BookOrder][] {
     return this.orders
       .toReversed()
@@ -83,7 +85,6 @@ export class HalfBook<OrderKey> {
 
   /**
    * Re-expresses orders in terms of the complementary token, recovering the original ask prices.
-   * Flips the market perspective. The old "Base" becomes the new "Quote".
    */
   asSellOrders(): BookOrder[] {
     const inverted = [];
