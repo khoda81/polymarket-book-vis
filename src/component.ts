@@ -18,14 +18,6 @@ import {
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
 
 // Accept the client as the first argument
-export async function getMarketTitles(
-  client: any,
-  event: Event,
-): Promise<Record<string, string>> {
-  const titles: Record<string> = {};
-
-  return titles;
-}
 
 enum ConnectionStatus {
   Error = "disconnected",
