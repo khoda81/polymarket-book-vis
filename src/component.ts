@@ -383,7 +383,7 @@ export class PolymarketCPV {
         }
 
         // If no orders to buy yes, we can always mint more at price 1.0
-        // yesToUsd.setLevel("mint", 1, Infinity);
+        yesToUsd.setLevel("mint", 1, Infinity);
 
         this.books[stream.payload.tokenId] = new TokenBook(usdToYes, yesToUsd);
       } else if (stream.type === "price_change") {
