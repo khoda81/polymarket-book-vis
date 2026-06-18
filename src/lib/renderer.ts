@@ -127,13 +127,8 @@ export class OrderBookPlotter {
     const targetWidth = Math.floor(this.canvas.clientWidth * dpr);
     const targetHeight = Math.floor(this.canvas.clientHeight * dpr);
 
-    if (
-      this.canvas.width !== targetWidth ||
-      this.canvas.height !== targetHeight
-    ) {
-      this.canvas.width = targetWidth;
-      this.canvas.height = targetHeight;
-    }
+    this.canvas.width = targetWidth;
+    this.canvas.height = targetHeight;
 
     // 2. Math Setup
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale context, not coordinates
@@ -194,7 +189,7 @@ export class OrderBookPlotter {
         this.ctx.strokeStyle = theme.grid;
         this.ctx.beginPath();
         this.ctx.moveTo(this.padding.l, screenY);
-        this.ctx.lineTo(this.canvas.width - this.padding.r, screenY);
+        this.ctx.lineTo(this.canvas.clientWidth - this.padding.r, screenY);
         this.ctx.stroke();
 
         // Tick mark
@@ -202,8 +197,8 @@ export class OrderBookPlotter {
         this.ctx.beginPath();
         this.ctx.moveTo(this.padding.l - 5, screenY);
         this.ctx.lineTo(this.padding.l, screenY);
-        this.ctx.moveTo(this.canvas.width - this.padding.r, screenY);
-        this.ctx.lineTo(this.canvas.width - this.padding.r + 5, screenY);
+        this.ctx.moveTo(this.canvas.clientWidth - this.padding.r, screenY);
+        this.ctx.lineTo(this.canvas.clientWidth - this.padding.r + 5, screenY);
         this.ctx.stroke();
 
         // Label
@@ -235,28 +230,27 @@ export class OrderBookPlotter {
     // TODO: Make the lines not go out of the chart box
     const { yAbsMax, dataToScreen: transform } = fc;
 
-    this.ctx.save();
-
     this.ctx.beginPath();
-    this.ctx.strokeStyle = color; // Expecting HSLA string or HEX
+    this.ctx.strokeStyle = color;
     this.ctx.lineJoin = "round";
     this.ctx.lineCap = "round";
     this.ctx.lineWidth = 2;
 
-    const { x: right, y: mid } = new DOMPoint(1, 0).matrixTransform(transform);
+    const { y: mid } = new DOMPoint(1, 0).matrixTransform(transform);
 
     const usdToYes = halfbookToDepth(book.usdToYes.asOrders(), yAbsMax);
     usdToYes.reverse();
     const buy = usdToYes.map((p) => transform.transformPoint(p));
 
     let current = buy[0];
-
     this.ctx.moveTo(current.x, current.y);
+
     for (const point of buy) {
       this.ctx.lineTo(current.x, point.y); // Vertical to the current volume
       this.ctx.lineTo(point.x, point.y); // Horizontal to the current price
       current = point;
     }
+
     current.y = mid;
     this.ctx.lineTo(current.x, mid); // Vertical to the mid
 
@@ -277,7 +271,6 @@ export class OrderBookPlotter {
     }
 
     this.ctx.stroke();
-    this.ctx.restore();
   }
 
   drawFilled(fc: FrameContext, book: HalfBook<unknown>, color: string) {
@@ -287,7 +280,7 @@ export class OrderBookPlotter {
   drawPointer(fc: FrameContext, pointer: Pointer) {
     const { theme, chart } = fc;
     const { screen, data } = pointer;
-    const { width, height } = this.canvas;
+    const { clientWidth: width, clientHeight: height } = this.canvas;
 
     // 1. Crosshairs
     this.ctx.strokeStyle = theme.axis;

@@ -56,6 +56,7 @@ export class PolymarketCPV {
   private event: Event | undefined;
   private activeTokens = new Set<TokenId>();
   private books: Record<TokenId, TokenBook<string>> = {};
+  private resizeObserver: ResizeObserver;
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private raf: number | null = null;
   // private userOrders: UserOrder[] = [];
@@ -70,6 +71,8 @@ export class PolymarketCPV {
   constructor(container: HTMLElement, polyMarketClient: PublicClient) {
     this.polyMarketClient = polyMarketClient;
     this.container = container;
+    this.resizeObserver = new ResizeObserver(() => this.reqDraw());
+
     this.buildDOM();
     this.bindEvents();
 
@@ -134,13 +137,14 @@ export class PolymarketCPV {
       this.pointer = pointer;
       this.reqDraw();
     };
+
+    this.resizeObserver.observe(this.refs.canvas);
   }
 
   private bindEvents() {
     const { searchInput, canvasWrap } = this.refs;
 
     searchInput.addEventListener("input", () => this.onSearchInput());
-
     document.addEventListener("click", this.handleDocumentClick);
 
     canvasWrap.addEventListener("click", (e) => {
@@ -225,6 +229,8 @@ export class PolymarketCPV {
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
     this.container.classList.remove("cpv-wrap");
     document.removeEventListener("click", this.handleDocumentClick);
+
+    this.resizeObserver.disconnect();
   }
 
   // TODO: These should be probably a dropdown and searchable cause making a checkbox for every market takes too much space

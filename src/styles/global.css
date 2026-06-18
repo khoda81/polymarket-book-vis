@@ -9,13 +9,14 @@ body {
 }
 
 .grid {
+    display: grid-lanes;
     column-count: 1;
     column-gap: 1rem;
     padding: 1rem;
 }
 
 .card {
-    border: 0.5px solid var(--color-border-secondary, #ddd);
+    border: 1px solid var(--color-border-secondary, #ddd);
     border-radius: 10px;
     overflow: hidden;
 
