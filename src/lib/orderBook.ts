@@ -1,5 +1,5 @@
 export interface BookOrder {
-  /** Amount of get over amount of give */
+  /** Conventional price: quote tokens per base token (e.g. USD per YES) */
   price: number;
   /** Amount of get */
   value: number;
@@ -10,15 +10,9 @@ export interface BookOrder {
  * * By design, this data structure is asymmetrical and maintains only a single,
  * strictly sorted list of orders. To represent a complete order book, you must
  * instantiate two of these classes (e.g., one for the Bid wing, one for the Ask wing).
- * * @remarks
- * In complementary prediction markets (like Polymarket where Yes + No = 1),
- * you can maintain a minimal state model by treating all orders as Asks.
- * A Bid for a 'Yes' token is mathematically identical to an Ask for a 'No' token.
- * This allows you to use two identical instances of this class to form the full
- * book without needing custom bidirectional sorting logic.
  * * @typeParam OrderKey - The unique identifier type for an order (e.g., string ID).
  */
-export class BuyOrders<OrderKey> {
+export class HalfBook<OrderKey> {
   private orders: OrderKey[] = [];
   private index = new Map<OrderKey, BookOrder>();
 
@@ -29,6 +23,8 @@ export class BuyOrders<OrderKey> {
 
   /**
    * Insert or replace an order. if the key already exists, it is removed first.
+   *
+   * @returns if the order key existed.
    */
   insertBid(key: OrderKey, price: number, value: number): boolean {
     const existing = this.index.get(key);
@@ -86,6 +82,7 @@ export class BuyOrders<OrderKey> {
   }
 
   /**
+   * Re-expresses orders in terms of the complementary token, recovering the original ask prices.
    * Flips the market perspective. The old "Base" becomes the new "Quote".
    */
   asSellOrders(): BookOrder[] {
@@ -126,11 +123,11 @@ export class BuyOrders<OrderKey> {
   }
 }
 
-export class EventBook<OrderKey> {
+export class TokenBook<OrderKey> {
   constructor(
     /** The order book for Give USD, Get YES */
-    public usdToYes: BuyOrders<OrderKey>,
+    public usdToYes: HalfBook<OrderKey>,
     /** The order book for Give YES, Get USD */
-    public yesToUsd: BuyOrders<OrderKey>,
+    public yesToUsd: HalfBook<OrderKey>,
   ) {}
 }

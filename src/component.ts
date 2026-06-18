@@ -1,6 +1,6 @@
 import { fmtVol, idToColor } from "@/lib/math";
-import { EventBook, BuyOrders } from "@/lib/orderBook";
-import { OrderBookPlotter, RenderFrameConfig } from "@/lib/renderer";
+import { TokenBook, HalfBook } from "@/lib/orderBook";
+import { OrderBookPlotter, Pointer } from "@/lib/renderer";
 import "@/styles/component.css";
 import {
   createPublicClient,
@@ -47,20 +47,20 @@ export class PolymarketCPV {
   private container: HTMLElement;
   private refs!: Record<string, HTMLElement>;
   private plotter!: OrderBookPlotter;
-  private pointer: { screen: DOMPoint; data: DOMPoint } | null = null;
+  private pointer: Pointer | null = null;
 
   private markets: Market[] = [];
   private activeTokens = new Set<TokenId>();
-  private books: Record<string, EventBook<string>> = {};
+  private books: Record<string, TokenBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private raf: number | null = null;
   // private userOrders: UserOrder[] = [];
-  private volZoom = 4.5;
-  private searchTimeout: ReturnType<typeof setTimeout> | null = null;
+  private volScale = 4.5;
+  private searchTimeout: number | undefined;
 
   private handleDocumentClick = (e: MouseEvent) => {
     if (!(e.target as HTMLElement).closest(".cpv-search-container"))
-      (this.refs.dropdown as HTMLElement).style.display = "none";
+      this.refs.dropdown.style.display = "none";
   };
 
   constructor(container: HTMLElement) {
@@ -122,30 +122,24 @@ export class PolymarketCPV {
 
     this.plotter = new OrderBookPlotter(this.refs.canvas as HTMLCanvasElement);
     this.plotter.onZoom = (delta) => {
-      this.volZoom = this.volZoom + delta;
+      this.volScale = this.volScale + delta;
       this.reqDraw();
     };
-    this.plotter.onHover = (point) => {
-      this.pointer = point
-        ? { screen: point, data: this.plotter.screenToDataPoint(point)! }
-        : null;
+    this.plotter.onHover = (pointer) => {
+      this.pointer = pointer;
       this.reqDraw();
     };
   }
 
   private bindEvents() {
-    const { searchInput, dropdown, canvasWrap, canvas } = this.refs;
+    const { searchInput, canvasWrap } = this.refs;
 
-    (searchInput as HTMLInputElement).addEventListener("input", () =>
-      this.onSearchInput(),
-    );
+    searchInput.addEventListener("input", () => this.onSearchInput());
 
     document.addEventListener("click", this.handleDocumentClick);
 
-    (canvasWrap as HTMLElement).addEventListener("click", (e) => {
-      const rect = (
-        this.refs.canvas as HTMLCanvasElement
-      ).getBoundingClientRect();
+    canvasWrap.addEventListener("click", (e) => {
+      const rect = this.refs.canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
       const screenX = (e.clientX - rect.left) * dpr;
       const screenY = (e.clientY - rect.top) * dpr;
@@ -163,14 +157,15 @@ export class PolymarketCPV {
     this.activeTokens.clear();
     // this.userOrders = [];
 
-    (this.refs.title as HTMLElement).textContent = event.title ?? "(untitled)";
+    this.refs.title.textContent = event.title ?? "(untitled)";
     (this.refs.searchInput as HTMLInputElement).value =
       event.slug ?? "(untitled)";
-    (this.refs.dropdown as HTMLElement).style.display = "none";
+    this.refs.dropdown.style.display = "none";
 
     if (event.display.sortBy === "descending") {
       event.markets.sort((a, b) => b.id.localeCompare(a.id));
     } else {
+      // Sort the markets anyways, even if not specified. Cause why not?
       event.markets.sort((a, b) => a.id.localeCompare(b.id));
     }
     this.markets = event.markets.filter((m) => !m.state.closed);
@@ -189,7 +184,7 @@ export class PolymarketCPV {
         break;
       } catch (err) {
         if (!(err instanceof TransportError)) throw err;
-        console.error("Error connecting to websocket, retrying");
+        console.error("Error connecting to websocket, retrying...");
       }
 
     this.readEvents(this.bookEventStream);
@@ -210,7 +205,7 @@ export class PolymarketCPV {
 
   // TODO: These should be probably a dropdown and searchable cause making a checkbox for every market takes too much space
   private buildToggles() {
-    const container = this.refs.toggles as HTMLElement;
+    const container = this.refs.toggles;
     container.innerHTML = "";
 
     // this.markets.forEach((m, i) => {
@@ -233,8 +228,6 @@ export class PolymarketCPV {
       });
 
       const dot = document.createElement("span");
-      const tokenId = market.outcomes.yes.tokenId;
-      if (!tokenId) continue;
       const color = this.tokenColor(i);
       dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
 
@@ -257,8 +250,8 @@ export class PolymarketCPV {
   private setDot(s: ConnectionStatus) {
     const { dot, stxt } = this.refs;
     const [cls, txt] = PolymarketCPV.STATUS_DISPLAY[s];
-    (dot as HTMLElement).className = `cpv-dot cpv-dot--${cls}`;
-    (stxt as HTMLElement).textContent = txt;
+    dot.className = `cpv-dot cpv-dot--${cls}`;
+    stxt.textContent = txt;
   }
 
   private async closeWS() {
@@ -269,10 +262,10 @@ export class PolymarketCPV {
   }
 
   private onSearchInput() {
-    clearTimeout(this.searchTimeout ?? undefined);
+    clearTimeout(this.searchTimeout);
     const query = (this.refs.searchInput as HTMLInputElement).value.trim();
     if (!query) {
-      (this.refs.dropdown as HTMLElement).style.display = "none";
+      this.refs.dropdown.style.display = "none";
       return;
     }
 
@@ -283,17 +276,20 @@ export class PolymarketCPV {
       });
       const page = await suggestions.firstPage();
       if (!page.totalCount) {
-        (this.refs.dropdown as HTMLElement).style.display = "none";
+        this.refs.dropdown.style.display = "none";
         return;
       }
 
-      const dropdown = this.refs.dropdown as HTMLElement;
+      const dropdown = this.refs.dropdown;
       dropdown.innerHTML = "";
+      // TODO: We should be able to navigate to the items by using Tab
       for (const event of page.items.events) {
         const div = document.createElement("div");
         div.className = "cpv-dropdown-item";
         const vol = event.metrics.volume ? parseFloat(event.metrics.volume) : 0;
-        div.innerHTML = `<span>${event.title}</span><span class="cpv-vol-tag">$${fmtVol(vol)}</span>`;
+        const title = document.createTextNode(event.title ?? "(no title)");
+        div.appendChild(title);
+        div.innerHTML += `<span class="cpv-vol-tag">$${fmtVol(vol)}</span>`;
         div.addEventListener("click", () => this.load(event));
         dropdown.appendChild(div);
       }
@@ -306,22 +302,16 @@ export class PolymarketCPV {
     this.raf = requestAnimationFrame(() => this.performDraw());
   }
 
-  private toPlotState(): RenderFrameConfig {
-    // TODO: My js isn't too good, is there a trick to do this cleaner?
-    const { volZoom, theme } = this;
-    return { volZoom, theme };
-  }
-
   private performDraw() {
     this.raf = null;
-    const state = this.toPlotState();
-    const frameCtx = this.plotter.beginFrame(state);
+    const { volScale, theme } = this;
+    const frameCtx = this.plotter.beginFrame({ volScale, theme });
     this.plotter.drawAxes(frameCtx);
 
     // Draw user line:
     this.plotter.drawCurve(
       frameCtx,
-      new EventBook(new BuyOrders<string>(), new BuyOrders<string>()),
+      new TokenBook(new HalfBook<string>(), new HalfBook<string>()),
       "white",
     );
 
@@ -333,7 +323,7 @@ export class PolymarketCPV {
 
       const book =
         this.books[tokenId] ??
-        new EventBook(new BuyOrders<string>(), new BuyOrders<string>());
+        new TokenBook(new HalfBook<string>(), new HalfBook<string>());
 
       this.plotter.drawCurve(frameCtx, book, this.tokenColor(i));
     }
@@ -341,31 +331,27 @@ export class PolymarketCPV {
     if (this.pointer) this.plotter.drawPointer(frameCtx, this.pointer);
   }
 
-  private tokenColor(id: number): string {
-    const tokenId = BigInt(id);
-    const PRIME = 2147483647n;
-    const color = idToColor(Number(tokenId % PRIME));
-    console.debug({ yesToken: id, color, id: Number(tokenId % PRIME) });
-    return color;
+  private tokenColor(index: number): string {
+    return idToColor(index);
   }
 
   private async readEvents(events: SubscriptionHandle<MarketEvent>) {
     for await (const stream of events) {
       if (stream.type === "book") {
-        const usdToYes = new BuyOrders<string>();
+        const usdToYes = new HalfBook<string>();
         for (const b of stream.payload.bids) {
           const price = parseFloat(b.price);
           usdToYes.insertBid(b.price, price, parseFloat(b.size) * price);
         }
 
-        const yesToUsd = new BuyOrders<string>();
+        const yesToUsd = new HalfBook<string>();
         for (const a of stream.payload.asks) {
           const price = 1 / parseFloat(a.price);
           // TODO: Should this be a multiply or divide?
           yesToUsd.insertBid(a.price, price, parseFloat(a.size));
         }
 
-        this.books[stream.payload.tokenId] = new EventBook(usdToYes, yesToUsd);
+        this.books[stream.payload.tokenId] = new TokenBook(usdToYes, yesToUsd);
       } else if (stream.type === "price_change") {
         for (const priceChange of stream.payload.priceChanges) {
           const book = this.books[priceChange.tokenId];

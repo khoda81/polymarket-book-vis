@@ -3,7 +3,7 @@ import { PolymarketCPV } from "./component";
 
 const first = new PolymarketCPV(document.getElementById("chart-a")!);
 const fisrt_event = await first.polyMarketClient.fetchEvent({
-  slug: "iran-closes-its-airspace-byptptpt-20260609184135829",
+  slug: "claude-fable-5-restored-for-us-customers-by-20260613193753196",
 });
 first.load(fisrt_event);
 

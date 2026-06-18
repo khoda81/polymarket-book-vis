@@ -1,4 +1,4 @@
-import { EventBook } from "./orderBook";
+import { TokenBook } from "./orderBook";
 import { fmtVol, powerOf10Ticks } from "./math";
 
 // --- 1. Interfaces ---
@@ -10,14 +10,11 @@ export interface ChartTheme {
   text: string;
 }
 
-type Pointer = {
-  screen: DOMPoint;
-  data: DOMPoint;
-};
+export type Pointer = { screen: DOMPoint; data: DOMPoint };
 
 export interface RenderFrameConfig {
   theme: ChartTheme;
-  volZoom: number;
+  volScale: number;
 }
 
 export interface FrameContext {
@@ -32,7 +29,7 @@ export class MarketCurve {
   sell: DOMPoint[] = [];
   buy: DOMPoint[] = [];
 
-  constructor(book: EventBook<unknown>, transform: DOMMatrix) {
+  constructor(book: TokenBook<unknown>, transform: DOMMatrix) {
     let total = 0;
     for (const [_id, level] of book.usdToYes.ordersDescending()) {
       total += level.value / level.price;
@@ -57,10 +54,7 @@ export class OrderBookPlotter {
 
   // Opt-in hooks for the parent
   public onZoom?: (delta: number) => void;
-  public onHover?: (
-    screenPoint: DOMPoint | null,
-    dataPoint: DOMPoint | null,
-  ) => void;
+  public onHover?: (pointer: Pointer | null) => void;
 
   // Cached matrix for event handling outside of draw cycle
   private latestScreenToData: DOMMatrix = new DOMMatrix();
@@ -116,14 +110,14 @@ export class OrderBookPlotter {
     const screenX = (e.clientX - rect.left) * dpr;
     const screenY = (e.clientY - rect.top) * dpr;
 
-    const screenPoint = new DOMPoint(screenX, screenY);
-    const dataPoint = screenPoint.matrixTransform(this.latestScreenToData);
+    const screen = new DOMPoint(screenX, screenY);
+    const data = screen.matrixTransform(this.latestScreenToData);
 
-    this.onHover(screenPoint, dataPoint);
+    this.onHover({ screen, data });
   };
 
   private handleMouseLeave = () => {
-    if (this.onHover) this.onHover(null, null);
+    if (this.onHover) this.onHover(null);
   };
 
   // --- Render Pipeline ---
@@ -147,8 +141,8 @@ export class OrderBookPlotter {
     const cW = width - this.padding.l - this.padding.r;
     const cH = height - this.padding.t - this.padding.b;
 
-    // TODO: Instead of passing config.volZoom, pass the y-range
-    const yAbsMax = Math.pow(10, config.volZoom);
+    // TODO: Instead of passing config.volScale, pass the y-range
+    const yAbsMax = Math.pow(10, config.volScale);
 
     // 3. Matrix Calculation
     const scaleX = cW;
@@ -238,7 +232,7 @@ export class OrderBookPlotter {
     this.ctx.fillText("1", x1, this.padding.t + chart.height + 8);
   }
 
-  drawCurve(fc: FrameContext, book: EventBook<unknown>, color: string) {
+  drawCurve(fc: FrameContext, book: TokenBook<unknown>, color: string) {
     // TODO: Make the lines not go out of the chart box
     const { dataToScreen } = fc;
 
@@ -252,10 +246,10 @@ export class OrderBookPlotter {
     this.ctx.lineCap = "round";
     this.ctx.lineWidth = 3;
 
-    const end = new DOMPoint(1, 0).matrixTransform(dataToScreen);
+    const midRight = new DOMPoint(1, 0).matrixTransform(dataToScreen);
 
     depth.buy.reverse();
-    let current = { ...end };
+    let current = { ...midRight };
     if (depth.buy.length) current.y = depth.buy[0].y;
 
     for (const point of depth.buy) {
@@ -263,10 +257,10 @@ export class OrderBookPlotter {
       this.ctx.lineTo(point.x, point.y); // Vertical drop to the lower volume
       current = point;
     }
-    this.ctx.lineTo(current.x, end.y); // Horizontal to the next price
+    this.ctx.lineTo(current.x, midRight.y); // Horizontal to the next price
 
-    current = depth.sell.length ? depth.sell[0] : end;
-    this.ctx.lineTo(current.x, end.y);
+    current = depth.sell.length ? depth.sell[0] : midRight;
+    this.ctx.lineTo(current.x, midRight.y);
 
     for (const point of depth.sell) {
       this.ctx.lineTo(point.x, current.y);
