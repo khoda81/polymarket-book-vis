@@ -1,4 +1,4 @@
-import { TokenBook } from "./orderBook";
+import { BookOrder, HalfBook, TokenBook } from "./orderBook";
 import { fmtVol, powerOf10Ticks } from "./math";
 
 // --- 1. Interfaces ---
@@ -25,26 +25,26 @@ export interface FrameContext {
   theme: ChartTheme;
 }
 
+function halfbookToCurve(
+  orders: Iterable<BookOrder>,
+  maxDepth: number = Infinity,
+) {
+  const points = [];
+  let total = 0;
+  for (const level of orders) {
+    total += level.value / level.price;
+    points.push(new DOMPoint(level.price, Math.min(total, maxDepth)));
+    if (total >= maxDepth) return points;
+  }
+
+  return points;
+}
+
 export class MarketCurve {
   sell: DOMPoint[] = [];
   buy: DOMPoint[] = [];
 
-  constructor(book: TokenBook<unknown>, transform: DOMMatrix) {
-    let total = 0;
-    for (const [_id, level] of book.usdToYes.ordersDescending()) {
-      total += level.value / level.price;
-      this.buy.push(transform.transformPoint(new DOMPoint(level.price, total)));
-    }
-    this.buy.push(transform.transformPoint(new DOMPoint(0, total)));
-    total = 0;
-    for (const level of book.yesToUsd.asSellOrders()) {
-      total -= level.value / level.price;
-      this.sell.push(
-        transform.transformPoint(new DOMPoint(level.price, total)),
-      );
-    }
-    this.sell.push(transform.transformPoint(new DOMPoint(1, total)));
-  }
+  constructor(book: TokenBook<unknown>, transform: DOMMatrix) {}
 }
 
 // --- 2. The Plotter ---
@@ -235,9 +235,7 @@ export class OrderBookPlotter {
 
   drawCurve(fc: FrameContext, book: TokenBook<unknown>, color: string) {
     // TODO: Make the lines not go out of the chart box
-    const { dataToScreen } = fc;
-
-    const depth = new MarketCurve(book, dataToScreen);
+    const { yAbsMax, dataToScreen: transform } = fc;
 
     this.ctx.save();
 
@@ -245,32 +243,55 @@ export class OrderBookPlotter {
     this.ctx.strokeStyle = color; // Expecting HSLA string or HEX
     this.ctx.lineJoin = "round";
     this.ctx.lineCap = "round";
-    this.ctx.lineWidth = 3;
+    this.ctx.lineWidth = 2;
 
-    const midRight = new DOMPoint(1, 0).matrixTransform(dataToScreen);
+    const { x: right, y: mid } = new DOMPoint(1, 0).matrixTransform(transform);
+    const { x: left, y: bottom } = new DOMPoint(0, -yAbsMax).matrixTransform(
+      transform,
+    );
 
-    depth.buy.reverse();
-    let current = { ...midRight };
-    if (depth.buy.length) current.y = depth.buy[0].y;
+    const usdToYes = halfbookToCurve(book.usdToYes.asOrders(), yAbsMax);
+    usdToYes.reverse();
+    const buy = usdToYes.map((p) => transform.transformPoint(p));
 
-    for (const point of depth.buy) {
-      this.ctx.lineTo(point.x, current.y); // Horizontal to the next price
-      this.ctx.lineTo(point.x, point.y); // Vertical drop to the lower volume
+    let current = buy[0];
+
+    this.ctx.moveTo(current.x, current.y);
+    for (const point of buy) {
+      this.ctx.lineTo(current.x, point.y); // Vertical to the current volume
+      this.ctx.lineTo(point.x, point.y); // Horizontal to the current price
       current = point;
     }
-    this.ctx.lineTo(current.x, midRight.y); // Horizontal to the next price
+    this.ctx.lineTo(current.x, mid); // Vertical to the mid
+    current.y = mid;
 
-    current = depth.sell.length ? depth.sell[0] : midRight;
-    this.ctx.lineTo(current.x, midRight.y);
+    const invTransform = transform.scale(1, -1, 1, 0, 0);
 
-    for (const point of depth.sell) {
-      this.ctx.lineTo(point.x, current.y); // horizontal
-      this.ctx.lineTo(point.x, point.y); // vertical
+    const orders = [...book.yesToUsd.asSellOrders()].map((o) => ({
+      ...o,
+      price: Math.min(o.price, 1.0),
+    }));
+    const yesToUsd = halfbookToCurve(orders, yAbsMax);
+    const sell = yesToUsd.map((p) => invTransform.transformPoint(p));
+
+    if (isNaN(sell[0].y)) console.debug({ sell, yesToUsd });
+    for (const point of sell) {
+      this.ctx.lineTo(point.x, current.y); // Horizontal to current price
+      this.ctx.lineTo(point.x, point.y); // Vertical to the current volume
       current = point;
     }
 
     this.ctx.stroke();
     this.ctx.restore();
+  }
+
+  drawFilled(
+    fc: FrameContext,
+    book: HalfBook<unknown>,
+    color: string,
+    cut: number,
+  ) {
+    // TODO:
   }
 
   drawPointer(fc: FrameContext, pointer: Pointer) {

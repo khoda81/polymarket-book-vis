@@ -379,9 +379,11 @@ export class PolymarketCPV {
         const yesToUsd = new HalfBook<string>();
         for (const a of stream.payload.asks) {
           const price = 1 / parseFloat(a.price);
-          // TODO: Should this be a multiply or divide?
           yesToUsd.setLevel(a.price, price, parseFloat(a.size));
         }
+
+        // If no orders to buy yes, we can always mint more at price 1.0
+        // yesToUsd.setLevel("mint", 1, Infinity);
 
         this.books[stream.payload.tokenId] = new TokenBook(usdToYes, yesToUsd);
       } else if (stream.type === "price_change") {

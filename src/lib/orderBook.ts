@@ -77,21 +77,17 @@ export class HalfBook<OrderKey> {
   }
 
   // TODO: This can be a generator function
-  ordersDescending(): [OrderKey, BookOrder][] {
-    return this.orders
-      .toReversed()
-      .map((key) => [key, { ...this.index.get(key)! }]);
+  *asOrders() {
+    for (const key of this.orders.toReversed()) yield this.index.get(key)!;
+    yield { price: 0, value: Infinity };
   }
 
   /**
    * Re-expresses orders in terms of the complementary token, recovering the original ask prices.
    */
-  asSellOrders(): BookOrder[] {
-    const inverted = [];
-
-    for (const key of this.orders) {
-      const order = this.getOrder(key);
-      if (!order) continue;
+  *asSellOrders() {
+    for (const order of this.asOrders()) {
+      if (order.price <= 0) break;
 
       // New Price: How much old Item for 1 unit of old Money?
       const invertedPrice = 1 / order.price;
@@ -99,12 +95,10 @@ export class HalfBook<OrderKey> {
       // New Volume: The total old items involved in this order
       const invertedValue = order.value * invertedPrice;
 
-      inverted.push({ price: invertedPrice, value: invertedValue });
+      yield { price: invertedPrice, value: invertedValue };
     }
 
-    inverted.reverse();
-
-    return inverted;
+    yield { price: Infinity, value: 0 };
   }
 
   private findInsertIndex(price: number): number {
