@@ -76,7 +76,6 @@ export class HalfBook<OrderKey> {
     return this.index.get(key);
   }
 
-  // TODO: This can be a generator function
   *asOrders() {
     for (const key of this.orders.toReversed()) yield this.index.get(key)!;
     yield { price: 0, value: Infinity };

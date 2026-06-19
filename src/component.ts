@@ -11,6 +11,7 @@ import {
   TransportError,
   MarketId,
   PublicClient,
+  GammaMarket,
 } from "@polymarket/client";
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
 
@@ -181,15 +182,26 @@ export class PolymarketCPV {
 
     // Parse the raw fetch response stream
     const rawEvent = await res.json();
+    const groupItemIdx: Record<MarketId, number> = {};
+
     for (const market of rawEvent.markets ?? []) {
       if (market.groupItemTitle) this.titles[market.id] = market.groupItemTitle;
+      if (market.groupItemThreshold)
+        groupItemIdx[market.id] = parseFloat(market.groupItemThreshold);
     }
+
+    // rawEvent.markets.sort(
+    //   (a: GammaMarket, b: GammaMarket) =>
+    //     parseFloat(a.groupItemThreshold) - parseFloat(b.groupItemThreshold),
+    // );
 
     // TODO: Find a better compare funcition
     // const compareFn = (a: Market, b: Market) =>
     //   parseFloat(a.outcomes.yes.price) - parseFloat(b.outcomes.yes.price);
+    // const compareFn = (a: Market, b: Market) =>
+    //   Date.parse(a.state.endDate!) - Date.parse(b.state.endDate!);
     const compareFn = (a: Market, b: Market) =>
-      Date.parse(a.state.endDate!) - Date.parse(b.state.endDate!);
+      groupItemIdx[a.id] - groupItemIdx[b.id];
 
     event.markets.sort(compareFn);
     if (event.display.sortBy === "descending") {
@@ -315,7 +327,6 @@ export class PolymarketCPV {
       }
 
       const dropdown = this.refs.dropdown;
-      clearTimeout(this.searchTimeout);
       dropdown.innerHTML = "";
       // TODO: We should be able to navigate to the items by using Tab
       for (const event of page.items.events) {
@@ -354,6 +365,7 @@ export class PolymarketCPV {
     );
 
     const markets = this.event?.markets ?? [];
+    let filled = false;
     for (const [i, market] of markets.entries()) {
       const tokenId = market.outcomes.yes.tokenId;
 
@@ -364,10 +376,23 @@ export class PolymarketCPV {
         this.books[tokenId] ??
         new TokenBook(new HalfBook<string>(), new HalfBook<string>());
 
-      this.plotter.drawCurve(frameCtx, book, this.tokenColor(i, this.event!));
+      const color = this.tokenColor(i, this.event!);
+      this.plotter.drawCurve(frameCtx, book, color);
+
+      if (!filled && this.pointer) {
+        const data = frameCtx.screenToData.transformPoint(this.pointer.screen);
+        if (data.y > 0) {
+          this.plotter.drawFilled(frameCtx, book.usdToYes, color, data.y);
+        } else {
+          this.plotter.drawFilled(frameCtx, book.yesToUsd, color, data.y);
+        }
+        filled = true;
+      }
     }
 
-    if (this.pointer) this.plotter.drawPointer(frameCtx, this.pointer);
+    if (this.pointer) {
+      this.plotter.drawPointer(frameCtx, this.pointer);
+    }
   }
 
   private tokenColor(index: number, event: Event): string {

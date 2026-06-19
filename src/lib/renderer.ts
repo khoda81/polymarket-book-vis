@@ -10,7 +10,7 @@ export interface ChartTheme {
   text: string;
 }
 
-export type Pointer = { screen: DOMPoint; data: DOMPoint };
+export type Pointer = { screen: DOMPoint };
 
 export interface RenderFrameConfig {
   theme: ChartTheme;
@@ -110,9 +110,8 @@ export class OrderBookPlotter {
     const screenY = e.clientY - rect.top;
 
     const screen = new DOMPoint(screenX, screenY);
-    const data = screen.matrixTransform(this.latestScreenToData);
 
-    this.onHover({ screen, data });
+    this.onHover({ screen });
   };
 
   private handleMouseLeave = () => {
@@ -127,8 +126,13 @@ export class OrderBookPlotter {
     const targetWidth = Math.floor(this.canvas.clientWidth * dpr);
     const targetHeight = Math.floor(this.canvas.clientHeight * dpr);
 
-    this.canvas.width = targetWidth;
-    this.canvas.height = targetHeight;
+    if (
+      this.canvas.width !== targetWidth ||
+      this.canvas.height !== targetHeight
+    ) {
+      this.canvas.width = targetWidth;
+      this.canvas.height = targetHeight;
+    }
 
     // 2. Math Setup
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale context, not coordinates
@@ -189,7 +193,7 @@ export class OrderBookPlotter {
         this.ctx.strokeStyle = theme.grid;
         this.ctx.beginPath();
         this.ctx.moveTo(this.padding.l, screenY);
-        this.ctx.lineTo(this.canvas.clientWidth - this.padding.r, screenY);
+        this.ctx.lineTo(this.padding.l + chart.width, screenY);
         this.ctx.stroke();
 
         // Tick mark
@@ -197,8 +201,8 @@ export class OrderBookPlotter {
         this.ctx.beginPath();
         this.ctx.moveTo(this.padding.l - 5, screenY);
         this.ctx.lineTo(this.padding.l, screenY);
-        this.ctx.moveTo(this.canvas.clientWidth - this.padding.r, screenY);
-        this.ctx.lineTo(this.canvas.clientWidth - this.padding.r + 5, screenY);
+        this.ctx.moveTo(this.padding.l + chart.width, screenY);
+        this.ctx.lineTo(this.padding.l + chart.width + 5, screenY);
         this.ctx.stroke();
 
         // Label
@@ -263,7 +267,6 @@ export class OrderBookPlotter {
     const yesToUsd = halfbookToDepth(orders, yAbsMax);
     const sell = yesToUsd.map((p) => invTransform.transformPoint(p));
 
-    if (isNaN(sell[0].y)) console.debug({ sell, yesToUsd });
     for (const point of sell) {
       this.ctx.lineTo(point.x, current.y); // Horizontal to current price
       this.ctx.lineTo(point.x, point.y); // Vertical to the current volume
@@ -273,13 +276,49 @@ export class OrderBookPlotter {
     this.ctx.stroke();
   }
 
-  drawFilled(fc: FrameContext, book: HalfBook<unknown>, color: string) {
-    // TODO:
+  drawFilled(
+    fc: FrameContext,
+    book: HalfBook<unknown>,
+    color: string,
+    limit: number = Infinity,
+  ) {
+    const { yAbsMax, dataToScreen: transform } = fc;
+    let curve;
+    if (limit < 0) {
+      const depth = halfbookToDepth(
+        book.asSellOrders(),
+        Math.min(-limit, yAbsMax),
+      );
+      let transformInv = transform.scale(1, -1, 1, 0, 0);
+      curve = depth.map((p) => transformInv.transformPoint(p));
+    } else {
+      const depth = halfbookToDepth(book.asOrders(), Math.min(limit, yAbsMax));
+      curve = depth.map((p) => transform.transformPoint(p));
+    }
+
+    let current = new DOMPoint(0, 0).matrixTransform(transform);
+    const { x: left } = current;
+
+    this.ctx.fillStyle = color;
+
+    this.ctx.beginPath();
+    this.ctx.moveTo(current.x, current.y);
+
+    for (const point of curve) {
+      this.ctx.lineTo(point.x, current.y); // Horizontal to the current price
+      this.ctx.lineTo(point.x, point.y); // Vertical to the current volume
+      current = point;
+    }
+
+    this.ctx.lineTo(left, current.y);
+    this.ctx.closePath();
+    this.ctx.fill();
   }
 
   drawPointer(fc: FrameContext, pointer: Pointer) {
     const { theme, chart } = fc;
-    const { screen, data } = pointer;
+    const { screen } = pointer;
+    const data = screen.matrixTransform(this.latestScreenToData);
     const { clientWidth: width, clientHeight: height } = this.canvas;
 
     // 1. Crosshairs
