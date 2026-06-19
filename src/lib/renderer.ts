@@ -40,11 +40,15 @@ export function halfbookToDepth(
   return points;
 }
 
-export class MarketCurve {
-  sell: DOMPoint[] = [];
-  buy: DOMPoint[] = [];
-
-  constructor(book: TokenBook<unknown>, transform: DOMMatrix) {}
+function* clampPrices(orders: Iterable<BookOrder>, maxPrice: number) {
+  for (const order of orders) {
+    // If you REALLY want zero allocations, don't yield a new object here either!
+    // But as a first step, just reusing the logic without the arrays is a massive win.
+    yield {
+      price: Math.min(order.price, maxPrice),
+      value: order.value,
+    };
+  }
 }
 
 // --- 2. The Plotter ---
@@ -242,14 +246,14 @@ export class OrderBookPlotter {
 
     const { y: mid } = new DOMPoint(1, 0).matrixTransform(transform);
 
-    const usdToYes = halfbookToDepth(book.usdToYes.asOrders(), yAbsMax);
-    usdToYes.reverse();
-    const buy = usdToYes.map((p) => transform.transformPoint(p));
+    const buy = halfbookToDepth(book.usdToYes.asOrders(), yAbsMax);
+    buy.reverse();
 
-    let current = buy[0];
+    let current = transform.transformPoint(buy[0]);
     this.ctx.moveTo(current.x, current.y);
 
-    for (const point of buy) {
+    for (const rawPoint of buy) {
+      const point = transform.transformPoint(rawPoint);
       this.ctx.lineTo(current.x, point.y); // Vertical to the current volume
       this.ctx.lineTo(point.x, point.y); // Horizontal to the current price
       current = point;
@@ -260,14 +264,11 @@ export class OrderBookPlotter {
 
     const invTransform = transform.scale(1, -1, 1, 0, 0);
 
-    const orders = [...book.yesToUsd.asSellOrders()].map((o) => ({
-      ...o,
-      price: Math.min(o.price, 1.0),
-    }));
-    const yesToUsd = halfbookToDepth(orders, yAbsMax);
-    const sell = yesToUsd.map((p) => invTransform.transformPoint(p));
+    const clampedSellOrders = clampPrices(book.yesToUsd.asSellOrders(), 1.0);
+    const sell = halfbookToDepth(clampedSellOrders, yAbsMax);
 
-    for (const point of sell) {
+    for (const rawPoint of sell) {
+      const point = invTransform.transformPoint(rawPoint);
       this.ctx.lineTo(point.x, current.y); // Horizontal to current price
       this.ctx.lineTo(point.x, point.y); // Vertical to the current volume
       current = point;

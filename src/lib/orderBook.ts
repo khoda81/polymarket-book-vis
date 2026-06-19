@@ -77,7 +77,9 @@ export class HalfBook<OrderKey> {
   }
 
   *asOrders() {
-    for (const key of this.orders.toReversed()) yield this.index.get(key)!;
+    for (let i = this.orders.length - 1; i >= 0; i--)
+      yield this.index.get(this.orders[i])!;
+
     yield { price: 0, value: Infinity };
   }
 

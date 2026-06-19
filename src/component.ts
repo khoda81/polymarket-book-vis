@@ -453,15 +453,5 @@ export class PolymarketCPV {
 
     console.debug({ price, shares });
     if (shares === 0) return;
-
-    // const order: UserOrder = {
-    //   id: crypto.randomUUID(),
-    //   price,
-    //   shares,
-    //   marketIdx: activeIdxs[0],
-    // };
-
-    // this.userOrders = [...this.userOrders, order];
-    // this.reqDraw();
   }
 }
