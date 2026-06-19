@@ -235,7 +235,6 @@ export class OrderBookPlotter {
   }
 
   drawCurve(fc: FrameContext, book: TokenBook<unknown>, color: string) {
-    // TODO: Make the lines not go out of the chart box
     const { yAbsMax, dataToScreen: transform } = fc;
 
     this.ctx.beginPath();
@@ -244,34 +243,49 @@ export class OrderBookPlotter {
     this.ctx.lineCap = "round";
     this.ctx.lineWidth = 2;
 
-    const { y: mid } = new DOMPoint(1, 0).matrixTransform(transform);
+    // Extract raw matrix values to avoid C++ property lookups inside the loop
+    const { a, b, c, d, e, f } = transform;
+
+    // Inline math for the mid point
+    const midY = 1 * b + 0 * d + f; // x=1, y=0
 
     const buy = halfbookToDepth(book.usdToYes.asOrders(), yAbsMax);
     buy.reverse();
 
-    let current = transform.transformPoint(buy[0]);
-    this.ctx.moveTo(current.x, current.y);
+    // Inline the first transform
+    let currX = buy[0].x * a + buy[0].y * c + e;
+    let currY = buy[0].x * b + buy[0].y * d + f;
 
-    for (const rawPoint of buy) {
-      const point = transform.transformPoint(rawPoint);
-      this.ctx.lineTo(current.x, point.y); // Vertical to the current volume
-      this.ctx.lineTo(point.x, point.y); // Horizontal to the current price
-      current = point;
+    this.ctx.moveTo(currX, currY);
+
+    // ZERO DOM calls inside this loop. Pure V8 JIT speed.
+    for (const raw of buy) {
+      currY = raw.x * b + raw.y * d + f;
+      this.ctx.lineTo(currX, currY); // Vertical
+      currX = raw.x * a + raw.y * c + e;
+      this.ctx.lineTo(currX, currY); // Horizontal
     }
 
-    current.y = mid;
-    this.ctx.lineTo(current.x, mid); // Vertical to the mid
+    currY = midY;
+    this.ctx.lineTo(currX, midY); // Vertical to mid
 
-    const invTransform = transform.scale(1, -1, 1, 0, 0);
+    // Inverse Transform Math (transform.scale(1, -1, 1, 0, 0))
+    // This just flips the Y axis scale, meaning we multiply the 'd' and 'f' logic by -1
+    const invA = a,
+      invC = c,
+      invE = e;
+    const invB = -b,
+      invD = -d,
+      invF = f;
 
     const clampedSellOrders = clampPrices(book.yesToUsd.asSellOrders(), 1.0);
     const sell = halfbookToDepth(clampedSellOrders, yAbsMax);
 
-    for (const rawPoint of sell) {
-      const point = invTransform.transformPoint(rawPoint);
-      this.ctx.lineTo(point.x, current.y); // Horizontal to current price
-      this.ctx.lineTo(point.x, point.y); // Vertical to the current volume
-      current = point;
+    for (const raw of sell) {
+      currX = raw.x * invA + raw.y * invC + invE;
+      this.ctx.lineTo(currX, currY); // Horizontal
+      currY = raw.x * invB + raw.y * invD + invF;
+      this.ctx.lineTo(currX, currY); // Vertical
     }
 
     this.ctx.stroke();
