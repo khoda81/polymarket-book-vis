@@ -25,19 +25,16 @@ export interface FrameContext {
   theme: ChartTheme;
 }
 
-export function halfbookToDepth(
+export function* halfbookToDepth(
   orders: Iterable<BookOrder>,
   maxDepth: number = Infinity,
 ) {
-  const points = [];
   let total = 0;
   for (const level of orders) {
     total += level.value / level.price;
-    points.push(new DOMPoint(level.price, Math.min(total, maxDepth)));
-    if (total >= maxDepth) return points;
+    yield new DOMPoint(level.price, Math.min(total, maxDepth));
+    if (total >= maxDepth) break;
   }
-
-  return points;
 }
 
 function* clampPrices(orders: Iterable<BookOrder>, maxPrice: number) {
@@ -243,6 +240,8 @@ export class OrderBookPlotter {
     this.ctx.lineCap = "round";
     this.ctx.lineWidth = 2;
 
+    // TODO: Use clamp rect to ensure shapes only draw inside the chart rect
+
     // Extract raw matrix values to avoid C++ property lookups inside the loop
     const { a, b, c, d, e, f } = transform;
 
@@ -250,24 +249,22 @@ export class OrderBookPlotter {
     const midY = 1 * b + 0 * d + f; // x=1, y=0
 
     const buy = halfbookToDepth(book.usdToYes.asOrders(), yAbsMax);
-    buy.reverse();
+    let startX = 0 * e + 0 * c + e,
+      currX = startX,
+      currY = midY;
 
-    // Inline the first transform
-    let currX = buy[0].x * a + buy[0].y * c + e;
-    let currY = buy[0].x * b + buy[0].y * d + f;
-
-    this.ctx.moveTo(currX, currY);
-
-    // ZERO DOM calls inside this loop. Pure V8 JIT speed.
+    // this.ctx.moveTo(currX, currY);
     for (const raw of buy) {
+      currX = raw.x * a + raw.y * c + e;
+      if (startX < currX) startX = currX;
+      this.ctx.lineTo(currX, currY); // Horizontal
       currY = raw.x * b + raw.y * d + f;
       this.ctx.lineTo(currX, currY); // Vertical
-      currX = raw.x * a + raw.y * c + e;
-      this.ctx.lineTo(currX, currY); // Horizontal
     }
 
+    currX = startX;
     currY = midY;
-    this.ctx.lineTo(currX, midY); // Vertical to mid
+    this.ctx.moveTo(currX, currY);
 
     // Inverse Transform Math (transform.scale(1, -1, 1, 0, 0))
     // This just flips the Y axis scale, meaning we multiply the 'd' and 'f' logic by -1
@@ -305,10 +302,10 @@ export class OrderBookPlotter {
         Math.min(-limit, yAbsMax),
       );
       let transformInv = transform.scale(1, -1, 1, 0, 0);
-      curve = depth.map((p) => transformInv.transformPoint(p));
+      curve = [...depth].map((p) => transformInv.transformPoint(p));
     } else {
       const depth = halfbookToDepth(book.asOrders(), Math.min(limit, yAbsMax));
-      curve = depth.map((p) => transform.transformPoint(p));
+      curve = [...depth].map((p) => transform.transformPoint(p));
     }
 
     let current = new DOMPoint(0, 0).matrixTransform(transform);

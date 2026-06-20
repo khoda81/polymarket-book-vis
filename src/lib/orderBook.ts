@@ -76,6 +76,14 @@ export class HalfBook<OrderKey> {
     return this.index.get(key);
   }
 
+  bestOrder(): { key?: OrderKey; order: BookOrder } {
+    const key = this.orders[this.orders.length - 1];
+    const order = this.index.get(key)!;
+
+    if (key) return { key, order };
+    return { order };
+  }
+
   *asOrders() {
     for (let i = this.orders.length - 1; i >= 0; i--)
       yield this.index.get(this.orders[i])!;
