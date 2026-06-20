@@ -22,8 +22,8 @@ const events = [
 events.forEach(async (slug) => createCard(await client.fetchEvent({ slug })));
 
 const extraEvents = client.listEvents({
-  featured: true,
-  volumeMin: 1000000,
+  // featured: true,
+  volumeMin: 100000,
   titleSearch: "iran",
 });
 

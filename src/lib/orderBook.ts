@@ -5,6 +5,10 @@ export interface BookOrder {
   value: number;
 }
 
+export interface Slot<Key> extends BookOrder {
+  key: Key;
+}
+
 /**
  * Represents a single "wing" (one side) of a limit order book.
  * * By design, this data structure is asymmetrical and maintains only a single,
@@ -27,25 +31,25 @@ export class HalfBook<OrderKey> {
    *
    * @returns `true` if the order key existed. Otherwise, `false`.
    */
-  setLevel(key: OrderKey, price: number, value: number): boolean {
+  setLevel(key: OrderKey, order: BookOrder): boolean {
     const existing = this.index.get(key);
 
     if (existing) {
-      if (existing.price === price) return this.updateValue(key, value);
+      if (existing.price === order.price)
+        return this.updateValue(key, order.value);
       console.warn(
         `Modifyin price of an existing order: `,
         existing,
         `to`,
-        price,
+        order.price,
       );
       this.removeOrder(key);
     }
 
-    const insertIdx = this.findInsertIndex(price);
-    const step: BookOrder = { price, value: value };
+    const insertIdx = this.findInsertIndex(order.price);
 
     this.orders.splice(insertIdx, 0, key);
-    this.index.set(key, step);
+    this.index.set(key, order);
 
     return !!existing;
   }
@@ -76,12 +80,11 @@ export class HalfBook<OrderKey> {
     return this.index.get(key);
   }
 
-  bestOrder(): { key?: OrderKey; order: BookOrder } {
+  bestOrder(): Slot<OrderKey> | undefined {
     const key = this.orders[this.orders.length - 1];
-    const order = this.index.get(key)!;
+    const order = this.index.get(key);
 
-    if (key) return { key, order };
-    return { order };
+    return order ? { key, ...order } : undefined;
   }
 
   *asOrders() {

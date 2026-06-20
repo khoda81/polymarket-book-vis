@@ -406,17 +406,19 @@ export class PolymarketCPV {
         const usdToYes = new HalfBook<string>();
         for (const b of stream.payload.bids) {
           const price = parseFloat(b.price);
-          usdToYes.setLevel(b.price, price, parseFloat(b.size) * price);
+          const value = parseFloat(b.size) * price;
+          usdToYes.setLevel(b.price, { price, value });
         }
 
         const yesToUsd = new HalfBook<string>();
         for (const a of stream.payload.asks) {
           const price = 1 / parseFloat(a.price);
-          yesToUsd.setLevel(a.price, price, parseFloat(a.size));
+          const value = parseFloat(a.size);
+          yesToUsd.setLevel(a.price, { price, value });
         }
 
         // If no orders to buy yes, we can always mint more at price 1.0
-        yesToUsd.setLevel("mint", 1, Infinity);
+        yesToUsd.setLevel("mint", { price: 1, value: Infinity });
 
         this.books[stream.payload.tokenId] = new TokenBook(usdToYes, yesToUsd);
       } else if (stream.type === "price_change") {
@@ -426,9 +428,12 @@ export class PolymarketCPV {
 
           const { side, price: tick, size } = priceChange;
           const price = parseFloat(tick);
-          if (side === OrderSide.BUY)
-            book.usdToYes.setLevel(tick, price, parseFloat(size) * price);
-          else book.yesToUsd.setLevel(tick, 1 / price, parseFloat(size));
+          const value = parseFloat(size);
+          if (side === OrderSide.BUY) {
+            book.usdToYes.setLevel(tick, { price, value: value * price });
+          } else {
+            book.yesToUsd.setLevel(tick, { price: 1 / price, value });
+          }
         }
       } else if (stream.type === "market_resolved") {
         for (const tokenId of stream.payload.tokenIds ?? [])
