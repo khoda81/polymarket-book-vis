@@ -1,15 +1,16 @@
 import { fmtVol, idToColor } from "@/lib/math";
-import { HalfBook } from "@/lib/orderBook";
+import { BookOrder, HalfBook } from "@/lib/orderBook";
 import {
-  BookView,
+  BoxStyle,
   ChartTheme,
+  Frame,
   OrderBookPlotter,
+  StackDirection,
   toDataX,
   toDataY,
 } from "@/lib/renderer";
 import "@/styles/component.css";
 import {
-  createPublicClient,
   Market,
   Event,
   OrderSide,
@@ -33,6 +34,13 @@ interface TokenBook<K = string> {
   usdToYes: HalfBook<K>;
   /** Give YES, Get USD */
   yesToUsd: HalfBook<K>;
+}
+
+interface BookBoxView {
+  readonly direction: StackDirection;
+  readonly orders: Iterable<BookOrder>;
+  readonly colorKey: number | string;
+  readonly fillDepth?: number;
 }
 
 function emptyTokenBook(): TokenBook<string> {
@@ -285,6 +293,7 @@ export class PolymarketCPV {
       });
 
       const dot = document.createElement("span");
+      // FIX: This color is desynced from chart colors
       const color = this.theme.color(this.tokenColorKey(i));
       dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
 
@@ -366,7 +375,6 @@ export class PolymarketCPV {
     this.raf = null;
     const { volScale, theme } = this;
     const frame = this.plotter.beginFrame({ volScale, theme });
-    frame.drawAxes();
 
     // Convert the stored screen-space pointer to data once, using this
     // frame's transform. No desync possible: we never cache the inverse.
@@ -380,8 +388,16 @@ export class PolymarketCPV {
     // User line: an empty book, drawn in the theme's color for key 0.
     // Kept as a placeholder for future user-order rendering.
     const empty = emptyTokenBook();
-    frame.drawBookView({ side: "buy", book: empty.usdToYes, colorKey: 0 });
-    frame.drawBookView({ side: "sell", book: empty.yesToUsd, colorKey: 0 });
+    this.drawBookView(frame, {
+      direction: "up",
+      orders: empty.usdToYes.asOrders(),
+      colorKey: 0,
+    });
+    this.drawBookView(frame, {
+      direction: "down",
+      orders: empty.yesToUsd.asSellOrders(),
+      colorKey: 0,
+    });
 
     const markets = this.event?.markets ?? [];
     let filled = false;
@@ -392,27 +408,106 @@ export class PolymarketCPV {
 
       const book = this.books[tokenId] ?? emptyTokenBook();
       const colorKey = this.tokenColorKey(i);
+      const buyFillDepth =
+        !filled && pointerData && pointerData.y > 0 ? pointerData.y : undefined;
+      const sellFillDepth =
+        !filled && pointerData && pointerData.y < 0
+          ? -pointerData.y
+          : undefined;
 
-      const views: BookView[] = [
-        { side: "buy", book: book.usdToYes, colorKey },
-        { side: "sell", book: book.yesToUsd, colorKey },
-      ];
+      this.drawBookView(frame, {
+        direction: "up",
+        orders: book.usdToYes.asOrders(),
+        colorKey,
+        fillDepth: buyFillDepth,
+      });
+      this.drawBookView(frame, {
+        direction: "down",
+        orders: book.yesToUsd.asSellOrders(),
+        colorKey,
+        fillDepth: sellFillDepth,
+      });
 
-      if (!filled && pointerData) {
-        if (pointerData.y > 0) {
-          views[0] = { ...views[0], fill: { depth: pointerData.y } };
-        } else {
-          views[1] = { ...views[1], fill: { depth: -pointerData.y } };
-        }
+      if (buyFillDepth !== undefined || sellFillDepth !== undefined)
         filled = true;
-      }
-
-      for (const v of views) frame.drawBookView(v);
     }
 
     if (this.pointer && pointerData) {
       frame.drawPointer(pointerData, this.pointer);
     }
+  }
+
+  private drawBookView(frame: Frame, view: BookBoxView) {
+    const color = frame.theme.color(view.colorKey);
+    const emptyStyle = PolymarketCPV.boxStyle(color, false);
+    const filledStyle = PolymarketCPV.boxStyle(color, true);
+    const pen = frame.boxPen(
+      { direction: view.direction, anchor: "left" },
+      emptyStyle,
+    );
+
+    let remainingHeight = frame.domain.yMax;
+    let fillRemaining = Math.min(view.fillDepth ?? 0, remainingHeight);
+    const maxWidth = frame.domain.xMax - frame.domain.xMin;
+
+    for (const level of view.orders) {
+      if (!Number.isFinite(level.price) || level.price <= 0)
+        throw new Error(
+          `Order price must be a finite positive number: ${level.price}`,
+        );
+      if (
+        level.value < 0 ||
+        (level.value !== Infinity && !Number.isFinite(level.value))
+      )
+        throw new Error(
+          `Order value must be a non-negative number: ${level.value}`,
+        );
+
+      const width = PolymarketCPV.clamp(
+        level.price - frame.domain.xMin,
+        0,
+        maxWidth,
+      );
+      const rowHeight = Math.min(level.value / level.price, remainingHeight);
+      if (rowHeight <= 0) continue;
+
+      const filledHeight = Math.min(rowHeight, fillRemaining);
+      if (filledHeight > 0) {
+        PolymarketCPV.commitBoxRow(pen, width, filledHeight, filledStyle);
+        fillRemaining -= filledHeight;
+      }
+
+      const emptyHeight = rowHeight - filledHeight;
+      if (emptyHeight > 0)
+        PolymarketCPV.commitBoxRow(pen, width, emptyHeight, emptyStyle);
+
+      remainingHeight -= rowHeight;
+      if (remainingHeight <= 0) break;
+    }
+
+    pen.dispose();
+  }
+
+  private static commitBoxRow(
+    pen: ReturnType<Frame["boxPen"]>,
+    width: number,
+    height: number,
+    style: BoxStyle,
+  ) {
+    pen.newBox(style);
+    pen.extendBox(width);
+    pen.commitRow(height);
+  }
+
+  private static boxStyle(color: string, filled: boolean): BoxStyle {
+    return {
+      stroke: color,
+      fill: filled ? { kind: "solid-dim", alpha: 0.25 } : { kind: "none" },
+    };
+  }
+
+  private static clamp(value: number, min: number, max: number): number {
+    return Math.min(Math.max(value, min), max);
   }
 
   /** Stable color key for market `i`. The theme turns this into a color. */

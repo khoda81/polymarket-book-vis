@@ -1,4 +1,3 @@
-import { BookOrder, HalfBook } from "./orderBook";
 import { fmtVol, powerOf10Ticks } from "./math";
 import {
   Domain,
@@ -19,32 +18,178 @@ export interface ChartTheme {
   grid: string;
   axis: string;
   text: string;
-  /** Map a stable key to a color. Used by `Frame.drawBookView` so the
-   * component never has to know how colors are generated. */
+  /** Map a stable key to a color. */
   color: (key: number | string) => string;
 }
 
-// --- Book views -----------------------------------------------------------
+// --- Box pen ---------------------------------------------------------------
 
-export type Side = "buy" | "sell";
+export type StackDirection = "up" | "down";
+export type StackAnchor = "left" | "right";
+
+export interface BoxPenOrientation {
+  /** Direction positive pen-y rows move on screen. */
+  readonly direction: StackDirection;
+  /** Screen edge where pen-x = 0 starts. */
+  readonly anchor: StackAnchor;
+}
+
+export type BoxFill =
+  | { readonly kind: "none" }
+  | { readonly kind: "solid-dim"; readonly alpha: number };
+
+export interface BoxStyle {
+  readonly stroke: string;
+  readonly fill: BoxFill;
+}
+
+interface BoxSegment {
+  readonly width: number;
+  readonly style: BoxStyle;
+}
 
 /**
- * Declarative description of one wing of a book to render.
+ * Immediate-mode renderer for one stack of boxes.
  *
- * - `side: "buy"`  → uses `book.asOrders()`, draws upward from the mid line.
- * - `side: "sell"` → uses `book.asSellOrders()` (price = 1/price), draws
- *   downward from the mid line.
- *
- * The mid line is `domain.yMin === -domain.yMax` (i.e. y=0 in data space);
- * the renderer never assumes this implicitly — it derives the baseline from
- * the domain.
+ * The pen only knows abstract widths/heights. Callers translate domain concepts
+ * (book side, price, asset amount, volume, etc.) before driving it.
  */
-export interface BookView<K = unknown> {
-  side: Side;
-  book: HalfBook<K>;
-  colorKey: number | string;
-  /** Omit to stroke only. Provide `depth` to fill up to that signed volume. */
-  fill?: { depth: number };
+export class BoxPen {
+  private rowBaseline = 0;
+  private previousRowWidth = 0;
+  private currentWidth = 0;
+  private currentStyle: BoxStyle;
+  private rowSegments: BoxSegment[] = [];
+  private disposed = false;
+
+  constructor(
+    private readonly ctx: CanvasRenderingContext2D,
+    private readonly transform: Transform,
+    initialStyle: BoxStyle,
+  ) {
+    this.currentStyle = initialStyle;
+  }
+
+  /** Grow the current box horizontally. Drawing happens on `commitRow`. */
+  extendBox(deltaWidth: number) {
+    this.assertOpen();
+    if (!Number.isFinite(deltaWidth) || deltaWidth < 0)
+      throw new Error(
+        `Box width delta must be a finite non-negative number: ${deltaWidth}`,
+      );
+    this.currentWidth += deltaWidth;
+  }
+
+  /** Finish the current box segment, then start a new segment with `style`. */
+  newBox(style: BoxStyle) {
+    this.assertOpen();
+    this.closeCurrentSegment();
+    this.currentStyle = style;
+  }
+
+  /** Draw the pending row with `height`, then move to the next row. */
+  commitRow(height: number) {
+    this.assertOpen();
+    if (!Number.isFinite(height) || height <= 0)
+      throw new Error(
+        `Box row height must be a finite positive number: ${height}`,
+      );
+
+    this.closeCurrentSegment();
+    if (!this.rowSegments.length) {
+      this.rowBaseline += height;
+      this.previousRowWidth = 0;
+      return;
+    }
+
+    const y0 = this.rowBaseline;
+    const y1 = y0 + height;
+    let cursor = 0;
+
+    for (const [i, segment] of this.rowSegments.entries()) {
+      this.fillBox(cursor, cursor + segment.width, y0, y1, segment.style);
+      if (i > 0) this.strokeLine(segment.style.stroke, cursor, y0, cursor, y1);
+      cursor += segment.width;
+    }
+
+    const outer = this.rowSegments[this.rowSegments.length - 1]!;
+    this.strokeLine(outer.style.stroke, this.previousRowWidth, y0, cursor, y0);
+    this.strokeLine(outer.style.stroke, cursor, y0, cursor, y1);
+
+    this.rowBaseline = y1;
+    this.previousRowWidth = cursor;
+    this.rowSegments = [];
+  }
+
+  /** Mark this stack complete. Throws if a row has width but no committed height. */
+  dispose() {
+    this.assertOpen();
+    if (this.currentWidth !== 0 || this.rowSegments.length)
+      throw new Error("Cannot dispose a BoxPen with an uncommitted row");
+    this.disposed = true;
+  }
+
+  private closeCurrentSegment() {
+    if (this.currentWidth === 0) return;
+    this.rowSegments.push({
+      width: this.currentWidth,
+      style: this.currentStyle,
+    });
+    this.currentWidth = 0;
+  }
+
+  private fillBox(
+    x0: number,
+    x1: number,
+    y0: number,
+    y1: number,
+    style: BoxStyle,
+  ) {
+    if (style.fill.kind === "none") return;
+
+    const sx0 = toScreenX(this.transform, x0, y0);
+    const sy0 = toScreenY(this.transform, x0, y0);
+    const sx1 = toScreenX(this.transform, x1, y1);
+    const sy1 = toScreenY(this.transform, x1, y1);
+
+    this.ctx.save();
+    this.ctx.globalAlpha *= style.fill.alpha;
+    this.ctx.fillStyle = style.stroke;
+    this.ctx.fillRect(
+      Math.min(sx0, sx1),
+      Math.min(sy0, sy1),
+      Math.abs(sx1 - sx0),
+      Math.abs(sy1 - sy0),
+    );
+    this.ctx.restore();
+  }
+
+  private strokeLine(
+    color: string,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+  ) {
+    this.ctx.strokeStyle = color;
+    this.ctx.lineWidth = 2;
+    this.ctx.lineJoin = "round";
+    this.ctx.lineCap = "round";
+    this.ctx.beginPath();
+    this.ctx.moveTo(
+      toScreenX(this.transform, x0, y0),
+      toScreenY(this.transform, x0, y0),
+    );
+    this.ctx.lineTo(
+      toScreenX(this.transform, x1, y1),
+      toScreenY(this.transform, x1, y1),
+    );
+    this.ctx.stroke();
+  }
+
+  private assertOpen() {
+    if (this.disposed) throw new Error("Cannot use a disposed BoxPen");
+  }
 }
 
 // --- Frame config ---------------------------------------------------------
@@ -59,6 +204,7 @@ export interface RenderFrameConfig {
 
 export class OrderBookPlotter {
   private readonly ctx: CanvasRenderingContext2D;
+  // TODO: Can this be in `RenderFrameConfig`?
   private readonly padding = { l: 60, r: 16, t: 24, b: 24 };
 
   public onZoom?: (delta: number) => void;
@@ -109,17 +255,17 @@ export class OrderBookPlotter {
     this.onPointer({ x: e.clientX - rect.left, y: e.clientY - rect.top });
   };
 
-  private handleMouseLeave = () => {
-    this.onPointer?.(null);
-  };
+  private handleMouseLeave = () => this.onPointer?.(null);
 }
 
 // --- Frame: per-frame immediate-mode drawing context ----------------------
 
 export class Frame {
+  // TODO: We should store only viewport and domain or only transform
   readonly viewport: Viewport;
   readonly domain: Domain;
   readonly transform: Transform; // data → screen
+  // TODO: Can get away with not storing this and doging desync chance
   readonly screenToData: Transform; // screen → data
   readonly theme: ChartTheme;
 
@@ -151,6 +297,7 @@ export class Frame {
       height: cH,
     };
 
+    // TODO: We should probably use y range instead of a "yAbsMax"
     const yAbsMax = Math.pow(10, config.volScale);
     this.domain = { xMin: 0, xMax: 1, yMin: -yAbsMax, yMax: yAbsMax };
 
@@ -158,12 +305,16 @@ export class Frame {
     this.screenToData = invert(this.transform);
     this.theme = config.theme;
 
-    // 3. Clear + background
+    // Clear + background
     this.ctx.clearRect(0, 0, width, height);
     this.ctx.fillStyle = config.theme.bg;
     this.ctx.fillRect(0, 0, width, height);
 
-    // 4. Clamp all subsequent drawing to the chart rect.
+    // FIX: This is a hack for now to make sure the axis is drawn before clip
+    this.drawAxes();
+
+    // TODO: Wait but doesn't this break the numbers?
+    // Clamp all subsequent drawing to the chart rect.
     this.ctx.beginPath();
     this.ctx.rect(
       this.viewport.l,
@@ -189,6 +340,7 @@ export class Frame {
     ctx.textBaseline = "middle";
 
     for (const frac of yFracs) {
+      // TODO: Instead of assuming symmetry we should probably go with evenly spaced ticks
       for (const sign of [1, -1]) {
         const yVal = sign * frac * yMax;
         const screenY = toScreenY(transform, 0, yVal);
@@ -227,111 +379,29 @@ export class Frame {
     ctx.fillText(String(domain.xMax), x1, vp.t + vp.height + 8);
   }
 
-  // --- Book views ---------------------------------------------------------
+  // --- Box stacks ---------------------------------------------------------
 
-  drawBookView(view: BookView) {
-    const color = this.theme.color(view.colorKey);
-    if (view.fill) this.fillBookView(view, color);
-    else this.strokeBookView(view, color);
-  }
+  boxPen(orientation: BoxPenOrientation, initialStyle: BoxStyle): BoxPen {
+    const { transform, domain } = this;
+    const xScale = Math.abs(transform.a);
+    const yScale = Math.abs(transform.d);
+    const originX =
+      orientation.anchor === "left"
+        ? toScreenX(transform, domain.xMin, 0)
+        : toScreenX(transform, domain.xMax, 0);
 
-  private strokeBookView(view: BookView, color: string) {
-    const { ctx, transform, domain } = this;
-    const { side, book } = view;
-
-    ctx.beginPath();
-    ctx.strokeStyle = color;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.lineWidth = 2;
-
-    // Baseline at y=0 in data space (the mid line for a symmetric domain).
-    const baseY = toScreenY(transform, 0, 0);
-
-    const depth = halfbookToDepth(
-      side === "buy" ? book.asOrders() : book.asSellOrders(),
-      domain.yMax,
+    return new BoxPen(
+      this.ctx,
+      {
+        a: orientation.anchor === "left" ? xScale : -xScale,
+        b: 0,
+        c: 0,
+        d: orientation.direction === "up" ? -yScale : yScale,
+        e: originX,
+        f: toScreenY(transform, 0, 0),
+      },
+      initialStyle,
     );
-
-    // Start at the left edge of the chart on the baseline.
-    let currX = toScreenX(transform, domain.xMin, 0);
-    let currY = baseY;
-    ctx.moveTo(currX, currY);
-
-    for (const p of depth) {
-      const px = toScreenX(transform, p.x, p.y);
-      const py = toScreenY(transform, p.x, p.y);
-      ctx.lineTo(px, currY); // horizontal
-      ctx.lineTo(px, py); // vertical
-      currX = px;
-      currY = py;
-    }
-    ctx.stroke();
-  }
-
-  private fillBookView(view: BookView, color: string) {
-    const { ctx, transform, domain } = this;
-    const { side, book, fill } = view;
-    if (!fill) return;
-
-    const limit = Math.min(Math.abs(fill.depth), domain.yMax);
-    const depth = halfbookToDepth(
-      side === "buy" ? book.asOrders() : book.asSellOrders(),
-      limit,
-    );
-
-    const baseY = toScreenY(transform, 0, 0);
-    const leftX = toScreenX(transform, domain.xMin, 0);
-
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(leftX, baseY);
-
-    let currY = baseY;
-    for (const p of depth) {
-      const px = toScreenX(transform, p.x, p.y);
-      const py = toScreenY(transform, p.x, p.y);
-      ctx.lineTo(px, currY); // horizontal
-      ctx.lineTo(px, py); // vertical
-      currY = py;
-    }
-    ctx.lineTo(leftX, currY);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // --- Stacked boxes ------------------------------------------------------
-
-  /**
-   * Draw a vertical stack of boxes growing from the mid line (y=0 in data
-   * space). Each box's bottom is the previous box's top. `boxes` is given in
-   * data space: `{ price, height }` where `price` is the left edge in data x
-   * and `height` is the data-y extent (always positive; direction is taken
-   * from `side`). Boxes are clamped to the chart rect by the frame's clip.
-   */
-  drawStackedBoxes(
-    side: Side,
-    boxes: Iterable<{ price: number; height: number }>,
-    colorKey: number | string,
-  ) {
-    const { ctx, transform, domain } = this;
-    const color = this.theme.color(colorKey);
-    ctx.fillStyle = color;
-
-    const baseY = toScreenY(transform, 0, 0);
-    const dir = side === "buy" ? -1 : 1; // screen y grows downward
-    const xMin = domain.xMin;
-    const xMax = domain.xMax;
-
-    let topY = baseY;
-    for (const b of boxes) {
-      const leftX = toScreenX(transform, Math.max(b.price, xMin), 0);
-      const rightX = toScreenX(transform, xMax, 0);
-      const h = b.height * Math.abs(transform.d);
-      const boxY = dir > 0 ? topY : topY - h;
-      ctx.fillRect(leftX, boxY, rightX - leftX, h);
-      topY = dir > 0 ? topY + h : topY - h;
-    }
   }
 
   // --- Pointer ------------------------------------------------------------
@@ -382,24 +452,4 @@ export class Frame {
   }
 }
 
-// --- Depth iteration (no per-point allocation) -----------------------------
-
-/**
- * Yield cumulative depth as `{x, y}` literals (not DOMPoint) up to `maxDepth`.
- * Reusing the same object via a closure would be faster but mutates shared
- * state; the literal-per-yield is cheap enough and keeps callers honest.
- */
-export function* halfbookToDepth(
-  orders: Iterable<BookOrder>,
-  maxDepth: number = Infinity,
-): Generator<{ x: number; y: number }> {
-  let total = 0;
-  for (const level of orders) {
-    total += level.value / level.price;
-    yield { x: level.price, y: Math.min(total, maxDepth) };
-    if (total >= maxDepth) break;
-  }
-}
-
-// Re-export for component convenience.
 export { toDataX, toDataY };

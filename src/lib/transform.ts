@@ -33,6 +33,7 @@ export const toScreenX = (t: Transform, x: number, y: number): number =>
 export const toScreenY = (t: Transform, x: number, y: number): number =>
   t.b * x + t.d * y + t.f;
 
+// TODO: Is there a reason these are functions and not methods? Is there a performance difference?
 /** Map a screen point to data coordinates using the inverse of `t`. */
 export const toDataX = (t: Transform, sx: number, sy: number): number =>
   t.a * sx + t.c * sy + t.e;
