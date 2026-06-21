@@ -28,17 +28,10 @@ export interface Viewport {
 }
 
 /** Map a data point to screen coordinates. */
-export const toScreenX = (t: Transform, x: number, y: number): number =>
+export const applyX = (t: Transform, x: number, y: number): number =>
   t.a * x + t.c * y + t.e;
-export const toScreenY = (t: Transform, x: number, y: number): number =>
+export const applyY = (t: Transform, x: number, y: number) =>
   t.b * x + t.d * y + t.f;
-
-// TODO: Is there a reason these are functions and not methods? Is there a performance difference?
-/** Map a screen point to data coordinates using the inverse of `t`. */
-export const toDataX = (t: Transform, sx: number, sy: number): number =>
-  t.a * sx + t.c * sy + t.e;
-export const toDataY = (t: Transform, sx: number, sy: number): number =>
-  t.b * sx + t.d * sy + t.f;
 
 /** Compose two transforms: `apply(A, apply(B, p)) === apply(compose(A, B), p)`. */
 export function compose(a: Transform, b: Transform): Transform {

@@ -3,12 +3,10 @@ import {
   Domain,
   Transform,
   Viewport,
+  applyX,
+  applyY,
   fromDomainViewport,
   invert,
-  toDataX,
-  toDataY,
-  toScreenX,
-  toScreenY,
 } from "./transform";
 
 // --- Theme ----------------------------------------------------------------
@@ -60,11 +58,9 @@ export class BoxPen {
   private currentWidth = 0;
   private currentStyle: BoxStyle;
   private rowSegments: BoxSegment[] = [];
-  private disposed = false;
 
   constructor(
-    private readonly ctx: CanvasRenderingContext2D,
-    private readonly transform: Transform,
+    private readonly frame: Frame,
     initialStyle: BoxStyle,
   ) {
     this.currentStyle = initialStyle;
@@ -72,35 +68,18 @@ export class BoxPen {
 
   /** Grow the current box horizontally. Drawing happens on `commitRow`. */
   extendBox(deltaWidth: number) {
-    this.assertOpen();
-    if (!Number.isFinite(deltaWidth) || deltaWidth < 0)
-      throw new Error(
-        `Box width delta must be a finite non-negative number: ${deltaWidth}`,
-      );
     this.currentWidth += deltaWidth;
   }
 
   /** Finish the current box segment, then start a new segment with `style`. */
   newBox(style: BoxStyle) {
-    this.assertOpen();
     this.closeCurrentSegment();
     this.currentStyle = style;
   }
 
   /** Draw the pending row with `height`, then move to the next row. */
   commitRow(height: number) {
-    this.assertOpen();
-    if (!Number.isFinite(height) || height <= 0)
-      throw new Error(
-        `Box row height must be a finite positive number: ${height}`,
-      );
-
     this.closeCurrentSegment();
-    if (!this.rowSegments.length) {
-      this.rowBaseline += height;
-      this.previousRowWidth = 0;
-      return;
-    }
 
     const y0 = this.rowBaseline;
     const y1 = y0 + height;
@@ -112,22 +91,24 @@ export class BoxPen {
       cursor += segment.width;
     }
 
-    const outer = this.rowSegments[this.rowSegments.length - 1]!;
-    this.strokeLine(outer.style.stroke, this.previousRowWidth, y0, cursor, y0);
-    this.strokeLine(outer.style.stroke, cursor, y0, cursor, y1);
+    if (this.rowSegments.length) {
+      const outer = this.rowSegments[this.rowSegments.length - 1]!;
+      this.strokeLine(
+        outer.style.stroke,
+        this.previousRowWidth,
+        y0,
+        cursor,
+        y0,
+      );
+      this.strokeLine(outer.style.stroke, cursor, y0, cursor, y1);
+    }
 
     this.rowBaseline = y1;
     this.previousRowWidth = cursor;
     this.rowSegments = [];
   }
 
-  /** Mark this stack complete. Throws if a row has width but no committed height. */
-  dispose() {
-    this.assertOpen();
-    if (this.currentWidth !== 0 || this.rowSegments.length)
-      throw new Error("Cannot dispose a BoxPen with an uncommitted row");
-    this.disposed = true;
-  }
+  dispose() {}
 
   private closeCurrentSegment() {
     if (this.currentWidth === 0) return;
@@ -147,21 +128,19 @@ export class BoxPen {
   ) {
     if (style.fill.kind === "none") return;
 
-    const sx0 = toScreenX(this.transform, x0, y0);
-    const sy0 = toScreenY(this.transform, x0, y0);
-    const sx1 = toScreenX(this.transform, x1, y1);
-    const sy1 = toScreenY(this.transform, x1, y1);
+    const { sx: sx0, sy: sy0 } = this.frame.toScreen(x0, y0);
+    const { sx: sx1, sy: sy1 } = this.frame.toScreen(x1, y1);
 
-    this.ctx.save();
-    this.ctx.globalAlpha *= style.fill.alpha;
-    this.ctx.fillStyle = style.stroke;
-    this.ctx.fillRect(
+    this.frame.ctx.save();
+    this.frame.ctx.globalAlpha *= style.fill.alpha;
+    this.frame.ctx.fillStyle = style.stroke;
+    this.frame.ctx.fillRect(
       Math.min(sx0, sx1),
       Math.min(sy0, sy1),
       Math.abs(sx1 - sx0),
       Math.abs(sy1 - sy0),
     );
-    this.ctx.restore();
+    this.frame.ctx.restore();
   }
 
   private strokeLine(
@@ -171,24 +150,20 @@ export class BoxPen {
     x1: number,
     y1: number,
   ) {
-    this.ctx.strokeStyle = color;
-    this.ctx.lineWidth = 2;
-    this.ctx.lineJoin = "round";
-    this.ctx.lineCap = "round";
-    this.ctx.beginPath();
-    this.ctx.moveTo(
-      toScreenX(this.transform, x0, y0),
-      toScreenY(this.transform, x0, y0),
+    this.frame.ctx.strokeStyle = color;
+    this.frame.ctx.lineWidth = 2;
+    this.frame.ctx.lineJoin = "round";
+    this.frame.ctx.lineCap = "round";
+    this.frame.ctx.beginPath();
+    this.frame.ctx.moveTo(
+      this.frame.toScreenX(x0, y0),
+      this.frame.toScreenY(x0, y0),
     );
-    this.ctx.lineTo(
-      toScreenX(this.transform, x1, y1),
-      toScreenY(this.transform, x1, y1),
+    this.frame.ctx.lineTo(
+      this.frame.toScreenX(x1, y1),
+      this.frame.toScreenY(x1, y1),
     );
-    this.ctx.stroke();
-  }
-
-  private assertOpen() {
-    if (this.disposed) throw new Error("Cannot use a disposed BoxPen");
+    this.frame.ctx.stroke();
   }
 }
 
@@ -270,9 +245,9 @@ export class Frame {
   readonly theme: ChartTheme;
 
   constructor(
-    private readonly canvas: HTMLCanvasElement,
-    private readonly ctx: CanvasRenderingContext2D,
-    private readonly padding: { l: number; r: number; t: number; b: number },
+    readonly canvas: HTMLCanvasElement,
+    readonly ctx: CanvasRenderingContext2D,
+    readonly padding: { l: number; r: number; t: number; b: number },
     config: RenderFrameConfig,
   ) {
     // 1. Synchronous auto-resize (device pixels)
@@ -309,21 +284,23 @@ export class Frame {
     this.ctx.clearRect(0, 0, width, height);
     this.ctx.fillStyle = config.theme.bg;
     this.ctx.fillRect(0, 0, width, height);
-
-    // FIX: This is a hack for now to make sure the axis is drawn before clip
-    this.drawAxes();
-
-    // TODO: Wait but doesn't this break the numbers?
-    // Clamp all subsequent drawing to the chart rect.
-    this.ctx.beginPath();
-    this.ctx.rect(
-      this.viewport.l,
-      this.viewport.t,
-      this.viewport.width,
-      this.viewport.height,
-    );
-    this.ctx.clip();
   }
+
+  /** Map a data point to screen coordinates. */
+  toScreenX = (x: number, y: number) => applyX(this.transform, x, y);
+  toScreenY = (x: number, y: number) => applyY(this.transform, x, y);
+  toScreen = (x: number, y: number) => ({
+    sx: this.toScreenX(x, y),
+    sy: this.toScreenY(x, y),
+  });
+
+  /** Map a screen point to data coordinates using the inverse of `t`. */
+  toDataX = (sx: number, sy: number) => applyX(this.screenToData, sx, sy);
+  toDataY = (sx: number, sy: number) => applyY(this.screenToData, sx, sy);
+  toData = ({ sx, sy }: { sx: number; sy: number }) => ({
+    x: this.toDataX(sx, sy),
+    y: this.toDataY(sx, sy),
+  });
 
   // --- Axes ---------------------------------------------------------------
 
@@ -343,7 +320,7 @@ export class Frame {
       // TODO: Instead of assuming symmetry we should probably go with evenly spaced ticks
       for (const sign of [1, -1]) {
         const yVal = sign * frac * yMax;
-        const screenY = toScreenY(transform, 0, yVal);
+        const screenY = this.toScreenY(0, yVal);
 
         ctx.strokeStyle = theme.grid;
         ctx.beginPath();
@@ -369,14 +346,24 @@ export class Frame {
       }
     }
 
-    // X-axis anchors at domain.xMin / domain.xMax
-    const x0 = toScreenX(transform, domain.xMin, 0);
-    const x1 = toScreenX(transform, domain.xMax, 0);
     ctx.fillStyle = theme.text;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
+    // X-axis anchors at domain.xMin / domain.xMax
+    const x0 = this.toScreenX(domain.xMin, 0);
+    const x1 = this.toScreenX(domain.xMax, 0);
     ctx.fillText(String(domain.xMin), x0, vp.t + vp.height + 8);
     ctx.fillText(String(domain.xMax), x1, vp.t + vp.height + 8);
+
+    // Clamp all subsequent drawing to the chart rect.
+    this.ctx.beginPath();
+    this.ctx.rect(
+      this.viewport.l,
+      this.viewport.t,
+      this.viewport.width,
+      this.viewport.height,
+    );
+    this.ctx.clip();
   }
 
   // --- Box stacks ---------------------------------------------------------
@@ -387,21 +374,20 @@ export class Frame {
     const yScale = Math.abs(transform.d);
     const originX =
       orientation.anchor === "left"
-        ? toScreenX(transform, domain.xMin, 0)
-        : toScreenX(transform, domain.xMax, 0);
+        ? this.toScreenX(domain.xMin, 0)
+        : this.toScreenX(domain.xMax, 0);
 
-    return new BoxPen(
-      this.ctx,
-      {
-        a: orientation.anchor === "left" ? xScale : -xScale,
-        b: 0,
-        c: 0,
-        d: orientation.direction === "up" ? -yScale : yScale,
-        e: originX,
-        f: toScreenY(transform, 0, 0),
-      },
-      initialStyle,
-    );
+    // TODO: This should be a method on Frame that sets the anchor
+    const boxTransform = {
+      a: orientation.anchor === "left" ? xScale : -xScale,
+      b: 0,
+      c: 0,
+      d: orientation.direction === "up" ? -yScale : yScale,
+      e: originX,
+      f: this.toScreenY(0, 0),
+    };
+
+    return new BoxPen(this, initialStyle);
   }
 
   // --- Pointer ------------------------------------------------------------
@@ -451,5 +437,3 @@ export class Frame {
     ctx.fillText(data.x.toFixed(2), screen.x, vp.t + vp.height + 8);
   }
 }
-
-export { toDataX, toDataY };

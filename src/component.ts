@@ -6,8 +6,6 @@ import {
   Frame,
   OrderBookPlotter,
   StackDirection,
-  toDataX,
-  toDataY,
 } from "@/lib/renderer";
 import "@/styles/component.css";
 import {
@@ -18,7 +16,6 @@ import {
   TransportError,
   MarketId,
   PublicClient,
-  GammaMarket,
 } from "@polymarket/client";
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
 
@@ -376,12 +373,14 @@ export class PolymarketCPV {
     const { volScale, theme } = this;
     const frame = this.plotter.beginFrame({ volScale, theme });
 
+    frame.drawAxes();
+
     // Convert the stored screen-space pointer to data once, using this
     // frame's transform. No desync possible: we never cache the inverse.
     const pointerData = this.pointer
       ? {
-          x: toDataX(frame.screenToData, this.pointer.x, this.pointer.y),
-          y: toDataY(frame.screenToData, this.pointer.x, this.pointer.y),
+          x: frame.toDataX(this.pointer.x, this.pointer.y),
+          y: frame.toDataY(this.pointer.x, this.pointer.y),
         }
       : null;
 
@@ -573,8 +572,8 @@ export class PolymarketCPV {
       volScale: this.volScale,
       theme: this.theme,
     });
-    const price = toDataX(frame.screenToData, screen.x, screen.y);
-    const shares = toDataY(frame.screenToData, screen.x, screen.y);
+    const price = frame.toDataX(screen.x, screen.y);
+    const shares = frame.toDataY(screen.x, screen.y);
 
     console.debug({ price, shares });
     if (shares === 0) return;
