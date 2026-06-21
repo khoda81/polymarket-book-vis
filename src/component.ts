@@ -19,12 +19,7 @@ import {
 } from "@polymarket/client";
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
 
-// Accept the client as the first argument
-enum ConnectionStatus {
-  Error = "disconnected",
-  Connecting = "connecting",
-  Live = "live",
-}
+type ConnectionStatus = "disconnected" | "connecting" | "live";
 
 interface TokenBook<K = string> {
   /** Give USD, Get YES */
@@ -65,9 +60,14 @@ export class PolymarketCPV {
 
   private theme: ChartTheme;
   private themeQuery: MediaQueryList;
+
+  // TODO: We should not need to store the container
   private container: HTMLElement;
   private refs!: Record<string, HTMLElement>;
+  private resizeObserver: ResizeObserver;
+  private raf: number | null = null;
   private plotter!: OrderBookPlotter;
+
   /** Pointer in CSS pixels relative to the canvas. Converted to data on draw. */
   private pointer: { x: number; y: number } | null = null;
   private titles: Record<MarketId, string> = {};
@@ -75,10 +75,7 @@ export class PolymarketCPV {
   private event: Event | undefined;
   private activeTokens = new Set<TokenId>();
   private books: Record<TokenId, TokenBook<string>> = {};
-  private resizeObserver: ResizeObserver;
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
-  private raf: number | null = null;
-  // private userOrders: UserOrder[] = [];
   private volScale = 4.5;
   private searchTimeout: number | undefined;
 
@@ -176,7 +173,7 @@ export class PolymarketCPV {
 
   async load(event: Event) {
     await this.closeWS();
-    this.setDot(ConnectionStatus.Connecting);
+    this.setDot("connecting");
 
     this.books = {};
     this.titles = {};
@@ -206,16 +203,6 @@ export class PolymarketCPV {
         groupItemIdx[market.id] = parseFloat(market.groupItemThreshold);
     }
 
-    // rawEvent.markets.sort(
-    //   (a: GammaMarket, b: GammaMarket) =>
-    //     parseFloat(a.groupItemThreshold) - parseFloat(b.groupItemThreshold),
-    // );
-
-    // TODO: Find a better compare funcition
-    // const compareFn = (a: Market, b: Market) =>
-    //   parseFloat(a.outcomes.yes.price) - parseFloat(b.outcomes.yes.price);
-    // const compareFn = (a: Market, b: Market) =>
-    //   Date.parse(a.state.endDate!) - Date.parse(b.state.endDate!);
     const compareFn = (a: Market, b: Market) =>
       groupItemIdx[a.id] - groupItemIdx[b.id];
 
@@ -238,13 +225,14 @@ export class PolymarketCPV {
         break;
       } catch (err) {
         if (!(err instanceof TransportError)) throw err;
+        // TODO: This is unbounded retry, we should use some retry library that implements exponential back off
         console.error("Error connecting to websocket, retrying...");
       }
 
     this.event = event;
 
+    this.setDot("live");
     this.readEvents(this.bookEventStream);
-    this.setDot(ConnectionStatus.Live);
 
     this.reqDraw();
   }
@@ -301,20 +289,20 @@ export class PolymarketCPV {
     }
   }
 
-  private static readonly STATUS_DISPLAY: Record<
-    ConnectionStatus,
-    [string, string]
-  > = {
-    [ConnectionStatus.Live]: ["live", "live"],
-    [ConnectionStatus.Error]: ["err", "error"],
-    [ConnectionStatus.Connecting]: ["conn", "connecting…"],
-  };
-
   private setDot(s: ConnectionStatus) {
     const { dot, stxt } = this.refs;
-    const [cls, txt] = PolymarketCPV.STATUS_DISPLAY[s];
-    dot.className = `cpv-dot cpv-dot--${cls}`;
-    stxt.textContent = txt;
+    if (s === "live") {
+      dot.className = `cpv-dot cpv-dot--live`;
+      stxt.textContent = "live";
+    } else if (s === "connecting") {
+      dot.className = `cpv-dot cpv-dot--conn`;
+      stxt.textContent = "connecting...";
+    } else if (s === "disconnected") {
+      dot.className = `cpv-dot cpv-dot--err`;
+      stxt.textContent = "disconnected";
+    } else {
+      console.error(`Unexpected status ${s}`);
+    }
   }
 
   private async closeWS() {
@@ -364,6 +352,7 @@ export class PolymarketCPV {
   }
 
   private reqDraw() {
+    // TODO: If raf is not null, shouldn't we just return insetad of cancel+request?
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = requestAnimationFrame(() => this.performDraw());
   }
@@ -371,6 +360,8 @@ export class PolymarketCPV {
   private performDraw() {
     this.raf = null;
     const { volScale, theme } = this;
+
+    const yAbsMax = Math.pow(10, volScale);
     const frame = this.plotter.beginFrame({ volScale, theme });
 
     frame.drawAxes();
@@ -408,11 +399,9 @@ export class PolymarketCPV {
       const book = this.books[tokenId] ?? emptyTokenBook();
       const colorKey = this.tokenColorKey(i);
       const buyFillDepth =
-        !filled && pointerData && pointerData.y > 0 ? pointerData.y : undefined;
+        !filled && pointerData && pointerData.y > 0 ? pointerData.y : 0;
       const sellFillDepth =
-        !filled && pointerData && pointerData.y < 0
-          ? -pointerData.y
-          : undefined;
+        !filled && pointerData && pointerData.y < 0 ? -pointerData.y : 0;
 
       this.drawBookView(frame, {
         direction: "up",
@@ -447,38 +436,20 @@ export class PolymarketCPV {
 
     let remainingHeight = frame.domain.yMax;
     let fillRemaining = Math.min(view.fillDepth ?? 0, remainingHeight);
-    const maxWidth = frame.domain.xMax - frame.domain.xMin;
 
     for (const level of view.orders) {
-      if (!Number.isFinite(level.price) || level.price <= 0)
-        throw new Error(
-          `Order price must be a finite positive number: ${level.price}`,
-        );
-      if (
-        level.value < 0 ||
-        (level.value !== Infinity && !Number.isFinite(level.value))
-      )
-        throw new Error(
-          `Order value must be a non-negative number: ${level.value}`,
-        );
-
-      const width = PolymarketCPV.clamp(
-        level.price - frame.domain.xMin,
-        0,
-        maxWidth,
-      );
       const rowHeight = Math.min(level.value / level.price, remainingHeight);
       if (rowHeight <= 0) continue;
 
       const filledHeight = Math.min(rowHeight, fillRemaining);
       if (filledHeight > 0) {
-        PolymarketCPV.commitBoxRow(pen, width, filledHeight, filledStyle);
+        PolymarketCPV.commitBoxRow(pen, level.price, filledHeight, filledStyle);
         fillRemaining -= filledHeight;
       }
 
       const emptyHeight = rowHeight - filledHeight;
       if (emptyHeight > 0)
-        PolymarketCPV.commitBoxRow(pen, width, emptyHeight, emptyStyle);
+        PolymarketCPV.commitBoxRow(pen, level.price, emptyHeight, emptyStyle);
 
       remainingHeight -= rowHeight;
       if (remainingHeight <= 0) break;
@@ -503,10 +474,6 @@ export class PolymarketCPV {
       stroke: color,
       fill: filled ? { kind: "solid-dim", alpha: 0.25 } : { kind: "none" },
     };
-  }
-
-  private static clamp(value: number, min: number, max: number): number {
-    return Math.min(Math.max(value, min), max);
   }
 
   /** Stable color key for market `i`. The theme turns this into a color. */
@@ -558,7 +525,7 @@ export class PolymarketCPV {
       this.reqDraw();
     }
 
-    this.setDot(ConnectionStatus.Error);
+    this.setDot("disconnected");
   }
 
   private placeOrder(screen: { x: number; y: number }) {

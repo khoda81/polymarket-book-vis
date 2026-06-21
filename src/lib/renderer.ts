@@ -60,8 +60,9 @@ export class BoxPen {
   private rowSegments: BoxSegment[] = [];
 
   constructor(
-    private readonly frame: Frame,
+    readonly frame: Frame,
     initialStyle: BoxStyle,
+    readonly boxTransform: Transform,
   ) {
     this.currentStyle = initialStyle;
   }
@@ -128,8 +129,8 @@ export class BoxPen {
   ) {
     if (style.fill.kind === "none") return;
 
-    const { sx: sx0, sy: sy0 } = this.frame.toScreen(x0, y0);
-    const { sx: sx1, sy: sy1 } = this.frame.toScreen(x1, y1);
+    const { sx: sx0, sy: sy0 } = this.toScreen(x0, y0);
+    const { sx: sx1, sy: sy1 } = this.toScreen(x1, y1);
 
     this.frame.ctx.save();
     this.frame.ctx.globalAlpha *= style.fill.alpha;
@@ -141,6 +142,12 @@ export class BoxPen {
       Math.abs(sy1 - sy0),
     );
     this.frame.ctx.restore();
+  }
+
+  private toScreen(x: number, y: number): { sx: number; sy: number } {
+    const bx = applyX(this.boxTransform, x, y);
+    const by = applyY(this.boxTransform, x, y);
+    return this.frame.toScreen(bx, by);
   }
 
   private strokeLine(
@@ -155,14 +162,11 @@ export class BoxPen {
     this.frame.ctx.lineJoin = "round";
     this.frame.ctx.lineCap = "round";
     this.frame.ctx.beginPath();
-    this.frame.ctx.moveTo(
-      this.frame.toScreenX(x0, y0),
-      this.frame.toScreenY(x0, y0),
-    );
-    this.frame.ctx.lineTo(
-      this.frame.toScreenX(x1, y1),
-      this.frame.toScreenY(x1, y1),
-    );
+
+    const p0 = this.toScreen(x0, y0);
+    this.frame.ctx.moveTo(p0.sx, p0.sy);
+    const p1 = this.toScreen(x1, y1);
+    this.frame.ctx.lineTo(p1.sx, p1.sy);
     this.frame.ctx.stroke();
   }
 }
@@ -171,7 +175,6 @@ export class BoxPen {
 
 export interface RenderFrameConfig {
   theme: ChartTheme;
-  /** log10 of the absolute y bound. The frame's domain is `[-10^volScale, +10^volScale]`. */
   volScale: number;
 }
 
@@ -248,7 +251,7 @@ export class Frame {
     readonly canvas: HTMLCanvasElement,
     readonly ctx: CanvasRenderingContext2D,
     readonly padding: { l: number; r: number; t: number; b: number },
-    config: RenderFrameConfig,
+    readonly config: RenderFrameConfig,
   ) {
     // 1. Synchronous auto-resize (device pixels)
     const dpr = window.devicePixelRatio || 1;
@@ -305,7 +308,7 @@ export class Frame {
   // --- Axes ---------------------------------------------------------------
 
   drawAxes() {
-    const { ctx, viewport: vp, theme, domain, transform } = this;
+    const { ctx, viewport: vp, theme, domain } = this;
     const { yMax } = domain;
 
     ctx.strokeStyle = theme.axis;
@@ -369,25 +372,16 @@ export class Frame {
   // --- Box stacks ---------------------------------------------------------
 
   boxPen(orientation: BoxPenOrientation, initialStyle: BoxStyle): BoxPen {
-    const { transform, domain } = this;
-    const xScale = Math.abs(transform.a);
-    const yScale = Math.abs(transform.d);
-    const originX =
-      orientation.anchor === "left"
-        ? this.toScreenX(domain.xMin, 0)
-        : this.toScreenX(domain.xMax, 0);
-
-    // TODO: This should be a method on Frame that sets the anchor
     const boxTransform = {
-      a: orientation.anchor === "left" ? xScale : -xScale,
+      a: orientation.anchor === "left" ? 1 : -1,
       b: 0,
       c: 0,
-      d: orientation.direction === "up" ? -yScale : yScale,
-      e: originX,
-      f: this.toScreenY(0, 0),
+      d: orientation.direction === "up" ? 1 : -1,
+      e: 0,
+      f: 0,
     };
 
-    return new BoxPen(this, initialStyle);
+    return new BoxPen(this, initialStyle, boxTransform);
   }
 
   // --- Pointer ------------------------------------------------------------
