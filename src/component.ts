@@ -1,6 +1,12 @@
 import { fmtVol, idToColor } from "@/lib/math";
-import { TokenBook, HalfBook } from "@/lib/orderBook";
-import { OrderBookPlotter, Pointer } from "@/lib/renderer";
+import { HalfBook } from "@/lib/orderBook";
+import {
+  BookView,
+  ChartTheme,
+  OrderBookPlotter,
+  toDataX,
+  toDataY,
+} from "@/lib/renderer";
 import "@/styles/component.css";
 import {
   createPublicClient,
@@ -22,26 +28,32 @@ enum ConnectionStatus {
   Live = "live",
 }
 
-export interface ChartTheme {
-  bg: string;
-  grid: string;
-  axis: string;
-  text: string;
+interface TokenBook<K = string> {
+  /** Give USD, Get YES */
+  usdToYes: HalfBook<K>;
+  /** Give YES, Get USD */
+  yesToUsd: HalfBook<K>;
 }
 
-const LIGHT_THEME = {
+function emptyTokenBook(): TokenBook<string> {
+  return { usdToYes: new HalfBook(), yesToUsd: new HalfBook() };
+}
+
+const LIGHT_THEME: ChartTheme = {
   bg: "#ffffff",
   grid: "rgba(128,128,128,0.15)",
   axis: "rgba(128,128,128,0.5)",
   text: "#666666",
-} satisfies ChartTheme;
+  color: (key) => idToColor(typeof key === "number" ? key : 0),
+};
 
-const DARK_THEME = {
+const DARK_THEME: ChartTheme = {
   bg: "#121212",
   grid: "rgba(255,255,255,0.1)",
   axis: "rgba(255,255,255,0.3)",
   text: "#aaaaaa",
-} satisfies ChartTheme;
+  color: (key) => idToColor(typeof key === "number" ? key : 0),
+};
 
 export class PolymarketCPV {
   polyMarketClient: PublicClient;
@@ -51,7 +63,8 @@ export class PolymarketCPV {
   private container: HTMLElement;
   private refs!: Record<string, HTMLElement>;
   private plotter!: OrderBookPlotter;
-  private pointer: Pointer | null = null;
+  /** Pointer in CSS pixels relative to the canvas. Converted to data on draw. */
+  private pointer: { x: number; y: number } | null = null;
   private titles: Record<MarketId, string> = {};
 
   private event: Event | undefined;
@@ -134,8 +147,8 @@ export class PolymarketCPV {
       this.volScale = this.volScale + delta;
       this.reqDraw();
     };
-    this.plotter.onHover = (pointer) => {
-      this.pointer = pointer;
+    this.plotter.onPointer = (p) => {
+      this.pointer = p;
       this.reqDraw();
     };
 
@@ -150,11 +163,9 @@ export class PolymarketCPV {
 
     canvasWrap.addEventListener("click", (e) => {
       const rect = this.refs.canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      const screenX = (e.clientX - rect.left) * dpr;
-      const screenY = (e.clientY - rect.top) * dpr;
-
-      this.placeOrder(new DOMPoint(screenX, screenY));
+      const screenX = e.clientX - rect.left;
+      const screenY = e.clientY - rect.top;
+      this.placeOrder({ x: screenX, y: screenY });
     });
   }
 
@@ -274,7 +285,7 @@ export class PolymarketCPV {
       });
 
       const dot = document.createElement("span");
-      const color = this.tokenColor(i, event);
+      const color = this.theme.color(this.tokenColorKey(i));
       dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
 
       lbl.appendChild(cb);
@@ -354,50 +365,60 @@ export class PolymarketCPV {
   private performDraw() {
     this.raf = null;
     const { volScale, theme } = this;
-    const frameCtx = this.plotter.beginFrame({ volScale, theme });
-    this.plotter.drawAxes(frameCtx);
+    const frame = this.plotter.beginFrame({ volScale, theme });
+    frame.drawAxes();
 
-    // Draw user line:
-    this.plotter.drawCurve(
-      frameCtx,
-      new TokenBook(new HalfBook<string>(), new HalfBook<string>()),
-      "white",
-    );
+    // Convert the stored screen-space pointer to data once, using this
+    // frame's transform. No desync possible: we never cache the inverse.
+    const pointerData = this.pointer
+      ? {
+          x: toDataX(frame.screenToData, this.pointer.x, this.pointer.y),
+          y: toDataY(frame.screenToData, this.pointer.x, this.pointer.y),
+        }
+      : null;
+
+    // User line: an empty book, drawn in the theme's color for key 0.
+    // Kept as a placeholder for future user-order rendering.
+    const empty = emptyTokenBook();
+    frame.drawBookView({ side: "buy", book: empty.usdToYes, colorKey: 0 });
+    frame.drawBookView({ side: "sell", book: empty.yesToUsd, colorKey: 0 });
 
     const markets = this.event?.markets ?? [];
     let filled = false;
     for (const [i, market] of markets.entries()) {
       const tokenId = market.outcomes.yes.tokenId;
-
       if (tokenId === null) continue;
       if (!this.activeTokens.has(tokenId)) continue;
 
-      const book =
-        this.books[tokenId] ??
-        new TokenBook(new HalfBook<string>(), new HalfBook<string>());
+      const book = this.books[tokenId] ?? emptyTokenBook();
+      const colorKey = this.tokenColorKey(i);
 
-      const color = this.tokenColor(i, this.event!);
-      this.plotter.drawCurve(frameCtx, book, color);
+      const views: BookView[] = [
+        { side: "buy", book: book.usdToYes, colorKey },
+        { side: "sell", book: book.yesToUsd, colorKey },
+      ];
 
-      if (!filled && this.pointer) {
-        const data = frameCtx.screenToData.transformPoint(this.pointer.screen);
-        if (data.y > 0) {
-          this.plotter.drawFilled(frameCtx, book.usdToYes, color, data.y);
+      if (!filled && pointerData) {
+        if (pointerData.y > 0) {
+          views[0] = { ...views[0], fill: { depth: pointerData.y } };
         } else {
-          this.plotter.drawFilled(frameCtx, book.yesToUsd, color, data.y);
+          views[1] = { ...views[1], fill: { depth: -pointerData.y } };
         }
         filled = true;
       }
+
+      for (const v of views) frame.drawBookView(v);
     }
 
-    if (this.pointer) {
-      this.plotter.drawPointer(frameCtx, this.pointer);
+    if (this.pointer && pointerData) {
+      frame.drawPointer(pointerData, this.pointer);
     }
   }
 
-  private tokenColor(index: number, event: Event): string {
-    const offset = parseInt(event.id);
-    return idToColor(index + offset);
+  /** Stable color key for market `i`. The theme turns this into a color. */
+  private tokenColorKey(index: number): number {
+    const offset = this.event ? parseInt(this.event.id) : 0;
+    return index + offset;
   }
 
   private async readEvents(events: SubscriptionHandle<MarketEvent>) {
@@ -420,7 +441,7 @@ export class PolymarketCPV {
         // If no orders to buy yes, we can always mint more at price 1.0
         yesToUsd.setLevel("mint", { price: 1, value: Infinity });
 
-        this.books[stream.payload.tokenId] = new TokenBook(usdToYes, yesToUsd);
+        this.books[stream.payload.tokenId] = { usdToYes, yesToUsd };
       } else if (stream.type === "price_change") {
         for (const priceChange of stream.payload.priceChanges) {
           const book = this.books[priceChange.tokenId];
@@ -446,15 +467,19 @@ export class PolymarketCPV {
     this.setDot(ConnectionStatus.Error);
   }
 
-  private placeOrder(point: DOMPoint) {
+  private placeOrder(screen: { x: number; y: number }) {
     const activeIdxs = Array.from(this.activeTokens);
     if (!activeIdxs.length) return;
 
-    const dataPoint = this.plotter.screenToDataPoint(point);
-    if (!dataPoint) return;
-
-    const price = dataPoint.x;
-    const shares = dataPoint.y;
+    // Convert using the *next* frame's transform by drawing immediately.
+    // We don't have a frame here, so we compute one on demand. This is fine
+    // because placeOrder is a user-initiated click, not a hot path.
+    const frame = this.plotter.beginFrame({
+      volScale: this.volScale,
+      theme: this.theme,
+    });
+    const price = toDataX(frame.screenToData, screen.x, screen.y);
+    const shares = toDataY(frame.screenToData, screen.x, screen.y);
 
     console.debug({ price, shares });
     if (shares === 0) return;

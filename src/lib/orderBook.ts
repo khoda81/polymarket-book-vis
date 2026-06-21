@@ -1,3 +1,12 @@
+/**
+ * Discriminated union key for orders originating from a parallel merge.
+ * The `source` tag preserves traceability so the renderer can pick
+ * a per-source color when drawing stacked boxes.
+ */
+export type MergedKey<A, B> =
+  | { readonly source: "left"; readonly key: A }
+  | { readonly source: "right"; readonly key: B };
+
 export interface BookOrder {
   /** Conventional price: quote tokens per base token (e.g. USD per YES) */
   price: number;
@@ -76,8 +85,8 @@ export class HalfBook<OrderKey> {
     return true;
   }
 
-  getOrder(key: OrderKey): BookOrder | undefined {
-    return this.index.get(key);
+  getOrder(key: OrderKey): BookOrder {
+    return this.index.get(key) ?? { price: 0, value: 1 };
   }
 
   bestOrder(): Slot<OrderKey> | undefined {
@@ -90,8 +99,14 @@ export class HalfBook<OrderKey> {
   *asOrders() {
     for (let i = this.orders.length - 1; i >= 0; i--)
       yield this.index.get(this.orders[i])!;
+  }
 
-    yield { price: 0, value: Infinity };
+  /** Yield all slots best-to-worst (descending price), including keys. */
+  *asSlots(): Generator<Slot<OrderKey>, void, undefined> {
+    for (let i = this.orders.length - 1; i >= 0; i--) {
+      const key = this.orders[i];
+      yield { key, ...this.index.get(key)! };
+    }
   }
 
   /**
@@ -109,8 +124,6 @@ export class HalfBook<OrderKey> {
 
       yield { price, value };
     }
-
-    yield { price: Infinity, value: 0 };
   }
 
   private findInsertIndex(price: number): number {
@@ -128,13 +141,72 @@ export class HalfBook<OrderKey> {
 
     return lo;
   }
-}
 
-export class TokenBook<OrderKey> {
-  constructor(
-    /** The order book for Give USD, Get YES */
-    public usdToYes: HalfBook<OrderKey>,
-    /** The order book for Give YES, Get USD */
-    public yesToUsd: HalfBook<OrderKey>,
-  ) {}
+  // --- Bulk construction (used by merge operations) ---
+
+  /**
+   * Build a HalfBook from pre-sorted slots.
+   * Slots **must** be sorted ascending by price with no duplicate keys.
+   * This bypasses per-insert binary search for O(n) construction.
+   */
+  private static fromSorted<K>(slots: ReadonlyArray<Slot<K>>): HalfBook<K> {
+    const book = new HalfBook<K>();
+    for (const { key, price, value } of slots) {
+      book.orders.push(key);
+      book.index.set(key, { price, value });
+    }
+    return book;
+  }
+
+  // --- Merge operations ---
+
+  /**
+   * Parallel merge: liquidity-aggregate two books into a new one.
+   *
+   * Orders at the same price are kept as **separate entries** (not summed)
+   * so that each retains its `MergedKey` source tag for per-source coloring.
+   * When prices are equal the left book's order is placed first.
+   */
+  static parallelMerge<A, B>(
+    left: HalfBook<A>,
+    right: HalfBook<B>,
+  ): HalfBook<MergedKey<A, B>> {
+    // Both `orders` arrays are ascending by price — classic two-pointer merge.
+    const merged: Slot<MergedKey<A, B>>[] = [];
+    let i = 0;
+    let j = 0;
+
+    while (i < left.orders.length && j < right.orders.length) {
+      const lPrice = left.index.get(left.orders[i])!.price;
+      const rPrice = right.index.get(right.orders[j])!.price;
+
+      if (lPrice <= rPrice) {
+        const key = left.orders[i];
+        const order = left.index.get(key)!;
+        merged.push({ key: { source: "left", key }, ...order });
+        i++;
+      } else {
+        const key = right.orders[j];
+        const order = right.index.get(key)!;
+        merged.push({ key: { source: "right", key }, ...order });
+        j++;
+      }
+    }
+
+    while (i < left.orders.length) {
+      const key = left.orders[i];
+      const order = left.index.get(key)!;
+      merged.push({ key: { source: "left", key }, ...order });
+      i++;
+    }
+
+    while (j < right.orders.length) {
+      const key = right.orders[j];
+      const order = right.index.get(key)!;
+      merged.push({ key: { source: "right", key }, ...order });
+      j++;
+    }
+
+    return HalfBook.fromSorted(merged);
+  }
 }
