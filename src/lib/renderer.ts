@@ -16,8 +16,6 @@ export interface ChartTheme {
   grid: string;
   axis: string;
   text: string;
-  /** Map a stable key to a color. */
-  color: (key: number | string) => string;
 }
 
 // --- Box pen ---------------------------------------------------------------
@@ -171,24 +169,16 @@ export class BoxPen {
   }
 }
 
-// --- Frame config ---------------------------------------------------------
-
-export interface RenderFrameConfig {
-  theme: ChartTheme;
-  volScale: number;
-}
-
 // --- Plotter: canvas + events only ---------------------------------------
 
 export class OrderBookPlotter {
-  private readonly ctx: CanvasRenderingContext2D;
-  // TODO: Can this be in `RenderFrameConfig`?
-  private readonly padding = { l: 60, r: 16, t: 24, b: 24 };
+  readonly ctx: CanvasRenderingContext2D;
+  readonly padding = { l: 60, r: 16, t: 24, b: 24 };
 
   public onZoom?: (delta: number) => void;
   public onPointer?: (p: { sx: number; sy: number } | null) => void;
 
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  constructor(readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D canvas context is not available");
     this.ctx = ctx;
@@ -206,9 +196,43 @@ export class OrderBookPlotter {
     this.onPointer = undefined;
   }
 
-  /** Begin a frame. The returned `Frame` is the only thing you draw with. */
-  beginFrame(config: RenderFrameConfig): Frame {
-    return new Frame(this.canvas, this.ctx, this.padding, config);
+  /**
+   * Sync the canvas backing store to its CSS size (× DPR). Call from the
+   * ResizeObserver — not every frame — so per-frame work is independent of
+   * layout.
+   */
+  resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const targetW = Math.floor(this.canvas.clientWidth * dpr);
+    const targetH = Math.floor(this.canvas.clientHeight * dpr);
+    if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
+      this.canvas.width = targetW;
+      this.canvas.height = targetH;
+    }
+  }
+
+  /**
+   * Begin a frame. The returned `Frame` is the only thing you draw with.
+   * The plotter owns canvas/ctx/padding; the frame is a dumb immutable
+   * wrapper over {domain, transform, theme}.
+   */
+  beginFrame(theme: ChartTheme, domain: Domain): Frame {
+    const dpr = window.devicePixelRatio || 1;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const { clientWidth: width, clientHeight: height } = this.canvas;
+    this.ctx.clearRect(0, 0, width, height);
+    this.ctx.fillStyle = theme.bg;
+    this.ctx.fillRect(0, 0, width, height);
+
+    const viewport: Viewport = {
+      l: this.padding.l,
+      t: this.padding.t,
+      width: width - this.padding.l - this.padding.r,
+      height: height - this.padding.t - this.padding.b,
+    };
+    const transform = fromDomainViewport(domain, viewport);
+    return new Frame(this, domain, transform, theme);
   }
 
   // --- Event handlers ---
@@ -238,53 +262,42 @@ export class OrderBookPlotter {
 
 // --- Frame: per-frame immediate-mode drawing context ----------------------
 
+/**
+ * Dumb immutable wrapper over the chart's mapping state. Holds exactly the
+ * degrees of freedom the renderer needs: the data range (`domain`), the
+ * data→screen `transform`, and the `theme`. Everything else (viewport,
+ * screen→data) is derived on demand, so there is nothing to desync.
+ *
+ * Canvas/ctx/padding live on the `plotter`; the frame borrows them for drawing.
+ */
 export class Frame {
-  readonly viewport: Viewport;
-  readonly domain: Domain;
-  readonly transform: Transform; // data → screen
-  readonly theme: ChartTheme;
-
   constructor(
-    readonly canvas: HTMLCanvasElement,
-    readonly ctx: CanvasRenderingContext2D,
-    readonly padding: { l: number; r: number; t: number; b: number },
-    readonly config: RenderFrameConfig,
-  ) {
-    // 1. Synchronous auto-resize (device pixels)
-    const dpr = window.devicePixelRatio || 1;
-    const targetW = Math.floor(this.canvas.clientWidth * dpr);
-    const targetH = Math.floor(this.canvas.clientHeight * dpr);
-    if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
-      this.canvas.width = targetW;
-      this.canvas.height = targetH;
-    }
+    readonly plotter: OrderBookPlotter,
+    readonly domain: Domain,
+    readonly transform: Transform,
+    readonly theme: ChartTheme,
+  ) {}
 
-    // 2. Scale the context once; everything below uses CSS pixels.
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const { clientWidth: width, clientHeight: height } = this.canvas;
-    const cW = width - this.padding.l - this.padding.r;
-    const cH = height - this.padding.t - this.padding.b;
+  /** Canvas 2D context, borrowed from the plotter. */
+  get ctx() {
+    return this.plotter.ctx;
+  }
+  /** Canvas element, borrowed from the plotter. */
+  get canvas() {
+    return this.plotter.canvas;
+  }
+  /** Chart padding, borrowed from the plotter. */
+  get padding() {
+    return this.plotter.padding;
+  }
 
-    this.viewport = {
-      l: this.padding.l,
-      t: this.padding.t,
-      width: cW,
-      height: cH,
-    };
-
-    const yAbsMax = Math.pow(10, config.volScale);
-    this.domain = {
-      xRange: { min: 0, max: 1 },
-      yRange: { min: -yAbsMax, max: yAbsMax },
-    };
-
-    this.transform = fromDomainViewport(this.domain, this.viewport);
-    this.theme = config.theme;
-
-    // Clear + background
-    this.ctx.clearRect(0, 0, width, height);
-    this.ctx.fillStyle = config.theme.bg;
-    this.ctx.fillRect(0, 0, width, height);
+  /** Screen rect of the chart area, derived from `transform` + `domain`. */
+  get viewport(): Viewport {
+    const l = applyX(this.transform, this.domain.xRange.min, 0);
+    const r = applyX(this.transform, this.domain.xRange.max, 0);
+    const t = applyY(this.transform, 0, this.domain.yRange.max);
+    const b = applyY(this.transform, 0, this.domain.yRange.min);
+    return { l, t, width: r - l, height: b - t };
   }
 
   /** Map a data point to screen coordinates. */
@@ -387,14 +400,14 @@ export class Frame {
   /**
    * Draw crosshairs + tooltip for a pointer given in *data* coordinates.
    * The component converts its stored screen-space pointer to data using the
-   * frame's `screenToData` before calling this, so there is never a desync.
+   * frame's `toData` before calling this, so there is never a desync.
    */
   drawPointer(
     data: { x: number; y: number },
     screen: { sx: number; sy: number },
   ) {
-    const { ctx, viewport: vp, theme } = this;
-    const { clientWidth: width, clientHeight: height } = this.canvas;
+    const { ctx, viewport: vp, theme, canvas, padding } = this;
+    const { clientWidth: width, clientHeight: height } = canvas;
 
     ctx.strokeStyle = theme.axis;
     ctx.lineWidth = 1;
@@ -410,8 +423,8 @@ export class Frame {
     const offset = 12;
     let boxX = screen.sx + offset;
     let boxY = screen.sy + offset;
-    if (boxX + boxW > width - this.padding.r) boxX = screen.sx - boxW - offset;
-    if (boxY + boxH > height - this.padding.b) boxY = screen.sy - boxH - offset;
+    if (boxX + boxW > width - padding.r) boxX = screen.sx - boxW - offset;
+    if (boxY + boxH > height - padding.b) boxY = screen.sy - boxH - offset;
 
     ctx.fillStyle = theme.bg;
     ctx.fillRect(boxX, boxY, boxW, boxH);

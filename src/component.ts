@@ -88,7 +88,10 @@ export class PolymarketCPV {
   constructor(container: HTMLElement, polyMarketClient: PublicClient) {
     this.polyMarketClient = polyMarketClient;
     this.container = container;
-    this.resizeObserver = new ResizeObserver(() => this.reqDraw());
+    this.resizeObserver = new ResizeObserver(() => {
+      this.plotter.resize();
+      this.reqDraw();
+    });
 
     this.buildDOM();
     this.bindEvents();
@@ -363,7 +366,10 @@ export class PolymarketCPV {
     const { volScale, theme } = this;
 
     const yAbsMax = Math.pow(10, volScale);
-    const frame = this.plotter.beginFrame({ volScale, theme });
+    const frame = this.plotter.beginFrame(theme, {
+      xRange: { min: 0, max: 1 },
+      yRange: { min: -yAbsMax, max: yAbsMax },
+    });
 
     frame.drawAxes();
 
@@ -531,9 +537,10 @@ export class PolymarketCPV {
     // Convert using the *next* frame's transform by drawing immediately.
     // We don't have a frame here, so we compute one on demand. This is fine
     // because placeOrder is a user-initiated click, not a hot path.
-    const frame = this.plotter.beginFrame({
-      volScale: this.volScale,
-      theme: this.theme,
+    const yAbsMax = Math.pow(10, this.volScale);
+    const frame = this.plotter.beginFrame(this.theme, {
+      xRange: { min: 0, max: 1 },
+      yRange: { min: -yAbsMax, max: yAbsMax },
     });
     const price = frame.toDataX(screen.x, screen.y);
     const shares = frame.toDataY(screen.x, screen.y);

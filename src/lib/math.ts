@@ -30,6 +30,19 @@ export function idToColor(idx: number, offset: number = 56.234): string {
   return `oklch(${L} ${C} ${hue})`;
 }
 
+/**
+ * Single source of truth for a market's color.
+ *
+ * Within an event, sequential markets are spaced by the golden angle in hue,
+ * so adjacent markets are maximally distinguishable. The event id shifts the
+ * whole palette, so the same market index in different events gets a
+ * different starting hue. Both the toggle dot and the chart line call this.
+ */
+export function marketColor(eventId: string, marketIndex: number): string {
+  const offset = parseInt(eventId) || 0;
+  return idToColor(marketIndex, offset);
+}
+
 /** Format a volume number for display. */
 export function fmtVol(n: number): string {
   if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
