@@ -1,21 +1,41 @@
+import type { Range } from "./transform";
+
 /**
- * Compute dynamic Y-axis tick positions as powers of 10.
- * Returns fractions in (0, 1] relative to yMax.
+ * Minimum pixel spacing between adjacent ticks. The tick count adapts to the
+ * axis pixel size so ticks never crowd on small charts and never sparse on
+ * large ones.
  */
-export function powerOf10Ticks(yMax: number, targetCount = 5): number[] {
-  if (yMax <= 0) return [];
-  const rough = yMax / targetCount;
-  const exp = Math.floor(Math.log10(rough));
-  const candidates = [1, 2, 5].map((m) => m * Math.pow(10, exp));
-  const step = candidates.reduce((best, c) => {
-    const n = Math.floor(yMax / c);
-    return Math.abs(n - targetCount) <
-      Math.abs(Math.floor(yMax / best) - targetCount)
-      ? c
-      : best;
-  });
+const MIN_TICK_SPACING_PX = 40;
+
+/**
+ * Compute "nice" axis tick values across `range`, sized to fit `pixelSize`.
+ *
+ * Steps are always 1, 2, or 5 × 10^n so labels stay clean. The count is bounded
+ * by `pixelSize / MIN_TICK_SPACING_PX` — a 600px axis yields up to 15 ticks,
+ * a 200px axis up to 5. Works for symmetric, one-sided, or arbitrary ranges;
+ * returns absolute positions (not fractions of the max).
+ */
+export function axisTicks(
+  range: Range,
+  pixelSize: number,
+  minSpacing: number = MIN_TICK_SPACING_PX,
+): number[] {
+  const span = range.max - range.min;
+  if (span <= 0 || pixelSize <= 0) return [];
+
+  const maxTicks = Math.max(1, Math.floor(pixelSize / minSpacing));
+  const roughStep = span / maxTicks;
+  const exp = Math.floor(Math.log10(roughStep));
+  const base = Math.pow(10, exp);
+  // Finest nice step (1, 2, 5, 10 × 10^n) that fits within maxTicks.
+  const step = [1, 2, 5, 10]
+    .map((m) => m * base)
+    .find((c) => Math.floor(span / c) <= maxTicks)!;
+
   const ticks: number[] = [];
-  for (let v = step; v <= yMax * 1.001; v += step) ticks.push(v / yMax);
+  // First tick >= range.min, aligned to the step grid.
+  const start = Math.ceil(range.min / step) * step;
+  for (let v = start; v <= range.max + step * 1e-6; v += step) ticks.push(v);
   return ticks;
 }
 

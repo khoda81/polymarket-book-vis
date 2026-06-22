@@ -1,4 +1,4 @@
-import { fmtVol, powerOf10Ticks } from "./math";
+import { axisTicks, fmtVol } from "./math";
 import {
   Domain,
   Transform,
@@ -218,6 +218,12 @@ export class OrderBookPlotter {
    */
   beginFrame(theme: ChartTheme, domain: Domain): Frame {
     const dpr = window.devicePixelRatio || 1;
+
+    // Undo the previous frame's ctx state (clip path, styles, lineDash, …).
+    // restore() is a no-op on the first frame when the state stack is empty.
+    // setTransform ignores save/restore, so it must come after restore.
+    this.ctx.restore();
+    this.ctx.save();
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const { clientWidth: width, clientHeight: height } = this.canvas;
@@ -320,45 +326,35 @@ export class Frame {
 
   drawAxes() {
     const { ctx, viewport: vp, theme, domain } = this;
-    const yMax = domain.yRange.max;
 
     ctx.strokeStyle = theme.axis;
     ctx.lineWidth = 1;
     ctx.strokeRect(vp.l, vp.t, vp.width, vp.height);
 
-    // TODO: make this take the domain.yRange instead of only yMax so we don't force symmetric y
-    const yFracs = powerOf10Ticks(yMax);
+    const yTicks = axisTicks(domain.yRange, vp.height);
     ctx.font = "11px sans-serif";
     ctx.textBaseline = "middle";
 
-    for (const frac of yFracs) {
-      // TODO: Instead of assuming symmetry we should probably go with evenly spaced ticks
-      for (const sign of [1, -1]) {
-        const yVal = sign * frac * yMax;
-        const screenY = this.toScreenY(0, yVal);
+    for (const yVal of yTicks) {
+      const screenY = this.toScreenY(0, yVal);
 
-        ctx.strokeStyle = theme.grid;
-        ctx.beginPath();
-        ctx.moveTo(vp.l, screenY);
-        ctx.lineTo(vp.l + vp.width, screenY);
-        ctx.stroke();
+      ctx.strokeStyle = theme.grid;
+      ctx.beginPath();
+      ctx.moveTo(vp.l, screenY);
+      ctx.lineTo(vp.l + vp.width, screenY);
+      ctx.stroke();
 
-        ctx.strokeStyle = theme.axis;
-        ctx.beginPath();
-        ctx.moveTo(vp.l - 5, screenY);
-        ctx.lineTo(vp.l, screenY);
-        ctx.moveTo(vp.l + vp.width, screenY);
-        ctx.lineTo(vp.l + vp.width + 5, screenY);
-        ctx.stroke();
+      ctx.strokeStyle = theme.axis;
+      ctx.beginPath();
+      ctx.moveTo(vp.l - 5, screenY);
+      ctx.lineTo(vp.l, screenY);
+      ctx.moveTo(vp.l + vp.width, screenY);
+      ctx.lineTo(vp.l + vp.width + 5, screenY);
+      ctx.stroke();
 
-        ctx.fillStyle = theme.text;
-        ctx.textAlign = "right";
-        ctx.fillText(
-          (sign > 0 ? "" : "-") + fmtVol(frac * yMax),
-          vp.l - 8,
-          screenY,
-        );
-      }
+      ctx.fillStyle = theme.text;
+      ctx.textAlign = "right";
+      ctx.fillText(fmtVol(yVal), vp.l - 8, screenY);
     }
 
     ctx.fillStyle = theme.text;
