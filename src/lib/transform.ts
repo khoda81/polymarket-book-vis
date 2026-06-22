@@ -13,11 +13,14 @@ export interface Transform {
   readonly f: number;
 }
 
+export interface Range {
+  readonly min: number;
+  readonly max: number;
+}
+
 export interface Domain {
-  readonly xMin: number;
-  readonly xMax: number;
-  readonly yMin: number;
-  readonly yMax: number;
+  readonly xRange: Range;
+  readonly yRange: Range;
 }
 
 export interface Viewport {
@@ -65,14 +68,14 @@ export function invert(t: Transform): Transform {
  * yMin→bottom, yMax→top.
  */
 export function fromDomainViewport(domain: Domain, vp: Viewport): Transform {
-  const sx = vp.width / (domain.xMax - domain.xMin);
-  const sy = -vp.height / (domain.yMax - domain.yMin);
+  const sx = vp.width / (domain.xRange.max - domain.xRange.min);
+  const sy = -vp.height / (domain.yRange.max - domain.yRange.min);
   return {
     a: sx,
     b: 0,
     c: 0,
     d: sy,
-    e: vp.l - sx * domain.xMin,
-    f: vp.t + vp.height - sy * domain.yMin,
+    e: vp.l - sx * domain.xRange.min,
+    f: vp.t + vp.height - sy * domain.yRange.min,
   };
 }

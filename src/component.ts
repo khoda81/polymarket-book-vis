@@ -430,7 +430,7 @@ export class PolymarketCPV {
       emptyStyle,
     );
 
-    let remainingHeight = frame.domain.yMax;
+    let remainingHeight = frame.domain.yRange.max;
     let fillRemaining = Math.min(view.fillDepth ?? 0, remainingHeight);
 
     for (const level of view.orders) {

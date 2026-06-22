@@ -239,12 +239,9 @@ export class OrderBookPlotter {
 // --- Frame: per-frame immediate-mode drawing context ----------------------
 
 export class Frame {
-  // TODO: We should store only viewport and domain or only transform
   readonly viewport: Viewport;
   readonly domain: Domain;
   readonly transform: Transform; // data → screen
-  // TODO: Can get away with not storing this and doging desync chance
-  readonly screenToData: Transform; // screen → data
   readonly theme: ChartTheme;
 
   constructor(
@@ -275,12 +272,13 @@ export class Frame {
       height: cH,
     };
 
-    // TODO: We should probably use y range instead of a "yAbsMax"
     const yAbsMax = Math.pow(10, config.volScale);
-    this.domain = { xMin: 0, xMax: 1, yMin: -yAbsMax, yMax: yAbsMax };
+    this.domain = {
+      xRange: { min: 0, max: 1 },
+      yRange: { min: -yAbsMax, max: yAbsMax },
+    };
 
     this.transform = fromDomainViewport(this.domain, this.viewport);
-    this.screenToData = invert(this.transform);
     this.theme = config.theme;
 
     // Clear + background
@@ -297,19 +295,19 @@ export class Frame {
     sy: this.toScreenY(x, y),
   });
 
-  /** Map a screen point to data coordinates using the inverse of `t`. */
-  toDataX = (sx: number, sy: number) => applyX(this.screenToData, sx, sy);
-  toDataY = (sx: number, sy: number) => applyY(this.screenToData, sx, sy);
-  toData = ({ sx, sy }: { sx: number; sy: number }) => ({
-    x: this.toDataX(sx, sy),
-    y: this.toDataY(sx, sy),
-  });
+  /** Map a screen point to data coordinates by inverting `transform` on demand. */
+  toDataX = (sx: number, sy: number) => applyX(invert(this.transform), sx, sy);
+  toDataY = (sx: number, sy: number) => applyY(invert(this.transform), sx, sy);
+  toData = ({ sx, sy }: { sx: number; sy: number }) => {
+    const inv = invert(this.transform);
+    return { x: applyX(inv, sx, sy), y: applyY(inv, sx, sy) };
+  };
 
   // --- Axes ---------------------------------------------------------------
 
   drawAxes() {
     const { ctx, viewport: vp, theme, domain } = this;
-    const { yMax } = domain;
+    const yMax = domain.yRange.max;
 
     ctx.strokeStyle = theme.axis;
     ctx.lineWidth = 1;
@@ -352,11 +350,11 @@ export class Frame {
     ctx.fillStyle = theme.text;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    // X-axis anchors at domain.xMin / domain.xMax
-    const x0 = this.toScreenX(domain.xMin, 0);
-    const x1 = this.toScreenX(domain.xMax, 0);
-    ctx.fillText(String(domain.xMin), x0, vp.t + vp.height + 8);
-    ctx.fillText(String(domain.xMax), x1, vp.t + vp.height + 8);
+    // X-axis anchors at domain.xRange.min / domain.xRange.max
+    const x0 = this.toScreenX(domain.xRange.min, 0);
+    const x1 = this.toScreenX(domain.xRange.max, 0);
+    ctx.fillText(String(domain.xRange.min), x0, vp.t + vp.height + 8);
+    ctx.fillText(String(domain.xRange.max), x1, vp.t + vp.height + 8);
 
     // Clamp all subsequent drawing to the chart rect.
     this.ctx.beginPath();
