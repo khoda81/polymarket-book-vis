@@ -1,4 +1,4 @@
-import { fmtVol, idToColor } from "@/lib/math";
+import { fmtVol, marketColor } from "@/lib/math";
 import { BookOrder, HalfBook } from "@/lib/orderBook";
 import {
   BoxStyle,
@@ -31,7 +31,7 @@ interface TokenBook<K = string> {
 interface BookBoxView {
   readonly direction: StackDirection;
   readonly orders: Iterable<BookOrder>;
-  readonly colorKey: number | string;
+  readonly color: string;
   readonly fillDepth?: number;
 }
 
@@ -44,8 +44,6 @@ const LIGHT_THEME: ChartTheme = {
   grid: "rgba(128,128,128,0.15)",
   axis: "rgba(128,128,128,0.5)",
   text: "#666666",
-  // TODO: This should use market offset
-  color: (key) => idToColor(typeof key === "number" ? key : 0),
 };
 
 const DARK_THEME: ChartTheme = {
@@ -53,7 +51,6 @@ const DARK_THEME: ChartTheme = {
   grid: "rgba(255,255,255,0.1)",
   axis: "rgba(255,255,255,0.3)",
   text: "#aaaaaa",
-  color: (key) => idToColor(typeof key === "number" ? key : 0),
 };
 
 export class PolymarketCPV {
@@ -282,8 +279,7 @@ export class PolymarketCPV {
       });
 
       const dot = document.createElement("span");
-      // FIX: This color is desynced from chart colors
-      const color = this.theme.color(this.tokenColorKey(i));
+      const color = marketColor(event.id, i);
       dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
 
       lbl.appendChild(cb);
@@ -377,18 +373,19 @@ export class PolymarketCPV {
     // frame's transform. No desync possible: we never cache the inverse.
     const pointerData = this.pointer ? frame.toData(this.pointer) : null;
 
-    // User line: an empty book, drawn in the theme's color for key 0.
+    // User line: an empty book, drawn in a neutral placeholder color.
     // Kept as a placeholder for future user-order rendering.
     const empty = emptyTokenBook();
+    const placeholderColor = marketColor("", 0);
     this.drawBookView(frame, {
       direction: "up",
       orders: empty.usdToYes.asOrders(),
-      colorKey: 0,
+      color: placeholderColor,
     });
     this.drawBookView(frame, {
       direction: "down",
       orders: empty.yesToUsd.asSellOrders(),
-      colorKey: 0,
+      color: placeholderColor,
     });
 
     const markets = this.event?.markets ?? [];
@@ -399,7 +396,7 @@ export class PolymarketCPV {
       if (!this.activeTokens.has(tokenId)) continue;
 
       const book = this.books[tokenId] ?? emptyTokenBook();
-      const colorKey = this.tokenColorKey(i);
+      const color = marketColor(this.event!.id, i);
       const buyFillDepth =
         !filled && pointerData && pointerData.y > 0 ? pointerData.y : 0;
       const sellFillDepth =
@@ -408,13 +405,13 @@ export class PolymarketCPV {
       this.drawBookView(frame, {
         direction: "up",
         orders: book.usdToYes.asOrders(),
-        colorKey,
+        color,
         fillDepth: buyFillDepth,
       });
       this.drawBookView(frame, {
         direction: "down",
         orders: book.yesToUsd.asSellOrders(),
-        colorKey,
+        color,
         fillDepth: sellFillDepth,
       });
 
@@ -428,9 +425,8 @@ export class PolymarketCPV {
   }
 
   private drawBookView(frame: Frame, view: BookBoxView) {
-    const color = frame.theme.color(view.colorKey);
-    const emptyStyle = PolymarketCPV.boxStyle(color, false);
-    const filledStyle = PolymarketCPV.boxStyle(color, true);
+    const emptyStyle = PolymarketCPV.boxStyle(view.color, false);
+    const filledStyle = PolymarketCPV.boxStyle(view.color, true);
     const pen = frame.boxPen(
       { direction: view.direction, anchor: "left" },
       emptyStyle,
@@ -476,12 +472,6 @@ export class PolymarketCPV {
       stroke: color,
       fill: filled ? { kind: "solid-dim", alpha: 0.25 } : { kind: "none" },
     };
-  }
-
-  /** Stable color key for market `i`. The theme turns this into a color. */
-  private tokenColorKey(index: number): number {
-    const offset = this.event ? parseInt(this.event.id) : 0;
-    return index + offset;
   }
 
   private async readEvents(events: SubscriptionHandle<MarketEvent>) {
