@@ -186,7 +186,7 @@ export class OrderBookPlotter {
   private readonly padding = { l: 60, r: 16, t: 24, b: 24 };
 
   public onZoom?: (delta: number) => void;
-  public onPointer?: (p: { x: number; y: number } | null) => void;
+  public onPointer?: (p: { sx: number; sy: number } | null) => void;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -230,7 +230,7 @@ export class OrderBookPlotter {
   private handleMouseMove = (e: MouseEvent) => {
     if (!this.onPointer) return;
     const rect = this.canvas.getBoundingClientRect();
-    this.onPointer({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    this.onPointer({ sx: e.clientX - rect.left, sy: e.clientY - rect.top });
   };
 
   private handleMouseLeave = () => this.onPointer?.(null);
@@ -393,7 +393,7 @@ export class Frame {
    */
   drawPointer(
     data: { x: number; y: number },
-    screen: { x: number; y: number },
+    screen: { sx: number; sy: number },
   ) {
     const { ctx, viewport: vp, theme } = this;
     const { clientWidth: width, clientHeight: height } = this.canvas;
@@ -402,18 +402,18 @@ export class Frame {
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.moveTo(screen.x, vp.t);
-    ctx.lineTo(screen.x, vp.t + vp.height);
+    ctx.moveTo(screen.sx, vp.t);
+    ctx.lineTo(screen.sx, vp.t + vp.height);
     ctx.stroke();
     ctx.setLineDash([]);
 
     const boxW = 110;
     const boxH = 40;
     const offset = 12;
-    let boxX = screen.x + offset;
-    let boxY = screen.y + offset;
-    if (boxX + boxW > width - this.padding.r) boxX = screen.x - boxW - offset;
-    if (boxY + boxH > height - this.padding.b) boxY = screen.y - boxH - offset;
+    let boxX = screen.sx + offset;
+    let boxY = screen.sy + offset;
+    if (boxX + boxW > width - this.padding.r) boxX = screen.sx - boxW - offset;
+    if (boxY + boxH > height - this.padding.b) boxY = screen.sy - boxH - offset;
 
     ctx.fillStyle = theme.bg;
     ctx.fillRect(boxX, boxY, boxW, boxH);
@@ -428,6 +428,6 @@ export class Frame {
     ctx.fillText(`Vol:   ${fmtVol(Math.abs(data.y))}`, boxX + 8, boxY + 22);
 
     ctx.textAlign = "center";
-    ctx.fillText(data.x.toFixed(2), screen.x, vp.t + vp.height + 8);
+    ctx.fillText(data.x.toFixed(2), screen.sx, vp.t + vp.height + 8);
   }
 }

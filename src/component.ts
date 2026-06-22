@@ -44,6 +44,7 @@ const LIGHT_THEME: ChartTheme = {
   grid: "rgba(128,128,128,0.15)",
   axis: "rgba(128,128,128,0.5)",
   text: "#666666",
+  // TODO: This should use market offset
   color: (key) => idToColor(typeof key === "number" ? key : 0),
 };
 
@@ -69,7 +70,7 @@ export class PolymarketCPV {
   private plotter!: OrderBookPlotter;
 
   /** Pointer in CSS pixels relative to the canvas. Converted to data on draw. */
-  private pointer: { x: number; y: number } | null = null;
+  private pointer: { sx: number; sy: number } | null = null;
   private titles: Record<MarketId, string> = {};
 
   private event: Event | undefined;
@@ -368,12 +369,7 @@ export class PolymarketCPV {
 
     // Convert the stored screen-space pointer to data once, using this
     // frame's transform. No desync possible: we never cache the inverse.
-    const pointerData = this.pointer
-      ? {
-          x: frame.toDataX(this.pointer.x, this.pointer.y),
-          y: frame.toDataY(this.pointer.x, this.pointer.y),
-        }
-      : null;
+    const pointerData = this.pointer ? frame.toData(this.pointer) : null;
 
     // User line: an empty book, drawn in the theme's color for key 0.
     // Kept as a placeholder for future user-order rendering.
