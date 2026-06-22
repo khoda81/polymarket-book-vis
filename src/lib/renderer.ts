@@ -326,6 +326,7 @@ export class Frame {
     ctx.lineWidth = 1;
     ctx.strokeRect(vp.l, vp.t, vp.width, vp.height);
 
+    // TODO: make this take the domain.yRange instead of only yMax so we don't force symmetric y
     const yFracs = powerOf10Ticks(yMax);
     ctx.font = "11px sans-serif";
     ctx.textBaseline = "middle";
