@@ -14,20 +14,28 @@ function createCard(event: Event) {
   chart.load(event);
 }
 
-const events = [
+const eventSlugs = [
   "claude-fable-5-restored-for-us-customers-by-20260613193753196",
   "israel-closes-its-airspace-by",
 ];
 
-events.forEach(async (slug) => createCard(await client.fetchEvent({ slug })));
+eventSlugs.forEach(async (slug) =>
+  createCard(await client.fetchEvent({ slug })),
+);
 
 const extraEvents = client.listEvents({
   // featured: true,
-  volumeMin: 100000,
+  volumeMin: 10000,
   titleSearch: "iran",
 });
 
+// TODO: Sort by amount of update in terms of entropy computed from transaction history of consecutive transaction prices.
+// TODO: For each two transactions with (p0, t0) -> (p1, t1), compute the kl divergence between p0 and p1 and divide by the delta t:
+// TODO: kl(p0, p1) / (t1 - t0)
+// And we need to do this for all consecutive transactions given the market's transaction history since a given timestamp till now.
 for await (const eventPage of extraEvents) {
   const events = eventPage.items;
-  events.forEach((e) => createCard(e));
+  events.forEach((e) => {
+    if (!eventSlugs.includes(e.slug ?? "")) createCard(e);
+  });
 }

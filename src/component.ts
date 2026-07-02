@@ -198,6 +198,7 @@ export class PolymarketCPV {
     const rawEvent = await res.json();
     const groupItemIdx: Record<MarketId, number> = {};
 
+    console.debug(rawEvent.markets);
     for (const market of rawEvent.markets ?? []) {
       if (market.groupItemTitle) this.titles[market.id] = market.groupItemTitle;
       if (market.groupItemThreshold)
@@ -212,16 +213,16 @@ export class PolymarketCPV {
       event.markets.reverse();
     }
 
+    const tokenIds = event.markets
+      .map((m) => (m.state.active ? m.outcomes.yes.tokenId : null))
+      .filter((t) => t !== null);
+
+    tokenIds.forEach((t) => this.activeTokens.add(t));
     this.buildToggles(event);
     for (;;)
       try {
         this.bookEventStream = await this.polyMarketClient.subscribe([
-          {
-            topic: "market",
-            tokenIds: event.markets
-              .map((m) => m.outcomes.yes.tokenId)
-              .filter((t) => t !== null),
-          },
+          { topic: "market", tokenIds },
         ]);
         break;
       } catch (err) {
@@ -259,17 +260,13 @@ export class PolymarketCPV {
     for (const [i, market] of event.markets.entries()) {
       const yesToken = market.outcomes.yes.tokenId;
       if (!yesToken) continue;
-      if (!market.state.acceptingOrders) continue;
-
-      const isClosed = market.state.closed ?? true;
+      if (!this.activeTokens.has(yesToken)) continue;
 
       const lbl = document.createElement("label");
       const cb = document.createElement("input");
 
       cb.type = "checkbox";
-      cb.checked = !isClosed;
-
-      if (cb.checked) this.activeTokens.add(yesToken);
+      cb.checked = true;
 
       cb.addEventListener("change", () => {
         cb.checked
@@ -389,7 +386,6 @@ export class PolymarketCPV {
     });
 
     const markets = this.event?.markets ?? [];
-    let filled = false;
     for (const [i, market] of markets.entries()) {
       const tokenId = market.outcomes.yes.tokenId;
       if (tokenId === null) continue;
@@ -397,26 +393,19 @@ export class PolymarketCPV {
 
       const book = this.books[tokenId] ?? emptyTokenBook();
       const color = marketColor(this.event!.id, i);
-      const buyFillDepth =
-        !filled && pointerData && pointerData.y > 0 ? pointerData.y : 0;
-      const sellFillDepth =
-        !filled && pointerData && pointerData.y < 0 ? -pointerData.y : 0;
 
       this.drawBookView(frame, {
         direction: "up",
         orders: book.usdToYes.asOrders(),
         color,
-        fillDepth: buyFillDepth,
+        fillDepth: pointerData ? Math.max(pointerData.y, 0) : undefined,
       });
       this.drawBookView(frame, {
         direction: "down",
         orders: book.yesToUsd.asSellOrders(),
         color,
-        fillDepth: sellFillDepth,
+        fillDepth: pointerData ? Math.max(-pointerData.y, 0) : undefined,
       });
-
-      if (buyFillDepth !== undefined || sellFillDepth !== undefined)
-        filled = true;
     }
 
     if (this.pointer && pointerData) {
@@ -524,18 +513,7 @@ export class PolymarketCPV {
     const activeIdxs = Array.from(this.activeTokens);
     if (!activeIdxs.length) return;
 
-    // Convert using the *next* frame's transform by drawing immediately.
-    // We don't have a frame here, so we compute one on demand. This is fine
-    // because placeOrder is a user-initiated click, not a hot path.
-    const yAbsMax = Math.pow(10, this.volScale);
-    const frame = this.plotter.beginFrame(this.theme, {
-      xRange: { min: 0, max: 1 },
-      yRange: { min: -yAbsMax, max: yAbsMax },
-    });
-    const price = frame.toDataX(screen.x, screen.y);
-    const shares = frame.toDataY(screen.x, screen.y);
-
-    console.debug({ price, shares });
-    if (shares === 0) return;
+    // console.debug({ price, shares });
+    // if (shares === 0) return;
   }
 }
