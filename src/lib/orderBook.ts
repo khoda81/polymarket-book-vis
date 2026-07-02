@@ -89,11 +89,40 @@ export class HalfBook<OrderKey> {
     return this.index.get(key) ?? { price: 0, value: 1 };
   }
 
+  get size(): number {
+    return this.orders.length;
+  }
+
   bestOrder(): Slot<OrderKey> | undefined {
     const key = this.orders[this.orders.length - 1];
     const order = this.index.get(key);
 
     return order ? { key, ...order } : undefined;
+  }
+
+  /** A shallow copy (orders + index rebuilt). Used by simulated merges. */
+  clone(): HalfBook<OrderKey> {
+    return HalfBook.fromSorted(this.asSlotsAscending());
+  }
+
+  /**
+   * Consume up to `limit` units from the best (highest-priced) order.
+   *
+   * Mutates this book: decrements the top order's volume and removes it once
+   * exhausted. Returns the filled price and consumed amount, or `undefined`
+   * if the book is empty or `limit <= 0`.
+   */
+  takeBest(limit: number): { price: number; consumed: number } {
+    if (this.orders.length === 0) return { price: 0, consumed: limit };
+
+    const key = this.orders[this.orders.length - 1];
+    const order = this.index.get(key)!;
+    const consumed = Math.min(order.value, limit);
+
+    if (consumed >= order.value) this.removeOrder(key);
+    else order.value -= consumed;
+
+    return { price: order.price, consumed };
   }
 
   *asOrders() {
@@ -214,6 +243,59 @@ export class HalfBook<OrderKey> {
       j++;
     }
 
+    return HalfBook.fromSorted(merged);
+  }
+
+  /**
+   * Simulated merge: combine two books by repeatedly consuming the cheaper
+   * top order from either side, bottlenecking on the smaller volume at each
+   * step. Unlike `parallelMerge`, this **sums** liquidity at overlapping
+   * price levels instead of keeping entries separate — so it models the
+   * aggregate book you'd get by routing flow to whichever source is cheaper.
+   *
+   * Both inputs are consumed via `takeBest` on private clones, so the caller's
+   * books are left untouched.
+   *
+   * @param limit Optional cap on total volume to simulate. Defaults to
+   *              `Infinity` (drain both books completely).
+   */
+  static simulatedMerge<A, B>(
+    left: HalfBook<A>,
+    right: HalfBook<B>,
+    limit: number = Infinity,
+  ): HalfBook<MergedKey<A, B>> {
+    const a = left.clone() as HalfBook<A>;
+    const b = right.clone() as HalfBook<B>;
+
+    const merged: Slot<MergedKey<A, B>>[] = [];
+    let remaining = limit;
+
+    while (remaining > 0 && (a.size > 0 || b.size > 0)) {
+      const topA = a.bestOrder();
+      const topB = b.bestOrder();
+
+      // Pick the cheaper source; if one book is empty, take from the other.
+      // `bestOrder` is highest-priced = best for the holder of this wing.
+      // For a merge we want the *cheapest* top, i.e. the lower of the two tops.
+      const takeFromA =
+        topA !== undefined && (topB === undefined || topA.price <= topB.price);
+
+      const source = takeFromA ? a : b;
+      const fill = source.takeBest(remaining);
+      if (!fill) break;
+
+      const key = (takeFromA ? topA!.key : topB!.key) as unknown as A | B;
+      const tag: MergedKey<A, B> = takeFromA
+        ? { source: "left", key: key as A }
+        : { source: "right", key: key as B };
+
+      merged.push({ key: tag, price: fill.price, value: fill.consumed });
+      remaining -= fill.consumed;
+    }
+
+    // `takeBest` always pulls the current top, so successive fills are
+    // non-increasing in price — i.e. descending. `fromSorted` needs ascending.
+    merged.reverse();
     return HalfBook.fromSorted(merged);
   }
 }

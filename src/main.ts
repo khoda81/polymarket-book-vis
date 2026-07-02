@@ -14,10 +14,7 @@ function createCard(event: Event) {
   chart.load(event);
 }
 
-const eventSlugs = [
-  "claude-fable-5-restored-for-us-customers-by-20260613193753196",
-  "israel-closes-its-airspace-by",
-];
+const eventSlugs = ["israel-closes-its-airspace-by"];
 
 eventSlugs.forEach(async (slug) =>
   createCard(await client.fetchEvent({ slug })),
@@ -34,8 +31,7 @@ const extraEvents = client.listEvents({
 // TODO: kl(p0, p1) / (t1 - t0)
 // And we need to do this for all consecutive transactions given the market's transaction history since a given timestamp till now.
 for await (const eventPage of extraEvents) {
-  const events = eventPage.items;
-  events.forEach((e) => {
+  eventPage.items.forEach((e) => {
     if (!eventSlugs.includes(e.slug ?? "")) createCard(e);
   });
 }
