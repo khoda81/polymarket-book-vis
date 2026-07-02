@@ -109,8 +109,9 @@ export class HalfBook<OrderKey> {
    * Consume up to `limit` units from the best (highest-priced) order.
    *
    * Mutates this book: decrements the top order's volume and removes it once
-   * exhausted. Returns the filled price and consumed amount, or `undefined`
-   * if the book is empty or `limit <= 0`.
+   * exhausted. Total: an empty book is treated as a price-0 sink (you can
+   * always dispose of tokens for nothing), so this always returns a fill —
+   * `{ price: 0, consumed: limit }` when the book is empty.
    */
   takeBest(limit: number): { price: number; consumed: number } {
     if (this.orders.length === 0) return { price: 0, consumed: limit };
@@ -254,7 +255,10 @@ export class HalfBook<OrderKey> {
    * aggregate book you'd get by routing flow to whichever source is cheaper.
    *
    * Both inputs are consumed via `takeBest` on private clones, so the caller's
-   * books are left untouched.
+   * books are left untouched. Because `takeBest` is total (an empty book acts
+   * as a price-0 sink), the loop terminates only when `limit` is reached or
+   * both books are empty — at which point further fills would be price-0
+   * throwaways, which we don't record.
    *
    * @param limit Optional cap on total volume to simulate. Defaults to
    *              `Infinity` (drain both books completely).
@@ -273,18 +277,21 @@ export class HalfBook<OrderKey> {
     while (remaining > 0 && (a.size > 0 || b.size > 0)) {
       const topA = a.bestOrder();
       const topB = b.bestOrder();
+      const priceA = topA?.price ?? 0;
+      const priceB = topB?.price ?? 0;
 
-      // Pick the cheaper source; if one book is empty, take from the other.
-      // `bestOrder` is highest-priced = best for the holder of this wing.
-      // For a merge we want the *cheapest* top, i.e. the lower of the two tops.
-      const takeFromA =
-        topA !== undefined && (topB === undefined || topA.price <= topB.price);
-
+      // Route to the cheaper top. An empty book has price 0, so a non-empty
+      // book always wins; if both are empty the loop guard already exited.
+      const takeFromA = priceA <= priceB;
       const source = takeFromA ? a : b;
-      const fill = source.takeBest(remaining);
-      if (!fill) break;
+      const top = takeFromA ? topA : topB;
 
-      const key = (takeFromA ? topA!.key : topB!.key) as unknown as A | B;
+      const fill = source.takeBest(remaining);
+      // `takeBest` is total, but a price-0 sink fill (empty book) carries no
+      // real liquidity — skip recording it and stop.
+      if (!top) break;
+
+      const key = top.key as unknown as A | B;
       const tag: MergedKey<A, B> = takeFromA
         ? { source: "left", key: key as A }
         : { source: "right", key: key as B };
