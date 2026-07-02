@@ -8,9 +8,9 @@ export type MergedKey<A, B> =
   | { readonly source: "right"; readonly key: B };
 
 export interface BookOrder {
-  /** Conventional price: quote tokens per base token (e.g. USD per YES) */
+  /** Price: give tokens per take token (e.g. USD per YES — give USD, take YES) */
   price: number;
-  /** Amount of get */
+  /** Amount of give (the token the order spends) */
   value: number;
 }
 
@@ -20,9 +20,10 @@ export interface Slot<Key> extends BookOrder {
 
 /**
  * Represents a single "wing" (one side) of a limit order book.
- * * By design, this data structure is asymmetrical and maintains only a single,
+ * By design, this data structure is asymmetrical and maintains only a single,
  * strictly sorted list of orders. To represent a complete order book, you must
- * instantiate two of these classes (e.g., one for the Bid wing, one for the Ask wing).
+ * instantiate two of these classes (e.g., one wing giving the priced token,
+ * one wing giving the pricing token).
  *
  * @typeParam OrderKey - The unique identifier type for an order (e.g., string ID).
  */
@@ -109,8 +110,8 @@ export class HalfBook<OrderKey> {
    * Consume up to `limit` units from the best (highest-priced) order.
    *
    * Mutates this book: decrements the top order's volume and removes it once
-   * exhausted. Total: an empty book is treated as a price-0 sink (you can
-   * always dispose of tokens for nothing), so this always returns a fill —
+   * exhausted. Total: an empty book is treated as a price-0 sink — you can
+   * always clear `limit` for nothing — so this always returns a fill,
    * `{ price: 0, consumed: limit }` when the book is empty.
    */
   takeBest(limit: number): { price: number; consumed: number } {
@@ -139,7 +140,7 @@ export class HalfBook<OrderKey> {
     }
   }
 
-  /** Yield all slots ascending by price (worst-to-best for a bid wing). */
+  /** Yield all slots ascending by price (worst-to-best when higher price is better). */
   *asSlotsAscending(): Generator<Slot<OrderKey>, void, undefined> {
     for (let i = 0; i < this.orders.length; i++) {
       const key = this.orders[i];
@@ -148,17 +149,20 @@ export class HalfBook<OrderKey> {
   }
 
   /**
-   * Re-expresses orders in terms of the complementary token, recovering the original ask prices.
+   * Invert the book: swap give and take. The original give token becomes the
+   * new take token and vice versa. New price = 1/old.price (take per give
+   * becomes give per take); new value = old.value / old.price = the old take
+   * amount, which is the new give amount.
    */
   *asSellOrders() {
     for (const order of this.asOrders()) {
       if (order.price <= 0) break;
 
-      // New Price: How much old Item for 1 unit of old Money?
+      // New price: the inverse ratio.
       const price = 1 / order.price;
 
-      // New Volume: The total old items involved in this order
-      const value = order.value * price;
+      // New volume: old take amount = old give / price (= old.value / old.price).
+      const value = order.value / order.price;
 
       yield { price, value };
     }
@@ -328,21 +332,22 @@ export interface SeriesKey<A, B> {
  * ## Price combinators
  *
  * - **Additive** `(p, q) => p + q`: disjoint-outcome union (`A | B = A + B`),
- *   basket assembly. Pair asks-with-asks to synthesize an ask, bids-with-bids
- *   to synthesize a bid.
+ *   basket assembly. Pair take-legs with take-legs to synthesize a take
+ *   (buy a basket by buying each component), give-legs with give-legs to
+ *   synthesize a give (sell a basket by selling each component).
  *
  * - **Subtractive** `(p, q) => p - q`: difference token `X \ Y` where `Y ⊆ X`.
  *   To synthesize `USD->(X\Y)` (buy the gap) pair `USD->X` with `Y->USD`
- *   (ask of the wide token, **bid** of the narrow token you must unload):
- *   `combinePrice = (askX, bidY) => askX - bidY`.
+ *   (take of the wide token, **give** of the narrow token you must unload):
+ *   `combinePrice = (takeX, giveY) => takeX - giveY`.
  *   To synthesize `(X\Y)->USD` (sell the gap) pair `X->USD` with `USD->Y`
- *   (bid of the wide token, **ask** of the narrow token you must repurchase):
- *   `combinePrice = (bidX, askY) => bidX - askY`.
+ *   (give of the wide token, **take** of the narrow token you must repurchase):
+ *   `combinePrice = (giveX, takeY) => giveX - takeY`.
  *
  * ## Volume semantics
  *
  * Both legs are assumed to be denominated in the **same unit** (the asset being
- * bought/sold on both legs). For multi-leg trades crossing through an
+ * taken/given on both legs). For multi-leg trades crossing through an
  * intermediate asset (e.g. `X->Y->Z`), normalize volumes into the common leg
  * before merging, or extend the combinator to also convert volume.
  *
