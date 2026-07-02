@@ -109,6 +109,14 @@ export class HalfBook<OrderKey> {
     }
   }
 
+  /** Yield all slots ascending by price (worst-to-best for a bid wing). */
+  *asSlotsAscending(): Generator<Slot<OrderKey>, void, undefined> {
+    for (let i = 0; i < this.orders.length; i++) {
+      const key = this.orders[i];
+      yield { key, ...this.index.get(key)! };
+    }
+  }
+
   /**
    * Re-expresses orders in terms of the complementary token, recovering the original ask prices.
    */
@@ -145,11 +153,10 @@ export class HalfBook<OrderKey> {
   // --- Bulk construction (used by merge operations) ---
 
   /**
-   * Build a HalfBook from pre-sorted slots.
-   * Slots **must** be sorted ascending by price with no duplicate keys.
-   * This bypasses per-insert binary search for O(n) construction.
+   * Build a HalfBook from slots sorted **ascending by price** with no
+   * duplicate keys. O(n) construction bypassing per-insert binary search.
    */
-  private static fromSorted<K>(slots: ReadonlyArray<Slot<K>>): HalfBook<K> {
+  static fromSorted<K>(slots: Iterable<Slot<K>>): HalfBook<K> {
     const book = new HalfBook<K>();
     for (const { key, price, value } of slots) {
       book.orders.push(key);
@@ -208,5 +215,91 @@ export class HalfBook<OrderKey> {
     }
 
     return HalfBook.fromSorted(merged);
+  }
+}
+
+/**
+ * Discriminated union key for orders produced by a series merge.
+ * Both legs must be filled simultaneously, so the key carries the pair.
+ */
+export interface SeriesKey<A, B> {
+  readonly left: A;
+  readonly right: B;
+}
+
+/**
+ * Series merge: synthesize a new book by executing on two books simultaneously.
+ *
+ * Walks both slot streams in lockstep, bottlenecking on the smaller volume at
+ * each level and combining prices via `combinePrice`. The resulting slots are
+ * yielded in the **same order** as the inputs (best-first if both inputs are
+ * best-first), so the output can be fed directly to `HalfBook.fromSorted` only
+ * when that order is ascending by price — see the usage notes below.
+ *
+ * ## Price combinators
+ *
+ * - **Additive** `(p, q) => p + q`: disjoint-outcome union (`A | B = A + B`),
+ *   basket assembly. Pair asks-with-asks to synthesize an ask, bids-with-bids
+ *   to synthesize a bid.
+ *
+ * - **Subtractive** `(p, q) => p - q`: difference token `X \ Y` where `Y ⊆ X`.
+ *   To synthesize `USD->(X\Y)` (buy the gap) pair `USD->X` with `Y->USD`
+ *   (ask of the wide token, **bid** of the narrow token you must unload):
+ *   `combinePrice = (askX, bidY) => askX - bidY`.
+ *   To synthesize `(X\Y)->USD` (sell the gap) pair `X->USD` with `USD->Y`
+ *   (bid of the wide token, **ask** of the narrow token you must repurchase):
+ *   `combinePrice = (bidX, askY) => bidX - askY`.
+ *
+ * ## Volume semantics
+ *
+ * Both legs are assumed to be denominated in the **same unit** (the asset being
+ * bought/sold on both legs). For multi-leg trades crossing through an
+ * intermediate asset (e.g. `X->Y->Z`), normalize volumes into the common leg
+ * before merging, or extend the combinator to also convert volume.
+ *
+ * ## Sort order
+ *
+ * `asSlots()` yields **descending** (best-first). For additive merges of two
+ * descending streams, the output is also descending — to build a `HalfBook`
+ * (which stores ascending) either feed `asSlotsAscending()` from both inputs,
+ * or collect and reverse. For subtractive merges the output order depends on
+ * which side is subtracted; verify monotonicity before constructing a book.
+ */
+export function* seriesMerge<A, B>(
+  left: Iterable<Slot<A>>,
+  right: Iterable<Slot<B>>,
+  combinePrice: (pLeft: number, pRight: number) => number,
+): Generator<Slot<SeriesKey<A, B>>, void, undefined> {
+  const iterA = left[Symbol.iterator]();
+  const iterB = right[Symbol.iterator]();
+
+  let currA = iterA.next();
+  let currB = iterB.next();
+
+  let remA = currA.done ? 0 : currA.value.value;
+  let remB = currB.done ? 0 : currB.value.value;
+
+  while (!currA.done && !currB.done) {
+    const price = combinePrice(currA.value.price, currB.value.price);
+    const volume = Math.min(remA, remB);
+
+    yield {
+      key: { left: currA.value.key, right: currB.value.key },
+      price,
+      value: volume,
+    };
+
+    remA -= volume;
+    remB -= volume;
+
+    // Advance whichever leg was exhausted at this level.
+    if (remA <= 0) {
+      currA = iterA.next();
+      remA = currA.done ? 0 : currA.value.value;
+    }
+    if (remB <= 0) {
+      currB = iterB.next();
+      remB = currB.done ? 0 : currB.value.value;
+    }
   }
 }
