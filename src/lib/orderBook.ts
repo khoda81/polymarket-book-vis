@@ -10,8 +10,8 @@ export type MergedKey<A, B> =
 export interface BookOrder {
   /** Price: give tokens per take token (e.g. USD per YES — give USD, take YES) */
   price: number;
-  /** Amount of give (the token the order spends) */
-  value: number;
+  /** Amount of take (the token the order receives). `give = price * take`. */
+  take: number;
 }
 
 export interface Slot<Key> extends BookOrder {
@@ -25,6 +25,44 @@ export interface Slot<Key> extends BookOrder {
  * instantiate two of these classes (e.g., one wing giving the priced token,
  * one wing giving the pricing token).
  *
+ * ## Representation choice: `{ price, take }` over `{ price, give }`
+ *
+ * An order is fundamentally two deltas with a ratio. Any two of
+ * `{price, give, take}` suffice (price = give/take). We store `price` and
+ * `take`, deriving `give = price * take` by **multiplication**.
+ *
+ * The alternative `{price, give}` would derive `take = give / price` by
+ * **division**, which is strictly worse at the IEEE-754 boundary corners:
+ *
+ * | corner `{price, value}` | `value/price` (division) | `price*value` (multiplication) |
+ * |---|---|---|
+ * | `{∞, ∞}` | `∞/∞ = NaN` ❌ | `∞·∞ = ∞` ✅ |
+ * | `{0, 0}` | `0/0 = NaN` | `0·0 = 0` ✅ |
+ * | `{0, ∞}` | `∞/0 = ∞` | `0·∞ = NaN` ❌ |
+ * | `{∞, 0}` | `0/∞ = 0` | `∞·0 = NaN` ❌ |
+ *
+ * `setLevel` rejects `price <= 0` and `take <= 0`, which removes exactly the
+ * rows where multiplication goes NaN (`{0,*}` and `{*,0}`). The surviving
+ * space `price ∈ (0, ∞], take ∈ (0, ∞]` has **zero NaN-producing corners**
+ * under multiplication. The same filters do *not* rescue division, which is
+ * ill-behaved off-axis at `{∞, ∞}` — a corner the filters don't touch.
+ *
+ * Performance aligns with this choice: the render hot path (`drawBookView`)
+ * and the inversion (`asSellOrders`) both need `take` directly, so storing it
+ * eliminates a per-row division. The one operation that needs `give`
+ * (`takeBest`, denominated in give to keep the sink on the give side) lives in
+ * the merge path, which is colder.
+ *
+ * ## The sink: free disposal, not free minting
+ *
+ * An empty book behaves as a **price-0 sink on the give side**: you can always
+ * dispose of any token for nothing (free disposal is a physical universal).
+ * This is *not* symmetric — you cannot generally mint any token at price 0.
+ * Infinite minting is an institutional fiction that exists only for specific
+ * tokens (e.g. Polymarket's USDC→YES+NO mint at price 1, modeled as a real
+ * stored level, not as the sink). The sink is never stored; it is the
+ * implicit behavior of `takeBest` on an empty book.
+ *
  * @typeParam OrderKey - The unique identifier type for an order (e.g., string ID).
  */
 export class HalfBook<OrderKey> {
@@ -37,18 +75,25 @@ export class HalfBook<OrderKey> {
   }
 
   /**
-   * Insert or replace an order. if the key already exists, it is removed first.
+   * Insert or replace an order. If the key already exists, it is removed first.
+   *
+   * Rejects `price <= 0` and `take <= 0`: those are the two filter axes that
+   * keep the `{price, take}` representation total (see class doc). A `price`
+   * of 0 is the sink, which is never stored — it's the implicit behavior of
+   * an empty book. A `take` of 0 is an empty order, which has no effect.
    *
    * @returns `true` if the order key existed. Otherwise, `false`.
    */
   setLevel(key: OrderKey, order: BookOrder): boolean {
+    if (order.price <= 0 || order.take <= 0) return false;
+
     const existing = this.index.get(key);
 
     if (existing) {
       if (existing.price === order.price)
-        return this.updateValue(key, order.value);
+        return this.updateTake(key, order.take);
       console.warn(
-        `Modifyin price of an existing order: `,
+        `Modifying price of an existing order: `,
         existing,
         `to`,
         order.price,
@@ -65,14 +110,14 @@ export class HalfBook<OrderKey> {
   }
 
   /**
-   * Update the volume of an existing order.
+   * Update the take amount of an existing order. `take <= 0` removes the order.
    */
-  updateValue(key: OrderKey, volume: number): boolean {
-    if (volume <= 0) return this.removeOrder(key);
+  updateTake(key: OrderKey, take: number): boolean {
+    if (take <= 0) return this.removeOrder(key);
 
     const existing = this.index.get(key);
     if (!existing) return false;
-    existing.value = volume;
+    existing.take = take;
     return true;
   }
 
@@ -86,8 +131,15 @@ export class HalfBook<OrderKey> {
     return true;
   }
 
+  /**
+   * Returns the order for `key`, or a price-0 sink phantom (`take: 1`) when
+   * absent. The phantom is never stored — it represents the implicit
+   * free-disposal sink (see class doc). `take: 1` is arbitrary since the sink
+   * has infinite capacity; it only exists so callers reading a missing key
+   * get a well-defined `give = price * take = 0`.
+   */
   getOrder(key: OrderKey): BookOrder {
-    return this.index.get(key) ?? { price: 0, value: 1 };
+    return this.index.get(key) ?? { price: 0, take: 1 };
   }
 
   get size(): number {
@@ -107,24 +159,32 @@ export class HalfBook<OrderKey> {
   }
 
   /**
-   * Consume up to `limit` units from the best (highest-priced) order.
+   * Consume up to `giveLimit` units of **give** from the best (highest-priced)
+   * order. Returns the fill priced in take-per-give, with `consumed` in **give**
+   * units (so `takeReceived = consumed * price`).
    *
-   * Mutates this book: decrements the top order's volume and removes it once
-   * exhausted. Total: an empty book is treated as a price-0 sink — you can
-   * always clear `limit` for nothing — so this always returns a fill,
-   * `{ price: 0, consumed: limit }` when the book is empty.
+   * `giveLimit` is denominated in give (not take) so that the sink semantics
+   * stay on the give side: an empty book returns `{ price: 0, consumed: giveLimit }`,
+   * meaning "you disposed of `giveLimit` for nothing" — free disposal, not free
+   * minting. See the class doc for why the sink must live on the give side.
+   *
+   * Because the book stores `take` and `giveLimit` is in give, this method
+   * divides once (`giveLimit / price`) to convert the budget into take units.
+   * This is the one place the `{price, take}` representation pays a division;
+   * it lives in the merge path (colder than the render hot path).
    */
-  takeBest(limit: number): { price: number; consumed: number } {
-    if (this.orders.length === 0) return { price: 0, consumed: limit };
+  takeBest(giveLimit: number): { price: number; consumed: number } {
+    if (this.orders.length === 0) return { price: 0, consumed: giveLimit };
 
     const key = this.orders[this.orders.length - 1];
     const order = this.index.get(key)!;
-    const consumed = Math.min(order.value, limit);
+    const takeToConsume = Math.min(order.take, giveLimit / order.price);
+    const giveConsumed = takeToConsume * order.price;
 
-    if (consumed >= order.value) this.removeOrder(key);
-    else order.value -= consumed;
+    if (takeToConsume >= order.take) this.removeOrder(key);
+    else order.take -= takeToConsume;
 
-    return { price: order.price, consumed };
+    return { price: order.price, consumed: giveConsumed };
   }
 
   *asOrders() {
@@ -150,9 +210,13 @@ export class HalfBook<OrderKey> {
 
   /**
    * Invert the book: swap give and take. The original give token becomes the
-   * new take token and vice versa. New price = 1/old.price (take per give
-   * becomes give per take); new value = old.value / old.price = the old take
-   * amount, which is the new give amount.
+   * new take token and vice versa. New price = 1/old.price (give-per-take
+   * becomes take-per-give); new take = old.give = old.price * old.take.
+   *
+   * This is the headline win of storing `{price, take}`: the inversion is a
+   * **multiplication** (`price * take`), which is total at every valid corner.
+   * Under the old `{price, give}` representation this was a division
+   * (`give / price`), which produced NaN at `{∞, ∞}`.
    */
   *asSellOrders() {
     for (const order of this.asOrders()) {
@@ -161,10 +225,10 @@ export class HalfBook<OrderKey> {
       // New price: the inverse ratio.
       const price = 1 / order.price;
 
-      // New volume: old take amount = old give / price (= old.value / old.price).
-      const value = order.value / order.price;
+      // New take = old give = price * take (multiplication, never NaN).
+      const take = order.price * order.take;
 
-      yield { price, value };
+      yield { price, take };
     }
   }
 
@@ -192,9 +256,9 @@ export class HalfBook<OrderKey> {
    */
   static fromSorted<K>(slots: Iterable<Slot<K>>): HalfBook<K> {
     const book = new HalfBook<K>();
-    for (const { key, price, value } of slots) {
+    for (const { key, price, take } of slots) {
       book.orders.push(key);
-      book.index.set(key, { price, value });
+      book.index.set(key, { price, take });
     }
     return book;
   }
@@ -259,12 +323,14 @@ export class HalfBook<OrderKey> {
    * aggregate book you'd get by routing flow to whichever source is cheaper.
    *
    * Both inputs are consumed via `takeBest` on private clones, so the caller's
-   * books are left untouched. Because `takeBest` is total (an empty book acts
-   * as a price-0 sink), the loop terminates only when `limit` is reached or
-   * both books are empty — at which point further fills would be price-0
-   * throwaways, which we don't record.
+   * books are left untouched. The loop guard checks `a.size > 0 || b.size > 0`
+   * before any `takeBest` call, so `takeBest` never sees an empty book and the
+   * price-0 sink never fires here — all recorded fills come from real liquidity.
    *
-   * @param limit Optional cap on total volume to simulate. Defaults to
+   * `takeBest` is denominated in give, so `remaining` and `fill.consumed` are
+   * in give units; the resulting merged orders store `take = consumed * price`.
+   *
+   * @param limit Optional cap on total **give** volume to simulate. Defaults to
    *              `Infinity` (drain both books completely).
    */
   static simulatedMerge<A, B>(
@@ -281,26 +347,24 @@ export class HalfBook<OrderKey> {
     while (remaining > 0 && (a.size > 0 || b.size > 0)) {
       const topA = a.bestOrder();
       const topB = b.bestOrder();
-      const priceA = topA?.price ?? 0;
-      const priceB = topB?.price ?? 0;
-
-      // Route to the cheaper top. An empty book has price 0, so a non-empty
-      // book always wins; if both are empty the loop guard already exited.
-      const takeFromA = priceA <= priceB;
+      // Both books are non-empty here (loop guard), so both tops exist.
+      const takeFromA = topA!.price <= topB!.price;
       const source = takeFromA ? a : b;
-      const top = takeFromA ? topA : topB;
+      const top = takeFromA ? topA! : topB!;
 
       const fill = source.takeBest(remaining);
-      // `takeBest` is total, but a price-0 sink fill (empty book) carries no
-      // real liquidity — skip recording it and stop.
-      if (!top) break;
 
       const key = top.key as unknown as A | B;
       const tag: MergedKey<A, B> = takeFromA
         ? { source: "left", key: key as A }
         : { source: "right", key: key as B };
 
-      merged.push({ key: tag, price: fill.price, value: fill.consumed });
+      // `takeBest` returns `consumed` in give units; convert to take for storage.
+      merged.push({
+        key: tag,
+        price: fill.price,
+        take: fill.consumed * fill.price,
+      });
       remaining -= fill.consumed;
     }
 
@@ -346,10 +410,11 @@ export interface SeriesKey<A, B> {
  *
  * ## Volume semantics
  *
- * Both legs are assumed to be denominated in the **same unit** (the asset being
- * taken/given on both legs). For multi-leg trades crossing through an
- * intermediate asset (e.g. `X->Y->Z`), normalize volumes into the common leg
- * before merging, or extend the combinator to also convert volume.
+ * Both legs are assumed to be denominated in the **same unit** (the take
+ * amount, since `Slot.take` is what `seriesMerge` bottlenecks on). For
+ * multi-leg trades crossing through an intermediate asset (e.g. `X->Y->Z`),
+ * normalize volumes into the common leg before merging, or extend the
+ * combinator to also convert volume.
  *
  * ## Sort order
  *
@@ -370,8 +435,8 @@ export function* seriesMerge<A, B>(
   let currA = iterA.next();
   let currB = iterB.next();
 
-  let remA = currA.done ? 0 : currA.value.value;
-  let remB = currB.done ? 0 : currB.value.value;
+  let remA = currA.done ? 0 : currA.value.take;
+  let remB = currB.done ? 0 : currB.value.take;
 
   while (!currA.done && !currB.done) {
     const price = combinePrice(currA.value.price, currB.value.price);
@@ -380,7 +445,7 @@ export function* seriesMerge<A, B>(
     yield {
       key: { left: currA.value.key, right: currB.value.key },
       price,
-      value: volume,
+      take: volume,
     };
 
     remA -= volume;
@@ -389,11 +454,11 @@ export function* seriesMerge<A, B>(
     // Advance whichever leg was exhausted at this level.
     if (remA <= 0) {
       currA = iterA.next();
-      remA = currA.done ? 0 : currA.value.value;
+      remA = currA.done ? 0 : currA.value.take;
     }
     if (remB <= 0) {
       currB = iterB.next();
-      remB = currB.done ? 0 : currB.value.value;
+      remB = currB.done ? 0 : currB.value.take;
     }
   }
 }

@@ -198,7 +198,6 @@ export class PolymarketCPV {
     const rawEvent = await res.json();
     const groupItemIdx: Record<MarketId, number> = {};
 
-    console.debug(rawEvent.markets);
     for (const market of rawEvent.markets ?? []) {
       if (market.groupItemTitle) this.titles[market.id] = market.groupItemTitle;
       if (market.groupItemThreshold)
@@ -425,7 +424,9 @@ export class PolymarketCPV {
     let fillRemaining = Math.min(view.fillDepth ?? 0, remainingHeight);
 
     for (const level of view.orders) {
-      const rowHeight = Math.min(level.value / level.price, remainingHeight);
+      // `level.take` is already the YES height (the priced token amount);
+      // no division needed — this is the render-hot-path win of `{price, take}`.
+      const rowHeight = Math.min(level.take, remainingHeight);
       if (rowHeight <= 0) continue;
 
       const filledHeight = Math.min(rowHeight, fillRemaining);
@@ -469,19 +470,24 @@ export class PolymarketCPV {
         const usdToYes = new HalfBook<string>();
         for (const b of stream.payload.bids) {
           const price = parseFloat(b.price);
-          const value = parseFloat(b.size) * price;
-          usdToYes.setLevel(b.price, { price, value });
+          // bids give USD for YES; size is the YES (take) amount.
+          const take = parseFloat(b.size);
+          usdToYes.setLevel(b.price, { price, take });
         }
 
         const yesToUsd = new HalfBook<string>();
         for (const a of stream.payload.asks) {
+          // asks give YES for USD; size is the YES (give) amount, convert to USD (take).
           const price = 1 / parseFloat(a.price);
-          const value = parseFloat(a.size);
-          yesToUsd.setLevel(a.price, { price, value });
+          const take = parseFloat(a.size) * price;
+          yesToUsd.setLevel(a.price, { price, take });
         }
 
-        // If no orders to buy yes, we can always mint more at price 1.0
-        yesToUsd.setLevel("mint", { price: 1, value: Infinity });
+        // Polymarket's mint contract: give 1 USDC → take 1 YES (and 1 NO),
+        // infinitely. This is an institutional primitive specific to
+        // conditional-token markets, not a universal sink — the free-disposal
+        // sink (price 0) is handled implicitly by `takeBest` on an empty book.
+        yesToUsd.setLevel("mint", { price: 1, take: Infinity });
 
         this.books[stream.payload.tokenId] = { usdToYes, yesToUsd };
       } else if (stream.type === "price_change") {
@@ -491,11 +497,16 @@ export class PolymarketCPV {
 
           const { side, price: tick, size } = priceChange;
           const price = parseFloat(tick);
-          const value = parseFloat(size);
+          const sizeNum = parseFloat(size);
           if (side === OrderSide.BUY) {
-            book.usdToYes.setLevel(tick, { price, value: value * price });
+            // BUY = bid: give USD, take YES. size is YES (take).
+            book.usdToYes.setLevel(tick, { price, take: sizeNum });
           } else {
-            book.yesToUsd.setLevel(tick, { price: 1 / price, value });
+            // SELL = ask: give YES, take USD. size is YES (give), convert to USD (take).
+            book.yesToUsd.setLevel(tick, {
+              price: 1 / price,
+              take: sizeNum / price,
+            });
           }
         }
       } else if (stream.type === "market_resolved") {
