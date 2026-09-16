@@ -5,6 +5,8 @@
     "type": "module",
     "scripts": {
         "dev": "vite",
+        "backend": "bun server/index.ts",
+        "backend:dev": "bun --watch server/index.ts",
         "build": "tsc && vite build",
         "preview": "vite preview"
     },
