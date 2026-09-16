@@ -1,6 +1,6 @@
 import "@/styles/global.css";
 import { PolymarketCPV } from "./component";
-import { installAgeStripView } from "./ageStripsOptimized";
+import { installAgeStripView } from "./ageStripsStableDom";
 import { disableAgePolling } from "./eventDrivenAge";
 import { createPublicClient, Event } from "@polymarket/client";
 
