@@ -134,7 +134,12 @@
     pointer-events: auto;
 }
 
-.cpv-toggles--age-axis .cpv-market-dot {
+.cpv-toggles--age-axis label:hover {
+    opacity: 0.75;
+}
+
+.cpv-toggles--age-axis input[type="checkbox"],
+.cpv-hidden-markets input[type="checkbox"] {
     display: none;
 }
 
@@ -144,6 +149,53 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.cpv-hidden-markets {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--color-text-secondary, #666);
+}
+
+.cpv-hidden-markets[hidden] {
+    display: none;
+}
+
+.cpv-hidden-markets::before {
+    content: "Hidden:";
+    margin-right: 2px;
+}
+
+.cpv-hidden-markets label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 180px;
+    padding: 3px 7px;
+    border: 1px solid var(--color-border-tertiary, #ddd);
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.cpv-hidden-markets label:hover {
+    background: var(--color-background-secondary, #eee);
+}
+
+.cpv-hidden-markets .cpv-market-label-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cpv-market-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
 }
 
 /* ── Search ──────────────────────────────────────────────────────────────── */
