@@ -1,7 +1,6 @@
 import { defineConfig } from "vite";
 import path from "path";
 
-
 export default defineConfig({
   resolve: {
     alias: {
@@ -10,5 +9,8 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    proxy: {
+      "/api": "http://localhost:8787",
+    },
   },
 });
