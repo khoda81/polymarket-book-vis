@@ -1,4 +1,9 @@
-import { fmtVol, marketColor } from "@/lib/math";
+import {
+  fmtRelativeTime,
+  fmtVol,
+  logAgeTicks,
+  marketColor,
+} from "@/lib/math";
 import {
   BookOrder,
   HalfBook,
@@ -14,6 +19,11 @@ import {
   StackDirection,
 } from "@/lib/renderer";
 import { AgedSegment, SpreadAge } from "@/lib/spreadAge";
+import {
+  SignedVolumeSegment,
+  signedVolumeColor,
+  signedVolumeSegments,
+} from "@/lib/signedVolume";
 import "@/styles/component.css";
 import {
   Market,
@@ -38,7 +48,13 @@ interface BookBoxView {
 
 interface AgeTowerView {
   readonly segments: readonly AgedSegment[];
+  readonly volumeSegments: readonly SignedVolumeSegment[];
   readonly color: string;
+}
+
+interface AgeViewRange {
+  readonly min: number;
+  readonly max: number;
 }
 
 const LIGHT_THEME: ChartTheme = {
@@ -78,7 +94,9 @@ export class PolymarketCPV {
   private spreadAges: Record<TokenId, SpreadAge> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private volScale = 4.5;
-  private viewMode: ViewMode = "volume";
+  private viewMode: ViewMode = "age";
+  private recordingSinceMs: number | undefined;
+  private ageViewRange: AgeViewRange | null = null;
   private ageTimer: number | undefined;
   private searchTimeout: number | undefined;
 
@@ -114,7 +132,7 @@ export class PolymarketCPV {
   private buildDOM() {
     this.container.classList.add("cpv-wrap");
     this.container.innerHTML = `
-      <h2 class="cpv-sr-only">Polymarket signed cumulative price-volume</h2>
+      <h2 class="cpv-sr-only">Polymarket market-state visualization</h2>
 
       <div class="cpv-header">
         <h5 class="cpv-title" data-ref="title">Loading…</h5>
@@ -136,8 +154,8 @@ export class PolymarketCPV {
         <label class="cpv-view-control">
           View
           <select data-ref="viewMode" aria-label="Visualization mode">
-            <option value="volume">volume</option>
             <option value="age">age</option>
+            <option value="volume">volume</option>
           </select>
         </label>
       </div>
@@ -158,8 +176,19 @@ export class PolymarketCPV {
     this.refs.dropdown.setAttribute("role", "listbox");
 
     this.plotter = new OrderBookPlotter(this.refs.canvas as HTMLCanvasElement);
-    this.plotter.onZoom = (delta) => {
-      this.volScale = this.volScale + delta;
+    this.plotter.onZoom = (delta, verticalAnchor) => {
+      if (this.viewMode === "age") this.zoomAgeView(delta, verticalAnchor);
+      else this.volScale = this.volScale + delta;
+      this.reqDraw();
+    };
+    this.plotter.onPan = (verticalDelta) => {
+      if (this.viewMode !== "age") return;
+      this.panAgeView(verticalDelta);
+      this.reqDraw();
+    };
+    this.plotter.onResetZoom = () => {
+      if (this.viewMode !== "age") return;
+      this.ageViewRange = null;
       this.reqDraw();
     };
     this.plotter.onPointer = (p) => {
@@ -196,6 +225,8 @@ export class PolymarketCPV {
 
     this.books = {};
     this.spreadAges = {};
+    this.recordingSinceMs = undefined;
+    this.ageViewRange = null;
     this.titles = {};
     this.activeTokens.clear();
     // this.userOrders = [];
@@ -441,42 +472,45 @@ export class PolymarketCPV {
   private drawAgeView() {
     const nowMs = performance.now();
     const views: AgeTowerView[] = [];
-    let maxHeight = 0;
 
     for (const [i, market] of (this.event?.markets ?? []).entries()) {
       const tokenId = market.outcomes.yes.tokenId;
       if (tokenId === null || !this.activeTokens.has(tokenId)) continue;
 
       const segments = this.spreadAges[tokenId]?.segments(nowMs) ?? [];
-      for (const segment of segments)
-        maxHeight = Math.max(
-          maxHeight,
-          PolymarketCPV.logAge(segment.ageMs),
-        );
+      const book = this.books[tokenId] ?? emptyTokenBook();
       views.push({
         segments,
+        volumeSegments: signedVolumeSegments(book),
         color: marketColor(this.event!.id, i),
       });
     }
 
+    const recordingMax = this.recordingAgeLog(nowMs);
+    const visibleRange = this.resolveAgeViewRange(recordingMax);
     const frame = this.plotter.beginFrame(this.theme, {
       xRange: { min: 0, max: 1 },
-      // Step the ceiling in whole transformed units so towers visibly grow
-      // between occasional rescale points instead of staying pinned to 91%.
-      yRange: { min: 0, max: Math.max(1, Math.ceil(maxHeight)) },
+      yRange: visibleRange,
     });
-    frame.drawAxes(PolymarketCPV.formatLogAge);
+    frame.drawAxes({
+      yTicks: logAgeTicks(visibleRange, frame.viewport.height),
+      formatY: PolymarketCPV.formatLogAge,
+    });
 
     for (const view of views) {
+      const top: { x: number; y: number }[] = [];
       for (const segment of view.segments) {
-        frame.drawDataRect(
-          segment.lo,
-          segment.hi,
-          0,
-          PolymarketCPV.logAge(segment.ageMs),
-          { stroke: view.color, fillAlpha: 0.18 },
-        );
+        const height = PolymarketCPV.logAge(segment.ageMs);
+        top.push({ x: segment.lo, y: height });
+        top.push({ x: segment.hi, y: height });
       }
+      frame.drawDataArea(top, 0, { fill: view.color, fillAlpha: 0.18 });
+    }
+
+    for (const view of views) {
+      frame.drawColoredStep(
+        PolymarketCPV.ageVolumeLine(view.segments, view.volumeSegments),
+      );
     }
 
     const pointerData = this.pointer ? frame.toData(this.pointer) : null;
@@ -494,11 +528,96 @@ export class PolymarketCPV {
   }
 
   private static formatLogAge(logAge: number): string {
-    const seconds = Math.expm1(Math.max(0, logAge));
-    if (seconds < 10) return `${seconds.toFixed(1)}s`;
-    if (seconds < 60) return `${Math.round(seconds)}s`;
-    if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;
-    return `${(seconds / 3600).toFixed(1)}h`;
+    return fmtRelativeTime(Math.expm1(Math.max(0, logAge)));
+  }
+
+  private static ageVolumeLine(
+    ages: readonly AgedSegment[],
+    volumes: readonly SignedVolumeSegment[],
+  ) {
+    const boundaries = new Set<number>([0, 1]);
+    for (const { lo, hi } of ages) {
+      boundaries.add(lo);
+      boundaries.add(hi);
+    }
+    for (const { lo, hi } of volumes) {
+      boundaries.add(lo);
+      boundaries.add(hi);
+    }
+
+    const sorted = [...boundaries].sort((a, b) => a - b);
+    return sorted.slice(0, -1).map((lo, index) => {
+      const hi = sorted[index + 1];
+      const midpoint = (lo + hi) / 2;
+      const ageMs =
+        ages.find((segment) => midpoint >= segment.lo && midpoint <= segment.hi)
+          ?.ageMs ?? 0;
+      const volume =
+        volumes.find(
+          (segment) => midpoint >= segment.lo && midpoint <= segment.hi,
+        )?.volume ?? 0;
+      return {
+        lo,
+        hi,
+        y: PolymarketCPV.logAge(ageMs),
+        color: signedVolumeColor(volume),
+      };
+    });
+  }
+
+  private recordingAgeLog(nowMs: number): number {
+    if (this.recordingSinceMs === undefined) return 0;
+    return PolymarketCPV.logAge(nowMs - this.recordingSinceMs);
+  }
+
+  private resolveAgeViewRange(recordingMax: number): AgeViewRange {
+    // A tiny positive extent keeps the affine transform invertible during the
+    // instant between connection and the first timer tick.
+    const upperBound = Math.max(recordingMax, 1e-6);
+    if (!this.ageViewRange) return { min: 0, max: upperBound };
+
+    const requestedSpan = this.ageViewRange.max - this.ageViewRange.min;
+    const span = Math.min(requestedSpan, upperBound);
+    const min = Math.max(
+      0,
+      Math.min(this.ageViewRange.min, upperBound - span),
+    );
+    return { min, max: min + span };
+  }
+
+  private zoomAgeView(delta: number, verticalAnchor: number) {
+    const recordingMax = this.recordingAgeLog(performance.now());
+    if (recordingMax <= 0) return;
+
+    const current = this.resolveAgeViewRange(recordingMax);
+    const currentSpan = current.max - current.min;
+    const minimumSpan = Math.min(0.01, recordingMax);
+    const span = Math.max(
+      minimumSpan,
+      Math.min(recordingMax, currentSpan * Math.exp(delta)),
+    );
+
+    if (span >= recordingMax * 0.999999) {
+      this.ageViewRange = null;
+      return;
+    }
+
+    const anchor = current.min + verticalAnchor * currentSpan;
+    let min = anchor - verticalAnchor * span;
+    min = Math.max(0, Math.min(min, recordingMax - span));
+    this.ageViewRange = { min, max: min + span };
+  }
+
+  private panAgeView(verticalDelta: number) {
+    if (!this.ageViewRange) return;
+    const recordingMax = this.recordingAgeLog(performance.now());
+    const current = this.resolveAgeViewRange(recordingMax);
+    const span = current.max - current.min;
+    const min = Math.max(
+      0,
+      Math.min(current.min + verticalDelta * span, recordingMax - span),
+    );
+    this.ageViewRange = { min, max: min + span };
   }
 
   private startAgeTimer() {
@@ -592,7 +711,7 @@ export class PolymarketCPV {
         for (const a of stream.payload.asks) {
           // asks give YES for USD; size is the YES (give) amount, convert to USD (take).
           const price = 1 / parseFloat(a.price);
-          const take = parseFloat(a.size) * price;
+          const take = parseFloat(a.size) / price;
           yesToUsd.setLevel(a.price, { price, take });
         }
 
@@ -605,8 +724,10 @@ export class PolymarketCPV {
         // Market subscriptions are created from token IDs. The SDK also uses
         // this event shape for position IDs, so narrow it at this boundary.
         const tokenId = stream.payload.tokenId as TokenId;
+        const nowMs = performance.now();
+        this.recordingSinceMs ??= nowMs;
         this.books[tokenId] = { usdToYes, yesToUsd };
-        this.updateSpreadAge(tokenId, performance.now());
+        this.updateSpreadAge(tokenId, nowMs);
       } else if (stream.type === "price_change") {
         const affectedTokens = new Set<TokenId>();
         for (const priceChange of stream.payload.priceChanges) {
@@ -624,7 +745,7 @@ export class PolymarketCPV {
             // SELL = ask: give YES, take USD. size is YES (give), convert to USD (take).
             book.yesToUsd.setLevel(tick, {
               price: 1 / price,
-              take: sizeNum / price,
+              take: sizeNum * price,
             });
           }
           affectedTokens.add(tokenId);

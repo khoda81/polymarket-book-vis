@@ -18,10 +18,23 @@ export interface ChartTheme {
   text: string;
 }
 
-export interface DataRectStyle {
-  readonly stroke: string;
+export interface DataAreaStyle {
+  readonly fill: string;
   readonly fillAlpha: number;
+  readonly stroke?: string;
   readonly lineWidth?: number;
+}
+
+export interface ColoredStepSegment {
+  readonly lo: number;
+  readonly hi: number;
+  readonly y: number;
+  readonly color: string;
+}
+
+export interface AxisOptions {
+  readonly yTicks?: readonly number[];
+  readonly formatY?: (value: number) => string;
 }
 
 // --- Box pen ---------------------------------------------------------------
@@ -181,8 +194,12 @@ export class OrderBookPlotter {
   readonly ctx: CanvasRenderingContext2D;
   readonly padding = { l: 60, r: 16, t: 24, b: 24 };
 
-  public onZoom?: (delta: number) => void;
+  public onZoom?: (delta: number, verticalAnchor: number) => void;
+  public onPan?: (verticalDelta: number) => void;
+  public onResetZoom?: () => void;
   public onPointer?: (p: { sx: number; sy: number } | null) => void;
+  private dragging = false;
+  private lastDragY = 0;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -190,15 +207,25 @@ export class OrderBookPlotter {
     this.ctx = ctx;
 
     this.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
-    this.canvas.addEventListener("mousemove", this.handleMouseMove);
+    this.canvas.addEventListener("pointerdown", this.handlePointerDown);
+    this.canvas.addEventListener("pointermove", this.handlePointerMove);
+    this.canvas.addEventListener("pointerup", this.handlePointerUp);
+    this.canvas.addEventListener("pointercancel", this.handlePointerUp);
     this.canvas.addEventListener("mouseleave", this.handleMouseLeave);
+    this.canvas.addEventListener("dblclick", this.handleDoubleClick);
   }
 
   destroy() {
     this.canvas.removeEventListener("wheel", this.handleWheel);
-    this.canvas.removeEventListener("mousemove", this.handleMouseMove);
+    this.canvas.removeEventListener("pointerdown", this.handlePointerDown);
+    this.canvas.removeEventListener("pointermove", this.handlePointerMove);
+    this.canvas.removeEventListener("pointerup", this.handlePointerUp);
+    this.canvas.removeEventListener("pointercancel", this.handlePointerUp);
     this.canvas.removeEventListener("mouseleave", this.handleMouseLeave);
+    this.canvas.removeEventListener("dblclick", this.handleDoubleClick);
     this.onZoom = undefined;
+    this.onPan = undefined;
+    this.onResetZoom = undefined;
     this.onPointer = undefined;
   }
 
@@ -260,16 +287,46 @@ export class OrderBookPlotter {
     } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
       delta *= this.canvas.clientHeight;
     }
-    this.onZoom(delta);
-  };
-
-  private handleMouseMove = (e: MouseEvent) => {
-    if (!this.onPointer) return;
     const rect = this.canvas.getBoundingClientRect();
-    this.onPointer({ sx: e.clientX - rect.left, sy: e.clientY - rect.top });
+    const chartHeight = this.canvas.clientHeight - this.padding.t - this.padding.b;
+    const y = e.clientY - rect.top;
+    const verticalAnchor = Math.max(
+      0,
+      Math.min(1, (this.canvas.clientHeight - this.padding.b - y) / chartHeight),
+    );
+    this.onZoom(delta, verticalAnchor);
   };
 
-  private handleMouseLeave = () => this.onPointer?.(null);
+  private handlePointerDown = (e: PointerEvent) => {
+    if (e.button !== 0 || !this.onPan) return;
+    e.preventDefault();
+    this.dragging = true;
+    this.lastDragY = e.clientY;
+    this.canvas.setPointerCapture(e.pointerId);
+  };
+
+  private handlePointerMove = (e: PointerEvent) => {
+    const rect = this.canvas.getBoundingClientRect();
+    this.onPointer?.({ sx: e.clientX - rect.left, sy: e.clientY - rect.top });
+
+    if (!this.dragging || !this.onPan) return;
+    const chartHeight = this.canvas.clientHeight - this.padding.t - this.padding.b;
+    this.onPan((e.clientY - this.lastDragY) / chartHeight);
+    this.lastDragY = e.clientY;
+  };
+
+  private handlePointerUp = (e: PointerEvent) => {
+    if (!this.dragging) return;
+    this.dragging = false;
+    if (this.canvas.hasPointerCapture(e.pointerId))
+      this.canvas.releasePointerCapture(e.pointerId);
+  };
+
+  private handleMouseLeave = () => {
+    if (!this.dragging) this.onPointer?.(null);
+  };
+
+  private handleDoubleClick = () => this.onResetZoom?.();
 }
 
 // --- Frame: per-frame immediate-mode drawing context ----------------------
@@ -330,14 +387,15 @@ export class Frame {
 
   // --- Axes ---------------------------------------------------------------
 
-  drawAxes(formatY: (value: number) => string = fmtVol) {
+  drawAxes(options: AxisOptions = {}) {
     const { ctx, viewport: vp, theme, domain } = this;
+    const formatY = options.formatY ?? fmtVol;
 
     ctx.strokeStyle = theme.axis;
     ctx.lineWidth = 1;
     ctx.strokeRect(vp.l, vp.t, vp.width, vp.height);
 
-    const yTicks = axisTicks(domain.yRange, vp.height);
+    const yTicks = options.yTicks ?? axisTicks(domain.yRange, vp.height);
     ctx.font = "11px sans-serif";
     ctx.textBaseline = "middle";
 
@@ -398,28 +456,75 @@ export class Frame {
     return new BoxPen(this, initialStyle, boxTransform);
   }
 
-  /** Draw a filled/stroked rectangle expressed entirely in data coordinates. */
-  drawDataRect(
-    x0: number,
-    x1: number,
-    y0: number,
-    y1: number,
-    style: DataRectStyle,
+  /**
+   * Draw a filled area under one data-space polyline. The fill closes at the
+   * baseline, but the stroke intentionally follows only the sides and top.
+   */
+  drawDataArea(
+    top: readonly { readonly x: number; readonly y: number }[],
+    baseline: number,
+    style: DataAreaStyle,
   ) {
-    const left = this.toScreenX(Math.min(x0, x1), 0);
-    const right = this.toScreenX(Math.max(x0, x1), 0);
-    const top = this.toScreenY(0, Math.max(y0, y1));
-    const bottom = this.toScreenY(0, Math.min(y0, y1));
+    if (top.length === 0) return;
+    const first = top[0];
+    const last = top[top.length - 1];
 
     this.ctx.save();
-    this.ctx.fillStyle = style.stroke;
+    this.ctx.beginPath();
+    this.ctx.moveTo(this.toScreenX(first.x, baseline), this.toScreenY(0, baseline));
+    for (const point of top)
+      this.ctx.lineTo(this.toScreenX(point.x, point.y), this.toScreenY(0, point.y));
+    this.ctx.lineTo(this.toScreenX(last.x, baseline), this.toScreenY(0, baseline));
+    this.ctx.closePath();
+    this.ctx.fillStyle = style.fill;
     this.ctx.globalAlpha = style.fillAlpha;
-    this.ctx.fillRect(left, top, right - left, bottom - top);
+    this.ctx.fill();
     this.ctx.restore();
 
+    if (!style.stroke) return;
     this.ctx.strokeStyle = style.stroke;
     this.ctx.lineWidth = style.lineWidth ?? 2;
-    this.ctx.strokeRect(left, top, right - left, bottom - top);
+    this.ctx.lineJoin = "miter";
+    this.ctx.beginPath();
+    this.ctx.moveTo(this.toScreenX(first.x, baseline), this.toScreenY(0, baseline));
+    for (const point of top)
+      this.ctx.lineTo(this.toScreenX(point.x, point.y), this.toScreenY(0, point.y));
+    this.ctx.lineTo(this.toScreenX(last.x, baseline), this.toScreenY(0, baseline));
+    this.ctx.stroke();
+  }
+
+  /** Draw a color-varying step line without closing it against a baseline. */
+  drawColoredStep(segments: readonly ColoredStepSegment[], lineWidth = 2) {
+    let previous: ColoredStepSegment | undefined;
+    for (const segment of segments) {
+      this.ctx.strokeStyle = segment.color;
+      this.ctx.lineWidth = lineWidth;
+      this.ctx.lineJoin = "miter";
+      this.ctx.beginPath();
+
+      if (previous) {
+        this.ctx.moveTo(
+          this.toScreenX(segment.lo, previous.y),
+          this.toScreenY(0, previous.y),
+        );
+        this.ctx.lineTo(
+          this.toScreenX(segment.lo, segment.y),
+          this.toScreenY(0, segment.y),
+        );
+      } else {
+        this.ctx.moveTo(
+          this.toScreenX(segment.lo, segment.y),
+          this.toScreenY(0, segment.y),
+        );
+      }
+
+      this.ctx.lineTo(
+        this.toScreenX(segment.hi, segment.y),
+        this.toScreenY(0, segment.y),
+      );
+      this.ctx.stroke();
+      previous = segment;
+    }
   }
 
   // --- Pointer ------------------------------------------------------------
