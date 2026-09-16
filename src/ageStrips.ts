@@ -1,5 +1,5 @@
-import type { PolymarketCPV } from "./component";
 import { canonicalSpread, type TokenBook } from "@/lib/orderBook";
+import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
@@ -8,6 +8,7 @@ import {
   StaleSignedVolume,
   type StaleSignedVolumeSegment,
 } from "@/lib/staleSignedVolume";
+import type { Event } from "@polymarket/client";
 
 const AGE_LEFT_PADDING_PX = 176;
 const VOLUME_LEFT_PADDING_PX = 60;
@@ -32,187 +33,193 @@ interface AgeStripTuning {
   volumeSoftLimit: number;
 }
 
-const tuning = loadTuning();
-const userHiddenMarketIds = loadStringSet(HIDDEN_MARKETS_STORAGE_KEY);
-let tuningPersistTimer: number | undefined;
-let globalRedrawRaf: number | undefined;
+interface MarketRuntimeState {
+  readonly field: StaleSignedVolume;
+  lastUpdateMs: number;
+  visibilityInitialized: boolean;
+}
 
 interface RenderRegistration {
   readonly redraw: () => void;
   visible: boolean;
 }
 
+export interface AgeStripHost {
+  readonly canvas: HTMLCanvasElement;
+  readonly canvasWrap: HTMLElement;
+  readonly toggles: HTMLElement;
+  readonly plotter: OrderBookPlotter;
+  readonly activeTokens: Set<string>;
+  readonly getBook: (tokenId: string) => TokenBook<string> | undefined;
+  readonly getTitle: (marketId: string) => string | undefined;
+  readonly getTheme: () => ChartTheme;
+  readonly getViewMode: () => "volume" | "age";
+  readonly requestDraw: () => void;
+}
+
+const tuning = loadTuning();
+const userHiddenMarketIds = loadStringSet(HIDDEN_MARKETS_STORAGE_KEY);
 const registrations = new Set<RenderRegistration>();
-
-interface AdapterMarket {
-  id: string;
-  question: string;
-  outcomes: { yes: { tokenId: string | null } };
-  state?: unknown;
-  [key: string]: unknown;
-}
-
-interface AdapterEvent {
-  markets: AdapterMarket[];
-}
-
-interface PlotterAdapter {
-  padding: { l: number; r: number; t: number; b: number };
-  resize(): void;
-  beginFrame(
-    theme: unknown,
-    domain: {
-      xRange: { min: number; max: number };
-      yRange: { min: number; max: number };
-    },
-  ): any;
-}
-
-interface ComponentAdapter {
-  event?: AdapterEvent;
-  activeTokens: Set<string>;
-  books: Record<string, TokenBook<string>>;
-  titles: Record<string, string>;
-  theme: unknown;
-  viewMode: "volume" | "age";
-  refs: Record<string, HTMLElement>;
-  plotter: PlotterAdapter;
-  ageTimer?: number;
-  startAgeTimer(): void;
-  updateSpreadAge(tokenId: string, nowMs: number): void;
-  buildToggles(event: AdapterEvent): void;
-  drawAgeView(): void;
-  drawVolumeView(): void;
-  reqDraw(): void;
-  load(event: unknown): Promise<void>;
-  destroy(): void;
-}
+let tuningPersistTimer: number | undefined;
+let globalRedrawRaf: number | undefined;
 
 /**
- * Install the age-strip view on an existing PolymarketCPV instance.
+ * Age-mode projection of the live order books.
  *
- * The base component remains responsible for websocket ingestion and the live
- * HalfBooks. This adapter owns only the derived sample-and-hold field, age-view
- * controls/layout, and visual calibration.
+ * Per market we retain exactly one derived state: a sample-and-hold signed
+ * volume field plus the timestamp of the latest websocket update. Visibility
+ * lives in the component's activeTokens set; checkboxes are only UI controls.
  */
-export function installAgeStripView(chart: PolymarketCPV): void {
-  const component = chart as unknown as ComponentAdapter;
+export class AgeStripView {
+  private readonly host: AgeStripHost;
+  private readonly hiddenTray: HTMLDivElement;
+  private readonly scratch = document.createElement("canvas");
+  private readonly scratchCtx: CanvasRenderingContext2D;
+  private readonly markets = new Map<string, MarketRuntimeState>();
+  private readonly toggleHomeParent: HTMLElement | null;
+  private readonly toggleHomeNextSibling: ChildNode | null;
+  private readonly registration: RenderRegistration;
+  private readonly visibilityObserver: IntersectionObserver;
 
-  // The old tower view animated age with a 500 ms interval. Strip age is
-  // derived lazily from timestamps, so there is no state to poll.
-  if (component.ageTimer !== undefined) {
-    clearInterval(component.ageTimer);
-    component.ageTimer = undefined;
+  private fadeTimer: number | undefined;
+  private layoutMode: "age" | "volume" | null = null;
+
+  constructor(host: AgeStripHost) {
+    this.host = host;
+    this.toggleHomeParent = host.toggles.parentElement;
+    this.toggleHomeNextSibling = host.toggles.nextSibling;
+
+    const scratchCtx = this.scratch.getContext("2d");
+    if (!scratchCtx) throw new Error("2D canvas context is not available");
+    this.scratchCtx = scratchCtx;
+
+    this.hiddenTray = document.createElement("div");
+    this.hiddenTray.className = "cpv-hidden-markets";
+    this.hiddenTray.hidden = true;
+    host.canvasWrap.insertAdjacentElement("afterend", this.hiddenTray);
+
+    this.registration = {
+      redraw: host.requestDraw,
+      visible: true,
+    };
+    registrations.add(this.registration);
+
+    this.visibilityObserver = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.some((entry) => entry.isIntersecting);
+        if (this.registration.visible === visible) return;
+        this.registration.visible = visible;
+        if (!visible) this.cancelFadeTimer();
+        else this.host.requestDraw();
+      },
+      { rootMargin: "200px" },
+    );
+    this.visibilityObserver.observe(host.canvasWrap);
+
+    host.canvas.addEventListener("wheel", this.handleWheel, {
+      capture: true,
+      passive: false,
+    });
   }
-  component.startAgeTimer = () => {};
 
-  const canvas = component.refs.canvas as HTMLCanvasElement;
-  const canvasWrap = component.refs.canvasWrap;
-  const toggles = component.refs.toggles;
-  const toggleHomeParent = toggles.parentElement;
-  const toggleHomeNextSibling = toggles.nextSibling;
+  reset(): void {
+    this.cancelFadeTimer();
+    this.markets.clear();
+    this.hiddenTray.replaceChildren();
+    this.layoutMode = null;
+  }
 
-  const hiddenTray = document.createElement("div");
-  hiddenTray.className = "cpv-hidden-markets";
-  hiddenTray.hidden = true;
-  canvasWrap.insertAdjacentElement("afterend", hiddenTray);
+  configureMarkets(event: Event, rawMarkets: readonly unknown[]): void {
+    const activeMarkets = event.markets.filter((market) => {
+      const tokenId = market.outcomes.yes.tokenId;
+      return tokenId !== null && this.host.activeTokens.has(tokenId);
+    });
+    const labels = Array.from(
+      this.host.toggles.querySelectorAll<HTMLLabelElement>("label"),
+    );
+    const orderByToken = resolutionOrder(event, rawMarkets);
 
-  const scratch = document.createElement("canvas");
-  const scratchCtx = scratch.getContext("2d");
-  if (!scratchCtx) throw new Error("2D canvas context is not available");
+    for (const [index, label] of labels.entries()) {
+      const market = activeMarkets[index];
+      const tokenId = market?.outcomes.yes.tokenId;
+      if (!market || !tokenId) continue;
 
-  const memories = new Map<string, StaleSignedVolume>();
-  const lastMarketUpdateMs = new Map<string, number>();
-  const initializedVisibility = new Set<string>();
-  let fadeTimer: number | undefined;
+      label.dataset.tokenId = tokenId;
+      label.dataset.marketId = market.id;
+      label.dataset.marketOrder = String(orderByToken.get(tokenId) ?? index);
 
-  const registration: RenderRegistration = {
-    redraw: () => component.reqDraw(),
-    visible: true,
-  };
-  registrations.add(registration);
+      const dot = label.querySelector<HTMLSpanElement>("span");
+      dot?.classList.add("cpv-market-dot");
 
-  const visibilityObserver = new IntersectionObserver(
-    (entries) => {
-      const visible = entries.some((entry) => entry.isIntersecting);
-      if (registration.visible === visible) return;
-      registration.visible = visible;
-      if (!visible) cancelFadeTimer();
-      else component.reqDraw();
-    },
-    { rootMargin: "200px" },
-  );
-  visibilityObserver.observe(canvasWrap);
+      for (const node of Array.from(label.childNodes))
+        if (node.nodeType === Node.TEXT_NODE) node.remove();
 
-  // readEvents() calls this once after each completed book mutation. Replace
-  // the legacy SpreadAge update entirely: the strip view has one derived state.
-  component.updateSpreadAge = (tokenId: string, nowMs: number) => {
-    const book = component.books[tokenId];
+      const text = this.host.getTitle(market.id) ?? market.question;
+      const textSpan = document.createElement("span");
+      textSpan.className = "cpv-market-label-text";
+      textSpan.textContent = text;
+      label.appendChild(textSpan);
+      label.title = text;
+
+      const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
+      if (!checkbox) continue;
+
+      if (userHiddenMarketIds.has(market.id)) {
+        checkbox.checked = false;
+        this.host.activeTokens.delete(tokenId);
+      }
+
+      checkbox.addEventListener("change", () => {
+        if (this.host.activeTokens.has(tokenId))
+          userHiddenMarketIds.delete(market.id);
+        else userHiddenMarketIds.add(market.id);
+        persistStringSet(HIDDEN_MARKETS_STORAGE_KEY, userHiddenMarketIds);
+      });
+    }
+  }
+
+  onBookUpdate(tokenId: string, nowMs: number): void {
+    const book = this.host.getBook(tokenId);
     if (!book) return;
 
-    lastMarketUpdateMs.set(tokenId, nowMs);
-    const memory = memories.get(tokenId) ?? new StaleSignedVolume();
-    memory.update(book, nowMs);
-    memories.set(tokenId, memory);
+    let state = this.markets.get(tokenId);
+    if (!state) {
+      state = {
+        field: new StaleSignedVolume(),
+        lastUpdateMs: nowMs,
+        visibilityInitialized: false,
+      };
+      this.markets.set(tokenId, state);
+    }
 
-    if (initializedVisibility.has(tokenId)) return;
-    initializedVisibility.add(tokenId);
+    state.field.update(book, nowMs);
+    state.lastUpdateMs = nowMs;
+
+    if (state.visibilityInitialized) return;
+    state.visibilityInitialized = true;
     if (hasRealOrders(book)) return;
 
-    const label = findControlByToken(toggles, hiddenTray, tokenId);
+    const label = this.findControl(tokenId);
     const marketId = label?.dataset.marketId;
     if (!label || !marketId || userHiddenMarketIds.has(marketId)) return;
 
     const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
     if (!checkbox) return;
     checkbox.checked = false;
-    component.activeTokens.delete(tokenId);
-  };
+    this.host.activeTokens.delete(tokenId);
+  }
 
-  const originalBuildToggles = component.buildToggles.bind(component);
-  component.buildToggles = (event: AdapterEvent) => {
-    hiddenTray.replaceChildren();
-    originalBuildToggles(event);
-    configureMarketControls(component, event, toggles);
-  };
+  draw(): void {
+    this.cancelFadeTimer();
 
-  const originalLoad = component.load.bind(component);
-  component.load = async (event: unknown) => {
-    cancelFadeTimer();
-    memories.clear();
-    lastMarketUpdateMs.clear();
-    initializedVisibility.clear();
-    hiddenTray.replaceChildren();
-    await originalLoad(event);
-  };
-
-  const originalDrawVolumeView = component.drawVolumeView.bind(component);
-  component.drawVolumeView = () => {
-    cancelFadeTimer();
-    restoreVolumeLayout(
-      component,
-      toggles,
-      hiddenTray,
-      canvasWrap,
-      toggleHomeParent,
-      toggleHomeNextSibling,
-    );
-    originalDrawVolumeView();
-  };
-
-  component.drawAgeView = () => {
-    cancelFadeTimer();
-
-    const controls = collectControls(toggles, hiddenTray);
-    syncControlPlacement(component.activeTokens, toggles, hiddenTray, controls);
-    const activeControls = controls.filter((label) =>
-      isControlActive(label, component.activeTokens),
-    );
+    const controls = this.collectControls();
+    this.syncControlPlacement(controls);
+    const activeControls = controls.filter((label) => this.isActive(label));
     const rowCount = Math.max(1, activeControls.length);
 
-    installAgeLayout(component, toggles, canvasWrap, rowCount);
+    this.installAgeLayout(rowCount);
 
-    const frame = component.plotter.beginFrame(component.theme, {
+    const frame = this.host.plotter.beginFrame(this.host.getTheme(), {
       xRange: { min: 0, max: 1 },
       yRange: { min: -0.5, max: rowCount - 0.5 },
     });
@@ -230,17 +237,14 @@ export function installAgeStripView(chart: PolymarketCPV): void {
       const tokenId = label.dataset.tokenId;
       if (!tokenId) continue;
 
-      const book = component.books[tokenId];
-      const memory = memories.get(tokenId);
-      if (!book || !memory) continue;
+      const book = this.host.getBook(tokenId);
+      const state = this.markets.get(tokenId);
+      if (!book || !state) continue;
 
-      const segments = memory.segments(nowMs);
+      const segments = state.field.segments(nowMs);
       if (segments.length === 0) continue;
 
-      const marketAgeMs = Math.max(
-        0,
-        nowMs - (lastMarketUpdateMs.get(tokenId) ?? nowMs),
-      );
+      const marketAgeMs = Math.max(0, nowMs - state.lastUpdateMs);
       const spread = canonicalSpread(book);
       const y = rowCount - 1 - index;
 
@@ -250,8 +254,8 @@ export function installAgeStripView(chart: PolymarketCPV): void {
         segments,
         spread,
         marketAgeMs,
-        scratch,
-        scratchCtx,
+        this.scratch,
+        this.scratchCtx,
         colorScale,
       );
 
@@ -267,20 +271,68 @@ export function installAgeStripView(chart: PolymarketCPV): void {
     }
 
     if (
-      registration.visible &&
-      component.viewMode === "age" &&
+      this.registration.visible &&
+      this.host.getViewMode() === "age" &&
       Number.isFinite(nextFadeDelayMs)
     ) {
-      fadeTimer = window.setTimeout(() => {
-        fadeTimer = undefined;
-        if (registration.visible && component.viewMode === "age")
-          component.reqDraw();
+      this.fadeTimer = window.setTimeout(() => {
+        this.fadeTimer = undefined;
+        if (this.registration.visible && this.host.getViewMode() === "age")
+          this.host.requestDraw();
       }, Math.max(1, Math.ceil(nextFadeDelayMs)));
     }
-  };
+  }
 
-  const handleAgeWheel = (event: WheelEvent) => {
-    if (component.viewMode !== "age") return;
+  prepareVolumeView(): void {
+    this.cancelFadeTimer();
+    if (this.layoutMode === "volume") return;
+
+    const controls = this.collectControls();
+    for (const label of controls) {
+      if (label.style.top !== "") label.style.top = "";
+      this.host.toggles.appendChild(label);
+    }
+    if (!this.hiddenTray.hidden) this.hiddenTray.hidden = true;
+
+    let resize = false;
+    if (this.host.plotter.padding.l !== VOLUME_LEFT_PADDING_PX) {
+      this.host.plotter.padding.l = VOLUME_LEFT_PADDING_PX;
+      resize = true;
+    }
+    if (this.host.canvasWrap.style.height !== "") {
+      this.host.canvasWrap.style.height = "";
+      resize = true;
+    }
+
+    this.host.toggles.classList.remove("cpv-toggles--age-axis");
+    if (this.host.toggles.style.width !== "") this.host.toggles.style.width = "";
+
+    if (
+      this.toggleHomeParent &&
+      this.host.toggles.parentElement !== this.toggleHomeParent
+    ) {
+      if (this.toggleHomeNextSibling?.parentNode === this.toggleHomeParent)
+        this.toggleHomeParent.insertBefore(
+          this.host.toggles,
+          this.toggleHomeNextSibling,
+        );
+      else this.toggleHomeParent.appendChild(this.host.toggles);
+    }
+
+    if (resize) this.host.plotter.resize();
+    this.layoutMode = "volume";
+  }
+
+  destroy(): void {
+    this.cancelFadeTimer();
+    this.visibilityObserver.disconnect();
+    registrations.delete(this.registration);
+    this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
+    this.hiddenTray.remove();
+  }
+
+  private readonly handleWheel = (event: WheelEvent) => {
+    if (this.host.getViewMode() !== "age") return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -304,193 +356,84 @@ export function installAgeStripView(chart: PolymarketCPV): void {
     scheduleGlobalRedraw();
   };
 
-  canvas.addEventListener("wheel", handleAgeWheel, {
-    capture: true,
-    passive: false,
-  });
-
-  const originalDestroy = component.destroy.bind(component);
-  component.destroy = () => {
-    cancelFadeTimer();
-    visibilityObserver.disconnect();
-    registrations.delete(registration);
-    canvas.removeEventListener("wheel", handleAgeWheel, true);
-    hiddenTray.remove();
-    originalDestroy();
-  };
-
-  function cancelFadeTimer() {
-    if (fadeTimer === undefined) return;
-    clearTimeout(fadeTimer);
-    fadeTimer = undefined;
-  }
-}
-
-function configureMarketControls(
-  component: Pick<ComponentAdapter, "activeTokens" | "titles">,
-  event: AdapterEvent,
-  toggles: HTMLElement,
-): void {
-  const markets = event.markets.filter((market) => {
-    const tokenId = market.outcomes.yes.tokenId;
-    return tokenId !== null && component.activeTokens.has(tokenId);
-  });
-  const labels = Array.from(toggles.querySelectorAll<HTMLLabelElement>("label"));
-  const orderByToken = resolutionOrder(event.markets);
-
-  for (const [index, label] of labels.entries()) {
-    const market = markets[index];
-    const tokenId = market?.outcomes.yes.tokenId;
-    if (!market || !tokenId) continue;
-
-    label.dataset.tokenId = tokenId;
-    label.dataset.marketId = market.id;
-    label.dataset.marketOrder = String(orderByToken.get(tokenId) ?? index);
-
-    const dot = label.querySelector<HTMLSpanElement>("span");
-    dot?.classList.add("cpv-market-dot");
-
-    for (const node of Array.from(label.childNodes))
-      if (node.nodeType === Node.TEXT_NODE) node.remove();
-
-    const text = component.titles[market.id] ?? market.question;
-    const textSpan = document.createElement("span");
-    textSpan.className = "cpv-market-label-text";
-    textSpan.textContent = text;
-    label.appendChild(textSpan);
-    label.title = text;
-
-    const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
-    if (!checkbox) continue;
-
-    if (userHiddenMarketIds.has(market.id)) {
-      checkbox.checked = false;
-      component.activeTokens.delete(tokenId);
+  private installAgeLayout(rowCount: number): void {
+    let resize = false;
+    if (this.host.plotter.padding.l !== AGE_LEFT_PADDING_PX) {
+      this.host.plotter.padding.l = AGE_LEFT_PADDING_PX;
+      resize = true;
     }
 
-    checkbox.addEventListener("change", () => {
-      if (component.activeTokens.has(tokenId)) userHiddenMarketIds.delete(market.id);
-      else userHiddenMarketIds.add(market.id);
-      persistStringSet(HIDDEN_MARKETS_STORAGE_KEY, userHiddenMarketIds);
-    });
-  }
-}
-
-function collectControls(
-  toggles: HTMLElement,
-  hiddenTray: HTMLElement,
-): HTMLLabelElement[] {
-  return [
-    ...toggles.querySelectorAll<HTMLLabelElement>("label[data-token-id]"),
-    ...hiddenTray.querySelectorAll<HTMLLabelElement>("label[data-token-id]"),
-  ].sort(
-    (a, b) =>
-      Number(a.dataset.marketOrder ?? 0) - Number(b.dataset.marketOrder ?? 0),
-  );
-}
-
-function isControlActive(
-  label: HTMLLabelElement,
-  activeTokens: ReadonlySet<string>,
-): boolean {
-  const tokenId = label.dataset.tokenId;
-  return !!tokenId && activeTokens.has(tokenId);
-}
-
-function syncControlPlacement(
-  activeTokens: ReadonlySet<string>,
-  toggles: HTMLElement,
-  hiddenTray: HTMLElement,
-  labels: readonly HTMLLabelElement[],
-): void {
-  let hiddenCount = 0;
-
-  for (const label of labels) {
-    const active = isControlActive(label, activeTokens);
-    const parent = active ? toggles : hiddenTray;
-    if (label.parentElement !== parent) parent.appendChild(label);
-
-    if (!active) {
-      if (label.style.top !== "") label.style.top = "";
-      hiddenCount++;
+    const height =
+      this.host.plotter.padding.t +
+      this.host.plotter.padding.b +
+      rowCount * AGE_ROW_BAND_PX;
+    const heightCss = `${height}px`;
+    if (this.host.canvasWrap.style.height !== heightCss) {
+      this.host.canvasWrap.style.height = heightCss;
+      resize = true;
     }
+
+    if (this.host.toggles.parentElement !== this.host.canvasWrap) {
+      this.host.canvasWrap.appendChild(this.host.toggles);
+      resize = true;
+    }
+    this.host.toggles.classList.add("cpv-toggles--age-axis");
+    const widthCss = `${AGE_LEFT_PADDING_PX}px`;
+    if (this.host.toggles.style.width !== widthCss)
+      this.host.toggles.style.width = widthCss;
+
+    if (resize) this.host.plotter.resize();
+    this.layoutMode = "age";
   }
 
-  const shouldHideTray = hiddenCount === 0;
-  if (hiddenTray.hidden !== shouldHideTray) hiddenTray.hidden = shouldHideTray;
-}
-
-function installAgeLayout(
-  component: Pick<ComponentAdapter, "plotter">,
-  toggles: HTMLElement,
-  canvasWrap: HTMLElement,
-  rowCount: number,
-): void {
-  let resize = false;
-
-  if (component.plotter.padding.l !== AGE_LEFT_PADDING_PX) {
-    component.plotter.padding.l = AGE_LEFT_PADDING_PX;
-    resize = true;
+  private collectControls(): HTMLLabelElement[] {
+    return [
+      ...this.host.toggles.querySelectorAll<HTMLLabelElement>(
+        "label[data-token-id]",
+      ),
+      ...this.hiddenTray.querySelectorAll<HTMLLabelElement>(
+        "label[data-token-id]",
+      ),
+    ].sort(
+      (a, b) =>
+        Number(a.dataset.marketOrder ?? 0) - Number(b.dataset.marketOrder ?? 0),
+    );
   }
 
-  const height =
-    component.plotter.padding.t +
-    component.plotter.padding.b +
-    rowCount * AGE_ROW_BAND_PX;
-  const heightCss = `${height}px`;
-  if (canvasWrap.style.height !== heightCss) {
-    canvasWrap.style.height = heightCss;
-    resize = true;
+  private isActive(label: HTMLLabelElement): boolean {
+    const tokenId = label.dataset.tokenId;
+    return !!tokenId && this.host.activeTokens.has(tokenId);
   }
 
-  if (toggles.parentElement !== canvasWrap) {
-    canvasWrap.appendChild(toggles);
-    resize = true;
+  private syncControlPlacement(labels: readonly HTMLLabelElement[]): void {
+    let hiddenCount = 0;
+    for (const label of labels) {
+      const active = this.isActive(label);
+      const parent = active ? this.host.toggles : this.hiddenTray;
+      if (label.parentElement !== parent) parent.appendChild(label);
+
+      if (!active) {
+        if (label.style.top !== "") label.style.top = "";
+        hiddenCount++;
+      }
+    }
+
+    const shouldHideTray = hiddenCount === 0;
+    if (this.hiddenTray.hidden !== shouldHideTray)
+      this.hiddenTray.hidden = shouldHideTray;
   }
 
-  if (!toggles.classList.contains("cpv-toggles--age-axis"))
-    toggles.classList.add("cpv-toggles--age-axis");
-  const widthCss = `${AGE_LEFT_PADDING_PX}px`;
-  if (toggles.style.width !== widthCss) toggles.style.width = widthCss;
-
-  if (resize) component.plotter.resize();
-}
-
-function restoreVolumeLayout(
-  component: Pick<ComponentAdapter, "plotter">,
-  toggles: HTMLElement,
-  hiddenTray: HTMLElement,
-  canvasWrap: HTMLElement,
-  homeParent: HTMLElement | null,
-  homeNextSibling: ChildNode | null,
-): void {
-  let resize = false;
-
-  for (const label of collectControls(toggles, hiddenTray)) {
-    if (label.style.top !== "") label.style.top = "";
-    if (label.parentElement !== toggles) toggles.appendChild(label);
-  }
-  if (!hiddenTray.hidden) hiddenTray.hidden = true;
-
-  if (component.plotter.padding.l !== VOLUME_LEFT_PADDING_PX) {
-    component.plotter.padding.l = VOLUME_LEFT_PADDING_PX;
-    resize = true;
-  }
-  if (canvasWrap.style.height !== "") {
-    canvasWrap.style.height = "";
-    resize = true;
+  private findControl(tokenId: string): HTMLLabelElement | undefined {
+    return this.collectControls().find(
+      (label) => label.dataset.tokenId === tokenId,
+    );
   }
 
-  toggles.classList.remove("cpv-toggles--age-axis");
-  if (toggles.style.width !== "") toggles.style.width = "";
-
-  if (homeParent && toggles.parentElement !== homeParent) {
-    if (homeNextSibling?.parentNode === homeParent)
-      homeParent.insertBefore(toggles, homeNextSibling);
-    else homeParent.appendChild(toggles);
+  private cancelFadeTimer(): void {
+    if (this.fadeTimer === undefined) return;
+    clearTimeout(this.fadeTimer);
+    this.fadeTimer = undefined;
   }
-
-  if (resize) component.plotter.resize();
 }
 
 function positionRowControls(
@@ -683,22 +626,21 @@ function hasRealOrders(book: TokenBook<string>): boolean {
   return book.usdToYes.size > 0 || book.yesToUsd.size > 1;
 }
 
-function findControlByToken(
-  toggles: HTMLElement,
-  hiddenTray: HTMLElement,
-  tokenId: string,
-): HTMLLabelElement | undefined {
-  return collectControls(toggles, hiddenTray).find(
-    (label) => label.dataset.tokenId === tokenId,
-  );
-}
+function resolutionOrder(
+  event: Event,
+  rawMarkets: readonly unknown[],
+): Map<string, number> {
+  const rawById = new Map<string, unknown>();
+  for (const rawMarket of rawMarkets) {
+    const record = asRecord(rawMarket);
+    if (typeof record?.id === "string") rawById.set(record.id, rawMarket);
+  }
 
-function resolutionOrder(markets: readonly AdapterMarket[]): Map<string, number> {
-  const sorted = markets
+  const sorted = event.markets
     .map((market, originalIndex) => ({
       market,
       originalIndex,
-      timestamp: resolutionTimestamp(market),
+      timestamp: resolutionTimestamp(rawById.get(market.id), market),
     }))
     .sort((a, b) => {
       const aKnown = Number.isFinite(a.timestamp);
@@ -717,24 +659,26 @@ function resolutionOrder(markets: readonly AdapterMarket[]): Map<string, number>
   return order;
 }
 
-function resolutionTimestamp(market: AdapterMarket): number {
-  const state = asRecord(market.state);
-  const candidates = [
-    state?.endDate,
-    state?.end_date,
-    market.endDate,
-    market.endDateIso,
-    market.end_date,
-    market.end_date_iso,
-  ];
-
-  for (const candidate of candidates) {
-    if (candidate instanceof Date) return candidate.getTime();
-    if (typeof candidate === "number" && Number.isFinite(candidate))
-      return candidate;
-    if (typeof candidate === "string") {
-      const parsed = Date.parse(candidate);
-      if (Number.isFinite(parsed)) return parsed;
+function resolutionTimestamp(...sources: readonly unknown[]): number {
+  for (const source of sources) {
+    const record = asRecord(source);
+    if (!record) continue;
+    const state = asRecord(record.state);
+    for (const candidate of [
+      state?.endDate,
+      state?.end_date,
+      record.endDate,
+      record.endDateIso,
+      record.end_date,
+      record.end_date_iso,
+    ]) {
+      if (candidate instanceof Date) return candidate.getTime();
+      if (typeof candidate === "number" && Number.isFinite(candidate))
+        return candidate;
+      if (typeof candidate === "string") {
+        const parsed = Date.parse(candidate);
+        if (Number.isFinite(parsed)) return parsed;
+      }
     }
   }
   return Infinity;
