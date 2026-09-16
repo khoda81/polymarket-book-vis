@@ -64,10 +64,7 @@ export class StaleSignedVolume {
       if (!(hi > lo)) continue;
       const midpoint = (lo + hi) / 2;
 
-      while (
-        liveIndex + 1 < live.length &&
-        midpoint >= live[liveIndex].hi
-      )
+      while (liveIndex + 1 < live.length && midpoint >= live[liveIndex].hi)
         liveIndex++;
       while (
         previousIndex + 1 < this.current.length &&
@@ -89,10 +86,7 @@ export class StaleSignedVolume {
 
       if (!insideSpread) {
         next.push({ lo, hi, volume: liveVolume, staleSinceMs: null });
-        continue;
-      }
-
-      if (previous && previous.staleSinceMs !== null) {
+      } else if (previous?.staleSinceMs !== null && previous) {
         next.push({
           lo,
           hi,
@@ -175,23 +169,4 @@ export class StaleSignedVolume {
     }
     return merged;
   }
-}
-
-/**
- * Log-time/power-law fade. `timeScaleSeconds` is the global visual time scale:
- * increasing it makes stale information remain opaque for longer. Current
- * state is always fully opaque and stale state never hits a hard TTL.
- */
-export function staleVolumeAlpha(
-  ageMs: number,
-  timeScaleSeconds: number = 5,
-): number {
-  if (!(ageMs > 0)) return 1;
-  if (!(timeScaleSeconds > 0) || !Number.isFinite(timeScaleSeconds))
-    throw new RangeError("stale alpha time scale must be finite and positive");
-  const ageSeconds = ageMs / 1000;
-  return Math.max(
-    0.05,
-    Math.pow(1 + ageSeconds / timeScaleSeconds, -0.35),
-  );
 }
