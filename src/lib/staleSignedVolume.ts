@@ -92,7 +92,7 @@ export class StaleSignedVolume {
         continue;
       }
 
-      if (previous?.staleSinceMs !== null && previous !== undefined) {
+      if (previous && previous.staleSinceMs !== null) {
         next.push({
           lo,
           hi,
