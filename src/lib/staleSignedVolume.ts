@@ -86,7 +86,7 @@ export class StaleSignedVolume {
 
       if (!insideSpread) {
         next.push({ lo, hi, volume: liveVolume, staleSinceMs: null });
-      } else if (previous?.staleSinceMs !== null && previous) {
+      } else if (previous && previous.staleSinceMs !== null) {
         next.push({
           lo,
           hi,
