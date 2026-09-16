@@ -7,7 +7,7 @@ export interface SignedVolumeSegment {
 }
 
 export interface SignedVolumeColorScale {
-  /** Magnitude that reaches maximum chroma after the log transform. */
+  /** Absolute volume mapped halfway from neutral to full chroma. */
   readonly softLimit: number;
   readonly luminance: number;
   readonly chroma: number;
@@ -60,14 +60,38 @@ export function signedVolumeSegments(
   return result;
 }
 
+/**
+ * Map signed volume onto [0, 1] without an arbitrary hard maximum.
+ *
+ *   0 volume          -> 0.5 (neutral)
+ *   +softLimit        -> 0.75
+ *   -softLimit        -> 0.25
+ *   +/- infinity      -> 1 / 0
+ *
+ * `softLimit` is therefore an intuitive half-saturation parameter. Changing
+ * it rescales every market without changing ordering or introducing a clip.
+ */
+export function signedVolumePosition(
+  volume: number,
+  softLimit: number = DEFAULT_SIGNED_VOLUME_COLOR_SCALE.softLimit,
+): number {
+  if (!(softLimit > 0) || !Number.isFinite(softLimit))
+    throw new RangeError("signed volume soft limit must be finite and positive");
+  if (Number.isNaN(volume) || volume === 0) return 0.5;
+
+  const signed = Number.isFinite(volume)
+    ? volume / (Math.abs(volume) + softLimit)
+    : Math.sign(volume);
+  return 0.5 + 0.5 * signed;
+}
+
 export function signedVolumeColor(
   volume: number,
   scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
 ): string {
-  const normalized = Number.isFinite(volume)
-    ? Math.min(1, Math.log1p(Math.abs(volume)) / Math.log1p(scale.softLimit))
-    : 1;
-  const chroma = normalized * scale.chroma;
-  const hue = volume < 0 ? scale.negativeHue : scale.positiveHue;
+  const position = signedVolumePosition(volume, scale.softLimit);
+  const signed = 2 * position - 1;
+  const chroma = Math.abs(signed) * scale.chroma;
+  const hue = signed < 0 ? scale.negativeHue : scale.positiveHue;
   return `oklch(${scale.luminance} ${chroma} ${hue})`;
 }
