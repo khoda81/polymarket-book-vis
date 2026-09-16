@@ -1,4 +1,5 @@
 import type { PolymarketCPV } from "./component";
+import type { TokenBook } from "@/lib/orderBook";
 import { signedVolumeColor } from "@/lib/signedVolume";
 import {
   StaleSignedVolume,
@@ -24,7 +25,7 @@ export function installAgeStripView(chart: PolymarketCPV): void {
       }>;
     };
     activeTokens: Set<string>;
-    books: Record<string, unknown>;
+    books: Record<string, TokenBook<string>>;
     titles: Record<string, string>;
     theme: unknown;
     plotter: {
@@ -46,7 +47,7 @@ export function installAgeStripView(chart: PolymarketCPV): void {
     const book = component.books[tokenId];
     if (!book) return;
     const memory = memories.get(tokenId) ?? new StaleSignedVolume();
-    memory.update(book as never, nowMs);
+    memory.update(book, nowMs);
     memories.set(tokenId, memory);
   };
 
@@ -65,7 +66,6 @@ export function installAgeStripView(chart: PolymarketCPV): void {
         {
           tokenId,
           label: compactLabel(component.titles[market.id] ?? market.question),
-          segments: memories.get(tokenId)?.segments(performance.now()) ?? [],
         },
       ];
     });
