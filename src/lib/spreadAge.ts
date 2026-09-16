@@ -10,6 +10,11 @@ export interface AgedSegment {
   readonly ageMs: number;
 }
 
+export interface SpreadAgeSnapshot {
+  readonly segments: readonly AgeSegment[];
+  readonly lastUpdateMs?: number;
+}
+
 /**
  * Piecewise-constant start times for probabilities inside the current spread.
  *
@@ -60,6 +65,42 @@ export class SpreadAge {
       hi,
       ageMs: nowMs - sinceMs,
     }));
+  }
+
+  snapshot(): SpreadAgeSnapshot {
+    return {
+      segments: this.current.map((segment) => ({ ...segment })),
+      lastUpdateMs: this.lastUpdateMs,
+    };
+  }
+
+  /** Restore a previously persisted exact state in the same clock domain. */
+  restore(snapshot: SpreadAgeSnapshot): void {
+    const segments = snapshot.segments.map((segment) => ({ ...segment }));
+    let previousHi = -Infinity;
+    let previousSince: number | undefined;
+
+    for (const segment of segments) {
+      if (![segment.lo, segment.hi, segment.sinceMs].every(Number.isFinite))
+        throw new RangeError("SpreadAge snapshot values must be finite");
+      if (segment.lo < 0 || segment.hi > 1 || segment.lo > segment.hi)
+        throw new RangeError("SpreadAge snapshot requires 0 <= lo <= hi <= 1");
+      if (segment.lo < previousHi)
+        throw new RangeError("SpreadAge snapshot segments must not overlap");
+      if (segment.lo === previousHi && segment.sinceMs === previousSince)
+        throw new RangeError("SpreadAge snapshot must be merge-normalized");
+      previousHi = segment.hi;
+      previousSince = segment.sinceMs;
+    }
+
+    if (
+      snapshot.lastUpdateMs !== undefined &&
+      !Number.isFinite(snapshot.lastUpdateMs)
+    )
+      throw new RangeError("SpreadAge last update timestamp must be finite");
+
+    this.current = segments;
+    this.lastUpdateMs = snapshot.lastUpdateMs;
   }
 
   clear(): void {
