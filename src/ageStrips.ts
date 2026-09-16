@@ -87,6 +87,11 @@ export function installAgeStripView(chart: PolymarketCPV): void {
   const toggleHomeParent = toggles.parentElement;
   const toggleHomeNextSibling = toggles.nextSibling;
 
+  const hiddenTray = document.createElement("div");
+  hiddenTray.className = "cpv-hidden-markets";
+  hiddenTray.hidden = true;
+  canvasWrap.insertAdjacentElement("afterend", hiddenTray);
+
   const redraw = () => component.reqDraw();
   redrawers.add(redraw);
 
@@ -102,6 +107,7 @@ export function installAgeStripView(chart: PolymarketCPV): void {
 
   const originalBuildToggles = component.buildToggles.bind(component);
   component.buildToggles = (event: AdapterEvent) => {
+    hiddenTray.replaceChildren();
     originalBuildToggles(event);
     annotateToggleLabels(component, event);
   };
@@ -109,6 +115,7 @@ export function installAgeStripView(chart: PolymarketCPV): void {
   const originalLoad = component.load.bind(component);
   component.load = async (event: unknown) => {
     memories.clear();
+    hiddenTray.replaceChildren();
     await originalLoad(event);
   };
 
@@ -117,6 +124,7 @@ export function installAgeStripView(chart: PolymarketCPV): void {
     restoreVolumeLayout(
       component,
       toggles,
+      hiddenTray,
       canvasWrap,
       toggleHomeParent,
       toggleHomeNextSibling,
@@ -125,10 +133,13 @@ export function installAgeStripView(chart: PolymarketCPV): void {
   };
 
   component.drawAgeView = () => {
-    const rowControls = Array.from(
-      toggles.querySelectorAll<HTMLLabelElement>("label[data-token-id]"),
+    const allControls = collectControls(toggles, hiddenTray);
+    syncAgeControlPlacement(toggles, hiddenTray, allControls);
+
+    const activeControls = allControls.filter((label) =>
+      isControlEnabled(label, component.activeTokens),
     );
-    const count = Math.max(1, rowControls.length);
+    const count = Math.max(1, activeControls.length);
 
     installAgeLayout(component, toggles, canvasWrap, count);
 
@@ -140,7 +151,7 @@ export function installAgeStripView(chart: PolymarketCPV): void {
     // Age mode uses HTML market controls in the y-axis gutter, so there are no
     // horizontal tick/grid lines competing with the thin market strips.
     frame.drawAxes({ yTicks: [] });
-    positionRowControls(rowControls, frame, count);
+    positionRowControls(activeControls, frame, count);
 
     const nowMs = performance.now();
     const colorScale = {
@@ -148,12 +159,9 @@ export function installAgeStripView(chart: PolymarketCPV): void {
       softLimit: tuning.volumeSoftLimit,
     };
 
-    for (const [index, label] of rowControls.entries()) {
+    for (const [index, label] of activeControls.entries()) {
       const tokenId = label.dataset.tokenId;
       if (!tokenId) continue;
-
-      const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
-      if (checkbox && !checkbox.checked) continue;
 
       const segments = memories.get(tokenId)?.segments(nowMs) ?? [];
       if (segments.length === 0) continue;
@@ -203,6 +211,7 @@ export function installAgeStripView(chart: PolymarketCPV): void {
   component.destroy = () => {
     redrawers.delete(redraw);
     canvas.removeEventListener("wheel", handleAgeWheel, true);
+    hiddenTray.remove();
     originalDestroy();
   };
 }
@@ -229,6 +238,7 @@ function annotateToggleLabels(
     if (!market || tokenId === null || tokenId === undefined) continue;
 
     label.dataset.tokenId = tokenId;
+    label.dataset.marketOrder = String(index);
     const dot = label.querySelector<HTMLSpanElement>("span");
     dot?.classList.add("cpv-market-dot");
 
@@ -242,6 +252,47 @@ function annotateToggleLabels(
     label.appendChild(textSpan);
     label.title = text;
   }
+}
+
+function collectControls(
+  toggles: HTMLElement,
+  hiddenTray: HTMLElement,
+): HTMLLabelElement[] {
+  return [
+    ...toggles.querySelectorAll<HTMLLabelElement>("label[data-token-id]"),
+    ...hiddenTray.querySelectorAll<HTMLLabelElement>("label[data-token-id]"),
+  ].sort(
+    (a, b) =>
+      Number(a.dataset.marketOrder ?? 0) - Number(b.dataset.marketOrder ?? 0),
+  );
+}
+
+function isControlEnabled(
+  label: HTMLLabelElement,
+  activeTokens: ReadonlySet<string>,
+): boolean {
+  const tokenId = label.dataset.tokenId;
+  const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
+  return !!tokenId && !!checkbox?.checked && activeTokens.has(tokenId);
+}
+
+function syncAgeControlPlacement(
+  toggles: HTMLElement,
+  hiddenTray: HTMLElement,
+  labels: readonly HTMLLabelElement[],
+): void {
+  let hiddenCount = 0;
+  for (const label of labels) {
+    const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
+    if (checkbox?.checked) {
+      toggles.appendChild(label);
+    } else {
+      label.style.top = "";
+      hiddenTray.appendChild(label);
+      hiddenCount++;
+    }
+  }
+  hiddenTray.hidden = hiddenCount === 0;
 }
 
 function installAgeLayout(
@@ -282,11 +333,18 @@ function installAgeLayout(
 function restoreVolumeLayout(
   component: { plotter: PlotterAdapter },
   toggles: HTMLElement,
+  hiddenTray: HTMLElement,
   canvasWrap: HTMLElement,
   homeParent: HTMLElement | null,
   homeNextSibling: ChildNode | null,
 ): void {
   let resize = false;
+
+  for (const label of collectControls(toggles, hiddenTray)) {
+    label.style.top = "";
+    toggles.appendChild(label);
+  }
+  hiddenTray.hidden = true;
 
   if (component.plotter.padding.l !== VOLUME_LEFT_PADDING_PX) {
     component.plotter.padding.l = VOLUME_LEFT_PADDING_PX;
@@ -299,8 +357,6 @@ function restoreVolumeLayout(
 
   toggles.classList.remove("cpv-toggles--age-axis");
   toggles.style.width = "";
-  for (const label of toggles.querySelectorAll<HTMLElement>("label"))
-    label.style.top = "";
 
   if (homeParent && toggles.parentElement !== homeParent) {
     if (homeNextSibling?.parentNode === homeParent)
