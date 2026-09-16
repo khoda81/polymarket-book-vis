@@ -1,7 +1,6 @@
 import "@/styles/global.css";
 import { PolymarketCPV } from "./component";
-import { installAgeStripView } from "./ageStripsStableDom";
-import { disableAgePolling } from "./eventDrivenAge";
+import { installAgeStripView } from "./ageStrips";
 import { createPublicClient, Event } from "@polymarket/client";
 
 const grid = document.getElementById("grid")!;
@@ -34,7 +33,6 @@ async function createCard(event: Event) {
   grid.prepend(card);
   const chart = new PolymarketCPV(chartHost, client);
   installAgeStripView(chart);
-  disableAgePolling(chart);
   cards.set(event.id, { card, chart });
 
   closeButton.addEventListener("click", () => {
