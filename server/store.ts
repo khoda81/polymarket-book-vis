@@ -1,4 +1,6 @@
 import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { SpreadAgeSnapshot } from "../src/lib/spreadAge";
 
 export interface TrackedToken {
@@ -21,6 +23,8 @@ export class AgeStore {
   private readonly db: Database;
 
   constructor(path = process.env.AGE_DB_PATH ?? "data/age.sqlite") {
+    const parent = dirname(path);
+    if (parent !== ".") mkdirSync(parent, { recursive: true });
     this.db = new Database(path, { create: true });
     this.db.run("PRAGMA journal_mode = WAL");
     this.db.run("PRAGMA synchronous = NORMAL");
