@@ -200,11 +200,17 @@ export class OrderBookPlotter {
   public onPointer?: (p: { sx: number; sy: number } | null) => void;
   private dragging = false;
   private lastDragY = 0;
+  private cssWidth = 0;
+  private cssHeight = 0;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D canvas context is not available");
     this.ctx = ctx;
+
+    // Establish the initial cached CSS size once. Subsequent reads happen only
+    // from resize(), which is driven by ResizeObserver / explicit layout changes.
+    this.resize();
 
     this.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
     this.canvas.addEventListener("pointerdown", this.handlePointerDown);
@@ -229,15 +235,30 @@ export class OrderBookPlotter {
     this.onPointer = undefined;
   }
 
+  /** CSS-space width captured by the most recent resize(). */
+  get width(): number {
+    return this.cssWidth;
+  }
+
+  /** CSS-space height captured by the most recent resize(). */
+  get height(): number {
+    return this.cssHeight;
+  }
+
   /**
-   * Sync the canvas backing store to its CSS size (× DPR). Call from the
-   * ResizeObserver — not every frame — so per-frame work is independent of
-   * layout.
+   * Sync the canvas backing store to its CSS size (× DPR). This is the only
+   * render-path method allowed to read layout. Call it from ResizeObserver or
+   * after an explicit CSS-size change; beginFrame() stays layout-independent.
    */
   resize() {
     const dpr = window.devicePixelRatio || 1;
-    const targetW = Math.floor(this.canvas.clientWidth * dpr);
-    const targetH = Math.floor(this.canvas.clientHeight * dpr);
+    const width = this.canvas.clientWidth;
+    const height = this.canvas.clientHeight;
+    this.cssWidth = width;
+    this.cssHeight = height;
+
+    const targetW = Math.floor(width * dpr);
+    const targetH = Math.floor(height * dpr);
     if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
       this.canvas.width = targetW;
       this.canvas.height = targetH;
@@ -259,7 +280,10 @@ export class OrderBookPlotter {
     this.ctx.save();
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const { clientWidth: width, clientHeight: height } = this.canvas;
+    // Crucially, do not touch clientWidth/clientHeight here. Those are layout
+    // reads and can synchronously flush the entire dashboard after DOM writes.
+    const width = this.cssWidth;
+    const height = this.cssHeight;
     this.ctx.clearRect(0, 0, width, height);
     this.ctx.fillStyle = theme.bg;
     this.ctx.fillRect(0, 0, width, height);
@@ -285,14 +309,14 @@ export class OrderBookPlotter {
       const lh = parseFloat(getComputedStyle(this.canvas).lineHeight) || 16;
       delta *= window.devicePixelRatio * lh;
     } else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
-      delta *= this.canvas.clientHeight;
+      delta *= this.cssHeight;
     }
     const rect = this.canvas.getBoundingClientRect();
-    const chartHeight = this.canvas.clientHeight - this.padding.t - this.padding.b;
+    const chartHeight = this.cssHeight - this.padding.t - this.padding.b;
     const y = e.clientY - rect.top;
     const verticalAnchor = Math.max(
       0,
-      Math.min(1, (this.canvas.clientHeight - this.padding.b - y) / chartHeight),
+      Math.min(1, (this.cssHeight - this.padding.b - y) / chartHeight),
     );
     this.onZoom(delta, verticalAnchor);
   };
@@ -310,7 +334,7 @@ export class OrderBookPlotter {
     this.onPointer?.({ sx: e.clientX - rect.left, sy: e.clientY - rect.top });
 
     if (!this.dragging || !this.onPan) return;
-    const chartHeight = this.canvas.clientHeight - this.padding.t - this.padding.b;
+    const chartHeight = this.cssHeight - this.padding.t - this.padding.b;
     this.onPan((e.clientY - this.lastDragY) / chartHeight);
     this.lastDragY = e.clientY;
   };
@@ -540,8 +564,9 @@ export class Frame {
     yLabel: string = "Vol",
     formatY: (value: number) => string = (value) => fmtVol(Math.abs(value)),
   ) {
-    const { ctx, viewport: vp, theme, canvas, padding } = this;
-    const { clientWidth: width, clientHeight: height } = canvas;
+    const { ctx, viewport: vp, theme, padding } = this;
+    const width = this.plotter.width;
+    const height = this.plotter.height;
 
     ctx.strokeStyle = theme.axis;
     ctx.lineWidth = 1;
