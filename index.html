@@ -3,9 +3,26 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Polymarket CPV — two instances</title>
+        <title>Polymarket market-state dashboard</title>
     </head>
     <body>
+        <header class="dashboard-toolbar">
+            <form class="dashboard-add-form" id="add-event-form">
+                <label for="event-slug">Add event by slug</label>
+                <div class="dashboard-add-row">
+                    <input
+                        id="event-slug"
+                        name="slug"
+                        type="text"
+                        placeholder="btc-updown-5m-1789556100"
+                        autocomplete="off"
+                        required
+                    />
+                    <button type="submit">Add event</button>
+                </div>
+                <span class="dashboard-add-status" id="add-event-status" aria-live="polite"></span>
+            </form>
+        </header>
         <div class="grid" id="grid"></div>
         <script type="module" src="/src/main.ts"></script>
     </body>

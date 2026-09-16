@@ -146,7 +146,7 @@ export class PolymarketCPV {
             type="text"
             class="cpv-search-input"
             data-ref="searchInput"
-            placeholder="Search event or paste slug…"
+            placeholder="Search events…"
             autocomplete="off"
           />
           <div class="cpv-dropdown" data-ref="dropdown"></div>

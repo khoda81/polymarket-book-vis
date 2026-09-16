@@ -6,6 +6,64 @@
 
 body {
     background: var(--color-background-primary, #fff);
+    color: var(--color-text-primary, #222);
+    font-family: var(--font-sans, sans-serif);
+}
+
+.dashboard-toolbar {
+    padding: 1rem 1rem 0;
+}
+
+.dashboard-add-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 560px;
+}
+
+.dashboard-add-form label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.dashboard-add-row {
+    display: flex;
+    gap: 8px;
+}
+
+.dashboard-add-row input {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    color: inherit;
+    background: var(--color-background-primary, #fff);
+    border: 1px solid var(--color-border-secondary, #ccc);
+    border-radius: 7px;
+}
+
+.dashboard-add-row button,
+.card-close {
+    color: inherit;
+    background: var(--color-background-secondary, #f2f2f2);
+    border: 1px solid var(--color-border-secondary, #ccc);
+    border-radius: 7px;
+    cursor: pointer;
+}
+
+.dashboard-add-row button {
+    padding: 8px 12px;
+    white-space: nowrap;
+}
+
+.dashboard-add-row button:disabled {
+    cursor: wait;
+    opacity: 0.6;
+}
+
+.dashboard-add-status {
+    min-height: 1.2em;
+    color: var(--color-text-secondary, #666);
+    font-size: 12px;
 }
 
 .grid {
@@ -16,6 +74,7 @@ body {
 }
 
 .card {
+    position: relative;
     border: 1px solid var(--color-border-secondary, #ddd);
     border-radius: 10px;
     overflow: hidden;
@@ -27,6 +86,30 @@ body {
     width: 100%;
 }
 
+.card-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 20;
+    width: 28px;
+    height: 28px;
+    font-size: 20px;
+    line-height: 1;
+}
+
+.card-close:hover {
+    background: var(--color-background-hover, #e5e5e5);
+}
+
+.card-close:disabled {
+    cursor: wait;
+    opacity: 0.45;
+}
+
+.card .cpv-header {
+    padding-right: 34px;
+}
+
 @media (min-width: 1200px) {
     .grid {
         column-count: 2;
@@ -36,6 +119,10 @@ body {
 @media (prefers-color-scheme: dark) {
     body {
         --color-background-primary: #111;
+        --color-background-secondary: #222;
+        --color-background-hover: #333;
         --color-border-secondary: #333;
+        --color-text-primary: #eee;
+        --color-text-secondary: #aaa;
     }
 }
