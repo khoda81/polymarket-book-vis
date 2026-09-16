@@ -102,6 +102,50 @@
     cursor: pointer;
 }
 
+.cpv-market-label-text {
+    min-width: 0;
+}
+
+/* In age mode the existing market toggles become the y-axis labels. */
+.cpv-toggles--age-axis {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    display: block;
+    margin: 0;
+    z-index: 6;
+    pointer-events: none;
+    font-size: 11px;
+}
+
+.cpv-toggles--age-axis label {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    height: 28px;
+    margin: 0;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    white-space: nowrap;
+    pointer-events: auto;
+}
+
+.cpv-toggles--age-axis .cpv-market-dot {
+    display: none;
+}
+
+.cpv-toggles--age-axis .cpv-market-label-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* ── Search ──────────────────────────────────────────────────────────────── */
 
 .cpv-search-container {
