@@ -1,6 +1,7 @@
 import { HalfBook, type TokenBook } from "@/lib/orderBook";
 import type { AgeSegment } from "@/lib/spreadAge";
-import type { Event, TokenId } from "@polymarket/client";
+import { StaleSignedVolume } from "@/lib/staleSignedVolume";
+import type { Event } from "@polymarket/client";
 import type { PolymarketCPV } from "./component";
 
 const BOOTSTRAP_TIMEOUT_MS = 500;
@@ -25,21 +26,33 @@ interface PendingBootstrap {
   readonly state: BackendAgeState;
 }
 
+interface AgeMarketRuntimeState {
+  readonly field: StaleSignedVolume;
+  lastUpdateMs: number;
+  visibilityInitialized: boolean;
+}
+
+interface AgeViewRuntime {
+  markets: Map<string, AgeMarketRuntimeState>;
+  onBookUpdate(tokenId: string, nowMs: number): void;
+}
+
 /**
- * Register markets with the always-on age collector and seed local age state
- * before the first live order-book update is processed.
+ * Register markets with the always-on collector and seed the cleaned age-view
+ * state before each token's first real book update.
  *
- * Historical signed volume is intentionally not fabricated. Replayed spreads
- * use near-zero synthetic depth, so prices whose age comes from the backend
- * start visually neutral. The real Polymarket book immediately overwrites all
- * currently constrained regions; subsequent spread movement fills historical
- * colors naturally from live data.
+ * The backend stores only spread-age timestamps. Historical signed volume is
+ * deliberately unknown: bootstrap replays the surviving spread history with
+ * effectively-neutral depth. The first real Polymarket book then overwrites
+ * every currently constrained region, while old in-spread regions retain the
+ * correct opacity and a neutral historical color until live motion teaches us
+ * their force naturally.
  */
 export function installAgeBackend(chart: PolymarketCPV): void {
   const component = chart as unknown as {
     books: Record<string, TokenBook<string>>;
+    ageView: AgeViewRuntime;
     load(event: Event): Promise<void>;
-    updateSpreadAge(tokenId: TokenId, nowMs: number): void;
   };
 
   const pending = new Map<string, PendingBootstrap>();
@@ -64,18 +77,18 @@ export function installAgeBackend(chart: PolymarketCPV): void {
     await originalLoad(event);
   };
 
-  const originalUpdateSpreadAge = component.updateSpreadAge.bind(component);
-  component.updateSpreadAge = (tokenId: TokenId, nowMs: number) => {
-    const id = tokenId as string;
-    const bootstrap = pending.get(id);
-
-    if (bootstrap && !seeded.has(id)) {
-      seeded.add(id);
-      pending.delete(id);
-      replayAgeTower(component, originalUpdateSpreadAge, id, bootstrap);
+  const originalOnBookUpdate = component.ageView.onBookUpdate.bind(
+    component.ageView,
+  );
+  component.ageView.onBookUpdate = (tokenId: string, nowMs: number) => {
+    const bootstrap = pending.get(tokenId);
+    if (bootstrap && !seeded.has(tokenId)) {
+      seeded.add(tokenId);
+      pending.delete(tokenId);
+      seedAgeField(component.ageView, tokenId, nowMs, bootstrap);
     }
 
-    originalUpdateSpreadAge(tokenId, nowMs);
+    originalOnBookUpdate(tokenId, nowMs);
   };
 }
 
@@ -103,16 +116,16 @@ async function bootstrapEvent(event: Event): Promise<BackendAgeResponse | null> 
     if (!response.ok) return null;
     return (await response.json()) as BackendAgeResponse;
   } catch {
-    // The visualization remains fully functional without the collector; it
-    // simply starts age recording from this page load as before.
+    // Backend is optional. Without it we retain the previous local-only
+    // behavior and start age recording from this page load.
     return null;
   }
 }
 
-function replayAgeTower(
-  component: { books: Record<string, TokenBook<string>> },
-  update: (tokenId: TokenId, nowMs: number) => void,
+function seedAgeField(
+  ageView: AgeViewRuntime,
   tokenId: string,
+  firstLiveUpdateMs: number,
   bootstrap: PendingBootstrap,
 ): void {
   const segments = [...bootstrap.state.segments]
@@ -120,26 +133,26 @@ function replayAgeTower(
     .sort((a, b) => a.sinceMs - b.sinceMs || a.lo - b.lo);
   if (segments.length === 0) return;
 
-  const realBook = component.books[tokenId];
-  if (!realBook) return;
-
+  const field = new StaleSignedVolume();
   const timestamps = [...new Set(segments.map((segment) => segment.sinceMs))]
     .sort((a, b) => a - b);
 
-  try {
-    for (const timestamp of timestamps) {
-      const surviving = segments.filter((segment) => segment.sinceMs <= timestamp);
-      const bid = Math.min(...surviving.map((segment) => segment.lo));
-      const ask = Math.max(...surviving.map((segment) => segment.hi));
-      const localTimestamp =
-        bootstrap.receivedAtLocalMs - (bootstrap.serverNowMs - timestamp);
-
-      component.books[tokenId] = syntheticBook(bid, ask);
-      update(tokenId as TokenId, localTimestamp);
-    }
-  } finally {
-    component.books[tokenId] = realBook;
+  for (const timestamp of timestamps) {
+    const surviving = segments.filter((segment) => segment.sinceMs <= timestamp);
+    const bid = Math.min(...surviving.map((segment) => segment.lo));
+    const ask = Math.max(...surviving.map((segment) => segment.hi));
+    const localTimestamp =
+      bootstrap.receivedAtLocalMs - (bootstrap.serverNowMs - timestamp);
+    field.update(syntheticBook(bid, ask), localTimestamp);
   }
+
+  ageView.markets.set(tokenId, {
+    field,
+    lastUpdateMs: firstLiveUpdateMs,
+    // Let the normal real-book update decide whether this market is empty and
+    // should start hidden. Synthetic bootstrap liquidity must not affect that.
+    visibilityInitialized: false,
+  });
 }
 
 function syntheticBook(bid: number, ask: number): TokenBook<string> {
@@ -171,9 +184,11 @@ function validAgeSegment(segment: AgeSegment): boolean {
   );
 }
 
-function marketResolutionTimestamp(market: Event["markets"][number]): number | undefined {
-  const value = (market as unknown as Record<string, unknown>).endDateIso ??
-    (market as unknown as Record<string, unknown>).endDate;
+function marketResolutionTimestamp(
+  market: Event["markets"][number],
+): number | undefined {
+  const record = market as unknown as Record<string, unknown>;
+  const value = record.endDateIso ?? record.endDate;
   if (typeof value !== "string") return undefined;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : undefined;
