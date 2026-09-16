@@ -3,6 +3,7 @@ import { emptyTokenBook } from "./orderBook";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
+  signedVolumePosition,
   signedVolumeSegments,
 } from "./signedVolume";
 
@@ -19,6 +20,16 @@ describe("signedVolumeSegments", () => {
       { lo: 0.4, hi: 0.6, volume: 0 },
       { lo: 0.6, hi: 1, volume: -10 },
     ]);
+  });
+});
+
+describe("signedVolumePosition", () => {
+  test("uses softLimit as a symmetric half-saturation parameter", () => {
+    expect(signedVolumePosition(0, 100)).toBe(0.5);
+    expect(signedVolumePosition(100, 100)).toBe(0.75);
+    expect(signedVolumePosition(-100, 100)).toBe(0.25);
+    expect(signedVolumePosition(Infinity, 100)).toBe(1);
+    expect(signedVolumePosition(-Infinity, 100)).toBe(0);
   });
 });
 
