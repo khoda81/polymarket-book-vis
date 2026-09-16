@@ -24,11 +24,55 @@ const STALE_ALPHA_FLOOR = 0.05;
 const MARKET_ALPHA_FLOOR = 0.2;
 const FADE_EXPONENT = 0.35;
 const MAX_TIMEOUT_MS = 2_147_000_000;
+const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
 
-const tuning = {
-  ageScaleSeconds: 5,
-  volumeSoftLimit: DEFAULT_SIGNED_VOLUME_COLOR_SCALE.softLimit,
-};
+const tuning = loadStoredTuning();
+let tuningPersistTimer: number | undefined;
+
+function loadStoredTuning(): {
+  ageScaleSeconds: number;
+  volumeSoftLimit: number;
+} {
+  let ageScaleSeconds = 5;
+  let volumeSoftLimit = DEFAULT_SIGNED_VOLUME_COLOR_SCALE.softLimit;
+
+  try {
+    const raw = window.localStorage.getItem(TUNING_STORAGE_KEY);
+    if (!raw) return { ageScaleSeconds, volumeSoftLimit };
+    const parsed = JSON.parse(raw) as {
+      ageScaleSeconds?: unknown;
+      volumeSoftLimit?: unknown;
+    };
+    if (typeof parsed.ageScaleSeconds === "number")
+      ageScaleSeconds = clamp(
+        parsed.ageScaleSeconds,
+        MIN_AGE_SCALE_SECONDS,
+        MAX_AGE_SCALE_SECONDS,
+      );
+    if (typeof parsed.volumeSoftLimit === "number")
+      volumeSoftLimit = clamp(
+        parsed.volumeSoftLimit,
+        MIN_VOLUME_SOFT_LIMIT,
+        MAX_VOLUME_SOFT_LIMIT,
+      );
+  } catch {
+    // Persistence is optional; keep defaults if storage is unavailable/corrupt.
+  }
+
+  return { ageScaleSeconds, volumeSoftLimit };
+}
+
+function schedulePersistTuning(): void {
+  if (tuningPersistTimer !== undefined) clearTimeout(tuningPersistTimer);
+  tuningPersistTimer = window.setTimeout(() => {
+    tuningPersistTimer = undefined;
+    try {
+      window.localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(tuning));
+    } catch {
+      // Ignore storage failures (private mode/quota/etc.).
+    }
+  }, 200);
+}
 
 interface RenderRegistration {
   redraw: () => void;
@@ -184,7 +228,7 @@ export function installAgeStripView(chart: PolymarketCPV): void {
       xRange: { min: 0, max: 1 },
       yRange: { min: -0.5, max: count - 0.5 },
     });
-    frame.drawAxes({ yTicks: [] });
+    drawAgeAxes(frame);
     positionRowControls(activeControls, frame, count);
 
     const nowMs = performance.now();
@@ -271,6 +315,7 @@ export function installAgeStripView(chart: PolymarketCPV): void {
       );
     }
 
+    schedulePersistTuning();
     scheduleGlobalTuningRedraw();
   };
 
@@ -454,6 +499,33 @@ function positionRowControls(
     const y = count - 1 - index;
     label.style.top = `${frame.toScreenY(0, y)}px`;
   }
+}
+
+function drawAgeAxes(frame: any): void {
+  const { ctx, viewport: vp, theme, domain } = frame;
+
+  // Keep the left/right alignment rails, but age strips no longer need a box.
+  ctx.strokeStyle = theme.axis;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(vp.l, vp.t);
+  ctx.lineTo(vp.l, vp.t + vp.height);
+  ctx.moveTo(vp.l + vp.width, vp.t);
+  ctx.lineTo(vp.l + vp.width, vp.t + vp.height);
+  ctx.stroke();
+
+  ctx.fillStyle = theme.text;
+  ctx.font = "11px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  const x0 = frame.toScreenX(domain.xRange.min, 0);
+  const x1 = frame.toScreenX(domain.xRange.max, 0);
+  ctx.fillText(String(domain.xRange.min), x0, vp.t + vp.height + 8);
+  ctx.fillText(String(domain.xRange.max), x1, vp.t + vp.height + 8);
+
+  ctx.beginPath();
+  ctx.rect(vp.l, vp.t, vp.width, vp.height);
+  ctx.clip();
 }
 
 function drawRasterStrip(
