@@ -71,6 +71,23 @@
     margin: 1rem 0;
 }
 
+.cpv-view-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--color-text-secondary, #666);
+}
+
+.cpv-view-control select {
+    padding: 4px 8px;
+    font: inherit;
+    color: var(--color-text-primary, #333);
+    background: var(--color-background-primary, #fff);
+    border: 0.5px solid var(--color-border-secondary, #ccc);
+    border-radius: 6px;
+}
+
 .cpv-toggles {
     display: flex;
     flex-wrap: wrap;

@@ -18,6 +18,12 @@ export interface ChartTheme {
   text: string;
 }
 
+export interface DataRectStyle {
+  readonly stroke: string;
+  readonly fillAlpha: number;
+  readonly lineWidth?: number;
+}
+
 // --- Box pen ---------------------------------------------------------------
 
 export type StackDirection = "up" | "down";
@@ -324,7 +330,7 @@ export class Frame {
 
   // --- Axes ---------------------------------------------------------------
 
-  drawAxes() {
+  drawAxes(formatY: (value: number) => string = fmtVol) {
     const { ctx, viewport: vp, theme, domain } = this;
 
     ctx.strokeStyle = theme.axis;
@@ -354,7 +360,7 @@ export class Frame {
 
       ctx.fillStyle = theme.text;
       ctx.textAlign = "right";
-      ctx.fillText(fmtVol(yVal), vp.l - 8, screenY);
+      ctx.fillText(formatY(yVal), vp.l - 8, screenY);
     }
 
     ctx.fillStyle = theme.text;
@@ -392,6 +398,30 @@ export class Frame {
     return new BoxPen(this, initialStyle, boxTransform);
   }
 
+  /** Draw a filled/stroked rectangle expressed entirely in data coordinates. */
+  drawDataRect(
+    x0: number,
+    x1: number,
+    y0: number,
+    y1: number,
+    style: DataRectStyle,
+  ) {
+    const left = this.toScreenX(Math.min(x0, x1), 0);
+    const right = this.toScreenX(Math.max(x0, x1), 0);
+    const top = this.toScreenY(0, Math.max(y0, y1));
+    const bottom = this.toScreenY(0, Math.min(y0, y1));
+
+    this.ctx.save();
+    this.ctx.fillStyle = style.stroke;
+    this.ctx.globalAlpha = style.fillAlpha;
+    this.ctx.fillRect(left, top, right - left, bottom - top);
+    this.ctx.restore();
+
+    this.ctx.strokeStyle = style.stroke;
+    this.ctx.lineWidth = style.lineWidth ?? 2;
+    this.ctx.strokeRect(left, top, right - left, bottom - top);
+  }
+
   // --- Pointer ------------------------------------------------------------
 
   /**
@@ -402,6 +432,8 @@ export class Frame {
   drawPointer(
     data: { x: number; y: number },
     screen: { sx: number; sy: number },
+    yLabel: string = "Vol",
+    formatY: (value: number) => string = (value) => fmtVol(Math.abs(value)),
   ) {
     const { ctx, viewport: vp, theme, canvas, padding } = this;
     const { clientWidth: width, clientHeight: height } = canvas;
@@ -433,7 +465,7 @@ export class Frame {
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
     ctx.fillText(`Price: ${data.x.toFixed(3)}`, boxX + 8, boxY + 8);
-    ctx.fillText(`Vol:   ${fmtVol(Math.abs(data.y))}`, boxX + 8, boxY + 22);
+    ctx.fillText(`${yLabel}: ${formatY(data.y)}`, boxX + 8, boxY + 22);
 
     ctx.textAlign = "center";
     ctx.fillText(data.x.toFixed(2), screen.sx, vp.t + vp.height + 8);

@@ -1,18 +1,18 @@
 {
-  "name": "polymarket-book-vis",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
-  },
-  "devDependencies": {
-    "typescript": "^6.0.3",
-    "vite": "^8.0.16"
-  },
-  "dependencies": {
-    "@polymarket/client": "^0.1.0-beta.7"
-  }
+    "name": "polymarket-book-vis",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc && vite build",
+        "preview": "vite preview"
+    },
+    "devDependencies": {
+        "typescript": "^7.0",
+        "vite": "^8.3"
+    },
+    "dependencies": {
+        "@polymarket/client": "^0.10"
+    }
 }

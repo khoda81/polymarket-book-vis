@@ -1,5 +1,11 @@
 import { fmtVol, marketColor } from "@/lib/math";
-import { BookOrder, HalfBook } from "@/lib/orderBook";
+import {
+  BookOrder,
+  HalfBook,
+  TokenBook,
+  canonicalSpread,
+  emptyTokenBook,
+} from "@/lib/orderBook";
 import {
   BoxStyle,
   ChartTheme,
@@ -7,6 +13,7 @@ import {
   OrderBookPlotter,
   StackDirection,
 } from "@/lib/renderer";
+import { AgedSegment, SpreadAge } from "@/lib/spreadAge";
 import "@/styles/component.css";
 import {
   Market,
@@ -20,13 +27,7 @@ import {
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
 
 type ConnectionStatus = "disconnected" | "connecting" | "live";
-
-interface TokenBook<K = string> {
-  /** Give USD, Get YES */
-  usdToYes: HalfBook<K>;
-  /** Give YES, Get USD */
-  yesToUsd: HalfBook<K>;
-}
+type ViewMode = "volume" | "age";
 
 interface BookBoxView {
   readonly direction: StackDirection;
@@ -35,8 +36,9 @@ interface BookBoxView {
   readonly fillDepth?: number;
 }
 
-function emptyTokenBook(): TokenBook<string> {
-  return { usdToYes: new HalfBook(), yesToUsd: new HalfBook() };
+interface AgeTowerView {
+  readonly segments: readonly AgedSegment[];
+  readonly color: string;
 }
 
 const LIGHT_THEME: ChartTheme = {
@@ -73,8 +75,11 @@ export class PolymarketCPV {
   private event: Event | undefined;
   private activeTokens = new Set<TokenId>();
   private books: Record<TokenId, TokenBook<string>> = {};
+  private spreadAges: Record<TokenId, SpreadAge> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private volScale = 4.5;
+  private viewMode: ViewMode = "volume";
+  private ageTimer: number | undefined;
   private searchTimeout: number | undefined;
 
   private handleDocumentClick = (e: MouseEvent) => {
@@ -128,6 +133,13 @@ export class PolymarketCPV {
           />
           <div class="cpv-dropdown" data-ref="dropdown"></div>
         </div>
+        <label class="cpv-view-control">
+          View
+          <select data-ref="viewMode" aria-label="Visualization mode">
+            <option value="volume">volume</option>
+            <option value="age">age</option>
+          </select>
+        </label>
       </div>
 
       <div class="cpv-canvas-wrap" data-ref="canvasWrap">
@@ -159,9 +171,15 @@ export class PolymarketCPV {
   }
 
   private bindEvents() {
-    const { searchInput, canvasWrap } = this.refs;
+    const { searchInput, canvasWrap, viewMode } = this.refs;
 
     searchInput.addEventListener("input", () => this.onSearchInput());
+    viewMode.addEventListener("change", () => {
+      this.viewMode = (viewMode as HTMLSelectElement).value as ViewMode;
+      if (this.viewMode === "age") this.startAgeTimer();
+      else this.stopAgeTimer();
+      this.reqDraw();
+    });
     document.addEventListener("click", this.handleDocumentClick);
 
     canvasWrap.addEventListener("click", (e) => {
@@ -177,6 +195,7 @@ export class PolymarketCPV {
     this.setDot("connecting");
 
     this.books = {};
+    this.spreadAges = {};
     this.titles = {};
     this.activeTokens.clear();
     // this.userOrders = [];
@@ -234,12 +253,14 @@ export class PolymarketCPV {
 
     this.setDot("live");
     this.readEvents(this.bookEventStream);
+    this.startAgeTimer();
 
     this.reqDraw();
   }
 
   destroy() {
     this.closeWS();
+    clearTimeout(this.searchTimeout);
     if (this.raf) cancelAnimationFrame(this.raf);
     this.plotter.destroy();
     this.container.innerHTML = "";
@@ -302,10 +323,10 @@ export class PolymarketCPV {
   }
 
   private async closeWS() {
-    if (this.bookEventStream) {
-      await this.bookEventStream.close();
-      this.bookEventStream = null;
-    }
+    this.stopAgeTimer();
+    const stream = this.bookEventStream;
+    this.bookEventStream = null;
+    if (stream) await stream.close();
   }
 
   private onSearchInput() {
@@ -355,6 +376,11 @@ export class PolymarketCPV {
 
   private performDraw() {
     this.raf = null;
+    if (this.viewMode === "age") this.drawAgeView();
+    else this.drawVolumeView();
+  }
+
+  private drawVolumeView() {
     const { volScale, theme } = this;
 
     const yAbsMax = Math.pow(10, volScale);
@@ -410,6 +436,93 @@ export class PolymarketCPV {
     if (this.pointer && pointerData) {
       frame.drawPointer(pointerData, this.pointer);
     }
+  }
+
+  private drawAgeView() {
+    const nowMs = performance.now();
+    const views: AgeTowerView[] = [];
+    let maxHeight = 0;
+
+    for (const [i, market] of (this.event?.markets ?? []).entries()) {
+      const tokenId = market.outcomes.yes.tokenId;
+      if (tokenId === null || !this.activeTokens.has(tokenId)) continue;
+
+      const segments = this.spreadAges[tokenId]?.segments(nowMs) ?? [];
+      for (const segment of segments)
+        maxHeight = Math.max(
+          maxHeight,
+          PolymarketCPV.logAge(segment.ageMs),
+        );
+      views.push({
+        segments,
+        color: marketColor(this.event!.id, i),
+      });
+    }
+
+    const frame = this.plotter.beginFrame(this.theme, {
+      xRange: { min: 0, max: 1 },
+      // Step the ceiling in whole transformed units so towers visibly grow
+      // between occasional rescale points instead of staying pinned to 91%.
+      yRange: { min: 0, max: Math.max(1, Math.ceil(maxHeight)) },
+    });
+    frame.drawAxes(PolymarketCPV.formatLogAge);
+
+    for (const view of views) {
+      for (const segment of view.segments) {
+        frame.drawDataRect(
+          segment.lo,
+          segment.hi,
+          0,
+          PolymarketCPV.logAge(segment.ageMs),
+          { stroke: view.color, fillAlpha: 0.18 },
+        );
+      }
+    }
+
+    const pointerData = this.pointer ? frame.toData(this.pointer) : null;
+    if (this.pointer && pointerData)
+      frame.drawPointer(
+        pointerData,
+        this.pointer,
+        "Age",
+        PolymarketCPV.formatLogAge,
+      );
+  }
+
+  private static logAge(ageMs: number): number {
+    return Math.log1p(ageMs / 1000);
+  }
+
+  private static formatLogAge(logAge: number): string {
+    const seconds = Math.expm1(Math.max(0, logAge));
+    if (seconds < 10) return `${seconds.toFixed(1)}s`;
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;
+    return `${(seconds / 3600).toFixed(1)}h`;
+  }
+
+  private startAgeTimer() {
+    if (
+      this.ageTimer !== undefined ||
+      this.viewMode !== "age" ||
+      !this.bookEventStream
+    )
+      return;
+    this.ageTimer = window.setInterval(() => this.reqDraw(), 500);
+  }
+
+  private stopAgeTimer() {
+    if (this.ageTimer === undefined) return;
+    clearInterval(this.ageTimer);
+    this.ageTimer = undefined;
+  }
+
+  private updateSpreadAge(tokenId: TokenId, nowMs: number) {
+    const book = this.books[tokenId];
+    if (!book) return;
+    const age = (this.spreadAges[tokenId] ??= new SpreadAge());
+    const { bid, ask } = canonicalSpread(book);
+    age.update(bid, ask, nowMs);
   }
 
   private drawBookView(frame: Frame, view: BookBoxView) {
@@ -489,10 +602,16 @@ export class PolymarketCPV {
         // sink (price 0) is handled implicitly by `takeBest` on an empty book.
         yesToUsd.setLevel("mint", { price: 1, take: Infinity });
 
-        this.books[stream.payload.tokenId] = { usdToYes, yesToUsd };
+        // Market subscriptions are created from token IDs. The SDK also uses
+        // this event shape for position IDs, so narrow it at this boundary.
+        const tokenId = stream.payload.tokenId as TokenId;
+        this.books[tokenId] = { usdToYes, yesToUsd };
+        this.updateSpreadAge(tokenId, performance.now());
       } else if (stream.type === "price_change") {
+        const affectedTokens = new Set<TokenId>();
         for (const priceChange of stream.payload.priceChanges) {
-          const book = this.books[priceChange.tokenId];
+          const tokenId = priceChange.tokenId as TokenId;
+          const book = this.books[tokenId];
           if (!book) continue;
 
           const { side, price: tick, size } = priceChange;
@@ -508,16 +627,25 @@ export class PolymarketCPV {
               take: sizeNum / price,
             });
           }
+          affectedTokens.add(tokenId);
         }
+
+        const nowMs = performance.now();
+        for (const tokenId of affectedTokens)
+          this.updateSpreadAge(tokenId, nowMs);
       } else if (stream.type === "market_resolved") {
-        for (const tokenId of stream.payload.tokenIds ?? [])
-          this.activeTokens.delete(tokenId);
+        for (const tokenId of stream.payload.assetIds ?? [])
+          this.activeTokens.delete(tokenId as TokenId);
       } else continue;
 
       this.reqDraw();
     }
 
-    this.setDot("disconnected");
+    if (this.bookEventStream === events) {
+      this.bookEventStream = null;
+      this.stopAgeTimer();
+      this.setDot("disconnected");
+    }
   }
 
   private placeOrder(screen: { x: number; y: number }) {

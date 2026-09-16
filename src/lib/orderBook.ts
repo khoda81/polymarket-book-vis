@@ -18,6 +18,27 @@ export interface Slot<Key> extends BookOrder {
   key: Key;
 }
 
+export interface TokenBook<K = string> {
+  /** Give USD, get YES. Prices are canonical USD/YES bids. */
+  usdToYes: HalfBook<K>;
+  /** Give YES, get USD. Prices are stored as the inverse canonical ask. */
+  yesToUsd: HalfBook<K>;
+}
+
+export function emptyTokenBook(): TokenBook<string> {
+  return { usdToYes: new HalfBook(), yesToUsd: new HalfBook() };
+}
+
+/** Extract the canonical YES spread, including the book's natural fallbacks. */
+export function canonicalSpread(book: TokenBook<unknown>): {
+  bid: number;
+  ask: number;
+} {
+  const bid = book.usdToYes.bestOrder()?.price ?? 0;
+  const inverseAsk = book.yesToUsd.bestOrder()?.price ?? 1;
+  return { bid, ask: 1 / inverseAsk };
+}
+
 /**
  * Represents a single "wing" (one side) of a limit order book.
  * By design, this data structure is asymmetrical and maintains only a single,
@@ -41,8 +62,8 @@ export interface Slot<Key> extends BookOrder {
  * | `{0, ∞}` | `∞/0 = ∞` | `0·∞ = NaN` ❌ |
  * | `{∞, 0}` | `0/∞ = 0` | `∞·0 = NaN` ❌ |
  *
- * `setLevel` rejects `price <= 0` and `take <= 0`, which removes exactly the
- * rows where multiplication goes NaN (`{0,*}` and `{*,0}`). The surviving
+ * `setLevel` never stores `price <= 0` or `take <= 0`, which excludes exactly
+ * the rows where multiplication goes NaN (`{0,*}` and `{*,0}`). The surviving
  * space `price ∈ (0, ∞], take ∈ (0, ∞]` has **zero NaN-producing corners**
  * under multiplication. The same filters do *not* rescue division, which is
  * ill-behaved off-axis at `{∞, ∞}` — a corner the filters don't touch.
@@ -77,15 +98,15 @@ export class HalfBook<OrderKey> {
   /**
    * Insert or replace an order. If the key already exists, it is removed first.
    *
-   * Rejects `price <= 0` and `take <= 0`: those are the two filter axes that
-   * keep the `{price, take}` representation total (see class doc). A `price`
-   * of 0 is the sink, which is never stored — it's the implicit behavior of
-   * an empty book. A `take` of 0 is an empty order, which has no effect.
+   * Rejects `price <= 0`. A `price` of 0 is the sink, which is never stored —
+   * it's the implicit behavior of an empty book. A `take <= 0` update removes
+   * an existing level, matching aggregate order-book delta semantics.
    *
    * @returns `true` if the order key existed. Otherwise, `false`.
    */
   setLevel(key: OrderKey, order: BookOrder): boolean {
-    if (order.price <= 0 || order.take <= 0) return false;
+    if (order.price <= 0) return false;
+    if (order.take <= 0) return this.removeOrder(key);
 
     const existing = this.index.get(key);
 
