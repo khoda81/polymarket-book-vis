@@ -13,6 +13,7 @@ import {
 } from "@/lib/signedVolume";
 import {
   StaleSignedVolume,
+  type PressureObservationRange,
   type StaleSignedVolumeSegment,
 } from "@/lib/staleSignedVolume";
 import {
@@ -130,7 +131,7 @@ export class AgeStripView {
     const nowMs = performance.now();
     for (const [tokenId, state] of Object.entries(states)) {
       const field = new StaleSignedVolume();
-      field.restoreSegments(state.segments, nowMs, state.spread);
+      field.restoreSegments(state.segments, nowMs);
       this.markets.set(tokenId, {
         field,
         visibilityInitialized: false,
@@ -193,7 +194,11 @@ export class AgeStripView {
     }
   }
 
-  onBookUpdate(tokenId: string, nowMs: number): void {
+  onBookUpdate(
+    tokenId: string,
+    nowMs: number,
+    observedRanges?: readonly PressureObservationRange[],
+  ): void {
     const book = this.host.getBook(tokenId);
     if (!book) return;
 
@@ -206,7 +211,7 @@ export class AgeStripView {
       this.markets.set(tokenId, state);
     }
 
-    state.field.update(book, nowMs);
+    state.field.update(book, nowMs, observedRanges);
     this.dirtyTokens.add(tokenId);
 
     if (state.visibilityInitialized) return;
