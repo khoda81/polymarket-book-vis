@@ -73,13 +73,13 @@ export function pressureInkProfile(
   if (!(thicknessDevice > 0)) return profile;
 
   const sigmaDevice = diffusionSigmaCss(ageMs, timeScaleSeconds) * dpr;
+  const center = profileCenterDevice(deviceHeight);
   if (!(sigmaDevice >= 0.05)) {
-    rasterFreshTopHat(profile, thicknessDevice);
+    rasterFreshTopHat(profile, thicknessDevice, center);
     return profile;
   }
 
   const halfThickness = thicknessDevice / 2;
-  const center = deviceHeight / 2;
   for (let y = 0; y < deviceHeight; y++) {
     const dy = y + 0.5 - center;
     const upper = normalCdf((dy + halfThickness) / sigmaDevice);
@@ -89,8 +89,11 @@ export function pressureInkProfile(
   return profile;
 }
 
-function rasterFreshTopHat(profile: Float32Array, thicknessDevice: number): void {
-  const center = profile.length / 2;
+function rasterFreshTopHat(
+  profile: Float32Array,
+  thicknessDevice: number,
+  center: number,
+): void {
   const lo = center - thicknessDevice / 2;
   const hi = center + thicknessDevice / 2;
 
@@ -98,6 +101,11 @@ function rasterFreshTopHat(profile: Float32Array, thicknessDevice: number): void
     const overlap = Math.min(y + 1, hi) - Math.max(y, lo);
     if (overlap > 0) profile[y] = Math.min(1, overlap);
   }
+}
+
+/** Pick one stable physical center pixel even when the row height is even. */
+function profileCenterDevice(deviceHeight: number): number {
+  return Math.floor((deviceHeight - 1) / 2) + 0.5;
 }
 
 function normalCdf(value: number): number {
