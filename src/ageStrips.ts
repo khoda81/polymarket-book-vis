@@ -24,11 +24,6 @@ const AGE_LEFT_PADDING_PX = 176;
 const VOLUME_LEFT_PADDING_PX = 60;
 export const AGE_ROW_BAND_PX = 36;
 
-const MIN_AGE_SCALE_SECONDS = 0.05;
-const MAX_AGE_SCALE_SECONDS = 7 * 24 * 60 * 60;
-const MIN_VOLUME_PER_CSS_PIXEL = 1;
-const MAX_VOLUME_PER_CSS_PIXEL = 1e9;
-
 const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
 const HIDDEN_MARKETS_STORAGE_KEY =
   "polymarket-book-vis.age-strip-hidden-markets.v1";
@@ -366,18 +361,16 @@ export class AgeStripView {
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    const factor = Math.exp(normalizedWheelDelta(event) * 0.002);
+    const logFactor = normalizedWheelDelta(event) * 0.002;
     if (event.ctrlKey) {
-      tuning.volumePerCssPixel = clamp(
-        tuning.volumePerCssPixel * factor,
-        MIN_VOLUME_PER_CSS_PIXEL,
-        MAX_VOLUME_PER_CSS_PIXEL,
+      tuning.volumePerCssPixel = rescalePositive(
+        tuning.volumePerCssPixel,
+        logFactor,
       );
     } else {
-      tuning.ageScaleSeconds = clamp(
-        tuning.ageScaleSeconds / factor,
-        MIN_AGE_SCALE_SECONDS,
-        MAX_AGE_SCALE_SECONDS,
+      tuning.ageScaleSeconds = rescalePositive(
+        tuning.ageScaleSeconds,
+        -logFactor,
       );
     }
 
@@ -690,22 +683,14 @@ function loadTuning(): AgeStripTuning {
         ? parsed.volumePerCssPixel
         : parsed.volumeSoftLimit;
     return {
-      ageScaleSeconds:
-        typeof parsed.ageScaleSeconds === "number"
-          ? clamp(
-              parsed.ageScaleSeconds,
-              MIN_AGE_SCALE_SECONDS,
-              MAX_AGE_SCALE_SECONDS,
-            )
-          : fallback.ageScaleSeconds,
-      volumePerCssPixel:
-        typeof storedVolumeScale === "number"
-          ? clamp(
-              storedVolumeScale,
-              MIN_VOLUME_PER_CSS_PIXEL,
-              MAX_VOLUME_PER_CSS_PIXEL,
-            )
-          : fallback.volumePerCssPixel,
+      ageScaleSeconds: positiveFiniteOrFallback(
+        parsed.ageScaleSeconds,
+        fallback.ageScaleSeconds,
+      ),
+      volumePerCssPixel: positiveFiniteOrFallback(
+        storedVolumeScale,
+        fallback.volumePerCssPixel,
+      ),
     };
   } catch {
     return fallback;
@@ -749,7 +734,27 @@ function normalizedWheelDelta(event: WheelEvent): number {
   let delta = event.deltaY;
   if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
   else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= 400;
-  return clamp(delta, -500, 500);
+  return delta;
+}
+
+/**
+ * Exponential rescaling with no product-level min/max. The only bounds are the
+ * positive finite range JavaScript can actually represent, keeping extreme
+ * wheel input from producing zero/Infinity and poisoning persisted tuning.
+ */
+function rescalePositive(value: number, logFactor: number): number {
+  const minLog = Math.log(Number.MIN_VALUE);
+  // volumePerCssPixel is multiplied by the row height in pressureInk; staying
+  // below this value also keeps that derived soft limit finite.
+  const maxLog = Math.log(Number.MAX_VALUE / AGE_ROW_BAND_PX);
+  const nextLog = Math.log(value) + logFactor;
+  return Math.exp(clamp(nextLog, minLog, maxLog));
+}
+
+function positiveFiniteOrFallback(value: unknown, fallback: number): number {
+  return typeof value === "number" && value > 0 && Number.isFinite(value)
+    ? value
+    : fallback;
 }
 
 function snapToDevicePixel(value: number, dpr: number): number {
