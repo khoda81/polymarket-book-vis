@@ -115,7 +115,12 @@ export class GaussianSpriteCache {
     dpr: number,
     bandHeightPx: number,
   ): HTMLCanvasElement {
-    const deviceHeight = Math.max(1, Math.round(bandHeightPx * dpr));
+    const targetDeviceHeight = Math.max(1, Math.round(bandHeightPx * dpr));
+    // An odd raster height gives every kernel one unambiguous center pixel.
+    // Even-height sprites are centered between two device pixels and can appear
+    // one row higher/lower when independently composited without smoothing.
+    const deviceHeight =
+      targetDeviceHeight % 2 === 0 ? targetDeviceHeight + 1 : targetDeviceHeight;
     const key = `${color}|${sigmaPx.toFixed(3)}|${dpr.toFixed(3)}|${deviceHeight}`;
     const cached = this.sprites.get(key);
     if (cached) return cached;
