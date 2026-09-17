@@ -51,13 +51,7 @@ export function diffusionSigmaCss(
   );
 }
 
-/**
- * Rasterize pressure into a vertically diffused row profile.
- *
- * `volumePerCssPixel * rowHeightCss` is the share reserve C. Each output
- * sample is the integral over a physical pixel rather than a point sample, so
- * subpixel ink remains continuous as the blur approaches zero.
- */
+/** Canvas/reference signature: C is derived from YES-per-pixel × row height. */
 export function pressureInkProfile(
   volume: number,
   ageMs: number,
@@ -65,12 +59,62 @@ export function pressureInkProfile(
   timeScaleSeconds: number,
   dpr: number,
   deviceHeight: number,
+): Float32Array;
+
+/**
+ * WebGL compatibility signature. `shareReference` is intentionally ignored;
+ * the renderer still passes it while the abandoned dashboard-wide scale is
+ * being removed. `reserveShares` alone controls the local soft mapping.
+ */
+export function pressureInkProfile(
+  volume: number,
+  ageMs: number,
+  shareReference: number,
+  reserveShares: number,
+  timeScaleSeconds: number,
+  dpr: number,
+  deviceHeight: number,
+): Float32Array;
+
+/**
+ * Rasterize pressure into a vertically diffused row profile.
+ *
+ * Each output sample is the integral over a physical pixel rather than a point
+ * sample, so subpixel ink remains continuous as the blur approaches zero.
+ */
+export function pressureInkProfile(
+  volume: number,
+  ageMs: number,
+  third: number,
+  fourth: number,
+  fifth: number,
+  sixth: number,
+  seventh?: number,
 ): Float32Array {
-  validatePositiveFinite(volumePerCssPixel, "volume per pixel");
-  validateRasterInputs(dpr, deviceHeight);
+  let reserveShares: number;
+  let timeScaleSeconds: number;
+  let dpr: number;
+  let deviceHeight: number;
+
+  if (seventh === undefined) {
+    const volumePerCssPixel = third;
+    timeScaleSeconds = fourth;
+    dpr = fifth;
+    deviceHeight = sixth;
+    validatePositiveFinite(volumePerCssPixel, "volume per pixel");
+    validateRasterInputs(dpr, deviceHeight);
+    reserveShares = volumePerCssPixel * (deviceHeight / dpr);
+  } else {
+    // `third` is the obsolete dashboard-wide share reference.
+    reserveShares = fourth;
+    timeScaleSeconds = fifth;
+    dpr = sixth;
+    deviceHeight = seventh;
+    validatePositiveFinite(reserveShares, "share reserve");
+    validateRasterInputs(dpr, deviceHeight);
+  }
 
   const rowHeightCss = deviceHeight / dpr;
-  const reserveShares = volumePerCssPixel * rowHeightCss;
   const thicknessCss = pressureInkThicknessCss(
     volume,
     reserveShares,
