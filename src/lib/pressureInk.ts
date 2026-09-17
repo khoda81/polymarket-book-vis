@@ -2,46 +2,36 @@ export const DEFAULT_VOLUME_PER_CSS_PIXEL = 10_000;
 export const DIFFUSION_VARIANCE_PER_TIME_SCALE = 8;
 
 /**
- * Area-preserving normalization of cumulative share pressure.
+ * Soft normalization of cumulative share pressure.
  *
- * `shareReference` is a common upper reference V for every pressure field in
- * the current dashboard and `reserveShares` is the user-controlled headroom C.
- * With D = V + C, pressure is simply
+ * `reserveShares` is the share count C that maps to half of the row:
  *
- *   pressure = |Q| / D
+ *   pressure = |Q| / (|Q| + C)
  *
- * so the transformation is linear in shares at every price. That linearity is
- * the important property: integrating the normalized bar over probability and
- * multiplying by D preserves the economically meaningful share×price area.
- * The maximum observed share depth V reaches V/(V+C), retaining the visual
- * softness of v/(v+c) without applying a nonlinear transform point-by-point.
+ * This deliberately gives up additive area semantics in exchange for local
+ * legibility: a very deep book far from the spread can no longer flatten small
+ * but important near-spread liquidity everywhere else on the dashboard.
  */
 export function sharePressureAreaFraction(
   volume: number,
-  shareReference: number,
   reserveShares: number,
 ): number {
-  validateNonNegativeFinite(shareReference, "share reference");
   validatePositiveFinite(reserveShares, "share reserve");
   if (volume === 0 || Number.isNaN(volume)) return 0;
   if (!Number.isFinite(volume)) return 1;
 
-  const denominator = shareReference + reserveShares;
-  return clamp01(Math.abs(volume) / denominator);
+  const magnitude = Math.abs(volume);
+  return magnitude / (magnitude + reserveShares);
 }
 
 /** Convert a share-pressure sample into fresh vertical ink thickness. */
 export function pressureInkThicknessCss(
   volume: number,
-  shareReference: number,
   reserveShares: number,
   rowHeightCss: number,
 ): number {
   validatePositiveFinite(rowHeightCss, "row height");
-  return (
-    rowHeightCss *
-    sharePressureAreaFraction(volume, shareReference, reserveShares)
-  );
+  return rowHeightCss * sharePressureAreaFraction(volume, reserveShares);
 }
 
 /** Standard deviation accumulated by diffusion over `ageMs`. */
@@ -62,8 +52,11 @@ export function diffusionSigmaCss(
 }
 
 /**
- * Legacy Canvas2D signature. It retains the previous local soft-share mapping
- * until the fallback renderer is migrated to the dashboard-wide share scale.
+ * Rasterize pressure into a vertically diffused row profile.
+ *
+ * `volumePerCssPixel * rowHeightCss` is the share reserve C. Each output
+ * sample is the integral over a physical pixel rather than a point sample, so
+ * subpixel ink remains continuous as the blur approaches zero.
  */
 export function pressureInkProfile(
   volume: number,
@@ -72,73 +65,14 @@ export function pressureInkProfile(
   timeScaleSeconds: number,
   dpr: number,
   deviceHeight: number,
-): Float32Array;
-
-/** Area-preserving share-pressure signature used by the WebGL path. */
-export function pressureInkProfile(
-  volume: number,
-  ageMs: number,
-  shareReference: number,
-  reserveShares: number,
-  timeScaleSeconds: number,
-  dpr: number,
-  deviceHeight: number,
-): Float32Array;
-
-/**
- * Rasterize pressure into a vertically diffused row profile.
- *
- * The seven-argument form uses one common linear share scale, so bar area is
- * proportional to the integral of cumulative shares over price. Each output
- * sample is the *integral over a physical pixel*, not the value at its center;
- * this conserves subpixel ink continuously as sigma tends to zero.
- */
-export function pressureInkProfile(
-  volume: number,
-  ageMs: number,
-  third: number,
-  fourth: number,
-  fifth: number,
-  sixth: number,
-  seventh?: number,
 ): Float32Array {
-  if (seventh === undefined) {
-    const volumePerCssPixel = third;
-    const timeScaleSeconds = fourth;
-    const dpr = fifth;
-    const deviceHeight = sixth;
-    validatePositiveFinite(volumePerCssPixel, "volume per pixel");
-    validateRasterInputs(dpr, deviceHeight);
-
-    const rowHeightCss = deviceHeight / dpr;
-    const softLimit = volumePerCssPixel * rowHeightCss;
-    const magnitude = Math.abs(volume);
-    const fraction =
-      volume === 0 || Number.isNaN(volume)
-        ? 0
-        : Number.isFinite(volume)
-          ? magnitude / (magnitude + softLimit)
-          : 1;
-    return rasterPressureProfile(
-      rowHeightCss * fraction,
-      ageMs,
-      timeScaleSeconds,
-      dpr,
-      deviceHeight,
-    );
-  }
-
-  const shareReference = third;
-  const reserveShares = fourth;
-  const timeScaleSeconds = fifth;
-  const dpr = sixth;
-  const deviceHeight = seventh;
+  validatePositiveFinite(volumePerCssPixel, "volume per pixel");
   validateRasterInputs(dpr, deviceHeight);
 
   const rowHeightCss = deviceHeight / dpr;
+  const reserveShares = volumePerCssPixel * rowHeightCss;
   const thicknessCss = pressureInkThicknessCss(
     volume,
-    shareReference,
     reserveShares,
     rowHeightCss,
   );
@@ -258,11 +192,6 @@ function validateRasterInputs(dpr: number, deviceHeight: number): void {
 function validatePositiveFinite(value: number, name: string): void {
   if (!(value > 0) || !Number.isFinite(value))
     throw new RangeError(`${name} must be finite and positive`);
-}
-
-function validateNonNegativeFinite(value: number, name: string): void {
-  if (value < 0 || !Number.isFinite(value))
-    throw new RangeError(`${name} must be finite and non-negative`);
 }
 
 function clamp01(value: number): number {
