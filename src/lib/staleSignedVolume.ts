@@ -139,14 +139,7 @@ export class StaleSignedVolume {
           : StaleSignedVolume.rangeContains(ranges[rangeIndex], midpoint);
 
       if (!observed) {
-        next.push(
-          previous ?? {
-            lo,
-            hi,
-            volume: 0,
-            observedAtMs: UNKNOWN_SINCE_MS,
-          },
-        );
+        next.push(StaleSignedVolume.inherit(previous, lo, hi));
         continue;
       }
 
@@ -170,14 +163,7 @@ export class StaleSignedVolume {
       // Zero pressure carries no directional information. Keep an existing
       // zero/unknown sample as-is rather than manufacturing a known zero in the
       // middle of the pipe.
-      next.push(
-        previous ?? {
-          lo,
-          hi,
-          volume: 0,
-          observedAtMs: UNKNOWN_SINCE_MS,
-        },
-      );
+      next.push(StaleSignedVolume.inherit(previous, lo, hi));
     }
 
     this.current = StaleSignedVolume.mergeAdjacent(next);
@@ -218,7 +204,9 @@ export class StaleSignedVolume {
         : undefined;
 
     const segments = snapshot.segments
-      .filter((segment) => StaleSignedVolume.validSnapshotSegment(segment, snapshot.version))
+      .filter((segment) =>
+        StaleSignedVolume.validSnapshotSegment(segment, snapshot.version),
+      )
       .sort((a, b) => a.lo - b.lo)
       .map((segment) => ({
         lo: segment.lo,
@@ -315,6 +303,21 @@ export class StaleSignedVolume {
     return !!range && point >= range.lo && point < range.hi;
   }
 
+  private static inherit(
+    previous: HeldVolumeSegment | undefined,
+    lo: number,
+    hi: number,
+  ): HeldVolumeSegment {
+    return previous
+      ? {
+          lo,
+          hi,
+          volume: previous.volume,
+          observedAtMs: previous.observedAtMs,
+        }
+      : { lo, hi, volume: 0, observedAtMs: UNKNOWN_SINCE_MS };
+  }
+
   private static validRange(segment: {
     lo: number;
     hi: number;
@@ -374,7 +377,7 @@ export class StaleSignedVolume {
   ): HeldVolumeSegment | undefined {
     const segment = segments[index];
     return segment && point >= segment.lo && point < segment.hi
-      ? { ...segment, lo: point, hi: point }
+      ? segment
       : undefined;
   }
 
