@@ -18,10 +18,10 @@ describe("pressure ink", () => {
     expect(pressureInkThicknessCss(1_000_000, 10_000, 36)).toBe(36);
   });
 
-  test("fresh subpixel volume becomes fractional pixel coverage", () => {
+  test("fresh subpixel volume becomes fractional center-pixel coverage", () => {
     const profile = pressureInkProfile(5_000, 0, 10_000, 5, 1, 36);
     expect(sum(profile)).toBeCloseTo(0.5, 6);
-    expect(Math.max(...profile)).toBeCloseTo(0.25, 6);
+    expect(Math.max(...profile)).toBeCloseTo(0.5, 6);
   });
 
   test("fresh raster mass is independent of device-pixel ratio", () => {
