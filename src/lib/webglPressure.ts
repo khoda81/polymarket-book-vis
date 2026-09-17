@@ -9,6 +9,20 @@ const MAX_SIGMA_PER_PASS_DEVICE_PX = 4;
 const MAX_BLUR_PASSES = 8;
 const MAX_SHADER_RADIUS = 16;
 
+const shareReferenceListeners = new Set<(shares: number) => void>();
+let globalShareReferenceShares = 0;
+
+export function getGlobalShareReferenceShares(): number {
+  return globalShareReferenceShares;
+}
+
+export function subscribeGlobalShareReferenceShares(
+  listener: (shares: number) => void,
+): () => void {
+  shareReferenceListeners.add(listener);
+  return () => shareReferenceListeners.delete(listener);
+}
+
 export interface WebGLPressureRow {
   readonly tokenId: string;
   readonly segments: readonly StaleSignedVolumeSegment[];
@@ -27,7 +41,7 @@ export interface WebGLPressureRenderInput {
   readonly dpr: number;
   readonly nowMs: number;
   readonly ageScaleSeconds: number;
-  /** Legacy tuning unit; multiplied by row height to obtain Kelly bankroll. */
+  /** Legacy tuning unit; one row multiplies this into reserve shares C. */
   readonly volumePerCssPixel: number;
   readonly colorScale: SignedVolumeColorScale;
   readonly requestRedraw: () => void;
@@ -41,6 +55,7 @@ interface PressureState {
   layoutSignature: string;
   ageScaleSeconds: number;
   volumePerCssPixel: number;
+  shareReferenceShares: number;
   lastTimeMs: number;
   generation: number;
   requestRedraw: () => void;
@@ -68,13 +83,15 @@ interface GlResources {
  * are created lazily so importing this module is harmless in tests/SSR, and
  * any WebGL failure can fall back to the Canvas2D reference renderer.
  *
- * The texture stores fractional vertical occupancy. Fresh occupancy is the
- * Kelly-normalized conviction needed to sweep the resting liquidity for the
- * configured bankroll; age then diffuses that conserved ink vertically until
- * row clipping dissipates it.
+ * Fresh vertical occupancy is linear in cumulative shares. Every chart uses
+ * the same dashboard-wide reference V, while the tuning contributes reserve
+ * shares C. Thus height = |Q|/(V+C): the whole shape gets the v/(v+c) softness
+ * at its observed maximum without destroying the additive share×price area.
+ * Age diffusion is still the legacy temporal treatment on this branch.
  */
 class SharedWebGLPressureRenderer {
   private readonly states = new Map<object, PressureState>();
+  private readonly sharePeaks = new Map<object, number>();
   private canvas: HTMLCanvasElement | undefined;
   private resources: GlResources | undefined;
   private contextLost = false;
@@ -91,6 +108,9 @@ class SharedWebGLPressureRenderer {
       !Number.isFinite(input.volumePerCssPixel)
     )
       return null;
+
+    this.setSharePeak(input.key, pressureSharePeak(input.rows));
+    const shareReferenceShares = globalShareReferenceShares;
 
     const resources = this.ensureResources();
     const canvas = this.canvas;
@@ -112,12 +132,20 @@ class SharedWebGLPressureRenderer {
         previous.height !== height ||
         previous.layoutSignature !== layoutSignature ||
         previous.ageScaleSeconds !== input.ageScaleSeconds ||
-        previous.volumePerCssPixel !== input.volumePerCssPixel;
+        previous.volumePerCssPixel !== input.volumePerCssPixel ||
+        previous.shareReferenceShares !== shareReferenceShares;
 
       let state: PressureState;
       if (mustRebuild) {
         if (previous) this.deleteStateTextures(gl, previous);
-        state = this.createState(gl, input, width, height, layoutSignature);
+        state = this.createState(
+          gl,
+          input,
+          width,
+          height,
+          layoutSignature,
+          shareReferenceShares,
+        );
         this.states.set(input.key, state);
         this.rebuildAll(gl, state, input);
       } else {
@@ -157,6 +185,23 @@ class SharedWebGLPressureRenderer {
     const gl = this.resources?.gl;
     if (state && gl && !gl.isContextLost()) this.deleteStateTextures(gl, state);
     this.states.delete(key);
+    this.sharePeaks.delete(key);
+    this.refreshGlobalShareReference();
+  }
+
+  private setSharePeak(key: object, shares: number): void {
+    this.sharePeaks.set(key, shares);
+    this.refreshGlobalShareReference();
+  }
+
+  private refreshGlobalShareReference(): void {
+    let next = 0;
+    for (const shares of this.sharePeaks.values()) next = Math.max(next, shares);
+    if (next === globalShareReferenceShares) return;
+
+    globalShareReferenceShares = next;
+    for (const listener of shareReferenceListeners) listener(next);
+    this.requestAllRedraws();
   }
 
   private ensureCanvas(): HTMLCanvasElement | undefined {
@@ -253,6 +298,7 @@ class SharedWebGLPressureRenderer {
     width: number,
     height: number,
     layoutSignature: string,
+    shareReferenceShares: number,
   ): PressureState {
     return {
       textures: [createTexture(gl, width, height), createTexture(gl, width, height)],
@@ -262,6 +308,7 @@ class SharedWebGLPressureRenderer {
       layoutSignature,
       ageScaleSeconds: input.ageScaleSeconds,
       volumePerCssPixel: input.volumePerCssPixel,
+      shareReferenceShares,
       lastTimeMs: input.nowMs,
       generation: this.generation,
       requestRedraw: input.requestRedraw,
@@ -280,6 +327,7 @@ class SharedWebGLPressureRenderer {
       input.dpr,
       input.ageScaleSeconds,
       input.volumePerCssPixel,
+      state.shareReferenceShares,
     );
     uploadWholeTexture(gl, state.textures[0], state.width, state.height, pixels);
     uploadWholeTexture(
@@ -293,6 +341,7 @@ class SharedWebGLPressureRenderer {
     state.lastTimeMs = input.nowMs;
     state.ageScaleSeconds = input.ageScaleSeconds;
     state.volumePerCssPixel = input.volumePerCssPixel;
+    state.shareReferenceShares = globalShareReferenceShares;
     state.generation = this.generation;
   }
 
@@ -315,6 +364,7 @@ class SharedWebGLPressureRenderer {
         input.dpr,
         input.ageScaleSeconds,
         input.volumePerCssPixel,
+        state.shareReferenceShares,
       );
       gl.texSubImage2D(
         gl.TEXTURE_2D,
@@ -427,6 +477,17 @@ class SharedWebGLPressureRenderer {
 
 export const sharedWebGLPressureRenderer = new SharedWebGLPressureRenderer();
 
+function pressureSharePeak(rows: readonly WebGLPressureRow[]): number {
+  let peak = 0;
+  for (const row of rows) {
+    for (const segment of row.segments) {
+      const magnitude = Math.abs(segment.volume);
+      if (Number.isFinite(magnitude)) peak = Math.max(peak, magnitude);
+    }
+  }
+  return peak;
+}
+
 function buildPressurePixels(
   rows: readonly WebGLPressureRow[],
   width: number,
@@ -434,6 +495,7 @@ function buildPressurePixels(
   dpr: number,
   ageScaleSeconds: number,
   volumePerCssPixel: number,
+  shareReferenceShares: number,
 ): Uint8Array {
   const pixels = new Uint8Array(width * height * 4);
   for (const [rowIndex, row] of rows.entries()) {
@@ -445,6 +507,7 @@ function buildPressurePixels(
       dpr,
       ageScaleSeconds,
       volumePerCssPixel,
+      shareReferenceShares,
     );
     pixels.set(rowPixels, bounds.bottom * width * 4);
   }
@@ -458,19 +521,18 @@ function buildPressureRowPixels(
   dpr: number,
   ageScaleSeconds: number,
   volumePerCssPixel: number,
+  shareReferenceShares: number,
 ): Uint8Array {
   const pixels = new Uint8Array(width * height * 4);
-  const bankroll = volumePerCssPixel * (height / dpr);
+  const reserveShares = volumePerCssPixel * (height / dpr);
 
   for (const segment of segments) {
     if (segment.ageMs === Infinity || segment.volume === 0) continue;
     const profile = pressureInkProfile(
       segment.volume,
-      segment.sweepCost,
-      segment.lo,
-      segment.hi,
       segment.ageMs,
-      bankroll,
+      shareReferenceShares,
+      reserveShares,
       ageScaleSeconds,
       dpr,
       height,
