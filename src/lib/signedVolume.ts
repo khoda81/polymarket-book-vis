@@ -7,28 +7,18 @@ export interface SignedVolumeSegment {
 }
 
 export interface SignedVolumeColorScale {
-  /** Absolute volume mapped halfway from zero to full ink intensity. */
-  readonly softLimit: number;
   readonly luminance: number;
   readonly chroma: number;
   readonly positiveHue: number;
   readonly negativeHue: number;
 }
 
-export interface SignedVolumeInk {
-  /** Full-strength sign color. */
-  readonly color: string;
-  /** Force amplitude in [0, 1]. Zero volume means zero ink. */
-  readonly intensity: number;
-}
-
 /**
- * Shared by every chart so equal signed volumes always have equal visual force.
- * Teal and violet are deliberately valence-neutral: neither reads as good/bad
- * in the way a red/green diverging scale tends to.
+ * Shared sign palette. Magnitude is deliberately absent from this scale:
+ * signed pressure magnitude is represented by vertical ink area, while hue
+ * communicates only direction.
  */
 export const DEFAULT_SIGNED_VOLUME_COLOR_SCALE: SignedVolumeColorScale = {
-  softLimit: 10_000,
   luminance: 0.7,
   chroma: 0.15,
   positiveHue: 190,
@@ -71,98 +61,12 @@ export function signedVolumeSegments(
   return result;
 }
 
-/**
- * Map signed volume onto [0, 1] without an arbitrary hard maximum.
- *
- *   0 volume          -> 0.5 (neutral)
- *   +softLimit        -> 0.75
- *   -softLimit        -> 0.25
- *   +/- infinity      -> 1 / 0
- *
- * `softLimit` is therefore an intuitive half-saturation parameter. Changing
- * it rescales every market without changing ordering or introducing a clip.
- */
-export function signedVolumePosition(
-  volume: number,
-  softLimit: number = DEFAULT_SIGNED_VOLUME_COLOR_SCALE.softLimit,
-): number {
-  if (!(softLimit > 0) || !Number.isFinite(softLimit))
-    throw new RangeError("signed volume soft limit must be finite and positive");
-  if (Number.isNaN(volume) || volume === 0) return 0.5;
-
-  const signed = Number.isFinite(volume)
-    ? volume / (Math.abs(volume) + softLimit)
-    : Math.sign(volume);
-  return 0.5 + 0.5 * signed;
-}
-
-/** Inverse of signedVolumePosition for finite positions inside (0, 1). */
-export function signedVolumeAtPosition(
-  position: number,
-  softLimit: number = DEFAULT_SIGNED_VOLUME_COLOR_SCALE.softLimit,
-): number {
-  if (!(softLimit > 0) || !Number.isFinite(softLimit))
-    throw new RangeError("signed volume soft limit must be finite and positive");
-  const p = Math.max(0, Math.min(1, position));
-  const signed = 2 * p - 1;
-  if (signed === 0) return 0;
-  if (Math.abs(signed) >= 1) return Math.sign(signed) * Infinity;
-  return Math.sign(signed) * softLimit * Math.abs(signed) / (1 - Math.abs(signed));
-}
-
-/**
- * Decompose the diverging map into orthogonal channels:
- * sign -> hue, magnitude -> ink amplitude.
- */
-export function signedVolumeInkAtPosition(
-  position: number,
-  scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-): SignedVolumeInk {
-  const signed = 2 * Math.max(0, Math.min(1, position)) - 1;
-  const intensity = Math.abs(signed);
-  const hue = signed < 0 ? scale.negativeHue : scale.positiveHue;
-  return {
-    color: `oklch(${scale.luminance} ${scale.chroma} ${hue})`,
-    intensity,
-  };
-}
-
-export function signedVolumeInk(
-  volume: number,
-  scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-): SignedVolumeInk {
-  return signedVolumeInkAtPosition(
-    signedVolumePosition(volume, scale.softLimit),
-    scale,
-  );
-}
-
-/** CSS/canvas color with force magnitude encoded as alpha. */
-export function signedVolumeInkCssAtPosition(
-  position: number,
-  scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-): string {
-  const signed = 2 * Math.max(0, Math.min(1, position)) - 1;
-  const intensity = Math.abs(signed);
-  if (intensity === 0) return "transparent";
-  const hue = signed < 0 ? scale.negativeHue : scale.positiveHue;
-  return `oklch(${scale.luminance} ${scale.chroma} ${hue} / ${intensity})`;
-}
-
-/** Canonical rendered color: sign is hue and magnitude is ink opacity. */
-export function signedVolumeColorAtPosition(
-  position: number,
-  scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-): string {
-  return signedVolumeInkCssAtPosition(position, scale);
-}
-
+/** Full-strength CSS color for the sign of a pressure value. */
 export function signedVolumeColor(
   volume: number,
   scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
 ): string {
-  return signedVolumeColorAtPosition(
-    signedVolumePosition(volume, scale.softLimit),
-    scale,
-  );
+  if (volume === 0 || Number.isNaN(volume)) return "transparent";
+  const hue = volume < 0 ? scale.negativeHue : scale.positiveHue;
+  return `oklch(${scale.luminance} ${scale.chroma} ${hue})`;
 }
