@@ -15,6 +15,10 @@ import {
   StaleSignedVolume,
   type StaleSignedVolumeSegment,
 } from "@/lib/staleSignedVolume";
+import {
+  sharedWebGLPressureRenderer,
+  type WebGLPressureRow,
+} from "@/lib/webglPressure";
 import type { Event } from "@polymarket/client";
 
 const AGE_LEFT_PADDING_PX = 176;
@@ -80,10 +84,9 @@ export function subscribeAgeStripTuning(
 /**
  * Age-mode projection of the live order books.
  *
- * Each probability interval carries one sample-and-hold signed-volume value
- * and one observation timestamp. Age is rendered as physical-looking vertical
- * diffusion: fresh evidence is concentrated, old evidence becomes a broad
- * faint haze, and never-observed evidence has age Infinity and vanishes.
+ * CPU sample-and-hold segments are authoritative. A WebGL pressure texture is
+ * used as a disposable incremental diffusion cache when available; the exact
+ * Canvas2D segment renderer remains the automatic fallback/reference path.
  */
 export class AgeStripView {
   private readonly host: AgeStripHost;
@@ -94,6 +97,8 @@ export class AgeStripView {
   private readonly toggleHomeNextSibling: ChildNode | null;
   private readonly registration: RenderRegistration;
   private readonly visibilityObserver: IntersectionObserver;
+  private readonly gpuKey = {};
+  private readonly dirtyTokens = new Set<string>();
 
   private diffusionTimer: number | undefined;
   private layoutMode: "age" | "volume" | null = null;
@@ -134,6 +139,8 @@ export class AgeStripView {
 
   reset(): void {
     this.cancelDiffusionTimer();
+    sharedWebGLPressureRenderer.release(this.gpuKey);
+    this.dirtyTokens.clear();
     this.markets.clear();
     this.hiddenTray.replaceChildren();
     this.layoutMode = null;
@@ -141,6 +148,8 @@ export class AgeStripView {
 
   /** Seed sample-and-hold fields recorded by the always-on backend. */
   hydrate(states: Readonly<Record<string, RecordedAgeState>>): void {
+    sharedWebGLPressureRenderer.release(this.gpuKey);
+    this.dirtyTokens.clear();
     const nowMs = performance.now();
     for (const [tokenId, state] of Object.entries(states)) {
       const field = new StaleSignedVolume();
@@ -221,6 +230,7 @@ export class AgeStripView {
     }
 
     state.field.update(book, nowMs);
+    this.dirtyTokens.add(tokenId);
 
     if (state.visibilityInitialized) return;
     state.visibilityInitialized = true;
@@ -250,7 +260,6 @@ export class AgeStripView {
       xRange: { min: 0, max: 1 },
       yRange: { min: -0.5, max: rowCount - 0.5 },
     });
-    drawAgeAxes(frame);
     positionRowControls(activeControls, frame, rowCount);
 
     const nowMs = performance.now();
@@ -258,47 +267,62 @@ export class AgeStripView {
       ...DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
       softLimit: tuning.volumeSoftLimit,
     };
+    const rows: WebGLPressureRow[] = activeControls.map((label, index) => {
+      const tokenId = label.dataset.tokenId ?? `missing-row-${index}`;
+      return {
+        tokenId,
+        segments: this.markets.get(tokenId)?.field.segments(nowMs) ?? [],
+      };
+    });
+
+    const vp = frame.viewport;
+    const gpuCanvas = sharedWebGLPressureRenderer.render({
+      key: this.gpuKey,
+      rows,
+      dirtyTokens: this.dirtyTokens,
+      widthCss: vp.width,
+      heightCss: vp.height,
+      dpr: window.devicePixelRatio || 1,
+      nowMs,
+      ageScaleSeconds: tuning.ageScaleSeconds,
+      colorScale,
+      requestRedraw: this.host.requestDraw,
+    });
+
+    if (gpuCanvas) {
+      const { ctx } = frame;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(vp.l, vp.t, vp.width, vp.height);
+      ctx.clip();
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(gpuCanvas, vp.l, vp.t, vp.width, vp.height);
+      ctx.restore();
+      drawAgeAxes(frame);
+      this.dirtyTokens.clear();
+      this.scheduleDiffusionTimer(gpuDiffusionDelayMs(tuning.ageScaleSeconds));
+      return;
+    }
+
+    // Reliable reference/fallback path: reconstruct each segment analytically
+    // with the existing cached Canvas2D Gaussian sprites.
     let nextDiffusionDelayMs = Infinity;
-
-    for (const [index, label] of activeControls.entries()) {
-      const tokenId = label.dataset.tokenId;
-      if (!tokenId) continue;
-
-      const state = this.markets.get(tokenId);
-      if (!state) continue;
-
-      const segments = state.field.segments(nowMs);
-      if (segments.length === 0) continue;
-
+    for (const [index, row] of rows.entries()) {
+      if (row.segments.length === 0) continue;
       const y = rowCount - 1 - index;
-      drawDiffusedStrip(
-        frame,
-        y,
-        segments,
-        this.sprites,
-        colorScale,
-      );
-
+      drawDiffusedStrip(frame, y, row.segments, this.sprites, colorScale);
       nextDiffusionDelayMs = Math.min(
         nextDiffusionDelayMs,
         nextStripDiffusionChangeDelayMs(
-          segments,
+          row.segments,
           tuning.ageScaleSeconds,
         ),
       );
     }
-
-    if (
-      this.registration.visible &&
-      this.host.getViewMode() === "age" &&
-      Number.isFinite(nextDiffusionDelayMs)
-    ) {
-      this.diffusionTimer = window.setTimeout(() => {
-        this.diffusionTimer = undefined;
-        if (this.registration.visible && this.host.getViewMode() === "age")
-          this.host.requestDraw();
-      }, Math.max(1, Math.ceil(nextDiffusionDelayMs)));
-    }
+    drawAgeAxes(frame);
+    this.dirtyTokens.clear();
+    if (Number.isFinite(nextDiffusionDelayMs))
+      this.scheduleDiffusionTimer(nextDiffusionDelayMs);
   }
 
   prepareVolumeView(): void {
@@ -343,6 +367,7 @@ export class AgeStripView {
 
   destroy(): void {
     this.cancelDiffusionTimer();
+    sharedWebGLPressureRenderer.release(this.gpuKey);
     this.visibilityObserver.disconnect();
     registrations.delete(this.registration);
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
@@ -448,6 +473,15 @@ export class AgeStripView {
     );
   }
 
+  private scheduleDiffusionTimer(delayMs: number): void {
+    if (!this.registration.visible || this.host.getViewMode() !== "age") return;
+    this.diffusionTimer = window.setTimeout(() => {
+      this.diffusionTimer = undefined;
+      if (this.registration.visible && this.host.getViewMode() === "age")
+        this.host.requestDraw();
+    }, Math.max(1, Math.ceil(delayMs)));
+  }
+
   private cancelDiffusionTimer(): void {
     if (this.diffusionTimer === undefined) return;
     clearTimeout(this.diffusionTimer);
@@ -502,8 +536,6 @@ function drawDiffusedStrip(
 ): void {
   const { ctx, viewport: vp } = frame;
   const dpr = window.devicePixelRatio || 1;
-  // Snap the semantic row center to a physical pixel center. Every kernel then
-  // shares exactly the same center sample regardless of its sigma/color.
   const screenY = snapToDevicePixelCenter(frame.toScreenY(0, y), dpr);
   const rowTop = screenY - AGE_ROW_BAND_PX / 2;
 
@@ -511,19 +543,12 @@ function drawDiffusedStrip(
   ctx.beginPath();
   ctx.rect(vp.l, rowTop, vp.width, AGE_ROW_BAND_PX);
   ctx.clip();
-  // Sprites are already rasterized at device resolution. Interpolating them
-  // again can sample transparent pixels at each independently drawn segment
-  // edge and create dark barcode seams.
   ctx.imageSmoothingEnabled = false;
 
   for (const segment of segments) {
     const visual = diffusionVisual(segment.ageMs, tuning.ageScaleSeconds);
     if (visual.peakAlpha <= 0) continue;
 
-    // Adjacent piecewise intervals share the same mathematical boundary, but a
-    // fractional CSS-pixel boundary is rasterized independently for each
-    // drawImage call. Snap both sides to the DPR grid so neighboring sprites
-    // cover exactly the same device-pixel boundary with no one-pixel crack.
     const x0 = snapToDevicePixel(
       vp.l + clamp(segment.lo, 0, 1) * vp.width,
       dpr,
@@ -549,9 +574,6 @@ function drawDiffusedStrip(
       dpr,
       AGE_ROW_BAND_PX,
     );
-    // Keep the pre-rasterized kernel 1:1 vertically. Its odd device-pixel
-    // height gives it one exact center pixel; the row clip trims the tiny
-    // half-pixel/one-pixel excess at the edges rather than resampling it.
     const spriteHeightCss = sprite.height / dpr;
     const spriteTop = screenY - spriteHeightCss / 2;
 
@@ -587,6 +609,10 @@ function nextStripDiffusionChangeDelayMs(
     );
   }
   return next;
+}
+
+function gpuDiffusionDelayMs(timeScaleSeconds: number): number {
+  return clamp(timeScaleSeconds * 20, 16, 250);
 }
 
 function hasRealOrders(book: TokenBook<string>): boolean {
