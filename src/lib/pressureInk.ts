@@ -17,6 +17,28 @@ export function pressureInkAreaFraction(volume: number, softLimit: number): numb
 }
 
 /**
+ * Unbounded bloom energy carried by pressure beyond the base half-row scale.
+ *
+ * `rowHeightCss * volumePerCssPixel` is the base renderer's half-row volume.
+ * Bloom starts only above that scale. `asinh` stays approximately linear near
+ * the threshold but grows logarithmically without ever saturating.
+ */
+export function pressureBloomEnergy(
+  volume: number,
+  volumePerCssPixel: number,
+  rowHeightCss: number,
+): number {
+  validatePositiveFinite(volumePerCssPixel, "volume per pixel");
+  validatePositiveFinite(rowHeightCss, "row height");
+  if (volume === 0 || Number.isNaN(volume)) return 0;
+  if (!Number.isFinite(volume)) return Infinity;
+
+  const softLimit = volumePerCssPixel * rowHeightCss;
+  const excess = Math.max(Math.abs(volume) / softLimit - 1, 0);
+  return Math.asinh(excess);
+}
+
+/**
  * Convert signed volume into fresh vertical ink thickness in CSS pixels.
  *
  * `volumePerCssPixel` preserves the intuitive small-signal scale of the linear
