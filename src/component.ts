@@ -14,6 +14,7 @@ import {
   OrderBookPlotter,
   StackDirection,
 } from "@/lib/renderer";
+import type { PressureObservationRange } from "@/lib/staleSignedVolume";
 import "@/styles/component.css";
 import { AgeStripView } from "./ageStrips";
 import {
@@ -481,7 +482,7 @@ export class PolymarketCPV {
         this.books[tokenId] = { usdToYes, yesToUsd };
         this.ageView.onBookUpdate(tokenId, nowMs);
       } else if (stream.type === "price_change") {
-        const affectedTokens = new Set<TokenId>();
+        const observedByToken = new Map<TokenId, PressureObservationRange[]>();
         for (const change of stream.payload.priceChanges) {
           const tokenId = change.tokenId as TokenId;
           const book = this.books[tokenId];
@@ -497,12 +498,19 @@ export class PolymarketCPV {
               take: size * price,
             });
           }
-          affectedTokens.add(tokenId);
+
+          const ranges = observedByToken.get(tokenId) ?? [];
+          ranges.push(
+            change.side === OrderSide.BUY
+              ? { lo: 0, hi: price }
+              : { lo: price, hi: 1 },
+          );
+          observedByToken.set(tokenId, ranges);
         }
 
         const nowMs = performance.now();
-        for (const tokenId of affectedTokens)
-          this.ageView.onBookUpdate(tokenId, nowMs);
+        for (const [tokenId, observedRanges] of observedByToken)
+          this.ageView.onBookUpdate(tokenId, nowMs, observedRanges);
       } else if (stream.type === "market_resolved") {
         for (const tokenId of stream.payload.assetIds ?? [])
           this.activeTokens.delete(tokenId as TokenId);
