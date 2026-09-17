@@ -27,7 +27,7 @@ export interface WebGLPressureRenderInput {
   readonly dpr: number;
   readonly nowMs: number;
   readonly ageScaleSeconds: number;
-  /** Fully opaque CSS-pixel-equivalent represented by this many YES. */
+  /** Legacy tuning unit; multiplied by row height to obtain Kelly bankroll. */
   readonly volumePerCssPixel: number;
   readonly colorScale: SignedVolumeColorScale;
   readonly requestRedraw: () => void;
@@ -68,9 +68,10 @@ interface GlResources {
  * are created lazily so importing this module is harmless in tests/SSR, and
  * any WebGL failure can fall back to the Canvas2D reference renderer.
  *
- * The texture stores fractional vertical occupancy, not normalized volume.
- * One opaque CSS-pixel-equivalent represents `volumePerCssPixel` YES; age then
- * diffuses that conserved ink vertically until row clipping dissipates it.
+ * The texture stores fractional vertical occupancy. Fresh occupancy is the
+ * Kelly-normalized conviction needed to sweep the resting liquidity for the
+ * configured bankroll; age then diffuses that conserved ink vertically until
+ * row clipping dissipates it.
  */
 class SharedWebGLPressureRenderer {
   private readonly states = new Map<object, PressureState>();
@@ -459,13 +460,17 @@ function buildPressureRowPixels(
   volumePerCssPixel: number,
 ): Uint8Array {
   const pixels = new Uint8Array(width * height * 4);
+  const bankroll = volumePerCssPixel * (height / dpr);
 
   for (const segment of segments) {
     if (segment.ageMs === Infinity || segment.volume === 0) continue;
     const profile = pressureInkProfile(
       segment.volume,
+      segment.sweepCost,
+      segment.lo,
+      segment.hi,
       segment.ageMs,
-      volumePerCssPixel,
+      bankroll,
       ageScaleSeconds,
       dpr,
       height,
