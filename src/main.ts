@@ -102,12 +102,12 @@ addEventForm.addEventListener("submit", async (submitEvent) => {
 });
 
 /**
- * The geometric scale is now decision-theoretic rather than raw volume.
- * The stored legacy scale maps naturally to the bankroll that used to be the
- * half-row soft limit, so existing tuning migrates without a visual reset.
+ * Capital pressure compares cumulative sweep capital A with a configurable
+ * reserve C through A/(A+C). The persisted legacy scale is converted to one
+ * row's worth of reserve so existing tuning does not jump unexpectedly.
  */
 function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
-  const bankroll = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
+  const reserveCapital = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
   const scale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
   volumeLegendBar.style.setProperty(
     "--negative-pressure-color",
@@ -117,18 +117,19 @@ function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
     "--positive-pressure-color",
     signedVolumeColor(1, scale),
   );
-  volumeLegendScale.textContent = `bankroll $${fmtVol(bankroll)}`;
+  volumeLegendScale.textContent =
+    `reserve $${fmtVol(reserveCapital)} · bar unit: shares`;
 
   volumeLegendTicks.replaceChildren();
-  for (const conviction of [-1, -0.5, 0, 0.5, 1]) {
+  for (const pressure of [-1, -0.5, 0, 0.5, 1]) {
     const tick = document.createElement("span");
-    tick.style.left = `${((conviction + 1) / 2) * 100}%`;
-    tick.textContent = formatConvictionTick(conviction);
+    tick.style.left = `${((pressure + 1) / 2) * 100}%`;
+    tick.textContent = formatPressureTick(pressure);
     volumeLegendTicks.appendChild(tick);
   }
 }
 
-function formatConvictionTick(value: number): string {
+function formatPressureTick(value: number): string {
   if (value === 0) return "0";
   return `${value > 0 ? "+" : "−"}${Math.round(Math.abs(value) * 100)}%`;
 }
