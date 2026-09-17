@@ -11,7 +11,15 @@ import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
 } from "./lib/signedVolume";
+import {
+  getGlobalShareReferenceShares,
+  subscribeGlobalShareReferenceShares,
+} from "./lib/webglPressure";
 import { createPublicClient, Event } from "@polymarket/client";
+
+const MIN_SHARE_LEGEND_TICK_DISTANCE_PX = 48;
+const NICE_TICK_FAMILIES = [1, 5, 2] as const;
+const TICK_EXPONENT_RADIUS = 12;
 
 const grid = document.getElementById("grid")!;
 const addEventForm = document.getElementById("add-event-form") as HTMLFormElement;
@@ -102,13 +110,21 @@ addEventForm.addEventListener("submit", async (submitEvent) => {
 });
 
 /**
- * Capital pressure compares cumulative sweep capital A with a configurable
- * reserve C through A/(A+C). The persisted legacy scale is converted to one
- * row's worth of reserve so existing tuning does not jump unexpectedly.
+ * Share pressure is linear in cumulative shares:
+ *
+ *   h(p) = |Q(p)| / D,   D = V + C
+ *
+ * where V is the largest cumulative share depth currently represented by the
+ * shared renderer and C is the user-controlled share reserve. Because D is one
+ * constant across price and across charts, signed legend ticks can be literal
+ * shares and normalized shape area retains its share×price interpretation.
  */
 function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
-  const reserveCapital = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
+  const reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
+  const referenceShares = getGlobalShareReferenceShares();
+  const scaleShares = referenceShares + reserveShares;
   const scale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
+
   volumeLegendBar.style.setProperty(
     "--negative-pressure-color",
     signedVolumeColor(-1, scale),
@@ -118,20 +134,87 @@ function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
     signedVolumeColor(1, scale),
   );
   volumeLegendScale.textContent =
-    `reserve $${fmtVol(reserveCapital)} · bar unit: shares`;
+    `reserve ${fmtVol(reserveShares)} shares · scale ${fmtVol(scaleShares)} shares`;
 
+  const values = shareLegendTickValues(
+    referenceShares,
+    scaleShares,
+    volumeLegendBar.clientWidth,
+  );
   volumeLegendTicks.replaceChildren();
-  for (const pressure of [-1, -0.5, 0, 0.5, 1]) {
+  for (const value of values) {
     const tick = document.createElement("span");
-    tick.style.left = `${((pressure + 1) / 2) * 100}%`;
-    tick.textContent = formatPressureTick(pressure);
+    tick.style.left = `${shareLegendPosition(value, scaleShares) * 100}%`;
+    tick.textContent = formatShareTick(value);
     volumeLegendTicks.appendChild(tick);
   }
 }
 
-function formatPressureTick(value: number): string {
+function shareLegendPosition(value: number, scaleShares: number): number {
+  if (!(scaleShares > 0) || !Number.isFinite(scaleShares)) return 0.5;
+  const signed = Math.max(-1, Math.min(1, value / scaleShares));
+  return 0.5 + 0.5 * signed;
+}
+
+/** Select symmetric, literal-share ticks using the old QBar-style priorities. */
+function shareLegendTickValues(
+  referenceShares: number,
+  scaleShares: number,
+  widthPx: number,
+): number[] {
+  if (
+    !(referenceShares > 0) ||
+    !Number.isFinite(referenceShares) ||
+    !(scaleShares > 0) ||
+    !Number.isFinite(scaleShares) ||
+    !(widthPx > 0)
+  )
+    return [0];
+
+  const selected: { value: number; x: number }[] = [
+    { value: 0, x: widthPx / 2 },
+  ];
+  const baseExponent = Math.floor(Math.log10(referenceShares));
+
+  for (const multiplier of NICE_TICK_FAMILIES) {
+    const magnitudes = Array.from(
+      { length: TICK_EXPONENT_RADIUS * 2 + 1 },
+      (_, index) =>
+        multiplier * 10 ** (baseExponent - TICK_EXPONENT_RADIUS + index),
+    )
+      .filter((value) => value > 0 && value <= referenceShares)
+      .sort((a, b) => b - a);
+
+    for (const magnitude of magnitudes) {
+      const pair = [-magnitude, magnitude].map((value) => ({
+        value,
+        x: shareLegendPosition(value, scaleShares) * widthPx,
+      }));
+      if (
+        Math.abs(pair[1]!.x - pair[0]!.x) <
+        MIN_SHARE_LEGEND_TICK_DISTANCE_PX
+      )
+        continue;
+
+      const fits = pair.every(({ x }) =>
+        selected.every(
+          (tick) =>
+            Math.abs(x - tick.x) >= MIN_SHARE_LEGEND_TICK_DISTANCE_PX,
+        ),
+      );
+      if (fits) selected.push(...pair);
+    }
+  }
+
+  return selected
+    .sort((a, b) => a.value - b.value)
+    .map(({ value }) => value);
+}
+
+function formatShareTick(value: number): string {
   if (value === 0) return "0";
-  return `${value > 0 ? "+" : "−"}${Math.round(Math.abs(value) * 100)}%`;
+  const magnitude = fmtVol(Math.abs(value)).replace(/\.0([KMB]?)$/, "$1");
+  return `${value > 0 ? "+" : "−"}${magnitude}`;
 }
 
 interface RecorderHealth {
@@ -170,11 +253,11 @@ async function refreshRecorderStatus(): Promise<void> {
   }
 }
 
-renderVolumeLegend(getAgeStripTuning());
-subscribeAgeStripTuning(renderVolumeLegend);
-new ResizeObserver(() => renderVolumeLegend(getAgeStripTuning())).observe(
-  volumeLegendBar,
-);
+const renderGlobalLegend = () => renderVolumeLegend(getAgeStripTuning());
+renderGlobalLegend();
+subscribeAgeStripTuning(renderGlobalLegend);
+subscribeGlobalShareReferenceShares(renderGlobalLegend);
+new ResizeObserver(renderGlobalLegend).observe(volumeLegendBar);
 void refreshRecorderStatus();
 window.setInterval(() => void refreshRecorderStatus(), 5_000);
 
