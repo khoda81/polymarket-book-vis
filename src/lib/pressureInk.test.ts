@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  pressureBloomEnergy,
   pressureInkAreaFraction,
   pressureInkProfile,
   pressureInkThicknessCss,
@@ -26,6 +27,17 @@ describe("pressure ink", () => {
 
     // Close to zero it approaches the old linear V / (YES/px) mapping.
     expect(pressureInkThicknessCss(100, 10_000, 36)).toBeCloseTo(0.01, 3);
+  });
+
+  test("bloom starts beyond the half-row scale and remains unbounded", () => {
+    expect(pressureBloomEnergy(360_000, 10_000, 36)).toBe(0);
+    expect(pressureBloomEnergy(720_000, 10_000, 36)).toBeCloseTo(Math.asinh(1));
+
+    const large = pressureBloomEnergy(36_000_000, 10_000, 36);
+    const huge = pressureBloomEnergy(36_000_000_000, 10_000, 36);
+    expect(huge).toBeGreaterThan(large);
+    expect(Number.isFinite(huge)).toBe(true);
+    expect(pressureBloomEnergy(Infinity, 10_000, 36)).toBe(Infinity);
   });
 
   test("fresh subpixel area becomes fractional center-pixel coverage", () => {
