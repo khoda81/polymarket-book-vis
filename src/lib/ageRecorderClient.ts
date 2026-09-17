@@ -1,7 +1,4 @@
-import type {
-  StaleSignedVolumeSegment,
-  StaleSignedVolumeSpread,
-} from "./staleSignedVolume";
+import type { StaleSignedVolumeSegment } from "./staleSignedVolume";
 
 interface RecorderTransportSegment {
   lo: number;
@@ -13,7 +10,6 @@ interface RecorderTransportSegment {
 
 interface RecorderTransportState {
   segments: RecorderTransportSegment[];
-  spread?: StaleSignedVolumeSpread;
 }
 
 interface RecorderStateResponse {
@@ -25,11 +21,10 @@ interface RecorderStateResponse {
 
 export interface RecordedAgeState {
   segments: readonly StaleSignedVolumeSegment[];
-  spread?: StaleSignedVolumeSpread;
 }
 
 /**
- * Fetch persisted sample-and-hold state and register the tokens with the
+ * Fetch persisted pressure-memory state and register the tokens with the
  * recorder. Failure is intentionally non-fatal: the UI can always fall back
  * to starting from the live websocket state.
  */
@@ -50,7 +45,6 @@ export async function fetchRecordedAgeState(
       Object.entries(body.states ?? {}).map(([tokenId, state]) => [
         tokenId,
         {
-          spread: state.spread,
           segments: state.segments.map(({ ageMs, ...segment }) => ({
             ...segment,
             ageMs: ageMs === null ? Infinity : ageMs,
