@@ -508,13 +508,27 @@ function drawDiffusedStrip(
   ctx.beginPath();
   ctx.rect(vp.l, rowTop, vp.width, AGE_ROW_BAND_PX);
   ctx.clip();
+  // Sprites are already rasterized at device resolution. Interpolating them
+  // again can sample transparent pixels at each independently drawn segment
+  // edge and create dark barcode seams.
+  ctx.imageSmoothingEnabled = false;
 
   for (const segment of segments) {
     const visual = diffusionVisual(segment.ageMs, tuning.ageScaleSeconds);
     if (visual.peakAlpha <= 0) continue;
 
-    const x0 = vp.l + clamp(segment.lo, 0, 1) * vp.width;
-    const x1 = vp.l + clamp(segment.hi, 0, 1) * vp.width;
+    // Adjacent piecewise intervals share the same mathematical boundary, but a
+    // fractional CSS-pixel boundary is rasterized independently for each
+    // drawImage call. Snap both sides to the DPR grid so neighboring sprites
+    // cover exactly the same device-pixel boundary with no one-pixel crack.
+    const x0 = snapToDevicePixel(
+      vp.l + clamp(segment.lo, 0, 1) * vp.width,
+      dpr,
+    );
+    const x1 = snapToDevicePixel(
+      vp.l + clamp(segment.hi, 0, 1) * vp.width,
+      dpr,
+    );
     if (!(x1 > x0)) continue;
 
     const position = signedVolumePosition(
@@ -721,6 +735,10 @@ function normalizedWheelDelta(event: WheelEvent): number {
   if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
   else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= 400;
   return clamp(delta, -500, 500);
+}
+
+function snapToDevicePixel(value: number, dpr: number): number {
+  return Math.round(value * dpr) / dpr;
 }
 
 function clamp(value: number, min: number, max: number): number {
