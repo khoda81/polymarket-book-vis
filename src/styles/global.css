@@ -136,9 +136,32 @@ body {
 }
 
 .volume-legend-bar {
-    height: 8px;
+    --negative-pressure-color: #a56ed8;
+    --positive-pressure-color: #1db9b0;
+    position: relative;
+    height: 12px;
+    overflow: hidden;
     border-radius: 999px;
     box-shadow: inset 0 0 0 1px color-mix(in oklab, currentColor 14%, transparent);
+}
+
+.volume-legend-wedge {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 50%;
+}
+
+.volume-legend-wedge--negative {
+    left: 0;
+    background: var(--negative-pressure-color);
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+.volume-legend-wedge--positive {
+    right: 0;
+    background: var(--positive-pressure-color);
+    clip-path: polygon(0 50%, 100% 0, 100% 100%);
 }
 
 .volume-legend-ticks {
