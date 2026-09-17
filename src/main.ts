@@ -5,6 +5,7 @@ import {
   type AgeStripTuning,
 } from "./ageStrips";
 import { PolymarketCPV } from "./component";
+import { volumeLegendTickValues } from "./lib/legendTicks";
 import { fmtRelativeTime, fmtVol } from "./lib/math";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
@@ -113,29 +114,31 @@ function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
   volumeLegendBar.style.background = `linear-gradient(90deg, ${stops.join(", ")})`;
   volumeLegendScale.textContent = `half-saturation ±${fmtVol(tuning.volumeSoftLimit)} YES`;
 
-  const values = [
-    -10 * tuning.volumeSoftLimit,
-    -tuning.volumeSoftLimit,
-    0,
+  const values = volumeLegendTickValues(
     tuning.volumeSoftLimit,
-    10 * tuning.volumeSoftLimit,
-  ];
+    volumeLegendBar.clientWidth,
+  );
   volumeLegendTicks.replaceChildren();
   for (const value of values) {
     const tick = document.createElement("span");
     tick.style.left = `${signedVolumePosition(value, tuning.volumeSoftLimit) * 100}%`;
-    tick.textContent =
-      value === 0
-        ? "0"
-        : `${value > 0 ? "+" : "−"}${fmtVol(Math.abs(value))}`;
+    tick.textContent = formatVolumeTick(value);
     volumeLegendTicks.appendChild(tick);
   }
+}
+
+function formatVolumeTick(value: number): string {
+  if (value === 0) return "0";
+  const magnitude = fmtVol(Math.abs(value)).replace(/\.0([KMB]?)$/, "$1");
+  return `${value > 0 ? "+" : "−"}${magnitude}`;
 }
 
 interface RecorderHealth {
   watchedTokens: number;
   connected: boolean;
-  oldestRecordingSinceMs: number | null;
+  // Optional so a frontend update remains readable while an older recorder
+  // process is still running and has not been restarted yet.
+  oldestRecordingSinceMs?: number | null;
 }
 
 async function refreshRecorderStatus(): Promise<void> {
@@ -151,9 +154,10 @@ async function refreshRecorderStatus(): Promise<void> {
     }
 
     const oldestRecording =
-      health.oldestRecordingSinceMs === null
-        ? "history starting"
-        : `${fmtRelativeTime((Date.now() - health.oldestRecordingSinceMs) / 1000)} oldest recording`;
+      typeof health.oldestRecordingSinceMs === "number" &&
+      Number.isFinite(health.oldestRecordingSinceMs)
+        ? `${fmtRelativeTime((Date.now() - health.oldestRecordingSinceMs) / 1000)} oldest recording`
+        : "history age unavailable";
 
     recorderStatus.dataset.state = health.connected ? "live" : "connecting";
     recorderStatusText.textContent = health.connected
@@ -167,6 +171,9 @@ async function refreshRecorderStatus(): Promise<void> {
 
 renderVolumeLegend(getAgeStripTuning());
 subscribeAgeStripTuning(renderVolumeLegend);
+new ResizeObserver(() => renderVolumeLegend(getAgeStripTuning())).observe(
+  volumeLegendBar,
+);
 void refreshRecorderStatus();
 window.setInterval(() => void refreshRecorderStatus(), 5_000);
 
