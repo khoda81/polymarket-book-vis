@@ -25,6 +25,12 @@ describe("pressure ink", () => {
     expect(kellyPressureAreaFraction(10, 6, 0, 0.4, 100)).toBeCloseTo(0.06, 12);
   });
 
+  test("accounts for price improvement across multiple levels", () => {
+    // 10 YES were acquired for $5 total, while the marginal ask is 0.6.
+    // f = pQ / (C - A + pQ) = 6 / 101.
+    expect(kellyPressureAreaFraction(-10, 5, 0.6, 1, 100)).toBeCloseTo(6 / 101, 12);
+  });
+
   test("saturates only when sweeping the resting side exhausts bankroll", () => {
     expect(kellyPressureAreaFraction(-10, 100, 0.6, 1, 100)).toBe(1);
     expect(kellyPressureAreaFraction(10, 101, 0, 0.4, 100)).toBe(1);
@@ -39,9 +45,9 @@ describe("pressure ink", () => {
   });
 
   test("fresh subpixel area becomes fractional center-pixel coverage", () => {
-    // Choose a very large bankroll so the Kelly fraction is subpixel.
-    const profile = pressureInkProfile(-1, 0.6, 0.6, 1, 10_000, 100_000, 5, 1, 36);
-    const expected = pressureInkThicknessCss(-1, 0.6, 0.6, 1, 100_000, 36);
+    const bankroll = 100_000;
+    const profile = pressureInkProfile(-1, 0.6, 0.6, 1, 0, bankroll, 5, 1, 36);
+    const expected = pressureInkThicknessCss(-1, 0.6, 0.6, 1, bankroll, 36);
     expect(sum(profile)).toBeCloseTo(expected, 6);
     expect(Math.max(...profile)).toBeCloseTo(expected, 6);
   });
@@ -72,6 +78,12 @@ describe("pressure ink", () => {
     const freshPeak = Math.max(...fresh);
     expect(Math.max(...slightlyAged)).toBeLessThanOrEqual(freshPeak + 1e-6);
     expect(Math.max(...moreAged)).toBeLessThanOrEqual(Math.max(...slightlyAged) + 1e-6);
+  });
+
+  test("legacy Canvas fallback still conserves subpixel area", () => {
+    const profile = pressureInkProfile(100, 0, 10_000, 5, 1, 36);
+    const expected = 36 * (100 / (100 + 360_000));
+    expect(sum(profile)).toBeCloseTo(expected, 6);
   });
 
   test("infinite age and zero pressure render no ink", () => {
