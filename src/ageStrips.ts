@@ -460,9 +460,10 @@ function positionRowControls(
   frame: any,
   rowCount: number,
 ): void {
+  const dpr = window.devicePixelRatio || 1;
   for (const [index, label] of labels.entries()) {
     const y = rowCount - 1 - index;
-    const top = `${frame.toScreenY(0, y)}px`;
+    const top = `${snapToDevicePixelCenter(frame.toScreenY(0, y), dpr)}px`;
     if (label.style.top !== top) label.style.top = top;
   }
 }
@@ -500,9 +501,11 @@ function drawDiffusedStrip(
   colorScale: typeof DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
 ): void {
   const { ctx, viewport: vp } = frame;
-  const screenY = frame.toScreenY(0, y);
-  const rowTop = screenY - AGE_ROW_BAND_PX / 2;
   const dpr = window.devicePixelRatio || 1;
+  // Snap the semantic row center to a physical pixel center. Every kernel then
+  // shares exactly the same center sample regardless of its sigma/color.
+  const screenY = snapToDevicePixelCenter(frame.toScreenY(0, y), dpr);
+  const rowTop = screenY - AGE_ROW_BAND_PX / 2;
 
   ctx.save();
   ctx.beginPath();
@@ -546,6 +549,11 @@ function drawDiffusedStrip(
       dpr,
       AGE_ROW_BAND_PX,
     );
+    // Keep the pre-rasterized kernel 1:1 vertically. Its odd device-pixel
+    // height gives it one exact center pixel; the row clip trims the tiny
+    // half-pixel/one-pixel excess at the edges rather than resampling it.
+    const spriteHeightCss = sprite.height / dpr;
+    const spriteTop = screenY - spriteHeightCss / 2;
 
     ctx.globalAlpha = visual.peakAlpha;
     ctx.drawImage(
@@ -555,9 +563,9 @@ function drawDiffusedStrip(
       sprite.width,
       sprite.height,
       x0,
-      rowTop,
+      spriteTop,
       x1 - x0,
-      AGE_ROW_BAND_PX,
+      spriteHeightCss,
     );
   }
 
@@ -739,6 +747,10 @@ function normalizedWheelDelta(event: WheelEvent): number {
 
 function snapToDevicePixel(value: number, dpr: number): number {
   return Math.round(value * dpr) / dpr;
+}
+
+function snapToDevicePixelCenter(value: number, dpr: number): number {
+  return (Math.round(value * dpr - 0.5) + 0.5) / dpr;
 }
 
 function clamp(value: number, min: number, max: number): number {
