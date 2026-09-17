@@ -8,7 +8,13 @@ test("scrolling up increases time scale and volume intensity; down reverses both
   let wheel!: (event: WheelEvent) => void;
   let redraw!: FrameRequestCallback;
   const replacements = [
-    { createElement: () => ({ remove() {} }) },
+    {
+      createElement: () => ({
+        remove() {},
+        style: {},
+        className: "",
+      }),
+    },
     { setTimeout: () => undefined },
     { DOM_DELTA_LINE: 1, DOM_DELTA_PAGE: 2 },
     (callback: FrameRequestCallback) => { redraw = callback; return 1; },
@@ -21,10 +27,16 @@ test("scrolling up increases time scale and volume intensity; down reverses both
   try {
     view = new AgeStripView({
       canvas: {
-        addEventListener: (_type: string, listener: typeof wheel) => { wheel = listener; },
+        addEventListener(type: string, listener: typeof wheel) {
+          if (type === "wheel") wheel = listener;
+        },
         removeEventListener() {},
       },
-      canvasWrap: { insertAdjacentElement() {} },
+      canvasWrap: {
+        insertAdjacentElement() {},
+        querySelector() { return null; },
+        appendChild() {},
+      },
       toggles: { parentElement: null, nextSibling: null },
       getViewMode: () => "age",
       requestDraw() {},
