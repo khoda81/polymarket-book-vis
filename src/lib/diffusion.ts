@@ -2,6 +2,7 @@ const BASE_SIGMA_PX = 0.85;
 const MAX_KERNEL_SIGMA_PX = 14;
 const VARIANCE_PER_TIME_SCALE = 8;
 const SIGMA_BUCKETS = 48;
+const ALPHA_LEVELS = 32;
 const MAX_TIMEOUT_MS = 2_147_000_000;
 const MAX_CACHE_ENTRIES = 2048;
 
@@ -35,7 +36,7 @@ export function diffusionVisual(
     return {
       sigmaPx: MAX_KERNEL_SIGMA_PX,
       peakAlpha: 0,
-      key: SIGMA_BUCKETS * 256,
+      key: SIGMA_BUCKETS * (ALPHA_LEVELS + 1),
     };
   }
   if (!Number.isFinite(ageMs) || ageMs < 0)
@@ -55,14 +56,18 @@ export function diffusionVisual(
     BASE_SIGMA_PX +
     (sigmaBucket / (SIGMA_BUCKETS - 1)) *
       (MAX_KERNEL_SIGMA_PX - BASE_SIGMA_PX);
-  const alphaByte = Math.round(
-    clamp(BASE_SIGMA_PX / rawSigma, 0, 1) * 255,
+
+  // A 32-step alpha is visually smooth at these tiny line widths but avoids
+  // turning fresh evidence into a 500 Hz timer source. At the default 5 s time
+  // scale the first change is ~14 ms, then updates become rapidly sparser.
+  const alphaStep = Math.round(
+    clamp(BASE_SIGMA_PX / rawSigma, 0, 1) * ALPHA_LEVELS,
   );
 
   return {
     sigmaPx,
-    peakAlpha: alphaByte / 255,
-    key: sigmaBucket * 256 + alphaByte,
+    peakAlpha: alphaStep / ALPHA_LEVELS,
+    key: sigmaBucket * (ALPHA_LEVELS + 1) + alphaStep,
   };
 }
 
