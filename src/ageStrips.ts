@@ -129,6 +129,24 @@ export class AgeStripView {
     this.layoutMode = null;
   }
 
+  /** Seed sample-and-hold fields recorded by the always-on backend. */
+  hydrate(
+    states: Readonly<Record<string, readonly StaleSignedVolumeSegment[]>>,
+  ): void {
+    const nowMs = performance.now();
+    for (const [tokenId, segments] of Object.entries(states)) {
+      const field = new StaleSignedVolume();
+      field.restoreSegments(segments, nowMs);
+      this.markets.set(tokenId, {
+        field,
+        // Treat hydration as a fresh UI observation. The first websocket update
+        // will replace this with the real per-market freshness timestamp.
+        lastUpdateMs: nowMs,
+        visibilityInitialized: false,
+      });
+    }
+  }
+
   configureMarkets(event: Event, rawMarkets: readonly unknown[]): void {
     const activeMarkets = event.markets.filter((market) => {
       const tokenId = market.outcomes.yes.tokenId;
