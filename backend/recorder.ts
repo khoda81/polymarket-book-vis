@@ -8,8 +8,8 @@ import type {
 import { HalfBook, type TokenBook } from "../src/lib/orderBook";
 import {
   StaleSignedVolume,
-  type StaleSignedVolumeSegment,
   type StaleSignedVolumeSnapshot,
+  type StaleSignedVolumeSpread,
 } from "../src/lib/staleSignedVolume";
 
 const PORT = Number(process.env.RECORDER_PORT ?? 3001);
@@ -21,17 +21,36 @@ const PERSIST_DEBOUNCE_MS = 250;
 interface PersistedRecorderState {
   version: 1;
   watchedTokenIds: string[];
+  /** First time this recorder installation began watching each token. */
+  recordingSinceMs?: Record<string, number>;
   states: Record<string, StaleSignedVolumeSnapshot>;
+}
+
+interface TransportSegment {
+  lo: number;
+  hi: number;
+  volume: number;
+  /** null is the explicit wire representation of age Infinity / unknown. */
+  ageMs: number | null;
+}
+
+interface TransportState {
+  segments: TransportSegment[];
+  spread?: StaleSignedVolumeSpread;
 }
 
 interface StateResponse {
   serverNowMs: number;
-  states: Record<string, readonly StaleSignedVolumeSegment[]>;
+  connected: boolean;
+  /** Earliest instant for which all requested tokens have recorder coverage. */
+  recordingSinceMs: number | null;
+  states: Record<string, TransportState>;
 }
 
 class AgeRecorder {
   private readonly client = createPublicClient();
   private readonly watched = new Set<string>();
+  private readonly recordingSince = new Map<string, number>();
   private readonly books = new Map<string, TokenBook<string>>();
   private readonly memories = new Map<string, StaleSignedVolume>();
   private subscription: SubscriptionHandle<MarketEvent> | null = null;
@@ -46,9 +65,11 @@ class AgeRecorder {
 
   watch(tokenIds: Iterable<string>): boolean {
     let changed = false;
+    const nowMs = Date.now();
     for (const tokenId of tokenIds) {
       if (!tokenId || this.watched.has(tokenId)) continue;
       this.watched.add(tokenId);
+      this.recordingSince.set(tokenId, nowMs);
       changed = true;
     }
     if (!changed) return false;
@@ -60,21 +81,46 @@ class AgeRecorder {
   }
 
   state(tokenIds: Iterable<string>): StateResponse {
+    const requested = [...tokenIds];
     const nowMs = Date.now();
-    const states: Record<string, readonly StaleSignedVolumeSegment[]> = {};
-    for (const tokenId of tokenIds) {
+    const states: Record<string, TransportState> = {};
+    for (const tokenId of requested) {
       const memory = this.memories.get(tokenId);
-      if (memory) states[tokenId] = memory.segments(nowMs);
+      if (!memory) continue;
+      states[tokenId] = {
+        segments: memory.segments(nowMs).map(({ ageMs, ...segment }) => ({
+          ...segment,
+          ageMs: ageMs === Infinity ? null : ageMs,
+        })),
+        spread: memory.spread(),
+      };
     }
-    return { serverNowMs: nowMs, states };
+
+    const coverageStarts = requested
+      .map((tokenId) => this.recordingSince.get(tokenId))
+      .filter((value): value is number => value !== undefined);
+    const recordingSinceMs =
+      requested.length > 0 && coverageStarts.length === requested.length
+        ? Math.max(...coverageStarts)
+        : null;
+
+    return {
+      serverNowMs: nowMs,
+      connected: this.subscription !== null,
+      recordingSinceMs,
+      states,
+    };
   }
 
   stats() {
+    const starts = [...this.recordingSince.values()];
     return {
       watchedTokens: this.watched.size,
       hydratedTokens: this.memories.size,
       liveBooks: this.books.size,
       connected: this.subscription !== null,
+      oldestRecordingSinceMs: starts.length ? Math.min(...starts) : null,
+      newestRecordingSinceMs: starts.length ? Math.max(...starts) : null,
       statePath: STATE_PATH,
     };
   }
@@ -147,9 +193,11 @@ class AgeRecorder {
           }
         } else if (stream.type === "market_resolved") {
           let changed = false;
-          for (const tokenId of stream.payload.assetIds ?? []) {
-            changed = this.watched.delete(String(tokenId)) || changed;
-            this.books.delete(String(tokenId));
+          for (const tokenIdValue of stream.payload.assetIds ?? []) {
+            const tokenId = String(tokenIdValue);
+            changed = this.watched.delete(tokenId) || changed;
+            this.recordingSince.delete(tokenId);
+            this.books.delete(tokenId);
           }
           if (changed) {
             this.schedulePersist();
@@ -197,6 +245,7 @@ class AgeRecorder {
     const payload: PersistedRecorderState = {
       version: 1,
       watchedTokenIds: [...this.watched],
+      recordingSinceMs: Object.fromEntries(this.recordingSince),
       states,
     };
 
@@ -223,8 +272,18 @@ class AgeRecorder {
       return;
     }
 
-    for (const tokenId of parsed.watchedTokenIds ?? [])
-      if (typeof tokenId === "string" && tokenId) this.watched.add(tokenId);
+    const migrationNowMs = Date.now();
+    for (const tokenId of parsed.watchedTokenIds ?? []) {
+      if (typeof tokenId !== "string" || !tokenId) continue;
+      this.watched.add(tokenId);
+      const storedStart = parsed.recordingSinceMs?.[tokenId];
+      this.recordingSince.set(
+        tokenId,
+        typeof storedStart === "number" && Number.isFinite(storedStart)
+          ? storedStart
+          : migrationNowMs,
+      );
+    }
 
     for (const [tokenId, snapshot] of Object.entries(parsed.states ?? {})) {
       try {
