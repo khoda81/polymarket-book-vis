@@ -15,13 +15,17 @@ export interface SignedVolumeColorScale {
   readonly negativeHue: number;
 }
 
-/** Shared by every chart so equal signed volumes always have equal colors. */
+/**
+ * Shared by every chart so equal signed volumes always have equal colors.
+ * Teal and violet are deliberately valence-neutral: neither reads as
+ * good/bad in the way a red/green diverging scale tends to.
+ */
 export const DEFAULT_SIGNED_VOLUME_COLOR_SCALE: SignedVolumeColorScale = {
   softLimit: 10_000,
-  luminance: 0.68,
-  chroma: 0.16,
-  positiveHue: 145,
-  negativeHue: 25,
+  luminance: 0.7,
+  chroma: 0.15,
+  positiveHue: 190,
+  negativeHue: 305,
 };
 
 /**
@@ -85,13 +89,36 @@ export function signedVolumePosition(
   return 0.5 + 0.5 * signed;
 }
 
+/** Inverse of signedVolumePosition for finite positions inside (0, 1). */
+export function signedVolumeAtPosition(
+  position: number,
+  softLimit: number = DEFAULT_SIGNED_VOLUME_COLOR_SCALE.softLimit,
+): number {
+  if (!(softLimit > 0) || !Number.isFinite(softLimit))
+    throw new RangeError("signed volume soft limit must be finite and positive");
+  const p = Math.max(0, Math.min(1, position));
+  const signed = 2 * p - 1;
+  if (signed === 0) return 0;
+  if (Math.abs(signed) >= 1) return Math.sign(signed) * Infinity;
+  return Math.sign(signed) * softLimit * Math.abs(signed) / (1 - Math.abs(signed));
+}
+
+export function signedVolumeColorAtPosition(
+  position: number,
+  scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+): string {
+  const signed = 2 * Math.max(0, Math.min(1, position)) - 1;
+  const chroma = Math.abs(signed) * scale.chroma;
+  const hue = signed < 0 ? scale.negativeHue : scale.positiveHue;
+  return `oklch(${scale.luminance} ${chroma} ${hue})`;
+}
+
 export function signedVolumeColor(
   volume: number,
   scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
 ): string {
-  const position = signedVolumePosition(volume, scale.softLimit);
-  const signed = 2 * position - 1;
-  const chroma = Math.abs(signed) * scale.chroma;
-  const hue = signed < 0 ? scale.negativeHue : scale.positiveHue;
-  return `oklch(${scale.luminance} ${chroma} ${hue})`;
+  return signedVolumeColorAtPosition(
+    signedVolumePosition(volume, scale.softLimit),
+    scale,
+  );
 }
