@@ -106,7 +106,7 @@ addEventForm.addEventListener("submit", async (submitEvent) => {
 });
 
 function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
-  const rowCapacity = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
+  const halfRowVolume = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
   const scale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
   volumeLegendBar.style.setProperty(
     "--negative-pressure-color",
@@ -117,16 +117,16 @@ function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
     signedVolumeColor(1, scale),
   );
   volumeLegendScale.textContent =
-    `${fmtVol(tuning.volumePerCssPixel)} YES / px · row clips ±${fmtVol(rowCapacity)}`;
+    `${fmtVol(tuning.volumePerCssPixel)} YES / px · half-row ±${fmtVol(halfRowVolume)}`;
 
   const values = volumeLegendTickValues(
-    rowCapacity,
+    halfRowVolume,
     volumeLegendBar.clientWidth,
   );
   volumeLegendTicks.replaceChildren();
   for (const value of values) {
     const tick = document.createElement("span");
-    tick.style.left = `${volumeLegendPosition(value, rowCapacity) * 100}%`;
+    tick.style.left = `${volumeLegendPosition(value, halfRowVolume) * 100}%`;
     tick.textContent = formatVolumeTick(value);
     volumeLegendTicks.appendChild(tick);
   }
