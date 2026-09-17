@@ -143,15 +143,22 @@ async function refreshRecorderStatus(): Promise<void> {
     const response = await fetch("/api/recorder/health", { cache: "no-store" });
     if (!response.ok) throw new Error(`recorder returned ${response.status}`);
     const health = (await response.json()) as RecorderHealth;
-    recorderStatus.dataset.state = health.connected ? "live" : "connecting";
 
-    const history =
+    if (health.watchedTokens === 0) {
+      recorderStatus.dataset.state = "idle";
+      recorderStatusText.textContent = "recorder ready · no markets watched";
+      return;
+    }
+
+    const oldestRecording =
       health.oldestRecordingSinceMs === null
-        ? "no history yet"
-        : `${fmtRelativeTime((Date.now() - health.oldestRecordingSinceMs) / 1000)} history`;
+        ? "history starting"
+        : `${fmtRelativeTime((Date.now() - health.oldestRecordingSinceMs) / 1000)} oldest recording`;
+
+    recorderStatus.dataset.state = health.connected ? "live" : "connecting";
     recorderStatusText.textContent = health.connected
-      ? `recorder · ${history} · ${health.watchedTokens} markets`
-      : `recorder reconnecting · ${history}`;
+      ? `recorder live · ${oldestRecording} · ${health.watchedTokens} markets`
+      : `recorder reconnecting · ${oldestRecording}`;
   } catch {
     recorderStatus.dataset.state = "offline";
     recorderStatusText.textContent = "recorder offline";
