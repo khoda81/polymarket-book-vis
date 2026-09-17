@@ -1,17 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import {
   MIN_VOLUME_LEGEND_TICK_DISTANCE_PX,
+  volumeLegendPosition,
   volumeLegendTickValues,
 } from "./legendTicks";
-import { signedVolumePosition } from "./signedVolume";
 
 describe("volumeLegendTickValues", () => {
   test("keeps selected ticks at least the configured pixel distance apart", () => {
-    const softLimit = 18.25;
+    const maxAbsVolume = 360_000;
     const width = 430;
-    const values = volumeLegendTickValues(softLimit, width);
+    const values = volumeLegendTickValues(maxAbsVolume, width);
     const xs = values.map(
-      (value) => signedVolumePosition(value, softLimit) * width,
+      (value) => volumeLegendPosition(value, maxAbsVolume) * width,
     );
 
     expect(values).toContain(0);
@@ -22,12 +22,20 @@ describe("volumeLegendTickValues", () => {
   });
 
   test("selects symmetric nice-number families around zero", () => {
-    expect(volumeLegendTickValues(18.25, 430)).toEqual([
-      -100, -10, 0, 10, 100,
+    expect(volumeLegendTickValues(360_000, 430)).toEqual([
+      -200_000,
+      -100_000,
+      0,
+      100_000,
+      200_000,
     ]);
   });
 
   test("falls through to lower-priority families when major decades do not fit", () => {
-    expect(volumeLegendTickValues(18.25, 260)).toEqual([-50, 0, 50]);
+    expect(volumeLegendTickValues(360_000, 260)).toEqual([
+      -200_000,
+      0,
+      200_000,
+    ]);
   });
 });
