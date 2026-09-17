@@ -1,5 +1,6 @@
 import {
   diffusionSigmaCss,
+  pressureBloomEnergy,
   pressureInkProfile,
 } from "./pressureInk";
 import type { SignedVolumeColorScale } from "./signedVolume";
@@ -8,6 +9,18 @@ import type { StaleSignedVolumeSegment } from "./staleSignedVolume";
 const MAX_SIGMA_PER_PASS_DEVICE_PX = 4;
 const MAX_BLUR_PASSES = 8;
 const MAX_SHADER_RADIUS = 16;
+const MAX_BLOOM_RADIUS = 32;
+
+// Bloom is deliberately a presentation enhancement: the base pressure field
+// and Canvas2D fallback remain unchanged.
+const BLOOM_EXTRA_SIGMA_CSS_PX = 3;
+const BLOOM_STRENGTH = 0.22;
+
+// B/A store bloom energy with q = E / (E + scale). The shader decodes q back
+// to linear energy before every convolution, so the non-linear byte encoding
+// never changes the diffusion math. Reserving the top byte avoids q == 1.
+const BLOOM_ENCODING_SCALE = 1;
+const BLOOM_MAX_ENCODED_BYTE = 254;
 
 export interface WebGLPressureRow {
   readonly tokenId: string;
@@ -27,7 +40,7 @@ export interface WebGLPressureRenderInput {
   readonly dpr: number;
   readonly nowMs: number;
   readonly ageScaleSeconds: number;
-  /** Fully opaque CSS-pixel-equivalent represented by this many YES. */
+  /** Small-signal YES-per-CSS-pixel scale for the soft area renderer. */
   readonly volumePerCssPixel: number;
   readonly colorScale: SignedVolumeColorScale;
   readonly requestRedraw: () => void;
@@ -57,8 +70,12 @@ interface GlResources {
   readonly blurRadius: WebGLUniformLocation;
   readonly blurRowCount: WebGLUniformLocation;
   readonly presentTexture: WebGLUniformLocation;
+  readonly presentSize: WebGLUniformLocation;
   readonly presentPositive: WebGLUniformLocation;
   readonly presentNegative: WebGLUniformLocation;
+  readonly presentBloomSigma: WebGLUniformLocation;
+  readonly presentBloomRadius: WebGLUniformLocation;
+  readonly presentBloomStrength: WebGLUniformLocation;
 }
 
 /**
@@ -68,9 +85,10 @@ interface GlResources {
  * are created lazily so importing this module is harmless in tests/SSR, and
  * any WebGL failure can fall back to the Canvas2D reference renderer.
  *
- * The texture stores fractional vertical occupancy, not normalized volume.
- * One opaque CSS-pixel-equivalent represents `volumePerCssPixel` YES; age then
- * diffuses that conserved ink vertically until row clipping dissipates it.
+ * R/G store positive/negative soft-area occupancy. B/A carry positive/negative
+ * excess-pressure bloom energy. Age diffusion evolves both fields in linear
+ * space; presentation gives bloom one extra vertical Gaussian before composing
+ * it over the known-good base rendering.
  */
 class SharedWebGLPressureRenderer {
   private readonly states = new Map<object, PressureState>();
@@ -137,7 +155,7 @@ class SharedWebGLPressureRenderer {
         }
       }
 
-      this.present(resources, state, input.colorScale);
+      this.present(resources, state, input.colorScale, input.dpr);
       const error = gl.getError();
       if (error !== gl.NO_ERROR)
         throw new Error(`WebGL error 0x${error.toString(16)}`);
@@ -218,8 +236,12 @@ class SharedWebGLPressureRenderer {
         blurRadius: requiredUniform(gl, blurProgram, "u_radius"),
         blurRowCount: requiredUniform(gl, blurProgram, "u_row_count"),
         presentTexture: requiredUniform(gl, presentProgram, "u_texture"),
+        presentSize: requiredUniform(gl, presentProgram, "u_size"),
         presentPositive: requiredUniform(gl, presentProgram, "u_positive"),
         presentNegative: requiredUniform(gl, presentProgram, "u_negative"),
+        presentBloomSigma: requiredUniform(gl, presentProgram, "u_bloom_sigma"),
+        presentBloomRadius: requiredUniform(gl, presentProgram, "u_bloom_radius"),
+        presentBloomStrength: requiredUniform(gl, presentProgram, "u_bloom_strength"),
       };
 
       // Tiny framebuffer self-test: fail early rather than ever blanking a card.
@@ -391,6 +413,7 @@ class SharedWebGLPressureRenderer {
     resources: GlResources,
     state: PressureState,
     scale: SignedVolumeColorScale,
+    dpr: number,
   ): void {
     const { gl } = resources;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -402,6 +425,15 @@ class SharedWebGLPressureRenderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, state.textures[state.front]);
     gl.uniform1i(resources.presentTexture, 0);
+    gl.uniform2i(resources.presentSize, state.width, state.height);
+
+    const bloomSigma = BLOOM_EXTRA_SIGMA_CSS_PX * dpr;
+    gl.uniform1f(resources.presentBloomSigma, bloomSigma);
+    gl.uniform1i(
+      resources.presentBloomRadius,
+      Math.min(MAX_BLOOM_RADIUS, Math.max(1, Math.ceil(3 * bloomSigma))),
+    );
+    gl.uniform1f(resources.presentBloomStrength, BLOOM_STRENGTH);
 
     const positive = cssColorToRgb(
       `oklch(${scale.luminance} ${scale.chroma} ${scale.positiveHue})`,
@@ -459,9 +491,11 @@ function buildPressureRowPixels(
   volumePerCssPixel: number,
 ): Uint8Array {
   const pixels = new Uint8Array(width * height * 4);
+  const rowHeightCss = height / dpr;
 
   for (const segment of segments) {
     if (segment.ageMs === Infinity || segment.volume === 0) continue;
+
     const profile = pressureInkProfile(
       segment.volume,
       segment.ageMs,
@@ -470,20 +504,39 @@ function buildPressureRowPixels(
       dpr,
       height,
     );
+    const bloomEnergy = pressureBloomEnergy(
+      segment.volume,
+      volumePerCssPixel,
+      rowHeightCss,
+    );
     const x0 = clampInt(Math.round(clamp01(segment.lo) * width), 0, width);
     const x1 = clampInt(Math.round(clamp01(segment.hi) * width), 0, width);
     if (!(x1 > x0)) continue;
-    const channel = segment.volume > 0 ? 0 : 1;
+
+    const baseChannel = segment.volume > 0 ? 0 : 1;
+    const bloomChannel = segment.volume > 0 ? 2 : 3;
 
     for (let y = 0; y < height; y++) {
-      const value = Math.round(255 * profile[y]!);
-      if (value <= 0) continue;
-      let offset = (y * width + x0) * 4 + channel;
-      for (let x = x0; x < x1; x++, offset += 4)
-        pixels[offset] = value;
+      const occupancy = profile[y]!;
+      if (!(occupancy > 0)) continue;
+
+      const baseByte = Math.round(255 * occupancy);
+      const bloomByte = encodeBloomEnergy(occupancy * bloomEnergy);
+      let offset = (y * width + x0) * 4;
+      for (let x = x0; x < x1; x++, offset += 4) {
+        pixels[offset + baseChannel] = baseByte;
+        pixels[offset + bloomChannel] = bloomByte;
+      }
     }
   }
   return pixels;
+}
+
+function encodeBloomEnergy(energy: number): number {
+  if (!(energy > 0)) return 0;
+  if (!Number.isFinite(energy)) return BLOOM_MAX_ENCODED_BYTE;
+  const encoded = energy / (energy + BLOOM_ENCODING_SCALE);
+  return Math.min(BLOOM_MAX_ENCODED_BYTE, Math.round(255 * encoded));
 }
 
 function uploadWholeTexture(
@@ -637,6 +690,19 @@ void main() {
   gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
 }`;
 
+const BLOOM_CODEC_GLSL = `
+const float BLOOM_ENCODING_SCALE = ${BLOOM_ENCODING_SCALE.toFixed(1)};
+const float BLOOM_MAX_ENCODED = ${BLOOM_MAX_ENCODED_BYTE.toFixed(1)} / 255.0;
+vec2 decodeBloom(vec2 encoded) {
+  vec2 q = min(encoded, vec2(BLOOM_MAX_ENCODED));
+  return BLOOM_ENCODING_SCALE * q / max(vec2(1e-6), vec2(1.0) - q);
+}
+vec2 encodeBloom(vec2 energy) {
+  vec2 q = energy / (energy + vec2(BLOOM_ENCODING_SCALE));
+  return min(q, vec2(BLOOM_MAX_ENCODED));
+}
+`;
+
 const BLUR_SHADER = `#version 300 es
 precision highp float;
 precision highp int;
@@ -646,13 +712,15 @@ uniform float u_sigma;
 uniform int u_radius;
 uniform int u_row_count;
 out vec4 outColor;
+${BLOOM_CODEC_GLSL}
 void main() {
   ivec2 pixel = ivec2(gl_FragCoord.xy);
   float rowHeight = float(u_size.y) / float(u_row_count);
   float row = floor(gl_FragCoord.y / rowHeight);
   float rowBottom = row * rowHeight;
   float rowTop = rowBottom + rowHeight;
-  vec2 sum = vec2(0.0);
+  vec2 pressureSum = vec2(0.0);
+  vec2 bloomSum = vec2(0.0);
   float norm = 0.0;
 
   for (int i = -${MAX_SHADER_RADIUS}; i <= ${MAX_SHADER_RADIUS}; ++i) {
@@ -664,27 +732,59 @@ void main() {
     if (sampleY < rowBottom || sampleY >= rowTop) continue;
     int sy = pixel.y + i;
     if (sy < 0 || sy >= u_size.y) continue;
-    sum += texelFetch(u_texture, ivec2(pixel.x, sy), 0).rg * weight;
+    vec4 sampleValue = texelFetch(u_texture, ivec2(pixel.x, sy), 0);
+    pressureSum += sampleValue.rg * weight;
+    bloomSum += decodeBloom(sampleValue.ba) * weight;
   }
 
-  outColor = vec4(norm > 0.0 ? sum / norm : vec2(0.0), 0.0, 1.0);
+  if (norm <= 0.0) {
+    outColor = vec4(0.0);
+    return;
+  }
+  outColor = vec4(pressureSum / norm, encodeBloom(bloomSum / norm));
 }`;
 
 const PRESENT_SHADER = `#version 300 es
 precision highp float;
+precision highp int;
 uniform sampler2D u_texture;
+uniform ivec2 u_size;
 uniform vec3 u_positive;
 uniform vec3 u_negative;
+uniform float u_bloom_sigma;
+uniform int u_bloom_radius;
+uniform float u_bloom_strength;
 out vec4 outColor;
+${BLOOM_CODEC_GLSL}
 void main() {
   ivec2 pixel = ivec2(gl_FragCoord.xy);
-  vec2 pressure = texelFetch(u_texture, pixel, 0).rg;
-  float mass = pressure.r + pressure.g;
+  vec4 center = texelFetch(u_texture, pixel, 0);
+  vec2 pressure = center.rg;
+
+  vec2 bloomSum = vec2(0.0);
+  float bloomNorm = 0.0;
+  for (int i = -${MAX_BLOOM_RADIUS}; i <= ${MAX_BLOOM_RADIUS}; ++i) {
+    if (abs(i) > u_bloom_radius) continue;
+    float offset = float(i);
+    float weight = exp(-0.5 * offset * offset / (u_bloom_sigma * u_bloom_sigma));
+    bloomNorm += weight;
+    int sy = pixel.y + i;
+    if (sy < 0 || sy >= u_size.y) continue;
+    vec4 sampleValue = texelFetch(u_texture, ivec2(pixel.x, sy), 0);
+    bloomSum += decodeBloom(sampleValue.ba) * weight;
+  }
+
+  vec2 bloom = bloomNorm > 0.0 ? bloomSum / bloomNorm : vec2(0.0);
+  vec2 visual = pressure + bloom * u_bloom_strength;
+  float mass = visual.r + visual.g;
   if (mass <= 0.00001) {
     outColor = vec4(0.0);
     return;
   }
+
+  // The display surface is SDR, so local intensity ultimately clips at one,
+  // but unbounded bloom energy still communicates itself by widening the halo.
   float alpha = clamp(mass, 0.0, 1.0);
-  vec3 color = (pressure.r * u_positive + pressure.g * u_negative) / mass;
+  vec3 color = (visual.r * u_positive + visual.g * u_negative) / mass;
   outColor = vec4(color, alpha);
 }`;
