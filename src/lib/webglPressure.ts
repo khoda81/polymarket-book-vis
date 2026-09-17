@@ -1,8 +1,10 @@
+import {
+  diffusionSigmaCss,
+  pressureInkProfile,
+} from "./pressureInk";
 import type { SignedVolumeColorScale } from "./signedVolume";
 import type { StaleSignedVolumeSegment } from "./staleSignedVolume";
 
-const BASE_SIGMA_CSS_PX = 0.85;
-const VARIANCE_PER_TIME_SCALE = 8;
 const MAX_SIGMA_PER_PASS_DEVICE_PX = 4;
 const MAX_BLUR_PASSES = 8;
 const MAX_SHADER_RADIUS = 16;
@@ -25,6 +27,8 @@ export interface WebGLPressureRenderInput {
   readonly dpr: number;
   readonly nowMs: number;
   readonly ageScaleSeconds: number;
+  /** Fully opaque CSS-pixel-equivalent represented by this many YES. */
+  readonly volumePerCssPixel: number;
   readonly colorScale: SignedVolumeColorScale;
   readonly requestRedraw: () => void;
 }
@@ -36,7 +40,7 @@ interface PressureState {
   height: number;
   layoutSignature: string;
   ageScaleSeconds: number;
-  softLimit: number;
+  volumePerCssPixel: number;
   lastTimeMs: number;
   generation: number;
   requestRedraw: () => void;
@@ -63,6 +67,10 @@ interface GlResources {
  * CPU/backend sample-and-hold state remains authoritative. Browser resources
  * are created lazily so importing this module is harmless in tests/SSR, and
  * any WebGL failure can fall back to the Canvas2D reference renderer.
+ *
+ * The texture stores fractional vertical occupancy, not normalized volume.
+ * One opaque CSS-pixel-equivalent represents `volumePerCssPixel` YES; age then
+ * diffuses that conserved ink vertically until row clipping dissipates it.
  */
 class SharedWebGLPressureRenderer {
   private readonly states = new Map<object, PressureState>();
@@ -77,7 +85,9 @@ class SharedWebGLPressureRenderer {
       input.rows.length === 0 ||
       !(input.widthCss > 0) ||
       !(input.heightCss > 0) ||
-      !(input.dpr > 0)
+      !(input.dpr > 0) ||
+      !(input.volumePerCssPixel > 0) ||
+      !Number.isFinite(input.volumePerCssPixel)
     )
       return null;
 
@@ -101,7 +111,7 @@ class SharedWebGLPressureRenderer {
         previous.height !== height ||
         previous.layoutSignature !== layoutSignature ||
         previous.ageScaleSeconds !== input.ageScaleSeconds ||
-        previous.softLimit !== input.colorScale.softLimit;
+        previous.volumePerCssPixel !== input.volumePerCssPixel;
 
       let state: PressureState;
       if (mustRebuild) {
@@ -115,11 +125,7 @@ class SharedWebGLPressureRenderer {
 
         const dtMs = Math.max(0, input.nowMs - state.lastTimeMs);
         const sigmaDevicePx =
-          Math.sqrt(
-            VARIANCE_PER_TIME_SCALE *
-              (dtMs / 1000) /
-              input.ageScaleSeconds,
-          ) * input.dpr;
+          diffusionSigmaCss(dtMs, input.ageScaleSeconds) * input.dpr;
 
         if (!this.advance(resources, state, sigmaDevicePx)) {
           this.rebuildAll(gl, state, input);
@@ -254,7 +260,7 @@ class SharedWebGLPressureRenderer {
       height,
       layoutSignature,
       ageScaleSeconds: input.ageScaleSeconds,
-      softLimit: input.colorScale.softLimit,
+      volumePerCssPixel: input.volumePerCssPixel,
       lastTimeMs: input.nowMs,
       generation: this.generation,
       requestRedraw: input.requestRedraw,
@@ -272,7 +278,7 @@ class SharedWebGLPressureRenderer {
       state.height,
       input.dpr,
       input.ageScaleSeconds,
-      input.colorScale.softLimit,
+      input.volumePerCssPixel,
     );
     uploadWholeTexture(gl, state.textures[0], state.width, state.height, pixels);
     uploadWholeTexture(
@@ -285,7 +291,7 @@ class SharedWebGLPressureRenderer {
     state.front = 0;
     state.lastTimeMs = input.nowMs;
     state.ageScaleSeconds = input.ageScaleSeconds;
-    state.softLimit = input.colorScale.softLimit;
+    state.volumePerCssPixel = input.volumePerCssPixel;
     state.generation = this.generation;
   }
 
@@ -307,7 +313,7 @@ class SharedWebGLPressureRenderer {
         rowHeight,
         input.dpr,
         input.ageScaleSeconds,
-        input.colorScale.softLimit,
+        input.volumePerCssPixel,
       );
       gl.texSubImage2D(
         gl.TEXTURE_2D,
@@ -426,7 +432,7 @@ function buildPressurePixels(
   height: number,
   dpr: number,
   ageScaleSeconds: number,
-  softLimit: number,
+  volumePerCssPixel: number,
 ): Uint8Array {
   const pixels = new Uint8Array(width * height * 4);
   for (const [rowIndex, row] of rows.entries()) {
@@ -437,7 +443,7 @@ function buildPressurePixels(
       bounds.top - bounds.bottom,
       dpr,
       ageScaleSeconds,
-      softLimit,
+      volumePerCssPixel,
     );
     pixels.set(rowPixels, bounds.bottom * width * 4);
   }
@@ -450,39 +456,31 @@ function buildPressureRowPixels(
   height: number,
   dpr: number,
   ageScaleSeconds: number,
-  softLimit: number,
+  volumePerCssPixel: number,
 ): Uint8Array {
   const pixels = new Uint8Array(width * height * 4);
-  const centerY = Math.floor((height - 1) / 2);
 
   for (const segment of segments) {
     if (segment.ageMs === Infinity || segment.volume === 0) continue;
-    const intensity = signedMagnitude(segment.volume, softLimit);
-    if (!(intensity > 0)) continue;
-
-    const sigmaCss = Math.sqrt(
-      BASE_SIGMA_CSS_PX * BASE_SIGMA_CSS_PX +
-        VARIANCE_PER_TIME_SCALE *
-          (segment.ageMs / 1000) /
-          ageScaleSeconds,
+    const profile = pressureInkProfile(
+      segment.volume,
+      segment.ageMs,
+      volumePerCssPixel,
+      ageScaleSeconds,
+      dpr,
+      height,
     );
-    const sigma = Math.max(0.01, sigmaCss * dpr);
-    const peak = Math.min(1, (BASE_SIGMA_CSS_PX * dpr) / sigma);
-    const radius = Math.ceil(3 * sigma);
     const x0 = clampInt(Math.round(clamp01(segment.lo) * width), 0, width);
     const x1 = clampInt(Math.round(clamp01(segment.hi) * width), 0, width);
+    if (!(x1 > x0)) continue;
     const channel = segment.volume > 0 ? 0 : 1;
 
-    for (let dy = -radius; dy <= radius; dy++) {
-      const y = centerY + dy;
-      if (y < 0 || y >= height) continue;
-      const value = Math.round(
-        255 * intensity * peak * Math.exp(-0.5 * (dy / sigma) ** 2),
-      );
+    for (let y = 0; y < height; y++) {
+      const value = Math.round(255 * profile[y]!);
       if (value <= 0) continue;
       let offset = (y * width + x0) * 4 + channel;
       for (let x = x0; x < x1; x++, offset += 4)
-        pixels[offset] = Math.min(255, pixels[offset] + value);
+        pixels[offset] = value;
     }
   }
   return pixels;
@@ -517,12 +515,6 @@ function deviceRowBounds(
   const topFromTop = Math.round((rowIndex / rowCount) * height);
   const bottomFromTop = Math.round(((rowIndex + 1) / rowCount) * height);
   return { bottom: height - bottomFromTop, top: height - topFromTop };
-}
-
-function signedMagnitude(volume: number, softLimit: number): number {
-  if (volume === 0 || Number.isNaN(volume)) return 0;
-  if (!Number.isFinite(volume)) return 1;
-  return Math.abs(volume) / (Math.abs(volume) + softLimit);
 }
 
 function createTexture(
