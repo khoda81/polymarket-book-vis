@@ -1,16 +1,19 @@
 import "@/styles/global.css";
 import {
+  AGE_ROW_BAND_PX,
   getAgeStripTuning,
   subscribeAgeStripTuning,
   type AgeStripTuning,
 } from "./ageStrips";
 import { PolymarketCPV } from "./component";
-import { volumeLegendTickValues } from "./lib/legendTicks";
+import {
+  volumeLegendPosition,
+  volumeLegendTickValues,
+} from "./lib/legendTicks";
 import { fmtRelativeTime, fmtVol } from "./lib/math";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  signedVolumeColorAtPosition,
-  signedVolumePosition,
+  signedVolumeColor,
 } from "./lib/signedVolume";
 import { createPublicClient, Event } from "@polymarket/client";
 
@@ -103,25 +106,27 @@ addEventForm.addEventListener("submit", async (submitEvent) => {
 });
 
 function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
-  const scale = {
-    ...DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-    softLimit: tuning.volumeSoftLimit,
-  };
-  const stops = Array.from({ length: 33 }, (_, index) => {
-    const position = index / 32;
-    return `${signedVolumeColorAtPosition(position, scale)} ${position * 100}%`;
-  });
-  volumeLegendBar.style.background = `linear-gradient(90deg, ${stops.join(", ")})`;
-  volumeLegendScale.textContent = `half-saturation ±${fmtVol(tuning.volumeSoftLimit)} YES`;
+  const rowCapacity = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
+  const scale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
+  volumeLegendBar.style.setProperty(
+    "--negative-pressure-color",
+    signedVolumeColor(-1, scale),
+  );
+  volumeLegendBar.style.setProperty(
+    "--positive-pressure-color",
+    signedVolumeColor(1, scale),
+  );
+  volumeLegendScale.textContent =
+    `${fmtVol(tuning.volumePerCssPixel)} YES / px · row clips ±${fmtVol(rowCapacity)}`;
 
   const values = volumeLegendTickValues(
-    tuning.volumeSoftLimit,
+    rowCapacity,
     volumeLegendBar.clientWidth,
   );
   volumeLegendTicks.replaceChildren();
   for (const value of values) {
     const tick = document.createElement("span");
-    tick.style.left = `${signedVolumePosition(value, tuning.volumeSoftLimit) * 100}%`;
+    tick.style.left = `${volumeLegendPosition(value, rowCapacity) * 100}%`;
     tick.textContent = formatVolumeTick(value);
     volumeLegendTicks.appendChild(tick);
   }
