@@ -40,6 +40,33 @@ export function displacedPressureSegments(
   return result;
 }
 
+/**
+ * Reproject a normalized pressure radius between two share-reserve scales.
+ *
+ * The sharp mapping is h = Q / (Q + C). Given a radius h_new in the new
+ * coordinate system, this returns the radius h_old that represents the same
+ * underlying share threshold Q in the old coordinate system:
+ *
+ *   Q = C_new h_new / (1 - h_new)
+ *   h_old = Q / (Q + C_old)
+ *
+ * This lets the GPU vertically warp already-diffused resin when Ctrl-scroll
+ * changes C, instead of leaving history stranded at its previous thickness.
+ */
+export function reprojectPressureFraction(
+  newFraction: number,
+  oldReserve: number,
+  newReserve: number,
+): number {
+  if (!(oldReserve > 0) || !(newReserve > 0))
+    throw new RangeError("share reserves must be positive");
+  if (!(newFraction > 0)) return 0;
+  if (newFraction >= 1) return 1;
+
+  const numerator = newReserve * newFraction;
+  return numerator / (numerator + oldReserve * (1 - newFraction));
+}
+
 function pushMerged(
   result: SignedVolumeSegment[],
   segment: SignedVolumeSegment,
