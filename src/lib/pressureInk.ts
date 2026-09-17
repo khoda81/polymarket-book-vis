@@ -2,37 +2,62 @@ export const DEFAULT_VOLUME_PER_CSS_PIXEL = 10_000;
 export const DIFFUSION_VARIANCE_PER_TIME_SCALE = 8;
 
 /**
- * Soft-saturating fraction of one row occupied by fresh pressure.
+ * Kelly-normalized conviction required to sweep one side of the book.
  *
- *   0 volume        -> 0
- *   softLimit       -> 1/2 row
- *   infinite volume -> full row
+ * `bankroll` is the bettor's starting capital. Positive pressure is resting
+ * bid support: sweeping it means selling YES into bids, equivalently buying NO
+ * at marginal price `1 - hi`. Negative pressure is resting ask resistance:
+ * sweeping it means buying YES at marginal price `lo`.
+ *
+ * The returned fraction is the inferred belief displacement toward the
+ * corresponding extreme, normalized to [0,1]:
+ *
+ *   bids: (p - q) / p
+ *   asks: (q - p) / (1 - p)
+ *
+ * where q is the belief at which consuming the cumulative position is Kelly
+ * optimal. Once the sweep itself exhausts the bankroll, the required
+ * conviction is effectively all-in and the fraction saturates at 1.
  */
-export function pressureInkAreaFraction(volume: number, softLimit: number): number {
-  validatePositiveFinite(softLimit, "volume soft limit");
-  if (volume === 0 || Number.isNaN(volume)) return 0;
+export function kellyPressureAreaFraction(
+  volume: number,
+  sweepCost: number | null,
+  lo: number,
+  hi: number,
+  bankroll: number,
+): number {
+  validatePositiveFinite(bankroll, "Kelly bankroll");
+  if (volume === 0 || Number.isNaN(volume) || sweepCost === null) return 0;
+  if (!(sweepCost >= 0) || !Number.isFinite(sweepCost)) return 0;
   if (!Number.isFinite(volume)) return 1;
-  const magnitude = Math.abs(volume);
-  return magnitude / (magnitude + softLimit);
+  if (sweepCost >= bankroll) return 1;
+
+  const shares = Math.abs(volume);
+  const marginalOutcomePrice =
+    volume > 0 ? 1 - clamp01(hi) : clamp01(lo);
+  const convictionCapital = marginalOutcomePrice * shares;
+  if (!(convictionCapital > 0)) return 0;
+
+  const remainingCapital = bankroll - sweepCost;
+  return clamp01(
+    convictionCapital / (remainingCapital + convictionCapital),
+  );
 }
 
-/**
- * Convert signed volume into fresh vertical ink thickness in CSS pixels.
- *
- * `volumePerCssPixel` preserves the intuitive small-signal scale of the linear
- * renderer. The corresponding soft limit is the volume that would have filled
- * one complete row linearly: `rowHeightCss * volumePerCssPixel`. At that volume
- * the saturating renderer occupies half the row rather than clipping.
- */
+/** Convert a Kelly pressure sample into fresh vertical ink thickness. */
 export function pressureInkThicknessCss(
   volume: number,
-  volumePerCssPixel: number = DEFAULT_VOLUME_PER_CSS_PIXEL,
+  sweepCost: number | null,
+  lo: number,
+  hi: number,
+  bankroll: number,
   rowHeightCss: number,
 ): number {
-  validatePositiveFinite(volumePerCssPixel, "volume per pixel");
   validatePositiveFinite(rowHeightCss, "row height");
-  const softLimit = volumePerCssPixel * rowHeightCss;
-  return rowHeightCss * pressureInkAreaFraction(volume, softLimit);
+  return (
+    rowHeightCss *
+    kellyPressureAreaFraction(volume, sweepCost, lo, hi, bankroll)
+  );
 }
 
 /** Standard deviation accumulated by diffusion over `ageMs`. */
@@ -53,20 +78,24 @@ export function diffusionSigmaCss(
 }
 
 /**
- * Rasterize one pressure value into a vertically diffused row profile.
+ * Rasterize one pressure sample into a vertically diffused row profile.
  *
- * Fresh pressure is a centered top-hat whose row-area fraction is
- * `abs(volume) / (abs(volume) + rowHeight * volumePerCssPixel)`. This agrees
- * with the previous linear volume-per-pixel mapping near zero but saturates
- * smoothly instead of hard-clipping. Fractional physical-pixel coverage
- * naturally represents subpixel area. For finite age the top-hat is convolved
- * with the heat kernel, so diffusion redistributes the same ink mass until row
- * clipping lets old haze dissipate out of view.
+ * Fresh line area is not an arbitrary function of volume: it is the normalized
+ * Kelly conviction required for a bankroll to sweep that cumulative resting
+ * liquidity. Age then evolves only the geometry, by convolving the fresh
+ * top-hat with the heat kernel.
+ *
+ * Each output sample is the *integral over a physical pixel*, not the value at
+ * the pixel center. That conserves subpixel ink continuously as sigma tends to
+ * zero and avoids the old one-pixel brightening discontinuity.
  */
 export function pressureInkProfile(
   volume: number,
+  sweepCost: number | null,
+  lo: number,
+  hi: number,
   ageMs: number,
-  volumePerCssPixel: number,
+  bankroll: number,
   timeScaleSeconds: number,
   dpr: number,
   deviceHeight: number,
@@ -81,7 +110,10 @@ export function pressureInkProfile(
   const rowHeightCss = deviceHeight / dpr;
   const thicknessCss = pressureInkThicknessCss(
     volume,
-    volumePerCssPixel,
+    sweepCost,
+    lo,
+    hi,
+    bankroll,
     rowHeightCss,
   );
   const thicknessDevice = Math.min(deviceHeight, thicknessCss * dpr);
@@ -89,19 +121,46 @@ export function pressureInkProfile(
 
   const sigmaDevice = diffusionSigmaCss(ageMs, timeScaleSeconds) * dpr;
   const center = profileCenterDevice(deviceHeight);
-  if (!(sigmaDevice >= 0.05)) {
+  if (!(sigmaDevice >= 1e-6)) {
     rasterFreshTopHat(profile, thicknessDevice, center);
     return profile;
   }
 
   const halfThickness = thicknessDevice / 2;
   for (let y = 0; y < deviceHeight; y++) {
-    const dy = y + 0.5 - center;
-    const upper = normalCdf((dy + halfThickness) / sigmaDevice);
-    const lower = normalCdf((dy - halfThickness) / sigmaDevice);
-    profile[y] = clamp01(upper - lower);
+    const pixelLo = y - center;
+    const pixelHi = y + 1 - center;
+    profile[y] = clamp01(
+      integratedBlurredTopHat(
+        pixelLo,
+        pixelHi,
+        halfThickness,
+        sigmaDevice,
+      ),
+    );
   }
   return profile;
+}
+
+function integratedBlurredTopHat(
+  pixelLo: number,
+  pixelHi: number,
+  halfThickness: number,
+  sigma: number,
+): number {
+  const primitive = (x: number) => normalCdfPrimitive(x, sigma);
+  return (
+    primitive(pixelHi + halfThickness) -
+    primitive(pixelLo + halfThickness) -
+    primitive(pixelHi - halfThickness) +
+    primitive(pixelLo - halfThickness)
+  );
+}
+
+/** Antiderivative of Φ(x / sigma). */
+function normalCdfPrimitive(x: number, sigma: number): number {
+  const z = x / sigma;
+  return x * normalCdf(z) + sigma * normalPdf(z);
 }
 
 function rasterFreshTopHat(
@@ -125,6 +184,10 @@ function profileCenterDevice(deviceHeight: number): number {
 
 function normalCdf(value: number): number {
   return 0.5 * (1 + erf(value / Math.SQRT2));
+}
+
+function normalPdf(value: number): number {
+  return Math.exp(-0.5 * value * value) / Math.sqrt(2 * Math.PI);
 }
 
 // Abramowitz-Stegun 7.1.26; comfortably more accurate than an 8-bit target.
