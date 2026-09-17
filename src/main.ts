@@ -11,10 +11,6 @@ import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
 } from "./lib/signedVolume";
-import {
-  getGlobalShareReferenceShares,
-  subscribeGlobalShareReferenceShares,
-} from "./lib/webglPressure";
 import { createPublicClient, Event } from "@polymarket/client";
 
 const MIN_SHARE_LEGEND_TICK_DISTANCE_PX = 48;
@@ -110,19 +106,15 @@ addEventForm.addEventListener("submit", async (submitEvent) => {
 });
 
 /**
- * Share pressure is linear in cumulative shares:
+ * Share pressure uses the local soft ratio
  *
- *   h(p) = |Q(p)| / D,   D = V + C
+ *   h(Q) = |Q| / (|Q| + C)
  *
- * where V is the largest cumulative share depth currently represented by the
- * shared renderer and C is the user-controlled share reserve. Because D is one
- * constant across price and across charts, signed legend ticks can be literal
- * shares and normalized shape area retains its share×price interpretation.
+ * where C is the share reserve. Literal share ticks are placed through the
+ * same transform, so Ctrl-scroll zooms both the rendered bars and legend.
  */
 function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
   const reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
-  const referenceShares = getGlobalShareReferenceShares();
-  const scaleShares = referenceShares + reserveShares;
   const scale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
 
   volumeLegendBar.style.setProperty(
@@ -134,47 +126,51 @@ function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
     signedVolumeColor(1, scale),
   );
   volumeLegendScale.textContent =
-    `reserve ${fmtVol(reserveShares)} shares · scale ${fmtVol(scaleShares)} shares`;
+    `reserve ${fmtVol(reserveShares)} shares · Q=C → 50% row`;
 
   const values = shareLegendTickValues(
-    referenceShares,
-    scaleShares,
+    reserveShares,
     volumeLegendBar.clientWidth,
   );
   volumeLegendTicks.replaceChildren();
   for (const value of values) {
     const tick = document.createElement("span");
-    tick.style.left = `${shareLegendPosition(value, scaleShares) * 100}%`;
+    tick.style.left = `${shareLegendPosition(value, reserveShares) * 100}%`;
     tick.textContent = formatShareTick(value);
     volumeLegendTicks.appendChild(tick);
   }
 }
 
-function shareLegendPosition(value: number, scaleShares: number): number {
-  if (!(scaleShares > 0) || !Number.isFinite(scaleShares)) return 0.5;
-  const signed = Math.max(-1, Math.min(1, value / scaleShares));
+function shareLegendPosition(value: number, reserveShares: number): number {
+  if (!(reserveShares > 0) || !Number.isFinite(reserveShares)) return 0.5;
+  if (Number.isNaN(value) || value === 0) return 0.5;
+  const signed = Number.isFinite(value)
+    ? value / (Math.abs(value) + reserveShares)
+    : Math.sign(value);
   return 0.5 + 0.5 * signed;
 }
 
-/** Select symmetric, literal-share ticks using the old QBar-style priorities. */
+/** Select symmetric literal-share ticks on the soft share scale. */
 function shareLegendTickValues(
-  referenceShares: number,
-  scaleShares: number,
+  reserveShares: number,
   widthPx: number,
 ): number[] {
-  if (
-    !(referenceShares > 0) ||
-    !Number.isFinite(referenceShares) ||
-    !(scaleShares > 0) ||
-    !Number.isFinite(scaleShares) ||
-    !(widthPx > 0)
-  )
-    return [0];
+  if (!(reserveShares > 0) || !Number.isFinite(reserveShares)) return [0];
+  if (!(widthPx > 0) || !Number.isFinite(widthPx)) return [0];
 
+  const minDistance = MIN_SHARE_LEGEND_TICK_DISTANCE_PX;
+  const edgePadding = minDistance / 2;
   const selected: { value: number; x: number }[] = [
     { value: 0, x: widthPx / 2 },
   ];
-  const baseExponent = Math.floor(Math.log10(referenceShares));
+
+  const maxSigned = Math.max(
+    0,
+    Math.min(1 - Number.EPSILON, 1 - (2 * edgePadding) / widthPx),
+  );
+  if (!(maxSigned > 0)) return [0];
+  const maxMagnitude = reserveShares * maxSigned / (1 - maxSigned);
+  const baseExponent = Math.floor(Math.log10(maxMagnitude));
 
   for (const multiplier of NICE_TICK_FAMILIES) {
     const magnitudes = Array.from(
@@ -182,25 +178,25 @@ function shareLegendTickValues(
       (_, index) =>
         multiplier * 10 ** (baseExponent - TICK_EXPONENT_RADIUS + index),
     )
-      .filter((value) => value > 0 && value <= referenceShares)
+      .filter((value) => value > 0 && value <= maxMagnitude)
       .sort((a, b) => b - a);
 
     for (const magnitude of magnitudes) {
       const pair = [-magnitude, magnitude].map((value) => ({
         value,
-        x: shareLegendPosition(value, scaleShares) * widthPx,
+        x: shareLegendPosition(value, reserveShares) * widthPx,
       }));
+
       if (
-        Math.abs(pair[1]!.x - pair[0]!.x) <
-        MIN_SHARE_LEGEND_TICK_DISTANCE_PX
+        pair.some(
+          ({ x }) => x < edgePadding || x > widthPx - edgePadding,
+        ) ||
+        Math.abs(pair[1]!.x - pair[0]!.x) < minDistance
       )
         continue;
 
       const fits = pair.every(({ x }) =>
-        selected.every(
-          (tick) =>
-            Math.abs(x - tick.x) >= MIN_SHARE_LEGEND_TICK_DISTANCE_PX,
-        ),
+        selected.every((tick) => Math.abs(x - tick.x) >= minDistance),
       );
       if (fits) selected.push(...pair);
     }
@@ -256,7 +252,6 @@ async function refreshRecorderStatus(): Promise<void> {
 const renderGlobalLegend = () => renderVolumeLegend(getAgeStripTuning());
 renderGlobalLegend();
 subscribeAgeStripTuning(renderGlobalLegend);
-subscribeGlobalShareReferenceShares(renderGlobalLegend);
 new ResizeObserver(renderGlobalLegend).observe(volumeLegendBar);
 void refreshRecorderStatus();
 window.setInterval(() => void refreshRecorderStatus(), 5_000);
