@@ -7,11 +7,11 @@ import {
 
 describe("volumeLegendTickValues", () => {
   test("keeps selected ticks at least the configured pixel distance apart", () => {
-    const maxAbsVolume = 360_000;
+    const softLimit = 360_000;
     const width = 430;
-    const values = volumeLegendTickValues(maxAbsVolume, width);
+    const values = volumeLegendTickValues(softLimit, width);
     const xs = values.map(
-      (value) => volumeLegendPosition(value, maxAbsVolume) * width,
+      (value) => volumeLegendPosition(value, softLimit) * width,
     );
 
     expect(values).toContain(0);
@@ -21,21 +21,27 @@ describe("volumeLegendTickValues", () => {
       );
   });
 
+  test("maps the half-area soft limit to quarter/three-quarter positions", () => {
+    expect(volumeLegendPosition(-360_000, 360_000)).toBe(0.25);
+    expect(volumeLegendPosition(0, 360_000)).toBe(0.5);
+    expect(volumeLegendPosition(360_000, 360_000)).toBe(0.75);
+  });
+
   test("selects symmetric nice-number families around zero", () => {
     expect(volumeLegendTickValues(360_000, 430)).toEqual([
+      -1_000_000,
       -200_000,
-      -100_000,
       0,
-      100_000,
       200_000,
+      1_000_000,
     ]);
   });
 
-  test("falls through to lower-priority families when major decades do not fit", () => {
+  test("falls through to lower-density ticks on narrower legends", () => {
     expect(volumeLegendTickValues(360_000, 260)).toEqual([
-      -200_000,
+      -1_000_000,
       0,
-      200_000,
+      1_000_000,
     ]);
   });
 });
