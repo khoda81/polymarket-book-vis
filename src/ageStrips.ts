@@ -1,4 +1,5 @@
 import type { RecordedAgeState } from "@/lib/ageRecorderClient";
+import { bookHoverAtPrice, type BookHoverSnapshot } from "@/lib/bookHover";
 import {
   DEFAULT_VOLUME_PER_CSS_PIXEL,
   pressureInkProfile,
@@ -20,7 +21,9 @@ import {
 } from "@/lib/webglPressure";
 import type { Event } from "@polymarket/client";
 
-const AGE_LEFT_PADDING_PX = 176;
+const AGE_LABEL_MIN_GUTTER_PX = 44;
+const AGE_LABEL_MAX_GUTTER_PX = 180;
+const AGE_LABEL_HORIZONTAL_INSET_PX = 8;
 const VOLUME_LEFT_PADDING_PX = 60;
 export const AGE_ROW_BAND_PX = 36;
 
@@ -51,6 +54,23 @@ interface MarketRuntimeState {
   visibilityInitialized: boolean;
 }
 
+interface HoverRow {
+  readonly tokenId: string;
+  readonly label: string;
+}
+
+interface HoverGeometry {
+  readonly viewport: {
+    readonly l: number;
+    readonly t: number;
+    readonly width: number;
+    readonly height: number;
+  };
+  readonly rows: readonly HoverRow[];
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+}
+
 export interface AgeStripHost {
   readonly canvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
@@ -70,6 +90,7 @@ const redrawCallbacks = new Set<() => void>();
 const tuningListeners = new Set<(tuning: Readonly<AgeStripTuning>) => void>();
 let tuningPersistTimer: number | undefined;
 let globalRedrawRaf: number | undefined;
+let ageLabelMeasureCtx: CanvasRenderingContext2D | null | undefined;
 
 export function getAgeStripTuning(): Readonly<AgeStripTuning> {
   return { ...tuning };
@@ -92,6 +113,7 @@ export function subscribeAgeStripTuning(
 export class AgeStripView {
   private readonly host: AgeStripHost;
   private readonly hiddenTray: HTMLDivElement;
+  private readonly overlay: HTMLDivElement;
   private readonly markets = new Map<string, MarketRuntimeState>();
   private readonly toggleHomeParent: HTMLElement | null;
   private readonly toggleHomeNextSibling: ChildNode | null;
@@ -100,6 +122,7 @@ export class AgeStripView {
 
   private diffusionTimer: number | undefined;
   private layoutMode: "age" | "volume" | null = null;
+  private hoverGeometry: HoverGeometry | null = null;
 
   constructor(host: AgeStripHost) {
     this.host = host;
@@ -111,12 +134,22 @@ export class AgeStripView {
     this.hiddenTray.hidden = true;
     host.canvasWrap.insertAdjacentElement("afterend", this.hiddenTray);
 
+    const existingOverlay = host.canvasWrap.querySelector<HTMLDivElement>(".cpv-overlay");
+    if (existingOverlay) this.overlay = existingOverlay;
+    else {
+      this.overlay = document.createElement("div");
+      this.overlay.className = "cpv-overlay";
+      host.canvasWrap.appendChild(this.overlay);
+    }
+
     redrawCallbacks.add(host.requestDraw);
 
     host.canvas.addEventListener("wheel", this.handleWheel, {
       capture: true,
       passive: false,
     });
+    host.canvas.addEventListener("pointermove", this.handlePointerMove);
+    host.canvas.addEventListener("pointerleave", this.hideTooltip);
   }
 
   reset(): void {
@@ -125,6 +158,8 @@ export class AgeStripView {
     this.dirtyTokens.clear();
     this.markets.clear();
     this.hiddenTray.replaceChildren();
+    this.hoverGeometry = null;
+    this.hideTooltip();
     this.layoutMode = null;
   }
 
@@ -240,13 +275,27 @@ export class AgeStripView {
     const activeControls = controls.filter((label) => this.isActive(label));
     const rowCount = Math.max(1, activeControls.length);
 
-    this.installAgeLayout(rowCount);
+    this.installAgeLayout(rowCount, activeControls);
 
     const frame = this.host.plotter.beginFrame(this.host.getTheme(), {
       xRange: { min: 0, max: 1 },
       yRange: { min: -0.5, max: rowCount - 0.5 },
     });
     positionRowControls(activeControls, frame, rowCount);
+
+    const vp = frame.viewport;
+    this.hoverGeometry = {
+      viewport: { l: vp.l, t: vp.t, width: vp.width, height: vp.height },
+      rows: activeControls.map((label, index) => ({
+        tokenId: label.dataset.tokenId ?? `missing-row-${index}`,
+        label:
+          label.querySelector<HTMLElement>(".cpv-market-label-text")?.textContent ??
+          label.textContent ??
+          "(untitled)",
+      })),
+      canvasWidth: vp.l + vp.width + this.host.plotter.padding.r,
+      canvasHeight: vp.t + vp.height + this.host.plotter.padding.b,
+    };
 
     const nowMs = performance.now();
     const colorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
@@ -258,7 +307,6 @@ export class AgeStripView {
       };
     });
 
-    const vp = frame.viewport;
     const gpuCanvas = sharedWebGLPressureRenderer.render({
       key: this.gpuKey,
       rows,
@@ -316,6 +364,8 @@ export class AgeStripView {
 
   prepareVolumeView(): void {
     this.cancelDiffusionTimer();
+    this.hoverGeometry = null;
+    this.hideTooltip();
     if (this.layoutMode === "volume") return;
 
     const controls = this.collectControls();
@@ -359,8 +409,70 @@ export class AgeStripView {
     sharedWebGLPressureRenderer.release(this.gpuKey);
     redrawCallbacks.delete(this.host.requestDraw);
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
+    this.host.canvas.removeEventListener("pointermove", this.handlePointerMove);
+    this.host.canvas.removeEventListener("pointerleave", this.hideTooltip);
+    this.hideTooltip();
     this.hiddenTray.remove();
   }
+
+  private readonly handlePointerMove = (event: PointerEvent) => {
+    if (this.host.getViewMode() !== "age") {
+      this.hideTooltip();
+      return;
+    }
+
+    const geometry = this.hoverGeometry;
+    if (!geometry || geometry.rows.length === 0) {
+      this.hideTooltip();
+      return;
+    }
+
+    const sx = event.offsetX;
+    const sy = event.offsetY;
+    const { viewport: vp } = geometry;
+    if (
+      sx < vp.l ||
+      sx > vp.l + vp.width ||
+      sy < vp.t ||
+      sy >= vp.t + vp.height
+    ) {
+      this.hideTooltip();
+      return;
+    }
+
+    const rowIndex = Math.floor(((sy - vp.t) / vp.height) * geometry.rows.length);
+    const row = geometry.rows[rowIndex];
+    if (!row) {
+      this.hideTooltip();
+      return;
+    }
+
+    const book = this.host.getBook(row.tokenId);
+    if (!book) {
+      this.hideTooltip();
+      return;
+    }
+
+    const hover = bookHoverAtPrice(book, (sx - vp.l) / vp.width);
+    renderAgeTooltip(this.overlay, row.label, hover);
+
+    const tooltipWidth = 232;
+    const tooltipHeight = hover.effectivePrice === null ? 100 : 122;
+    let left = sx + 12;
+    let top = sy + 12;
+    if (left + tooltipWidth > geometry.canvasWidth)
+      left = Math.max(4, sx - tooltipWidth - 12);
+    if (top + tooltipHeight > geometry.canvasHeight)
+      top = Math.max(4, sy - tooltipHeight - 12);
+
+    this.overlay.style.left = `${left}px`;
+    this.overlay.style.top = `${top}px`;
+    this.overlay.style.display = "block";
+  };
+
+  private readonly hideTooltip = () => {
+    this.overlay.style.display = "none";
+  };
 
   private readonly handleWheel = (event: WheelEvent) => {
     if (this.host.getViewMode() !== "age") return;
@@ -388,10 +500,14 @@ export class AgeStripView {
     scheduleGlobalRedraw();
   };
 
-  private installAgeLayout(rowCount: number): void {
+  private installAgeLayout(
+    rowCount: number,
+    labels: readonly HTMLLabelElement[],
+  ): void {
+    const leftPadding = ageLabelGutterWidth(labels);
     let resize = false;
-    if (this.host.plotter.padding.l !== AGE_LEFT_PADDING_PX) {
-      this.host.plotter.padding.l = AGE_LEFT_PADDING_PX;
+    if (this.host.plotter.padding.l !== leftPadding) {
+      this.host.plotter.padding.l = leftPadding;
       resize = true;
     }
 
@@ -410,7 +526,7 @@ export class AgeStripView {
       resize = true;
     }
     this.host.toggles.classList.add("cpv-toggles--age-axis");
-    const widthCss = `${AGE_LEFT_PADDING_PX}px`;
+    const widthCss = `${leftPadding}px`;
     if (this.host.toggles.style.width !== widthCss)
       this.host.toggles.style.width = widthCss;
 
@@ -474,6 +590,82 @@ export class AgeStripView {
     clearTimeout(this.diffusionTimer);
     this.diffusionTimer = undefined;
   }
+}
+
+function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
+  if (labels.length === 0) return AGE_LABEL_MIN_GUTTER_PX;
+
+  if (ageLabelMeasureCtx === undefined) {
+    const canvas = document.createElement("canvas");
+    ageLabelMeasureCtx = canvas.getContext("2d");
+  }
+
+  let widest = 0;
+  if (ageLabelMeasureCtx) ageLabelMeasureCtx.font = "11px sans-serif";
+  for (const label of labels) {
+    const text =
+      label.querySelector<HTMLElement>(".cpv-market-label-text")?.textContent ??
+      label.textContent ??
+      "";
+    const width = ageLabelMeasureCtx
+      ? ageLabelMeasureCtx.measureText(text).width
+      : text.length * 6;
+    widest = Math.max(widest, width);
+  }
+
+  return Math.round(
+    clamp(
+      widest + AGE_LABEL_HORIZONTAL_INSET_PX * 2,
+      AGE_LABEL_MIN_GUTTER_PX,
+      AGE_LABEL_MAX_GUTTER_PX,
+    ),
+  );
+}
+
+function renderAgeTooltip(
+  overlay: HTMLDivElement,
+  label: string,
+  hover: BookHoverSnapshot,
+): void {
+  overlay.replaceChildren();
+
+  const title = document.createElement("div");
+  title.className = "cpv-ov-label";
+  title.textContent = label;
+  overlay.appendChild(title);
+  overlay.appendChild(tooltipRow("Price", formatProbability(hover.price)));
+  overlay.appendChild(
+    tooltipRow(
+      "Side",
+      hover.side === "bid" ? "bid" : hover.side === "ask" ? "ask" : "spread",
+    ),
+  );
+  overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
+  if (hover.effectivePrice !== null)
+    overlay.appendChild(tooltipRow("VWAP", formatProbability(hover.effectivePrice)));
+}
+
+function tooltipRow(name: string, value: string): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "cpv-ov-row";
+  const key = document.createElement("span");
+  key.textContent = name;
+  const amount = document.createElement("b");
+  amount.textContent = value;
+  row.append(key, amount);
+  return row;
+}
+
+function formatProbability(value: number): string {
+  return value.toFixed(3);
+}
+
+function formatShares(value: number): string {
+  if (!(value > 0)) return "0";
+  return new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function positionRowControls(
