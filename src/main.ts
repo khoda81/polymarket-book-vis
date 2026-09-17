@@ -6,10 +6,6 @@ import {
   type AgeStripTuning,
 } from "./ageStrips";
 import { PolymarketCPV } from "./component";
-import {
-  volumeLegendPosition,
-  volumeLegendTickValues,
-} from "./lib/legendTicks";
 import { fmtRelativeTime, fmtVol } from "./lib/math";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
@@ -105,8 +101,13 @@ addEventForm.addEventListener("submit", async (submitEvent) => {
   }
 });
 
+/**
+ * The geometric scale is now decision-theoretic rather than raw volume.
+ * The stored legacy scale maps naturally to the bankroll that used to be the
+ * half-row soft limit, so existing tuning migrates without a visual reset.
+ */
 function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
-  const halfRowVolume = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
+  const bankroll = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
   const scale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
   volumeLegendBar.style.setProperty(
     "--negative-pressure-color",
@@ -116,26 +117,20 @@ function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
     "--positive-pressure-color",
     signedVolumeColor(1, scale),
   );
-  volumeLegendScale.textContent =
-    `${fmtVol(tuning.volumePerCssPixel)} YES / px · half-row ±${fmtVol(halfRowVolume)}`;
+  volumeLegendScale.textContent = `bankroll $${fmtVol(bankroll)}`;
 
-  const values = volumeLegendTickValues(
-    halfRowVolume,
-    volumeLegendBar.clientWidth,
-  );
   volumeLegendTicks.replaceChildren();
-  for (const value of values) {
+  for (const conviction of [-1, -0.5, 0, 0.5, 1]) {
     const tick = document.createElement("span");
-    tick.style.left = `${volumeLegendPosition(value, halfRowVolume) * 100}%`;
-    tick.textContent = formatVolumeTick(value);
+    tick.style.left = `${((conviction + 1) / 2) * 100}%`;
+    tick.textContent = formatConvictionTick(conviction);
     volumeLegendTicks.appendChild(tick);
   }
 }
 
-function formatVolumeTick(value: number): string {
+function formatConvictionTick(value: number): string {
   if (value === 0) return "0";
-  const magnitude = fmtVol(Math.abs(value)).replace(/\.0([KMB]?)$/, "$1");
-  return `${value > 0 ? "+" : "−"}${magnitude}`;
+  return `${value > 0 ? "+" : "−"}${Math.round(Math.abs(value) * 100)}%`;
 }
 
 interface RecorderHealth {
