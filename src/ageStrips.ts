@@ -1,15 +1,13 @@
 import type { RecordedAgeState } from "@/lib/ageRecorderClient";
 import {
-  diffusionVisual,
-  GaussianSpriteCache,
-  nextDiffusionChangeDelayMs,
-} from "@/lib/diffusion";
+  DEFAULT_VOLUME_PER_CSS_PIXEL,
+  pressureInkProfile,
+} from "@/lib/pressureInk";
 import type { TokenBook } from "@/lib/orderBook";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  signedVolumeColorAtPosition,
-  signedVolumePosition,
+  signedVolumeColor,
 } from "@/lib/signedVolume";
 import {
   StaleSignedVolume,
@@ -24,13 +22,12 @@ import type { Event } from "@polymarket/client";
 
 const AGE_LEFT_PADDING_PX = 176;
 const VOLUME_LEFT_PADDING_PX = 60;
-const AGE_ROW_BAND_PX = 36;
-const COLOR_BUCKETS = 128;
+export const AGE_ROW_BAND_PX = 36;
 
 const MIN_AGE_SCALE_SECONDS = 0.05;
 const MAX_AGE_SCALE_SECONDS = 7 * 24 * 60 * 60;
-const MIN_VOLUME_SOFT_LIMIT = 1;
-const MAX_VOLUME_SOFT_LIMIT = 1e9;
+const MIN_VOLUME_PER_CSS_PIXEL = 1;
+const MAX_VOLUME_PER_CSS_PIXEL = 1e9;
 
 const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
 const HIDDEN_MARKETS_STORAGE_KEY =
@@ -38,7 +35,15 @@ const HIDDEN_MARKETS_STORAGE_KEY =
 
 export interface AgeStripTuning {
   ageScaleSeconds: number;
-  volumeSoftLimit: number;
+  /** Fully opaque CSS-pixel-equivalent represented by this many YES. */
+  volumePerCssPixel: number;
+}
+
+interface StoredAgeStripTuning {
+  ageScaleSeconds?: number;
+  volumePerCssPixel?: number;
+  /** Legacy v1 name; migrated in place to volumePerCssPixel. */
+  volumeSoftLimit?: number;
 }
 
 interface MarketRuntimeState {
@@ -82,12 +87,11 @@ export function subscribeAgeStripTuning(
  *
  * CPU sample-and-hold segments are authoritative. A WebGL pressure texture is
  * used as a disposable incremental diffusion cache when available; the exact
- * Canvas2D segment renderer remains the automatic fallback/reference path.
+ * Canvas2D area renderer remains the automatic fallback/reference path.
  */
 export class AgeStripView {
   private readonly host: AgeStripHost;
   private readonly hiddenTray: HTMLDivElement;
-  private readonly sprites = new GaussianSpriteCache();
   private readonly markets = new Map<string, MarketRuntimeState>();
   private readonly toggleHomeParent: HTMLElement | null;
   private readonly toggleHomeNextSibling: ChildNode | null;
@@ -245,10 +249,7 @@ export class AgeStripView {
     positionRowControls(activeControls, frame, rowCount);
 
     const nowMs = performance.now();
-    const colorScale = {
-      ...DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-      softLimit: tuning.volumeSoftLimit,
-    };
+    const colorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
     const rows: WebGLPressureRow[] = activeControls.map((label, index) => {
       const tokenId = label.dataset.tokenId ?? `missing-row-${index}`;
       return {
@@ -267,6 +268,7 @@ export class AgeStripView {
       dpr: window.devicePixelRatio || 1,
       nowMs,
       ageScaleSeconds: tuning.ageScaleSeconds,
+      volumePerCssPixel: tuning.volumePerCssPixel,
       colorScale,
       requestRedraw: this.host.requestDraw,
     });
@@ -286,25 +288,28 @@ export class AgeStripView {
       return;
     }
 
-    // Reliable reference/fallback path: reconstruct each segment analytically
-    // with the existing cached Canvas2D Gaussian sprites.
-    let nextDiffusionDelayMs = Infinity;
+    // Reliable reference/fallback path: reconstruct the same vertical ink-area
+    // profiles directly in Canvas2D.
+    let hasDiffusingPressure = false;
     for (const [index, row] of rows.entries()) {
       if (row.segments.length === 0) continue;
       const y = rowCount - 1 - index;
-      drawDiffusedStrip(frame, y, row.segments, this.sprites, colorScale);
-      nextDiffusionDelayMs = Math.min(
-        nextDiffusionDelayMs,
-        nextStripDiffusionChangeDelayMs(
-          row.segments,
-          tuning.ageScaleSeconds,
-        ),
+      drawPressureStrip(
+        frame,
+        y,
+        row.segments,
+        colorScale,
+        tuning.volumePerCssPixel,
+        tuning.ageScaleSeconds,
+      );
+      hasDiffusingPressure ||= row.segments.some(
+        (segment) => segment.volume !== 0 && segment.ageMs !== Infinity,
       );
     }
     drawAgeAxes(frame);
     this.dirtyTokens.clear();
-    if (Number.isFinite(nextDiffusionDelayMs))
-      this.scheduleDiffusionTimer(nextDiffusionDelayMs);
+    if (hasDiffusingPressure)
+      this.scheduleDiffusionTimer(gpuDiffusionDelayMs(tuning.ageScaleSeconds));
   }
 
   prepareVolumeView(): void {
@@ -363,10 +368,10 @@ export class AgeStripView {
 
     const factor = Math.exp(normalizedWheelDelta(event) * 0.002);
     if (event.ctrlKey) {
-      tuning.volumeSoftLimit = clamp(
-        tuning.volumeSoftLimit * factor,
-        MIN_VOLUME_SOFT_LIMIT,
-        MAX_VOLUME_SOFT_LIMIT,
+      tuning.volumePerCssPixel = clamp(
+        tuning.volumePerCssPixel * factor,
+        MIN_VOLUME_PER_CSS_PIXEL,
+        MAX_VOLUME_PER_CSS_PIXEL,
       );
     } else {
       tuning.ageScaleSeconds = clamp(
@@ -477,7 +482,8 @@ function positionRowControls(
   const dpr = window.devicePixelRatio || 1;
   for (const [index, label] of labels.entries()) {
     const y = rowCount - 1 - index;
-    const top = `${snapToDevicePixelCenter(frame.toScreenY(0, y), dpr)}px`;
+    const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+    const top = `${geometry.centerCss}px`;
     if (label.style.top !== top) label.style.top = top;
   }
 }
@@ -507,28 +513,25 @@ function drawAgeAxes(frame: any): void {
   ctx.clip();
 }
 
-function drawDiffusedStrip(
+function drawPressureStrip(
   frame: any,
   y: number,
   segments: readonly StaleSignedVolumeSegment[],
-  sprites: GaussianSpriteCache,
   colorScale: typeof DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+  volumePerCssPixel: number,
+  timeScaleSeconds: number,
 ): void {
   const { ctx, viewport: vp } = frame;
   const dpr = window.devicePixelRatio || 1;
-  const screenY = snapToDevicePixelCenter(frame.toScreenY(0, y), dpr);
-  const rowTop = screenY - AGE_ROW_BAND_PX / 2;
+  const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(vp.l, rowTop, vp.width, AGE_ROW_BAND_PX);
+  ctx.rect(vp.l, geometry.topCss, vp.width, geometry.heightCss);
   ctx.clip();
-  ctx.imageSmoothingEnabled = false;
 
   for (const segment of segments) {
-    const visual = diffusionVisual(segment.ageMs, tuning.ageScaleSeconds);
-    if (visual.peakAlpha <= 0) continue;
-
+    if (segment.volume === 0 || segment.ageMs === Infinity) continue;
     const x0 = snapToDevicePixel(
       vp.l + clamp(segment.lo, 0, 1) * vp.width,
       dpr,
@@ -539,56 +542,51 @@ function drawDiffusedStrip(
     );
     if (!(x1 > x0)) continue;
 
-    const position = signedVolumePosition(
+    const profile = pressureInkProfile(
       segment.volume,
-      colorScale.softLimit,
-    );
-    const colorBucket = Math.round(position * COLOR_BUCKETS);
-    const color = signedVolumeColorAtPosition(
-      colorBucket / COLOR_BUCKETS,
-      colorScale,
-    );
-    const sprite = sprites.get(
-      color,
-      visual.sigmaPx,
+      segment.ageMs,
+      volumePerCssPixel,
+      timeScaleSeconds,
       dpr,
-      AGE_ROW_BAND_PX,
+      geometry.deviceHeight,
     );
-    const spriteHeightCss = sprite.height / dpr;
-    const spriteTop = screenY - spriteHeightCss / 2;
+    ctx.fillStyle = signedVolumeColor(segment.volume, colorScale);
 
-    ctx.globalAlpha = visual.peakAlpha;
-    ctx.drawImage(
-      sprite,
-      0,
-      0,
-      sprite.width,
-      sprite.height,
-      x0,
-      spriteTop,
-      x1 - x0,
-      spriteHeightCss,
-    );
+    for (let py = 0; py < profile.length; py++) {
+      const alpha = profile[py]!;
+      if (!(alpha > 0)) continue;
+      ctx.globalAlpha = alpha;
+      ctx.fillRect(
+        x0,
+        geometry.topCss + py / dpr,
+        x1 - x0,
+        1 / dpr,
+      );
+    }
   }
 
   ctx.restore();
 }
 
-function nextStripDiffusionChangeDelayMs(
-  segments: readonly StaleSignedVolumeSegment[],
-  timeScaleSeconds: number,
-): number {
-  let next = Infinity;
-  const seenAges = new Set<number>();
-  for (const segment of segments) {
-    if (seenAges.has(segment.ageMs)) continue;
-    seenAges.add(segment.ageMs);
-    next = Math.min(
-      next,
-      nextDiffusionChangeDelayMs(segment.ageMs, timeScaleSeconds),
-    );
-  }
-  return next;
+function rowRasterGeometry(
+  desiredCenterCss: number,
+  dpr: number,
+): {
+  deviceHeight: number;
+  topCss: number;
+  heightCss: number;
+  centerCss: number;
+} {
+  const deviceHeight = Math.max(1, Math.round(AGE_ROW_BAND_PX * dpr));
+  const topDevice = Math.round(desiredCenterCss * dpr - deviceHeight / 2);
+  const topCss = topDevice / dpr;
+  const heightCss = deviceHeight / dpr;
+  return {
+    deviceHeight,
+    topCss,
+    heightCss,
+    centerCss: topCss + heightCss / 2,
+  };
 }
 
 function gpuDiffusionDelayMs(timeScaleSeconds: number): number {
@@ -680,13 +678,17 @@ function notifyTuningListeners(): void {
 function loadTuning(): AgeStripTuning {
   const fallback: AgeStripTuning = {
     ageScaleSeconds: 5,
-    volumeSoftLimit: DEFAULT_SIGNED_VOLUME_COLOR_SCALE.softLimit,
+    volumePerCssPixel: DEFAULT_VOLUME_PER_CSS_PIXEL,
   };
 
   try {
     const raw = window.localStorage.getItem(TUNING_STORAGE_KEY);
     if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as Partial<AgeStripTuning>;
+    const parsed = JSON.parse(raw) as StoredAgeStripTuning;
+    const storedVolumeScale =
+      typeof parsed.volumePerCssPixel === "number"
+        ? parsed.volumePerCssPixel
+        : parsed.volumeSoftLimit;
     return {
       ageScaleSeconds:
         typeof parsed.ageScaleSeconds === "number"
@@ -696,14 +698,14 @@ function loadTuning(): AgeStripTuning {
               MAX_AGE_SCALE_SECONDS,
             )
           : fallback.ageScaleSeconds,
-      volumeSoftLimit:
-        typeof parsed.volumeSoftLimit === "number"
+      volumePerCssPixel:
+        typeof storedVolumeScale === "number"
           ? clamp(
-              parsed.volumeSoftLimit,
-              MIN_VOLUME_SOFT_LIMIT,
-              MAX_VOLUME_SOFT_LIMIT,
+              storedVolumeScale,
+              MIN_VOLUME_PER_CSS_PIXEL,
+              MAX_VOLUME_PER_CSS_PIXEL,
             )
-          : fallback.volumeSoftLimit,
+          : fallback.volumePerCssPixel,
     };
   } catch {
     return fallback;
@@ -752,10 +754,6 @@ function normalizedWheelDelta(event: WheelEvent): number {
 
 function snapToDevicePixel(value: number, dpr: number): number {
   return Math.round(value * dpr) / dpr;
-}
-
-function snapToDevicePixelCenter(value: number, dpr: number): number {
-  return (Math.round(value * dpr - 0.5) + 0.5) / dpr;
 }
 
 function clamp(value: number, min: number, max: number): number {
