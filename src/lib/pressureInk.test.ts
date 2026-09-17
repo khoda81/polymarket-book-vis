@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  kellyPressureAreaFraction,
+  capitalPressureAreaFraction,
   pressureInkProfile,
   pressureInkThicknessCss,
 } from "./pressureInk";
@@ -12,42 +12,34 @@ function sum(values: Float32Array): number {
 }
 
 describe("pressure ink", () => {
-  test("derives ask resistance from Kelly-optimal YES allocation", () => {
-    // Buy 10 YES for $6 total, with the marginal ask at 0.6 and $100 bankroll.
-    // W(no)=94, W(yes)=104, so Kelly indifference gives q=0.624.
-    // Normalized conviction above market: (0.624-0.6)/(1-0.6)=0.06.
-    expect(kellyPressureAreaFraction(-10, 6, 0.6, 1, 100)).toBeCloseTo(0.06, 12);
+  test("maps sweep capital through the reserve-capital soft ratio", () => {
+    expect(capitalPressureAreaFraction(-10, 25, 75)).toBeCloseTo(0.25, 12);
+    expect(capitalPressureAreaFraction(10, 75, 25)).toBeCloseTo(0.75, 12);
   });
 
-  test("derives bid support symmetrically through the equivalent NO sweep", () => {
-    // Selling 10 YES into a 0.4 bid is equivalent to buying 10 NO at 0.6.
-    // The required normalized bearish conviction is therefore also 0.06.
-    expect(kellyPressureAreaFraction(10, 6, 0, 0.4, 100)).toBeCloseTo(0.06, 12);
+  test("is symmetric between bid and ask pressure at equal sweep capital", () => {
+    expect(capitalPressureAreaFraction(-10, 6, 100)).toBeCloseTo(6 / 106, 12);
+    expect(capitalPressureAreaFraction(10, 6, 100)).toBeCloseTo(6 / 106, 12);
   });
 
-  test("accounts for price improvement across multiple levels", () => {
-    // 10 YES were acquired for $5 total, while the marginal ask is 0.6.
-    // f = pQ / (C - A + pQ) = 6 / 101.
-    expect(kellyPressureAreaFraction(-10, 5, 0.6, 1, 100)).toBeCloseTo(6 / 101, 12);
+  test("approaches full-row pressure smoothly without an arbitrary hard cap", () => {
+    expect(capitalPressureAreaFraction(-10, 100, 100)).toBeCloseTo(0.5, 12);
+    expect(capitalPressureAreaFraction(-10, 900, 100)).toBeCloseTo(0.9, 12);
+    expect(capitalPressureAreaFraction(-10, Infinity, 100)).toBe(1);
   });
 
-  test("saturates only when sweeping the resting side exhausts bankroll", () => {
-    expect(kellyPressureAreaFraction(-10, 100, 0.6, 1, 100)).toBe(1);
-    expect(kellyPressureAreaFraction(10, 101, 0, 0.4, 100)).toBe(1);
+  test("legacy samples with unknown sweep cost do not invent capital pressure", () => {
+    expect(capitalPressureAreaFraction(10, null, 100)).toBe(0);
   });
 
-  test("legacy samples with unknown sweep cost do not invent Kelly magnitude", () => {
-    expect(kellyPressureAreaFraction(10, null, 0, 0.4, 100)).toBe(0);
-  });
-
-  test("row thickness is the Kelly conviction fraction times row height", () => {
-    expect(pressureInkThicknessCss(-10, 6, 0.6, 1, 100, 36)).toBeCloseTo(2.16, 12);
+  test("row thickness is the capital-pressure fraction times row height", () => {
+    expect(pressureInkThicknessCss(-10, 6, 100, 36)).toBeCloseTo(36 * 6 / 106, 12);
   });
 
   test("fresh subpixel area becomes fractional center-pixel coverage", () => {
-    const bankroll = 100_000;
-    const profile = pressureInkProfile(-1, 0.6, 0.6, 1, 0, bankroll, 5, 1, 36);
-    const expected = pressureInkThicknessCss(-1, 0.6, 0.6, 1, bankroll, 36);
+    const reserve = 100_000;
+    const profile = pressureInkProfile(-1, 0.6, 0.6, 1, 0, reserve, 5, 1, 36);
+    const expected = pressureInkThicknessCss(-1, 0.6, reserve, 36);
     expect(sum(profile)).toBeCloseTo(expected, 6);
     expect(Math.max(...profile)).toBeCloseTo(expected, 6);
   });
@@ -55,7 +47,7 @@ describe("pressure ink", () => {
   test("fresh raster area is independent of device-pixel ratio", () => {
     const oneX = pressureInkProfile(-10, 6, 0.6, 1, 0, 100, 5, 1, 36);
     const twoX = pressureInkProfile(-10, 6, 0.6, 1, 0, 100, 5, 2, 72);
-    const expected = pressureInkThicknessCss(-10, 6, 0.6, 1, 100, 36);
+    const expected = pressureInkThicknessCss(-10, 6, 100, 36);
     expect(sum(oneX)).toBeCloseTo(expected, 6);
     expect(sum(twoX) / 2).toBeCloseTo(expected, 6);
   });
@@ -63,17 +55,17 @@ describe("pressure ink", () => {
   test("diffusion conserves area before row clipping matters", () => {
     const fresh = pressureInkProfile(-10, 6, 0.6, 1, 0, 100, 20, 2, 72);
     const aged = pressureInkProfile(-10, 6, 0.6, 1, 1_000, 100, 20, 2, 72);
-    const expected = pressureInkThicknessCss(-10, 6, 0.6, 1, 100, 36);
+    const expected = pressureInkThicknessCss(-10, 6, 100, 36);
 
     expect(Math.max(...aged)).toBeLessThan(Math.max(...fresh));
     expect(sum(aged) / 2).toBeCloseTo(expected, 2);
   });
 
   test("subpixel sharpening approaches fresh coverage without overshooting", () => {
-    const bankroll = 100_000;
-    const fresh = pressureInkProfile(-1, 0.6, 0.6, 1, 0, bankroll, 1, 1, 36);
-    const slightlyAged = pressureInkProfile(-1, 0.6, 0.6, 1, 1, bankroll, 1, 1, 36);
-    const moreAged = pressureInkProfile(-1, 0.6, 0.6, 1, 10, bankroll, 1, 1, 36);
+    const reserve = 100_000;
+    const fresh = pressureInkProfile(-1, 0.6, 0.6, 1, 0, reserve, 1, 1, 36);
+    const slightlyAged = pressureInkProfile(-1, 0.6, 0.6, 1, 1, reserve, 1, 1, 36);
+    const moreAged = pressureInkProfile(-1, 0.6, 0.6, 1, 10, reserve, 1, 1, 36);
 
     const freshPeak = Math.max(...fresh);
     expect(Math.max(...slightlyAged)).toBeLessThanOrEqual(freshPeak + 1e-6);
