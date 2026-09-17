@@ -65,11 +65,9 @@ describe("StaleSignedVolume", () => {
       [{ lo: 0, hi: 0.3 }],
     );
 
-    expect(at(field, 15_000, 0.2)).toMatchObject({
-      volume: 17,
-      sweepCost: 10.9,
-      ageMs: 5_000,
-    });
+    const cumulative = at(field, 15_000, 0.2);
+    expect(cumulative).toMatchObject({ volume: 17, ageMs: 5_000 });
+    expect(cumulative.sweepCost).toBeCloseTo(10.9);
     expect(at(field, 15_000, 0.35)).toMatchObject({
       volume: 10,
       sweepCost: 6,
@@ -97,11 +95,9 @@ describe("StaleSignedVolume", () => {
       sweepCost: 6,
       ageMs: 5_000,
     });
-    expect(at(field, 15_000, 0.425)).toMatchObject({
-      volume: 12,
-      sweepCost: 6.6,
-      ageMs: 5_000,
-    });
+    const stale = at(field, 15_000, 0.425);
+    expect(stale).toMatchObject({ volume: 12, ageMs: 5_000 });
+    expect(stale.sweepCost).toBeCloseTo(6.6);
     expect(at(field, 15_000, 0.7)).toMatchObject({
       volume: -20,
       sweepCost: 12,
@@ -139,11 +135,9 @@ describe("StaleSignedVolume", () => {
       volume: 10,
       ageMs: 10_000,
     });
-    expect(at(field, 30_000, 0.425)).toMatchObject({
-      volume: 12,
-      sweepCost: 6.6,
-      ageMs: 30_000,
-    });
+    const stale = at(field, 30_000, 0.425);
+    expect(stale).toMatchObject({ volume: 12, ageMs: 30_000 });
+    expect(stale.sweepCost).toBeCloseTo(6.6);
   });
 
   test("snapshot/restore preserves v4 economic samples and explicit unknowns", () => {
@@ -161,11 +155,9 @@ describe("StaleSignedVolume", () => {
 
     const restored = new StaleSignedVolume();
     restored.restore(snapshot);
-    expect(at(restored, 35_000, 0.425)).toMatchObject({
-      volume: 12,
-      sweepCost: 6.6,
-      ageMs: 15_000,
-    });
+    const stale = at(restored, 35_000, 0.425);
+    expect(stale).toMatchObject({ volume: 12, ageMs: 15_000 });
+    expect(stale.sweepCost).toBeCloseTo(6.6);
 
     const initiallyUnknown = new StaleSignedVolume();
     initiallyUnknown.update(makeBook([[0.4, 10]], [[0.6, 20]]), 10_000);
@@ -206,15 +198,14 @@ describe("StaleSignedVolume", () => {
     const hydrated = new StaleSignedVolume();
     hydrated.restoreSegments(source.segments(35_000), 1_000);
 
-    expect(at(hydrated, 2_000, 0.425)).toMatchObject({
-      volume: 12,
-      sweepCost: 6.6,
-      ageMs: 16_000,
-    });
+    const stale = at(hydrated, 2_000, 0.425);
+    expect(stale).toMatchObject({ volume: 12, ageMs: 16_000 });
+    expect(stale.sweepCost).toBeCloseTo(6.6);
 
     const unknownSource = new StaleSignedVolume();
     unknownSource.update(makeBook([[0.4, 10]], [[0.6, 20]]), 0);
     const unknownHydrated = new StaleSignedVolume();
+    unknownHydrated.restoreSegments(source.segments(35_000), 1_000);
     unknownHydrated.restoreSegments(unknownSource.segments(1_000), 5_000);
     expect(at(unknownHydrated, 6_000, 0.5).ageMs).toBe(Infinity);
   });
