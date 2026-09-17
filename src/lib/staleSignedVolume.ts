@@ -17,6 +17,8 @@ interface HeldVolumeSegment {
   readonly lo: number;
   readonly hi: number;
   readonly volume: number;
+  /** Capital required to sweep this pressure; null means legacy/unknown. */
+  readonly sweepCost: number | null;
   /** Absolute observation timestamp, or UNKNOWN_SINCE_MS if never observed. */
   readonly observedAtMs: number;
 }
@@ -25,7 +27,9 @@ interface SnapshotVolumeSegment {
   readonly lo: number;
   readonly hi: number;
   readonly volume: number;
-  /** v3 field; null is the JSON-safe encoding of UNKNOWN_SINCE_MS. */
+  /** v4 field; null means the economic magnitude was not recorded. */
+  readonly sweepCost?: number | null;
+  /** v3/v4 field; null is the JSON-safe encoding of UNKNOWN_SINCE_MS. */
   readonly observedAtMs?: number | null;
   /** Legacy v1/v2 field retained only for migration. */
   readonly staleSinceMs?: number | null;
@@ -35,13 +39,15 @@ export interface StaleSignedVolumeSegment {
   readonly lo: number;
   readonly hi: number;
   readonly volume: number;
+  /** Capital required to sweep this pressure; null means legacy/unknown. */
+  readonly sweepCost: number | null;
   /** Infinity means this interval has never been observed. */
   readonly ageMs: number;
 }
 
 export interface StaleSignedVolumeSnapshot {
-  /** v3 stores pressure and observation time together and no longer stores spread. */
-  readonly version?: 2 | 3;
+  /** v4 adds sweep cost so magnitude can be derived from Kelly allocation. */
+  readonly version?: 2 | 3 | 4;
   readonly lastUpdateMs?: number;
   readonly segments: readonly SnapshotVolumeSegment[];
 }
@@ -49,8 +55,8 @@ export interface StaleSignedVolumeSnapshot {
 /**
  * Piecewise memory of signed cumulative market pressure.
  *
- * Each interval stores exactly two pieces of semantic state: the last pressure
- * observed there and when it was observed. There is no separately persisted
+ * Each interval stores the last pressure observed there, the capital required
+ * to sweep it, and when it was observed. There is no separately persisted
  * spread and no live/stale tag.
  *
  * Exact price-change events supply the probability ranges they observe:
@@ -123,11 +129,8 @@ export class StaleSignedVolume {
       )
         rangeIndex++;
 
-      const liveVolume = StaleSignedVolume.volumeAt(
-        live,
-        liveIndex,
-        midpoint,
-      );
+      const liveSample = StaleSignedVolume.liveAt(live, liveIndex, midpoint);
+      const liveVolume = liveSample?.volume ?? 0;
       const previous = StaleSignedVolume.segmentAt(
         this.current,
         previousIndex,
@@ -143,18 +146,25 @@ export class StaleSignedVolume {
         continue;
       }
 
-      if (liveVolume !== 0) {
-        next.push({ lo, hi, volume: liveVolume, observedAtMs: nowMs });
+      if (liveVolume !== 0 && liveSample) {
+        next.push({
+          lo,
+          hi,
+          volume: liveVolume,
+          sweepCost: liveSample.sweepCost,
+          observedAtMs: nowMs,
+        });
         continue;
       }
 
       if (previous && previous.volume !== 0) {
         // This observed range just lost its live pressure. Preserve the last
-        // pressure value, but its freshness ends exactly at this update.
+        // economic sample, but its freshness ends exactly at this update.
         next.push({
           lo,
           hi,
           volume: previous.volume,
+          sweepCost: previous.sweepCost,
           observedAtMs: nowMs,
         });
         continue;
@@ -172,10 +182,11 @@ export class StaleSignedVolume {
 
   segments(nowMs: number): readonly StaleSignedVolumeSegment[] {
     this.validateTime(nowMs);
-    return this.current.map(({ lo, hi, volume, observedAtMs }) => ({
+    return this.current.map(({ lo, hi, volume, sweepCost, observedAtMs }) => ({
       lo,
       hi,
       volume,
+      sweepCost,
       ageMs:
         observedAtMs === UNKNOWN_SINCE_MS
           ? Infinity
@@ -183,10 +194,10 @@ export class StaleSignedVolume {
     }));
   }
 
-  /** Serialize compact v3 state; unknown timestamps become explicit JSON nulls. */
+  /** Serialize compact v4 state; unknown timestamps become explicit JSON nulls. */
   snapshot(): StaleSignedVolumeSnapshot {
     return {
-      version: 3,
+      version: 4,
       lastUpdateMs: this.lastUpdateMs,
       segments: this.current.map(({ observedAtMs, ...segment }) => ({
         ...segment,
@@ -196,7 +207,7 @@ export class StaleSignedVolume {
     };
   }
 
-  /** Restore v3 snapshots and migrate legacy v1/v2 timestamp fields. */
+  /** Restore v4 snapshots and migrate legacy v1-v3 timestamp fields. */
   restore(snapshot: StaleSignedVolumeSnapshot): void {
     const lastUpdateMs =
       snapshot.lastUpdateMs !== undefined && Number.isFinite(snapshot.lastUpdateMs)
@@ -212,6 +223,8 @@ export class StaleSignedVolume {
         lo: segment.lo,
         hi: segment.hi,
         volume: segment.volume,
+        sweepCost:
+          snapshot.version === 4 ? (segment.sweepCost ?? null) : null,
         observedAtMs: StaleSignedVolume.snapshotObservedAt(
           segment,
           snapshot.version,
@@ -240,13 +253,14 @@ export class StaleSignedVolume {
           (segment) =>
             (segment.ageMs === Infinity ||
               (Number.isFinite(segment.ageMs) && segment.ageMs >= 0)) &&
-            StaleSignedVolume.validRange(segment),
+            StaleSignedVolume.validTransportSegment(segment),
         )
         .sort((a, b) => a.lo - b.lo)
-        .map(({ lo, hi, volume, ageMs }) => ({
+        .map(({ lo, hi, volume, sweepCost, ageMs }) => ({
           lo,
           hi,
           volume,
+          sweepCost,
           observedAtMs:
             ageMs === Infinity ? UNKNOWN_SINCE_MS : nowMs - ageMs,
         })),
@@ -313,12 +327,19 @@ export class StaleSignedVolume {
           lo,
           hi,
           volume: previous.volume,
+          sweepCost: previous.sweepCost,
           observedAtMs: previous.observedAtMs,
         }
-      : { lo, hi, volume: 0, observedAtMs: UNKNOWN_SINCE_MS };
+      : {
+          lo,
+          hi,
+          volume: 0,
+          sweepCost: null,
+          observedAtMs: UNKNOWN_SINCE_MS,
+        };
   }
 
-  private static validRange(segment: {
+  private static validGeometry(segment: {
     lo: number;
     hi: number;
     volume: number;
@@ -333,12 +354,30 @@ export class StaleSignedVolume {
     );
   }
 
+  private static validSweepCost(value: unknown): value is number | null {
+    return value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0);
+  }
+
+  private static validTransportSegment(segment: StaleSignedVolumeSegment): boolean {
+    return (
+      StaleSignedVolume.validGeometry(segment) &&
+      StaleSignedVolume.validSweepCost(segment.sweepCost)
+    );
+  }
+
   private static validSnapshotSegment(
     segment: SnapshotVolumeSegment,
     version: StaleSignedVolumeSnapshot["version"],
   ): boolean {
-    if (!StaleSignedVolume.validRange(segment)) return false;
-    const timestamp = version === 3 ? segment.observedAtMs : segment.staleSinceMs;
+    if (!StaleSignedVolume.validGeometry(segment)) return false;
+    if (
+      version === 4 &&
+      !StaleSignedVolume.validSweepCost(segment.sweepCost ?? null)
+    )
+      return false;
+    const timestamp = version === 3 || version === 4
+      ? segment.observedAtMs
+      : segment.staleSinceMs;
     return timestamp === null || (timestamp !== undefined && Number.isFinite(timestamp));
   }
 
@@ -347,7 +386,7 @@ export class StaleSignedVolume {
     version: StaleSignedVolumeSnapshot["version"],
     lastUpdateMs: number | undefined,
   ): number {
-    if (version === 3)
+    if (version === 3 || version === 4)
       return segment.observedAtMs === null
         ? UNKNOWN_SINCE_MS
         : segment.observedAtMs!;
@@ -359,15 +398,15 @@ export class StaleSignedVolume {
     return segment.staleSinceMs!;
   }
 
-  private static volumeAt(
+  private static liveAt(
     segments: readonly SignedVolumeSegment[],
     index: number,
     point: number,
-  ): number {
+  ): SignedVolumeSegment | undefined {
     const segment = segments[index];
     return segment && point >= segment.lo && point < segment.hi
-      ? segment.volume
-      : 0;
+      ? segment
+      : undefined;
   }
 
   private static segmentAt(
@@ -391,6 +430,7 @@ export class StaleSignedVolume {
         previous &&
         previous.hi === segment.lo &&
         previous.volume === segment.volume &&
+        previous.sweepCost === segment.sweepCost &&
         previous.observedAtMs === segment.observedAtMs
       ) {
         merged[merged.length - 1] = { ...previous, hi: segment.hi };
