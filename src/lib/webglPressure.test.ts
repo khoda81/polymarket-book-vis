@@ -22,6 +22,7 @@ test("WebGL pressure rendering degrades cleanly without a DOM", () => {
       dpr: 1,
       nowMs: 0,
       ageScaleSeconds: 5,
+      volumePerCssPixel: 10_000,
       colorScale: DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
       requestRedraw() {},
     }),
