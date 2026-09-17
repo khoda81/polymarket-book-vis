@@ -13,7 +13,9 @@ test("WebGL pressure rendering degrades cleanly without a DOM", () => {
       rows: [
         {
           tokenId: "test",
-          segments: [{ lo: 0, hi: 1, volume: 100, ageMs: 0 }],
+          segments: [
+            { lo: 0, hi: 1, volume: 100, sweepCost: 50, ageMs: 0 },
+          ],
         },
       ],
       dirtyTokens: new Set(["test"]),
