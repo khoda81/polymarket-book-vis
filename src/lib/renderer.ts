@@ -208,8 +208,8 @@ export class OrderBookPlotter {
     if (!ctx) throw new Error("2D canvas context is not available");
     this.ctx = ctx;
 
-    // Establish the initial cached CSS size once. Subsequent reads happen only
-    // from resize(), which is driven by ResizeObserver / explicit layout changes.
+    // Establish the initial cached CSS size once. Subsequent observer-driven
+    // resizes use ResizeObserver's measured box and avoid another layout read.
     this.resize();
 
     this.canvas.addEventListener("wheel", this.handleWheel, { passive: false });
@@ -235,25 +235,24 @@ export class OrderBookPlotter {
     this.onPointer = undefined;
   }
 
-  /** CSS-space width captured by the most recent resize(). */
+  /** CSS-space width captured by the most recent resize. */
   get width(): number {
     return this.cssWidth;
   }
 
-  /** CSS-space height captured by the most recent resize(). */
+  /** CSS-space height captured by the most recent resize. */
   get height(): number {
     return this.cssHeight;
   }
 
-  /**
-   * Sync the canvas backing store to its CSS size (× DPR). This is the only
-   * render-path method allowed to read layout. Call it from ResizeObserver or
-   * after an explicit CSS-size change; beginFrame() stays layout-independent.
-   */
+  /** Explicit layout read for initial sizing / deliberate CSS-size changes. */
   resize() {
+    this.resizeTo(this.canvas.clientWidth, this.canvas.clientHeight);
+  }
+
+  /** Apply a CSS-space size already measured by ResizeObserver. */
+  resizeTo(width: number, height: number) {
     const dpr = window.devicePixelRatio || 1;
-    const width = this.canvas.clientWidth;
-    const height = this.canvas.clientHeight;
     this.cssWidth = width;
     this.cssHeight = height;
 
@@ -398,7 +397,7 @@ export class Frame {
   toScreenY = (x: number, y: number) => applyY(this.transform, x, y);
   toScreen = (x: number, y: number) => ({
     sx: this.toScreenX(x, y),
-    sy: this.toScreenY(x, y),
+    sy: this.toScreenY(0, y),
   });
 
   /** Map a screen point to data coordinates by inverting `transform` on demand. */
