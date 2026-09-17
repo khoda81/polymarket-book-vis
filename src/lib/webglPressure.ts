@@ -14,7 +14,7 @@ const MAX_BLOOM_RADIUS = 32;
 // Bloom is deliberately a presentation enhancement: the base pressure field
 // and Canvas2D fallback remain unchanged.
 const BLOOM_EXTRA_SIGMA_CSS_PX = 3;
-const BLOOM_STRENGTH = 0.22;
+const BLOOM_STRENGTH = 1;
 
 // B/A store bloom energy with q = E / (E + scale). The shader decodes q back
 // to linear energy before every convolution, so the non-linear byte encoding
@@ -87,8 +87,10 @@ interface GlResources {
  *
  * R/G store positive/negative soft-area occupancy. B/A carry positive/negative
  * excess-pressure bloom energy. Age diffusion evolves both fields in linear
- * space; presentation gives bloom one extra vertical Gaussian before composing
- * it over the known-good base rendering.
+ * energy space. Presentation applies one extra Gaussian to the bloom field,
+ * converts the signed hues from sRGB to linear light, multiplies by pressure
+ * intensity, then converts back to sRGB. Values above the SDR gamut are left
+ * above one until the RGBA8 framebuffer clips them, producing real blowout.
  */
 class SharedWebGLPressureRenderer {
   private readonly states = new Map<object, PressureState>();
@@ -756,6 +758,22 @@ uniform int u_bloom_radius;
 uniform float u_bloom_strength;
 out vec4 outColor;
 ${BLOOM_CODEC_GLSL}
+
+vec3 srgbToLinear(vec3 srgb) {
+  bvec3 low = lessThanEqual(srgb, vec3(0.04045));
+  vec3 linearLow = srgb / 12.92;
+  vec3 linearHigh = pow((srgb + vec3(0.055)) / 1.055, vec3(2.4));
+  return mix(linearHigh, linearLow, low);
+}
+
+vec3 linearToSrgb(vec3 linear) {
+  linear = max(linear, vec3(0.0));
+  bvec3 low = lessThanEqual(linear, vec3(0.0031308));
+  vec3 srgbLow = linear * 12.92;
+  vec3 srgbHigh = 1.055 * pow(linear, vec3(1.0 / 2.4)) - vec3(0.055);
+  return mix(srgbHigh, srgbLow, low);
+}
+
 void main() {
   ivec2 pixel = ivec2(gl_FragCoord.xy);
   vec4 center = texelFetch(u_texture, pixel, 0);
@@ -775,16 +793,25 @@ void main() {
   }
 
   vec2 bloom = bloomNorm > 0.0 ? bloomSum / bloomNorm : vec2(0.0);
-  vec2 visual = pressure + bloom * u_bloom_strength;
-  float mass = visual.r + visual.g;
-  if (mass <= 0.00001) {
+  vec2 intensity = pressure + bloom * u_bloom_strength;
+  float totalIntensity = intensity.r + intensity.g;
+  if (totalIntensity <= 0.00001) {
     outColor = vec4(0.0);
     return;
   }
 
-  // The display surface is SDR, so local intensity ultimately clips at one,
-  // but unbounded bloom energy still communicates itself by widening the halo.
-  float alpha = clamp(mass, 0.0, 1.0);
-  vec3 color = (visual.r * u_positive + visual.g * u_negative) / mass;
-  outColor = vec4(color, alpha);
+  // Treat the signed hues as emitted linear-light energy. Below unit total
+  // intensity, alpha carries fractional coverage and dividing by alpha exactly
+  // recovers the known-good base hue. Once total intensity exceeds one, alpha
+  // is pinned and additional energy drives linear RGB above the display gamut.
+  // The final RGBA8 target performs the only upper clipping, creating the
+  // desired blown-out core instead of normalizing the color back down.
+  float alpha = clamp(totalIntensity, 0.0, 1.0);
+  vec3 positiveLinear = srgbToLinear(u_positive);
+  vec3 negativeLinear = srgbToLinear(u_negative);
+  vec3 premultipliedLinear =
+    intensity.r * positiveLinear + intensity.g * negativeLinear;
+  vec3 displayLinear = premultipliedLinear / max(alpha, 1e-6);
+  vec3 displaySrgb = linearToSrgb(displayLinear);
+  outColor = vec4(displaySrgb, alpha);
 }`;
