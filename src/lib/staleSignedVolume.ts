@@ -1,4 +1,4 @@
-import { canonicalSpread, type TokenBook } from "./orderBook";
+import type { TokenBook } from "./orderBook";
 import {
   signedVolumeSegments,
   type SignedVolumeSegment,
@@ -7,9 +7,10 @@ import {
 /** Sentinel observation time for regions that have never been observed. */
 export const UNKNOWN_SINCE_MS = Number.NEGATIVE_INFINITY;
 
-export interface StaleSignedVolumeSpread {
-  readonly bid: number;
-  readonly ask: number;
+/** Probability range whose cumulative pressure was observed by one update. */
+export interface PressureObservationRange {
+  readonly lo: number;
+  readonly hi: number;
 }
 
 interface HeldVolumeSegment {
@@ -17,15 +18,17 @@ interface HeldVolumeSegment {
   readonly hi: number;
   readonly volume: number;
   /** Absolute observation timestamp, or UNKNOWN_SINCE_MS if never observed. */
-  readonly staleSinceMs: number;
+  readonly observedAtMs: number;
 }
 
 interface SnapshotVolumeSegment {
   readonly lo: number;
   readonly hi: number;
   readonly volume: number;
-  /** null is the JSON-safe encoding of UNKNOWN_SINCE_MS in v2 snapshots. */
-  readonly staleSinceMs: number | null;
+  /** v3 field; null is the JSON-safe encoding of UNKNOWN_SINCE_MS. */
+  readonly observedAtMs?: number | null;
+  /** Legacy v1/v2 field retained only for migration. */
+  readonly staleSinceMs?: number | null;
 }
 
 export interface StaleSignedVolumeSegment {
@@ -37,33 +40,47 @@ export interface StaleSignedVolumeSegment {
 }
 
 export interface StaleSignedVolumeSnapshot {
-  /** Missing means the legacy v1 segment semantics where null meant live. */
-  readonly version?: 2;
+  /** v3 stores pressure and observation time together and no longer stores spread. */
+  readonly version?: 2 | 3;
   readonly lastUpdateMs?: number;
-  readonly spread?: StaleSignedVolumeSpread;
   readonly segments: readonly SnapshotVolumeSegment[];
 }
 
 /**
- * Sample-and-hold extension of the current signed cumulative volume field.
+ * Piecewise memory of signed cumulative market pressure.
  *
- * There is deliberately no live/stale tagged state. Every interval carries the
- * timestamp of its latest observation. Constrained intervals are refreshed to
- * `nowMs`; intervals that enter the spread freeze at the transition time;
- * intervals already in the spread retain their timestamp. A never-observed
- * interval uses UNKNOWN_SINCE_MS, which renders as age Infinity.
+ * Each interval stores exactly two pieces of semantic state: the last pressure
+ * observed there and when it was observed. There is no separately persisted
+ * spread and no live/stale tag.
+ *
+ * Exact price-change events supply the probability ranges they observe:
+ * a bid at q observes [0,q], while an ask at q observes [q,1]. Inside an
+ * observed range, present pressure overwrites the remembered value. If the
+ * range has just become empty, the previous pressure is retained and stamped
+ * with `nowMs`, which is precisely the instant it became stale. Unobserved
+ * ranges are left untouched.
+ *
+ * When `observedRanges` is omitted, the update is a full book snapshot. Such a
+ * snapshot refreshes only currently nonzero pressure. Empty regions are left
+ * untouched because a snapshot cannot tell us when they became empty.
  */
 export class StaleSignedVolume {
   private current: HeldVolumeSegment[] = [];
   private lastUpdateMs: number | undefined;
-  private lastSpread: StaleSignedVolumeSpread | undefined;
 
-  update(book: TokenBook<unknown>, nowMs: number): void {
+  update(
+    book: TokenBook<unknown>,
+    nowMs: number,
+    observedRanges?: readonly PressureObservationRange[],
+  ): void {
     this.validateTime(nowMs);
 
     const live = signedVolumeSegments(book);
-    const spread = canonicalSpread(book);
-    const boundaries = new Set<number>([0, 1, spread.bid, spread.ask]);
+    const ranges =
+      observedRanges === undefined
+        ? undefined
+        : StaleSignedVolume.normalizeRanges(observedRanges);
+    const boundaries = new Set<number>([0, 1]);
     for (const segment of live) {
       boundaries.add(segment.lo);
       boundaries.add(segment.hi);
@@ -72,9 +89,9 @@ export class StaleSignedVolume {
       boundaries.add(segment.lo);
       boundaries.add(segment.hi);
     }
-    if (this.lastSpread) {
-      boundaries.add(this.lastSpread.bid);
-      boundaries.add(this.lastSpread.ask);
+    for (const range of ranges ?? []) {
+      boundaries.add(range.lo);
+      boundaries.add(range.hi);
     }
 
     const sorted = [...boundaries]
@@ -84,6 +101,7 @@ export class StaleSignedVolume {
     const next: HeldVolumeSegment[] = [];
     let liveIndex = 0;
     let previousIndex = 0;
+    let rangeIndex = 0;
 
     for (let i = 0; i < sorted.length - 1; i++) {
       const lo = sorted[i];
@@ -98,6 +116,12 @@ export class StaleSignedVolume {
         midpoint >= this.current[previousIndex].hi
       )
         previousIndex++;
+      while (
+        ranges &&
+        rangeIndex + 1 < ranges.length &&
+        midpoint >= ranges[rangeIndex].hi
+      )
+        rangeIndex++;
 
       const liveVolume = StaleSignedVolume.volumeAt(
         live,
@@ -109,105 +133,106 @@ export class StaleSignedVolume {
         previousIndex,
         midpoint,
       );
-      const insideSpread = midpoint > spread.bid && midpoint < spread.ask;
+      const observed =
+        ranges === undefined
+          ? liveVolume !== 0
+          : StaleSignedVolume.rangeContains(ranges[rangeIndex], midpoint);
 
-      if (!insideSpread) {
-        // Current book pressure is observable here right now.
-        next.push({ lo, hi, volume: liveVolume, staleSinceMs: nowMs });
+      if (!observed) {
+        next.push(
+          previous ?? {
+            lo,
+            hi,
+            volume: 0,
+            observedAtMs: UNKNOWN_SINCE_MS,
+          },
+        );
         continue;
       }
 
-      if (!previous) {
-        // The first snapshot cannot tell us what existed in its spread before
-        // recording began. Zero would be a fabricated observation here.
-        next.push({ lo, hi, volume: 0, staleSinceMs: UNKNOWN_SINCE_MS });
+      if (liveVolume !== 0) {
+        next.push({ lo, hi, volume: liveVolume, observedAtMs: nowMs });
         continue;
       }
 
-      const wasInsidePreviousSpread = this.lastSpread
-        ? midpoint > this.lastSpread.bid && midpoint < this.lastSpread.ask
-        : previous.staleSinceMs !== this.lastUpdateMs;
-
-      if (wasInsidePreviousSpread) {
+      if (previous && previous.volume !== 0) {
+        // This observed range just lost its live pressure. Preserve the last
+        // pressure value, but its freshness ends exactly at this update.
         next.push({
           lo,
           hi,
           volume: previous.volume,
-          staleSinceMs: previous.staleSinceMs,
+          observedAtMs: nowMs,
         });
-      } else {
-        // It was constrained up to this update and has just entered the spread.
-        next.push({
+        continue;
+      }
+
+      // Zero pressure carries no directional information. Keep an existing
+      // zero/unknown sample as-is rather than manufacturing a known zero in the
+      // middle of the pipe.
+      next.push(
+        previous ?? {
           lo,
           hi,
-          volume: previous.volume,
-          staleSinceMs: nowMs,
-        });
-      }
+          volume: 0,
+          observedAtMs: UNKNOWN_SINCE_MS,
+        },
+      );
     }
 
     this.current = StaleSignedVolume.mergeAdjacent(next);
     this.lastUpdateMs = nowMs;
-    this.lastSpread = spread;
   }
 
   segments(nowMs: number): readonly StaleSignedVolumeSegment[] {
     this.validateTime(nowMs);
-    return this.current.map(({ lo, hi, volume, staleSinceMs }) => ({
+    return this.current.map(({ lo, hi, volume, observedAtMs }) => ({
       lo,
       hi,
       volume,
       ageMs:
-        staleSinceMs === UNKNOWN_SINCE_MS
+        observedAtMs === UNKNOWN_SINCE_MS
           ? Infinity
-          : Math.max(0, nowMs - staleSinceMs),
+          : Math.max(0, nowMs - observedAtMs),
     }));
   }
 
-  spread(): StaleSignedVolumeSpread | undefined {
-    return this.lastSpread ? { ...this.lastSpread } : undefined;
-  }
-
-  /** Serialize compact state; unknown timestamps become explicit JSON nulls. */
+  /** Serialize compact v3 state; unknown timestamps become explicit JSON nulls. */
   snapshot(): StaleSignedVolumeSnapshot {
     return {
-      version: 2,
+      version: 3,
       lastUpdateMs: this.lastUpdateMs,
-      spread: this.lastSpread ? { ...this.lastSpread } : undefined,
-      segments: this.current.map(({ staleSinceMs, ...segment }) => ({
+      segments: this.current.map(({ observedAtMs, ...segment }) => ({
         ...segment,
-        staleSinceMs:
-          staleSinceMs === UNKNOWN_SINCE_MS ? null : staleSinceMs,
+        observedAtMs:
+          observedAtMs === UNKNOWN_SINCE_MS ? null : observedAtMs,
       })),
     };
   }
 
-  /** Restore v2 snapshots and migrate legacy snapshots where null meant live. */
+  /** Restore v3 snapshots and migrate legacy v1/v2 timestamp fields. */
   restore(snapshot: StaleSignedVolumeSnapshot): void {
     const lastUpdateMs =
       snapshot.lastUpdateMs !== undefined && Number.isFinite(snapshot.lastUpdateMs)
         ? snapshot.lastUpdateMs
         : undefined;
-    const isV2 = snapshot.version === 2;
 
     const segments = snapshot.segments
-      .filter(StaleSignedVolume.validSnapshotSegment)
+      .filter((segment) => StaleSignedVolume.validSnapshotSegment(segment, snapshot.version))
       .sort((a, b) => a.lo - b.lo)
-      .map(({ staleSinceMs, ...segment }) => ({
-        ...segment,
-        staleSinceMs:
-          staleSinceMs === null
-            ? isV2
-              ? UNKNOWN_SINCE_MS
-              : lastUpdateMs ?? UNKNOWN_SINCE_MS
-            : staleSinceMs,
+      .map((segment) => ({
+        lo: segment.lo,
+        hi: segment.hi,
+        volume: segment.volume,
+        observedAtMs: StaleSignedVolume.snapshotObservedAt(
+          segment,
+          snapshot.version,
+          lastUpdateMs,
+        ),
       }));
 
     this.current = StaleSignedVolume.mergeAdjacent(segments);
     this.lastUpdateMs = lastUpdateMs;
-    this.lastSpread = StaleSignedVolume.validSpread(snapshot.spread)
-      ? { ...snapshot.spread }
-      : undefined;
   }
 
   /**
@@ -217,7 +242,6 @@ export class StaleSignedVolume {
   restoreSegments(
     segments: readonly StaleSignedVolumeSegment[],
     nowMs: number,
-    spread?: StaleSignedVolumeSpread,
   ): void {
     if (!Number.isFinite(nowMs))
       throw new RangeError("StaleSignedVolume timestamp must be finite");
@@ -235,20 +259,16 @@ export class StaleSignedVolume {
           lo,
           hi,
           volume,
-          staleSinceMs:
+          observedAtMs:
             ageMs === Infinity ? UNKNOWN_SINCE_MS : nowMs - ageMs,
         })),
     );
     this.lastUpdateMs = nowMs;
-    this.lastSpread = StaleSignedVolume.validSpread(spread)
-      ? { ...spread }
-      : undefined;
   }
 
   clear(): void {
     this.current = [];
     this.lastUpdateMs = undefined;
-    this.lastSpread = undefined;
   }
 
   private validateTime(nowMs: number): void {
@@ -256,6 +276,43 @@ export class StaleSignedVolume {
       throw new RangeError("StaleSignedVolume timestamp must be finite");
     if (this.lastUpdateMs !== undefined && nowMs < this.lastUpdateMs)
       throw new RangeError("StaleSignedVolume timestamps must be monotonic");
+  }
+
+  private static normalizeRanges(
+    ranges: readonly PressureObservationRange[],
+  ): PressureObservationRange[] {
+    const sorted = ranges
+      .filter(
+        ({ lo, hi }) =>
+          Number.isFinite(lo) && Number.isFinite(hi) && hi > lo,
+      )
+      .map(({ lo, hi }) => ({
+        lo: Math.max(0, Math.min(1, lo)),
+        hi: Math.max(0, Math.min(1, hi)),
+      }))
+      .filter(({ lo, hi }) => hi > lo)
+      .sort((a, b) => a.lo - b.lo || a.hi - b.hi);
+
+    const merged: PressureObservationRange[] = [];
+    for (const range of sorted) {
+      const previous = merged[merged.length - 1];
+      if (previous && range.lo <= previous.hi) {
+        merged[merged.length - 1] = {
+          lo: previous.lo,
+          hi: Math.max(previous.hi, range.hi),
+        };
+      } else {
+        merged.push(range);
+      }
+    }
+    return merged;
+  }
+
+  private static rangeContains(
+    range: PressureObservationRange | undefined,
+    point: number,
+  ): boolean {
+    return !!range && point >= range.lo && point < range.hi;
   }
 
   private static validRange(segment: {
@@ -273,24 +330,30 @@ export class StaleSignedVolume {
     );
   }
 
-  private static validSpread(
-    spread: StaleSignedVolumeSpread | undefined,
-  ): spread is StaleSignedVolumeSpread {
-    return !!spread &&
-      Number.isFinite(spread.bid) &&
-      Number.isFinite(spread.ask) &&
-      spread.bid >= 0 &&
-      spread.ask <= 1 &&
-      spread.ask >= spread.bid;
-  }
-
   private static validSnapshotSegment(
     segment: SnapshotVolumeSegment,
+    version: StaleSignedVolumeSnapshot["version"],
   ): boolean {
-    return (
-      StaleSignedVolume.validRange(segment) &&
-      (segment.staleSinceMs === null || Number.isFinite(segment.staleSinceMs))
-    );
+    if (!StaleSignedVolume.validRange(segment)) return false;
+    const timestamp = version === 3 ? segment.observedAtMs : segment.staleSinceMs;
+    return timestamp === null || (timestamp !== undefined && Number.isFinite(timestamp));
+  }
+
+  private static snapshotObservedAt(
+    segment: SnapshotVolumeSegment,
+    version: StaleSignedVolumeSnapshot["version"],
+    lastUpdateMs: number | undefined,
+  ): number {
+    if (version === 3)
+      return segment.observedAtMs === null
+        ? UNKNOWN_SINCE_MS
+        : segment.observedAtMs!;
+
+    if (segment.staleSinceMs === null)
+      return version === 2
+        ? UNKNOWN_SINCE_MS
+        : lastUpdateMs ?? UNKNOWN_SINCE_MS;
+    return segment.staleSinceMs!;
   }
 
   private static volumeAt(
@@ -311,7 +374,7 @@ export class StaleSignedVolume {
   ): HeldVolumeSegment | undefined {
     const segment = segments[index];
     return segment && point >= segment.lo && point < segment.hi
-      ? segment
+      ? { ...segment, lo: point, hi: point }
       : undefined;
   }
 
@@ -325,7 +388,7 @@ export class StaleSignedVolume {
         previous &&
         previous.hi === segment.lo &&
         previous.volume === segment.volume &&
-        previous.staleSinceMs === segment.staleSinceMs
+        previous.observedAtMs === segment.observedAtMs
       ) {
         merged[merged.length - 1] = { ...previous, hi: segment.hi };
       } else {
