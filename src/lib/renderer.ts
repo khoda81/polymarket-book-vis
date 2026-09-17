@@ -397,7 +397,7 @@ export class Frame {
   toScreenY = (x: number, y: number) => applyY(this.transform, x, y);
   toScreen = (x: number, y: number) => ({
     sx: this.toScreenX(x, y),
-    sy: this.toScreenY(0, y),
+    sy: this.toScreenY(x, y),
   });
 
   /** Map a screen point to data coordinates by inverting `transform` on demand. */
