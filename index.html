@@ -29,12 +29,15 @@
                     <span id="recorder-status-text">recorder…</span>
                 </div>
 
-                <section class="volume-legend" aria-label="Global signed-volume color scale">
+                <section class="volume-legend" aria-label="Global signed-volume area scale">
                     <div class="volume-legend-header">
                         <span>signed volume</span>
                         <span class="volume-legend-scale" id="volume-legend-scale"></span>
                     </div>
-                    <div class="volume-legend-bar" id="volume-legend-bar"></div>
+                    <div class="volume-legend-bar" id="volume-legend-bar" aria-hidden="true">
+                        <span class="volume-legend-wedge volume-legend-wedge--negative"></span>
+                        <span class="volume-legend-wedge volume-legend-wedge--positive"></span>
+                    </div>
                     <div class="volume-legend-ticks" id="volume-legend-ticks"></div>
                 </section>
             </div>
