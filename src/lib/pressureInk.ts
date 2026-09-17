@@ -78,17 +78,19 @@ export function diffusionSigmaCss(
 }
 
 /**
- * Rasterize one pressure sample into a vertically diffused row profile.
- *
- * Fresh line area is not an arbitrary function of volume: it is the normalized
- * Kelly conviction required for a bankroll to sweep that cumulative resting
- * liquidity. Age then evolves only the geometry, by convolving the fresh
- * top-hat with the heat kernel.
- *
- * Each output sample is the *integral over a physical pixel*, not the value at
- * the pixel center. That conserves subpixel ink continuously as sigma tends to
- * zero and avoids the old one-pixel brightening discontinuity.
+ * Legacy Canvas2D signature retained while the Kelly experiment is evaluated.
+ * It keeps the old volume soft-saturation semantics in the no-WebGL fallback.
  */
+export function pressureInkProfile(
+  volume: number,
+  ageMs: number,
+  volumePerCssPixel: number,
+  timeScaleSeconds: number,
+  dpr: number,
+  deviceHeight: number,
+): Float32Array;
+
+/** Kelly pressure signature used by the WebGL experiment. */
 export function pressureInkProfile(
   volume: number,
   sweepCost: number | null,
@@ -99,13 +101,66 @@ export function pressureInkProfile(
   timeScaleSeconds: number,
   dpr: number,
   deviceHeight: number,
-): Float32Array {
-  validatePositiveFinite(dpr, "device pixel ratio");
-  if (!Number.isInteger(deviceHeight) || deviceHeight < 1)
-    throw new RangeError("device row height must be a positive integer");
+): Float32Array;
 
-  const profile = new Float32Array(deviceHeight);
-  if (ageMs === Infinity || volume === 0 || Number.isNaN(volume)) return profile;
+/**
+ * Rasterize pressure into a vertically diffused row profile.
+ *
+ * The Kelly form derives fresh area from investment allocation rather than an
+ * arbitrary transfer function. The six-argument form is kept only so the
+ * Canvas2D safety fallback remains usable during the experiment.
+ *
+ * Each output sample is the *integral over a physical pixel*, not the value at
+ * the pixel center. That conserves subpixel ink continuously as sigma tends to
+ * zero and removes the one-pixel brightening discontinuity of point sampling.
+ */
+export function pressureInkProfile(
+  volume: number,
+  second: number | null,
+  third: number,
+  fourth: number,
+  fifth: number,
+  sixth: number,
+  seventh?: number,
+  eighth?: number,
+  ninth?: number,
+): Float32Array {
+  if (seventh === undefined || eighth === undefined || ninth === undefined) {
+    const ageMs = second as number;
+    const volumePerCssPixel = third;
+    const timeScaleSeconds = fourth;
+    const dpr = fifth;
+    const deviceHeight = sixth;
+    validatePositiveFinite(volumePerCssPixel, "volume per pixel");
+    validateRasterInputs(dpr, deviceHeight);
+
+    const rowHeightCss = deviceHeight / dpr;
+    const softLimit = volumePerCssPixel * rowHeightCss;
+    const magnitude = Math.abs(volume);
+    const fraction =
+      volume === 0 || Number.isNaN(volume)
+        ? 0
+        : Number.isFinite(volume)
+          ? magnitude / (magnitude + softLimit)
+          : 1;
+    return rasterPressureProfile(
+      rowHeightCss * fraction,
+      ageMs,
+      timeScaleSeconds,
+      dpr,
+      deviceHeight,
+    );
+  }
+
+  const sweepCost = second;
+  const lo = third;
+  const hi = fourth;
+  const ageMs = fifth;
+  const bankroll = sixth;
+  const timeScaleSeconds = seventh;
+  const dpr = eighth;
+  const deviceHeight = ninth;
+  validateRasterInputs(dpr, deviceHeight);
 
   const rowHeightCss = deviceHeight / dpr;
   const thicknessCss = pressureInkThicknessCss(
@@ -116,6 +171,25 @@ export function pressureInkProfile(
     bankroll,
     rowHeightCss,
   );
+  return rasterPressureProfile(
+    thicknessCss,
+    ageMs,
+    timeScaleSeconds,
+    dpr,
+    deviceHeight,
+  );
+}
+
+function rasterPressureProfile(
+  thicknessCss: number,
+  ageMs: number,
+  timeScaleSeconds: number,
+  dpr: number,
+  deviceHeight: number,
+): Float32Array {
+  const profile = new Float32Array(deviceHeight);
+  if (ageMs === Infinity || !(thicknessCss > 0)) return profile;
+
   const thicknessDevice = Math.min(deviceHeight, thicknessCss * dpr);
   if (!(thicknessDevice > 0)) return profile;
 
@@ -202,6 +276,12 @@ function erf(value: number): number {
       0.254829592) *
     t;
   return sign * (1 - polynomial * Math.exp(-x * x));
+}
+
+function validateRasterInputs(dpr: number, deviceHeight: number): void {
+  validatePositiveFinite(dpr, "device pixel ratio");
+  if (!Number.isInteger(deviceHeight) || deviceHeight < 1)
+    throw new RangeError("device row height must be a positive integer");
 }
 
 function validatePositiveFinite(value: number, name: string): void {
