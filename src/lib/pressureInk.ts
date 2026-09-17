@@ -2,61 +2,43 @@ export const DEFAULT_VOLUME_PER_CSS_PIXEL = 10_000;
 export const DIFFUSION_VARIANCE_PER_TIME_SCALE = 8;
 
 /**
- * Kelly-normalized conviction required to sweep one side of the book.
+ * Fraction of the configured reserve consumed by sweeping one side of the book.
  *
- * `bankroll` is the bettor's starting capital. Positive pressure is resting
- * bid support: sweeping it means selling YES into bids, equivalently buying NO
- * at marginal price `1 - hi`. Negative pressure is resting ask resistance:
- * sweeping it means buying YES at marginal price `lo`.
+ * `sweepCost` is the cumulative capital needed to consume the resting liquidity
+ * represented by this sample. `reserveCapital` is the comparison reserve. The
+ * resulting soft ratio keeps the useful shape of v/(v+c), but both numerator
+ * and denominator are now expressed in dollars:
  *
- * The returned fraction is the inferred belief displacement toward the
- * corresponding extreme, normalized to [0,1]:
+ *   pressure = sweepCost / (sweepCost + reserveCapital)
  *
- *   bids: (p - q) / p
- *   asks: (q - p) / (1 - p)
- *
- * where q is the belief at which consuming the cumulative position is Kelly
- * optimal. Once the sweep itself exhausts the bankroll, the required
- * conviction is effectively all-in and the fraction saturates at 1.
+ * The value is in [0,1), approaches 1 asymptotically, and has the simple
+ * interpretation "what fraction of sweep capital + reserve is committed to
+ * crossing this much liquidity?".
  */
-export function kellyPressureAreaFraction(
+export function capitalPressureAreaFraction(
   volume: number,
   sweepCost: number | null,
-  lo: number,
-  hi: number,
-  bankroll: number,
+  reserveCapital: number,
 ): number {
-  validatePositiveFinite(bankroll, "Kelly bankroll");
+  validatePositiveFinite(reserveCapital, "reserve capital");
   if (volume === 0 || Number.isNaN(volume) || sweepCost === null) return 0;
-  if (!(sweepCost >= 0) || !Number.isFinite(sweepCost)) return 0;
-  if (!Number.isFinite(volume)) return 1;
-  if (sweepCost >= bankroll) return 1;
-
-  const shares = Math.abs(volume);
-  const marginalOutcomePrice =
-    volume > 0 ? 1 - clamp01(hi) : clamp01(lo);
-  const convictionCapital = marginalOutcomePrice * shares;
-  if (!(convictionCapital > 0)) return 0;
-
-  const remainingCapital = bankroll - sweepCost;
-  return clamp01(
-    convictionCapital / (remainingCapital + convictionCapital),
-  );
+  if (Number.isNaN(sweepCost) || sweepCost < 0) return 0;
+  if (sweepCost === Infinity) return 1;
+  if (!Number.isFinite(sweepCost) || sweepCost === 0) return 0;
+  return sweepCost / (sweepCost + reserveCapital);
 }
 
-/** Convert a Kelly pressure sample into fresh vertical ink thickness. */
+/** Convert a capital-pressure sample into fresh vertical ink thickness. */
 export function pressureInkThicknessCss(
   volume: number,
   sweepCost: number | null,
-  lo: number,
-  hi: number,
-  bankroll: number,
+  reserveCapital: number,
   rowHeightCss: number,
 ): number {
   validatePositiveFinite(rowHeightCss, "row height");
   return (
     rowHeightCss *
-    kellyPressureAreaFraction(volume, sweepCost, lo, hi, bankroll)
+    capitalPressureAreaFraction(volume, sweepCost, reserveCapital)
   );
 }
 
@@ -78,8 +60,9 @@ export function diffusionSigmaCss(
 }
 
 /**
- * Legacy Canvas2D signature retained while the Kelly experiment is evaluated.
- * It keeps the old volume soft-saturation semantics in the no-WebGL fallback.
+ * Legacy Canvas2D signature retained while the WebGL experiment is evaluated.
+ * It keeps the old share-volume soft-saturation semantics in the no-WebGL
+ * fallback because that call site does not yet provide sweep capital.
  */
 export function pressureInkProfile(
   volume: number,
@@ -90,14 +73,14 @@ export function pressureInkProfile(
   deviceHeight: number,
 ): Float32Array;
 
-/** Kelly pressure signature used by the WebGL experiment. */
+/** Capital-pressure signature used by the WebGL path. */
 export function pressureInkProfile(
   volume: number,
   sweepCost: number | null,
   lo: number,
   hi: number,
   ageMs: number,
-  bankroll: number,
+  reserveCapital: number,
   timeScaleSeconds: number,
   dpr: number,
   deviceHeight: number,
@@ -106,9 +89,9 @@ export function pressureInkProfile(
 /**
  * Rasterize pressure into a vertically diffused row profile.
  *
- * The Kelly form derives fresh area from investment allocation rather than an
- * arbitrary transfer function. The six-argument form is kept only so the
- * Canvas2D safety fallback remains usable during the experiment.
+ * The capital-pressure form derives fresh area from sweep capital relative to a
+ * reserve rather than raw share count. `lo` and `hi` remain in the compatibility
+ * signature for the current renderer call shape, but no longer affect magnitude.
  *
  * Each output sample is the *integral over a physical pixel*, not the value at
  * the pixel center. That conserves subpixel ink continuously as sigma tends to
@@ -153,10 +136,10 @@ export function pressureInkProfile(
   }
 
   const sweepCost = second;
-  const lo = third;
-  const hi = fourth;
+  // `third` and `fourth` are the segment price bounds retained only for call
+  // compatibility; sweepCost already incorporates the prices of consumed levels.
   const ageMs = fifth;
-  const bankroll = sixth;
+  const reserveCapital = sixth;
   const timeScaleSeconds = seventh;
   const dpr = eighth;
   const deviceHeight = ninth;
@@ -166,9 +149,7 @@ export function pressureInkProfile(
   const thicknessCss = pressureInkThicknessCss(
     volume,
     sweepCost,
-    lo,
-    hi,
-    bankroll,
+    reserveCapital,
     rowHeightCss,
   );
   return rasterPressureProfile(
