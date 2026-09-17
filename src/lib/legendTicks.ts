@@ -1,5 +1,3 @@
-import { signedVolumePosition } from "./signedVolume";
-
 /** Minimum center-to-center spacing between signed-volume legend labels. */
 export const MIN_VOLUME_LEGEND_TICK_DISTANCE_PX = 48;
 
@@ -9,20 +7,25 @@ export const MIN_VOLUME_LEGEND_TICK_DISTANCE_PX = 48;
 const NICE_TICK_FAMILIES = [1, 5, 2] as const;
 const EXPONENT_RADIUS = 12;
 
+/** Linear signed-volume position across a symmetric [-max,+max] legend. */
+export function volumeLegendPosition(value: number, maxAbsVolume: number): number {
+  if (!(maxAbsVolume > 0) || !Number.isFinite(maxAbsVolume)) return 0.5;
+  return 0.5 + 0.5 * Math.max(-1, Math.min(1, value / maxAbsVolume));
+}
+
 /**
- * Select symmetric "nice" signed-volume ticks for the nonlinear softsign bar.
+ * Select symmetric "nice" ticks for the linear ink-area legend.
  *
- * Candidates are considered family-by-family. Within one family, values near
- * the current half-saturation scale are considered first. A ± pair is accepted
- * only when both labels stay at least `minDistancePx` from every already chosen
- * tick. Zero is always the highest-priority tick.
+ * Candidates are considered family-by-family and largest-first. A ± pair is
+ * accepted only when both labels remain at least `minDistancePx` from every
+ * already selected tick. Zero is always the highest-priority tick.
  */
 export function volumeLegendTickValues(
-  softLimit: number,
+  maxAbsVolume: number,
   widthPx: number,
   minDistancePx: number = MIN_VOLUME_LEGEND_TICK_DISTANCE_PX,
 ): number[] {
-  if (!(softLimit > 0) || !Number.isFinite(softLimit)) return [0];
+  if (!(maxAbsVolume > 0) || !Number.isFinite(maxAbsVolume)) return [0];
   if (!(widthPx > 0) || !Number.isFinite(widthPx)) return [0];
 
   const minDistance = Math.max(0, minDistancePx);
@@ -30,23 +33,20 @@ export function volumeLegendTickValues(
   const selected: { value: number; x: number }[] = [
     { value: 0, x: widthPx / 2 },
   ];
-  const baseExponent = Math.floor(Math.log10(softLimit));
+  const baseExponent = Math.floor(Math.log10(maxAbsVolume));
 
   for (const multiplier of NICE_TICK_FAMILIES) {
     const magnitudes = Array.from(
       { length: EXPONENT_RADIUS * 2 + 1 },
       (_, index) => multiplier * 10 ** (baseExponent - EXPONENT_RADIUS + index),
-    ).sort(
-      (a, b) =>
-        Math.abs(Math.log10(a / softLimit)) -
-          Math.abs(Math.log10(b / softLimit)) ||
-        a - b,
-    );
+    )
+      .filter((value) => value > 0 && value <= maxAbsVolume)
+      .sort((a, b) => b - a);
 
     for (const magnitude of magnitudes) {
       const pair = [-magnitude, magnitude].map((value) => ({
         value,
-        x: signedVolumePosition(value, softLimit) * widthPx,
+        x: volumeLegendPosition(value, maxAbsVolume) * widthPx,
       }));
 
       if (
