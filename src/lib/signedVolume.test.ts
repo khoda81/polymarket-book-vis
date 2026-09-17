@@ -7,17 +7,19 @@ import {
 } from "./signedVolume";
 
 describe("signedVolumeSegments", () => {
-  test("is positive below bids, zero in the spread, and negative above asks", () => {
+  test("tracks signed shares and the capital needed to sweep each side", () => {
     const book = emptyTokenBook();
     book.usdToYes.setLevel("bid-1", { price: 0.4, take: 10 });
     book.usdToYes.setLevel("bid-2", { price: 0.3, take: 5 });
     book.yesToUsd.setLevel("ask", { price: 1 / 0.6, take: 6 });
 
     expect(signedVolumeSegments(book)).toEqual([
-      { lo: 0, hi: 0.3, volume: 15 },
-      { lo: 0.3, hi: 0.4, volume: 10 },
-      { lo: 0.4, hi: 0.6, volume: 0 },
-      { lo: 0.6, hi: 1, volume: -10 },
+      // Wiping bids is equivalent to buying NO: 10×0.6 + 5×0.7 = 9.5.
+      { lo: 0, hi: 0.3, volume: 15, sweepCost: 9.5 },
+      { lo: 0.3, hi: 0.4, volume: 10, sweepCost: 6 },
+      { lo: 0.4, hi: 0.6, volume: 0, sweepCost: 0 },
+      // The inverse book level represents 10 YES at a 0.6 ask.
+      { lo: 0.6, hi: 1, volume: -10, sweepCost: 6 },
     ]);
   });
 });
