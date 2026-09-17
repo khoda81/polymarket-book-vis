@@ -172,7 +172,10 @@ export class AgeStripView {
       for (const node of Array.from(label.childNodes))
         if (node.nodeType === Node.TEXT_NODE) node.remove();
 
-      const text = this.host.getTitle(market.id) ?? market.question;
+      const text =
+        this.host.getTitle(market.id) ??
+        market.question ??
+        "(untitled)";
       const textSpan = document.createElement("span");
       textSpan.className = "cpv-market-label-text";
       textSpan.textContent = text;
@@ -182,7 +185,10 @@ export class AgeStripView {
       const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
       if (!checkbox) continue;
 
-      if (userHiddenMarketIds.has(market.id)) {
+      if (
+        market.state.acceptingOrders !== true ||
+        userHiddenMarketIds.has(market.id)
+      ) {
         checkbox.checked = false;
         this.host.activeTokens.delete(tokenId);
       }
@@ -592,18 +598,18 @@ function nextQuantizedAlphaChangeDelayMs(
       staleAgeMs === null
         ? 1
         : ageAlpha(
-            staleAgeMs + deltaMs,
-            timeScaleSeconds,
-            STALE_ALPHA_FLOOR,
-          );
+          staleAgeMs + deltaMs,
+          timeScaleSeconds,
+          STALE_ALPHA_FLOOR,
+        );
     return marketAlpha * memoryAlpha;
   };
 
   const currentByte = Math.round(alphaAt(0) * 255);
   const plateauByte = Math.round(
     MARKET_ALPHA_FLOOR *
-      (staleAgeMs === null ? 1 : STALE_ALPHA_FLOOR) *
-      255,
+    (staleAgeMs === null ? 1 : STALE_ALPHA_FLOOR) *
+    255,
   );
   if (currentByte <= plateauByte) return Infinity;
 
@@ -731,18 +737,18 @@ function loadTuning(): AgeStripTuning {
       ageScaleSeconds:
         typeof parsed.ageScaleSeconds === "number"
           ? clamp(
-              parsed.ageScaleSeconds,
-              MIN_AGE_SCALE_SECONDS,
-              MAX_AGE_SCALE_SECONDS,
-            )
+            parsed.ageScaleSeconds,
+            MIN_AGE_SCALE_SECONDS,
+            MAX_AGE_SCALE_SECONDS,
+          )
           : fallback.ageScaleSeconds,
       volumeSoftLimit:
         typeof parsed.volumeSoftLimit === "number"
           ? clamp(
-              parsed.volumeSoftLimit,
-              MIN_VOLUME_SOFT_LIMIT,
-              MAX_VOLUME_SOFT_LIMIT,
-            )
+            parsed.volumeSoftLimit,
+            MIN_VOLUME_SOFT_LIMIT,
+            MAX_VOLUME_SOFT_LIMIT,
+          )
           : fallback.volumeSoftLimit,
     };
   } catch {

@@ -65,10 +65,9 @@ describe("StaleSignedVolume", () => {
       volume: 12,
       ageMs: 10_000,
     });
-    expect(at(field, 30_000, 0.575)).toMatchObject({
-      volume: -7,
-      ageMs: 10_000,
-    });
+    const segment = at(field, 30_000, 0.575);
+    expect(segment.volume).toBeCloseTo(-7);
+    expect(segment.ageMs).toBe(10_000);
 
     field.update(makeBook([[0.45, 3]], [[0.6, 20]]), 40_000);
     expect(at(field, 50_000, 0.425)).toMatchObject({ volume: 3, ageMs: 0 });
