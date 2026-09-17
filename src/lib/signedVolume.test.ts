@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { emptyTokenBook } from "./orderBook";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+  signedVolumeAtPosition,
   signedVolumeColor,
   signedVolumePosition,
   signedVolumeSegments,
@@ -31,14 +32,22 @@ describe("signedVolumePosition", () => {
     expect(signedVolumePosition(Infinity, 100)).toBe(1);
     expect(signedVolumePosition(-Infinity, 100)).toBe(0);
   });
+
+  test("round-trips finite positions", () => {
+    for (const volume of [-1000, -100, -1, 0, 1, 100, 1000]) {
+      const position = signedVolumePosition(volume, 100);
+      expect(signedVolumeAtPosition(position, 100)).toBeCloseTo(volume);
+    }
+  });
 });
 
 describe("signedVolumeColor", () => {
-  test("uses one fixed-luminance scale for both signs", () => {
+  test("uses equivalent-luminance opposing hues and zero ink at zero force", () => {
     const positive = signedVolumeColor(100);
     const negative = signedVolumeColor(-100);
     expect(positive).toContain(`oklch(${DEFAULT_SIGNED_VOLUME_COLOR_SCALE.luminance}`);
     expect(negative).toContain(`oklch(${DEFAULT_SIGNED_VOLUME_COLOR_SCALE.luminance}`);
     expect(positive).not.toBe(negative);
+    expect(signedVolumeColor(0)).toBe("transparent");
   });
 });
