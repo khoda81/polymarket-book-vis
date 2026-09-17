@@ -85,7 +85,8 @@ export class PolymarketCPV {
       canvasWrap: this.refs.canvasWrap,
       toggles: this.refs.toggles,
       plotter: this.plotter,
-      activeTokens: this.activeTokens, getBook: (tokenId) => this.books[tokenId as TokenId],
+      activeTokens: this.activeTokens,
+      getBook: (tokenId) => this.books[tokenId as TokenId],
       getTitle: (marketId) => this.titles[marketId as MarketId],
       getTheme: () => this.theme,
       getViewMode: () => this.viewMode,
@@ -164,7 +165,7 @@ export class PolymarketCPV {
   }
 
   private bindEvents() {
-    const { searchInput, canvasWrap, viewMode } = this.refs;
+    const { searchInput, viewMode } = this.refs;
 
     searchInput.addEventListener("input", () => this.onSearchInput());
     viewMode.addEventListener("change", () => {
@@ -172,14 +173,6 @@ export class PolymarketCPV {
       this.reqDraw();
     });
     document.addEventListener("click", this.handleDocumentClick);
-
-    canvasWrap.addEventListener("click", (event) => {
-      const rect = this.refs.canvas.getBoundingClientRect();
-      this.placeOrder({
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top,
-      });
-    });
   }
 
   private handleDocumentClick = (event: MouseEvent) => {
@@ -234,7 +227,7 @@ export class PolymarketCPV {
     // best-effort, so the chart still works normally when the backend is down.
     this.ageView.hydrate(await fetchRecordedAgeState(tokenIds));
 
-    for (; ;) {
+    for (;;) {
       try {
         this.bookEventStream = await this.polyMarketClient.subscribe([
           { topic: "market", tokenIds },
@@ -524,9 +517,5 @@ export class PolymarketCPV {
       this.bookEventStream = null;
       this.setDot("disconnected");
     }
-  }
-
-  private placeOrder(_screen: { x: number; y: number }) {
-    if (this.activeTokens.size === 0) return;
   }
 }

@@ -60,34 +60,17 @@ interface GlResources {
 /**
  * Shared, disposable GPU cache for age-pressure fields.
  *
- * The CPU/backend sample-and-hold model remains authoritative. Context loss,
- * shader failure, unsupported WebGL, or a very long idle gap can therefore
- * fall back to Canvas2D / rebuild from CPU state without losing information.
+ * CPU/backend sample-and-hold state remains authoritative. Browser resources
+ * are created lazily so importing this module is harmless in tests/SSR, and
+ * any WebGL failure can fall back to the Canvas2D reference renderer.
  */
 class SharedWebGLPressureRenderer {
-  private readonly canvas = document.createElement("canvas");
   private readonly states = new Map<object, PressureState>();
+  private canvas: HTMLCanvasElement | undefined;
   private resources: GlResources | undefined;
   private contextLost = false;
   private permanentlyDisabled = false;
   private generation = 0;
-
-  constructor() {
-    this.canvas.addEventListener("webglcontextlost", (event) => {
-      event.preventDefault();
-      this.contextLost = true;
-      this.resources = undefined;
-      this.generation++;
-      this.requestAllRedraws();
-    });
-
-    this.canvas.addEventListener("webglcontextrestored", () => {
-      this.contextLost = false;
-      this.resources = undefined;
-      this.generation++;
-      this.requestAllRedraws();
-    });
-  }
 
   render(input: WebGLPressureRenderInput): HTMLCanvasElement | null {
     if (
@@ -99,13 +82,14 @@ class SharedWebGLPressureRenderer {
       return null;
 
     const resources = this.ensureResources();
-    if (!resources || resources.gl.isContextLost()) return null;
+    const canvas = this.canvas;
+    if (!resources || !canvas || resources.gl.isContextLost()) return null;
     const { gl } = resources;
 
     const width = Math.max(1, Math.round(input.widthCss * input.dpr));
     const height = Math.max(1, Math.round(input.heightCss * input.dpr));
-    if (this.canvas.width !== width) this.canvas.width = width;
-    if (this.canvas.height !== height) this.canvas.height = height;
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
 
     try {
       const layoutSignature = input.rows.map((row) => row.tokenId).join("\u0000");
@@ -133,8 +117,8 @@ class SharedWebGLPressureRenderer {
         const sigmaDevicePx =
           Math.sqrt(
             VARIANCE_PER_TIME_SCALE *
-            (dtMs / 1000) /
-            input.ageScaleSeconds,
+              (dtMs / 1000) /
+              input.ageScaleSeconds,
           ) * input.dpr;
 
         if (!this.advance(resources, state, sigmaDevicePx)) {
@@ -151,7 +135,7 @@ class SharedWebGLPressureRenderer {
       const error = gl.getError();
       if (error !== gl.NO_ERROR)
         throw new Error(`WebGL error 0x${error.toString(16)}`);
-      return this.canvas;
+      return canvas;
     } catch (error) {
       console.warn("WebGL pressure renderer disabled for this session:", error);
       this.permanentlyDisabled = true;
@@ -168,12 +152,37 @@ class SharedWebGLPressureRenderer {
     this.states.delete(key);
   }
 
+  private ensureCanvas(): HTMLCanvasElement | undefined {
+    if (this.canvas) return this.canvas;
+    if (typeof document === "undefined") return undefined;
+
+    const canvas = document.createElement("canvas");
+    canvas.addEventListener("webglcontextlost", (event) => {
+      event.preventDefault();
+      this.contextLost = true;
+      this.resources = undefined;
+      this.generation++;
+      this.requestAllRedraws();
+    });
+    canvas.addEventListener("webglcontextrestored", () => {
+      this.contextLost = false;
+      this.resources = undefined;
+      this.generation++;
+      this.requestAllRedraws();
+    });
+    this.canvas = canvas;
+    return canvas;
+  }
+
   private ensureResources(): GlResources | undefined {
     if (this.permanentlyDisabled || this.contextLost) return undefined;
     if (this.resources) return this.resources;
 
+    const canvas = this.ensureCanvas();
+    if (!canvas) return undefined;
+
     try {
-      const gl = this.canvas.getContext("webgl2", {
+      const gl = canvas.getContext("webgl2", {
         alpha: true,
         antialias: false,
         depth: false,
@@ -326,7 +335,7 @@ class SharedWebGLPressureRenderer {
       1,
       Math.ceil(
         (sigmaDevicePx * sigmaDevicePx) /
-        (MAX_SIGMA_PER_PASS_DEVICE_PX ** 2),
+          (MAX_SIGMA_PER_PASS_DEVICE_PX ** 2),
       ),
     );
     if (passes > MAX_BLUR_PASSES) return false;
@@ -364,7 +373,10 @@ class SharedWebGLPressureRenderer {
       resources.blurRadius,
       Math.min(MAX_SHADER_RADIUS, Math.max(1, Math.ceil(3 * sigmaDevicePx))),
     );
-    gl.uniform1i(resources.blurRowCount, state.layoutSignature.split("\u0000").length);
+    gl.uniform1i(
+      resources.blurRowCount,
+      state.layoutSignature.split("\u0000").length,
+    );
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     state.front = destination;
   }
@@ -450,9 +462,9 @@ function buildPressureRowPixels(
 
     const sigmaCss = Math.sqrt(
       BASE_SIGMA_CSS_PX * BASE_SIGMA_CSS_PX +
-      VARIANCE_PER_TIME_SCALE *
-      (segment.ageMs / 1000) /
-      ageScaleSeconds,
+        VARIANCE_PER_TIME_SCALE *
+          (segment.ageMs / 1000) /
+          ageScaleSeconds,
     );
     const sigma = Math.max(0.01, sigmaCss * dpr);
     const peak = Math.min(1, (BASE_SIGMA_CSS_PX * dpr) / sigma);
@@ -588,15 +600,23 @@ function requiredUniform(
   return location;
 }
 
-const colorProbe = document.createElement("canvas");
-colorProbe.width = colorProbe.height = 1;
-const colorProbeCtx = colorProbe.getContext("2d", { willReadFrequently: true });
+let colorProbeCtx: CanvasRenderingContext2D | null | undefined;
 const rgbCache = new Map<string, [number, number, number]>();
 
 function cssColorToRgb(css: string): [number, number, number] {
   const cached = rgbCache.get(css);
   if (cached) return cached;
+
+  if (colorProbeCtx === undefined) {
+    if (typeof document === "undefined") colorProbeCtx = null;
+    else {
+      const probe = document.createElement("canvas");
+      probe.width = probe.height = 1;
+      colorProbeCtx = probe.getContext("2d", { willReadFrequently: true });
+    }
+  }
   if (!colorProbeCtx) return [1, 1, 1];
+
   colorProbeCtx.clearRect(0, 0, 1, 1);
   colorProbeCtx.fillStyle = css;
   colorProbeCtx.fillRect(0, 0, 1, 1);

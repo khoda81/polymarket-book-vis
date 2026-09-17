@@ -22,7 +22,8 @@ test("markets not accepting orders start unchecked but retain their controls", (
       appendChild() {},
     };
   });
-  // Exercise configuration without constructing the canvas renderer or observers.
+
+  // Exercise market configuration without constructing the browser renderer.
   const view = Object.assign(Object.create(AgeStripView.prototype), {
     host: {
       activeTokens,

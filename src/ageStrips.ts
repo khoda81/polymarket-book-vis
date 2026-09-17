@@ -45,11 +45,6 @@ interface MarketRuntimeState {
   visibilityInitialized: boolean;
 }
 
-interface RenderRegistration {
-  readonly redraw: () => void;
-  visible: boolean;
-}
-
 export interface AgeStripHost {
   readonly canvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
@@ -65,7 +60,7 @@ export interface AgeStripHost {
 
 const tuning = loadTuning();
 const userHiddenMarketIds = loadStringSet(HIDDEN_MARKETS_STORAGE_KEY);
-const registrations = new Set<RenderRegistration>();
+const redrawCallbacks = new Set<() => void>();
 const tuningListeners = new Set<(tuning: Readonly<AgeStripTuning>) => void>();
 let tuningPersistTimer: number | undefined;
 let globalRedrawRaf: number | undefined;
@@ -95,8 +90,6 @@ export class AgeStripView {
   private readonly markets = new Map<string, MarketRuntimeState>();
   private readonly toggleHomeParent: HTMLElement | null;
   private readonly toggleHomeNextSibling: ChildNode | null;
-  private readonly registration: RenderRegistration;
-  private readonly visibilityObserver: IntersectionObserver;
   private readonly gpuKey = {};
   private readonly dirtyTokens = new Set<string>();
 
@@ -113,23 +106,7 @@ export class AgeStripView {
     this.hiddenTray.hidden = true;
     host.canvasWrap.insertAdjacentElement("afterend", this.hiddenTray);
 
-    this.registration = {
-      redraw: host.requestDraw,
-      visible: true,
-    };
-    registrations.add(this.registration);
-
-    this.visibilityObserver = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.some((entry) => entry.isIntersecting);
-        if (this.registration.visible === visible) return;
-        this.registration.visible = visible;
-        if (!visible) this.cancelDiffusionTimer();
-        else this.host.requestDraw();
-      },
-      { rootMargin: "200px" },
-    );
-    this.visibilityObserver.observe(host.canvasWrap);
+    redrawCallbacks.add(host.requestDraw);
 
     host.canvas.addEventListener("wheel", this.handleWheel, {
       capture: true,
@@ -368,8 +345,7 @@ export class AgeStripView {
   destroy(): void {
     this.cancelDiffusionTimer();
     sharedWebGLPressureRenderer.release(this.gpuKey);
-    this.visibilityObserver.disconnect();
-    registrations.delete(this.registration);
+    redrawCallbacks.delete(this.host.requestDraw);
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.hiddenTray.remove();
   }
@@ -474,11 +450,10 @@ export class AgeStripView {
   }
 
   private scheduleDiffusionTimer(delayMs: number): void {
-    if (!this.registration.visible || this.host.getViewMode() !== "age") return;
+    if (this.host.getViewMode() !== "age") return;
     this.diffusionTimer = window.setTimeout(() => {
       this.diffusionTimer = undefined;
-      if (this.registration.visible && this.host.getViewMode() === "age")
-        this.host.requestDraw();
+      if (this.host.getViewMode() === "age") this.host.requestDraw();
     }, Math.max(1, Math.ceil(delayMs)));
   }
 
@@ -688,8 +663,7 @@ function scheduleGlobalRedraw(): void {
   if (globalRedrawRaf !== undefined) return;
   globalRedrawRaf = requestAnimationFrame(() => {
     globalRedrawRaf = undefined;
-    for (const registration of registrations)
-      if (registration.visible) registration.redraw();
+    for (const redraw of redrawCallbacks) redraw();
   });
 }
 
