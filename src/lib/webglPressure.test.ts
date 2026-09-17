@@ -19,6 +19,7 @@ test("WebGL pressure rendering degrades cleanly without a DOM", () => {
         },
       ],
       dirtyTokens: new Set(["test"]),
+      getBook: () => undefined,
       widthCss: 100,
       heightCss: 36,
       dpr: 1,
