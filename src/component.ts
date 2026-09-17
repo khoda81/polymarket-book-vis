@@ -1,3 +1,4 @@
+import { fetchRecordedAgeState } from "@/lib/ageRecorderClient";
 import { fmtVol, marketColor } from "@/lib/math";
 import {
   BookOrder,
@@ -235,6 +236,10 @@ export class PolymarketCPV {
     tokenIds.forEach((tokenId) => this.activeTokens.add(tokenId));
     this.buildToggles(event);
     this.ageView.configureMarkets(event, rawMarkets);
+
+    // GET also registers these tokens with the always-on recorder. Hydration is
+    // best-effort, so the chart still works normally when the backend is down.
+    this.ageView.hydrate(await fetchRecordedAgeState(tokenIds));
 
     for (;;) {
       try {
