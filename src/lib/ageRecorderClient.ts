@@ -4,6 +4,8 @@ interface RecorderTransportSegment {
   lo: number;
   hi: number;
   volume: number;
+  /** Missing/null means an older recorder did not capture economic magnitude. */
+  sweepCost?: number | null;
   /** null is the backend wire encoding of age Infinity / never observed. */
   ageMs: number | null;
 }
@@ -45,8 +47,12 @@ export async function fetchRecordedAgeState(
       Object.entries(body.states ?? {}).map(([tokenId, state]) => [
         tokenId,
         {
-          segments: state.segments.map(({ ageMs, ...segment }) => ({
+          segments: state.segments.map(({ ageMs, sweepCost, ...segment }) => ({
             ...segment,
+            sweepCost:
+              typeof sweepCost === "number" && Number.isFinite(sweepCost)
+                ? sweepCost
+                : null,
             ageMs: ageMs === null ? Infinity : ageMs,
           })),
         } satisfies RecordedAgeState,
