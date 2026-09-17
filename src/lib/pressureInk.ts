@@ -2,43 +2,45 @@ export const DEFAULT_VOLUME_PER_CSS_PIXEL = 10_000;
 export const DIFFUSION_VARIANCE_PER_TIME_SCALE = 8;
 
 /**
- * Fraction of the configured reserve consumed by sweeping one side of the book.
+ * Area-preserving normalization of cumulative share pressure.
  *
- * `sweepCost` is the cumulative capital needed to consume the resting liquidity
- * represented by this sample. `reserveCapital` is the comparison reserve. The
- * resulting soft ratio keeps the useful shape of v/(v+c), but both numerator
- * and denominator are now expressed in dollars:
+ * `shareReference` is a common upper reference V for every pressure field in
+ * the current dashboard and `reserveShares` is the user-controlled headroom C.
+ * With D = V + C, pressure is simply
  *
- *   pressure = sweepCost / (sweepCost + reserveCapital)
+ *   pressure = |Q| / D
  *
- * The value is in [0,1), approaches 1 asymptotically, and has the simple
- * interpretation "what fraction of sweep capital + reserve is committed to
- * crossing this much liquidity?".
+ * so the transformation is linear in shares at every price. That linearity is
+ * the important property: integrating the normalized bar over probability and
+ * multiplying by D preserves the economically meaningful share×price area.
+ * The maximum observed share depth V reaches V/(V+C), retaining the visual
+ * softness of v/(v+c) without applying a nonlinear transform point-by-point.
  */
-export function capitalPressureAreaFraction(
+export function sharePressureAreaFraction(
   volume: number,
-  sweepCost: number | null,
-  reserveCapital: number,
+  shareReference: number,
+  reserveShares: number,
 ): number {
-  validatePositiveFinite(reserveCapital, "reserve capital");
-  if (volume === 0 || Number.isNaN(volume) || sweepCost === null) return 0;
-  if (Number.isNaN(sweepCost) || sweepCost < 0) return 0;
-  if (sweepCost === Infinity) return 1;
-  if (!Number.isFinite(sweepCost) || sweepCost === 0) return 0;
-  return sweepCost / (sweepCost + reserveCapital);
+  validateNonNegativeFinite(shareReference, "share reference");
+  validatePositiveFinite(reserveShares, "share reserve");
+  if (volume === 0 || Number.isNaN(volume)) return 0;
+  if (!Number.isFinite(volume)) return 1;
+
+  const denominator = shareReference + reserveShares;
+  return clamp01(Math.abs(volume) / denominator);
 }
 
-/** Convert a capital-pressure sample into fresh vertical ink thickness. */
+/** Convert a share-pressure sample into fresh vertical ink thickness. */
 export function pressureInkThicknessCss(
   volume: number,
-  sweepCost: number | null,
-  reserveCapital: number,
+  shareReference: number,
+  reserveShares: number,
   rowHeightCss: number,
 ): number {
   validatePositiveFinite(rowHeightCss, "row height");
   return (
     rowHeightCss *
-    capitalPressureAreaFraction(volume, sweepCost, reserveCapital)
+    sharePressureAreaFraction(volume, shareReference, reserveShares)
   );
 }
 
@@ -60,9 +62,8 @@ export function diffusionSigmaCss(
 }
 
 /**
- * Legacy Canvas2D signature retained while the WebGL experiment is evaluated.
- * It keeps the old share-volume soft-saturation semantics in the no-WebGL
- * fallback because that call site does not yet provide sweep capital.
+ * Legacy Canvas2D signature. It retains the previous local soft-share mapping
+ * until the fallback renderer is migrated to the dashboard-wide share scale.
  */
 export function pressureInkProfile(
   volume: number,
@@ -73,14 +74,12 @@ export function pressureInkProfile(
   deviceHeight: number,
 ): Float32Array;
 
-/** Capital-pressure signature used by the WebGL path. */
+/** Area-preserving share-pressure signature used by the WebGL path. */
 export function pressureInkProfile(
   volume: number,
-  sweepCost: number | null,
-  lo: number,
-  hi: number,
   ageMs: number,
-  reserveCapital: number,
+  shareReference: number,
+  reserveShares: number,
   timeScaleSeconds: number,
   dpr: number,
   deviceHeight: number,
@@ -89,27 +88,21 @@ export function pressureInkProfile(
 /**
  * Rasterize pressure into a vertically diffused row profile.
  *
- * The capital-pressure form derives fresh area from sweep capital relative to a
- * reserve rather than raw share count. `lo` and `hi` remain in the compatibility
- * signature for the current renderer call shape, but no longer affect magnitude.
- *
- * Each output sample is the *integral over a physical pixel*, not the value at
- * the pixel center. That conserves subpixel ink continuously as sigma tends to
- * zero and removes the one-pixel brightening discontinuity of point sampling.
+ * The seven-argument form uses one common linear share scale, so bar area is
+ * proportional to the integral of cumulative shares over price. Each output
+ * sample is the *integral over a physical pixel*, not the value at its center;
+ * this conserves subpixel ink continuously as sigma tends to zero.
  */
 export function pressureInkProfile(
   volume: number,
-  second: number | null,
+  ageMs: number,
   third: number,
   fourth: number,
   fifth: number,
   sixth: number,
   seventh?: number,
-  eighth?: number,
-  ninth?: number,
 ): Float32Array {
-  if (seventh === undefined || eighth === undefined || ninth === undefined) {
-    const ageMs = second as number;
+  if (seventh === undefined) {
     const volumePerCssPixel = third;
     const timeScaleSeconds = fourth;
     const dpr = fifth;
@@ -135,21 +128,18 @@ export function pressureInkProfile(
     );
   }
 
-  const sweepCost = second;
-  // `third` and `fourth` are the segment price bounds retained only for call
-  // compatibility; sweepCost already incorporates the prices of consumed levels.
-  const ageMs = fifth;
-  const reserveCapital = sixth;
-  const timeScaleSeconds = seventh;
-  const dpr = eighth;
-  const deviceHeight = ninth;
+  const shareReference = third;
+  const reserveShares = fourth;
+  const timeScaleSeconds = fifth;
+  const dpr = sixth;
+  const deviceHeight = seventh;
   validateRasterInputs(dpr, deviceHeight);
 
   const rowHeightCss = deviceHeight / dpr;
   const thicknessCss = pressureInkThicknessCss(
     volume,
-    sweepCost,
-    reserveCapital,
+    shareReference,
+    reserveShares,
     rowHeightCss,
   );
   return rasterPressureProfile(
@@ -268,6 +258,11 @@ function validateRasterInputs(dpr: number, deviceHeight: number): void {
 function validatePositiveFinite(value: number, name: string): void {
   if (!(value > 0) || !Number.isFinite(value))
     throw new RangeError(`${name} must be finite and positive`);
+}
+
+function validateNonNegativeFinite(value: number, name: string): void {
+  if (value < 0 || !Number.isFinite(value))
+    throw new RangeError(`${name} must be finite and non-negative`);
 }
 
 function clamp01(value: number): number {
