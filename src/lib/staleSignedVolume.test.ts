@@ -21,11 +21,7 @@ function makeBook(
   return { usdToYes, yesToUsd };
 }
 
-function at(
-  field: StaleSignedVolume,
-  nowMs: number,
-  price: number,
-) {
+function at(field: StaleSignedVolume, nowMs: number, price: number) {
   return field
     .segments(nowMs)
     .find((segment) => price >= segment.lo && price < segment.hi)!;
@@ -76,5 +72,33 @@ describe("StaleSignedVolume", () => {
 
     field.update(makeBook([[0.45, 3]], [[0.6, 20]]), 40_000);
     expect(at(field, 50_000, 0.425)).toMatchObject({ volume: 3, ageMs: 0 });
+  });
+
+  test("snapshot/restore preserves absolute stale timestamps", () => {
+    const field = new StaleSignedVolume();
+    field.update(makeBook([[0.45, 12]], [[0.55, 7]]), 10_000);
+    field.update(makeBook([[0.4, 10]], [[0.6, 20]]), 20_000);
+
+    const restored = new StaleSignedVolume();
+    restored.restore(field.snapshot());
+
+    expect(at(restored, 35_000, 0.425)).toMatchObject({
+      volume: 12,
+      ageMs: 15_000,
+    });
+  });
+
+  test("transport hydration rebases age onto the browser clock", () => {
+    const source = new StaleSignedVolume();
+    source.update(makeBook([[0.45, 12]], [[0.55, 7]]), 10_000);
+    source.update(makeBook([[0.4, 10]], [[0.6, 20]]), 20_000);
+
+    const hydrated = new StaleSignedVolume();
+    hydrated.restoreSegments(source.segments(35_000), 1_000);
+
+    expect(at(hydrated, 2_000, 0.425)).toMatchObject({
+      volume: 12,
+      ageMs: 16_000,
+    });
   });
 });
