@@ -85,9 +85,9 @@ export function subscribeAgeStripTuning(
 /**
  * Age-mode projection of the live order books.
  *
- * CPU sample-and-hold segments are authoritative. A WebGL pressure texture is
- * used as a disposable incremental diffusion cache when available; the exact
- * Canvas2D area renderer remains the automatic fallback/reference path.
+ * The WebGL path renders the authoritative live book sharply and keeps time in
+ * a separate diffusing resin texture. CPU sample-and-hold segments are retained
+ * as rebuild/hydration history and as the reliable Canvas2D fallback.
  */
 export class AgeStripView {
   private readonly host: AgeStripHost;
@@ -263,6 +263,7 @@ export class AgeStripView {
       key: this.gpuKey,
       rows,
       dirtyTokens: this.dirtyTokens,
+      getBook: this.host.getBook,
       widthCss: vp.width,
       heightCss: vp.height,
       dpr: window.devicePixelRatio || 1,
@@ -284,12 +285,13 @@ export class AgeStripView {
       ctx.restore();
       drawAgeAxes(frame);
       this.dirtyTokens.clear();
-      this.scheduleDiffusionTimer(gpuDiffusionDelayMs(tuning.ageScaleSeconds));
+      if (sharedWebGLPressureRenderer.hasHistory(this.gpuKey))
+        this.scheduleDiffusionTimer(gpuDiffusionDelayMs(tuning.ageScaleSeconds));
       return;
     }
 
-    // Reliable reference/fallback path: reconstruct the same vertical ink-area
-    // profiles directly in Canvas2D.
+    // Reliable reference/fallback path: reconstruct the legacy vertical
+    // sample-and-hold profiles directly in Canvas2D.
     let hasDiffusingPressure = false;
     for (const [index, row] of rows.entries()) {
       if (row.segments.length === 0) continue;
@@ -590,7 +592,9 @@ function rowRasterGeometry(
 }
 
 function gpuDiffusionDelayMs(timeScaleSeconds: number): number {
-  return clamp(timeScaleSeconds * 20, 16, 250);
+  // Resin is a slow visual memory; batching more elapsed diffusion into each
+  // GPU step dramatically reduces canvas copies without changing the equation.
+  return clamp(timeScaleSeconds * 60, 50, 500);
 }
 
 function hasRealOrders(book: TokenBook<string>): boolean {
