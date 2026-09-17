@@ -70,6 +70,12 @@ interface GlResources {
   readonly blurSigma: WebGLUniformLocation;
   readonly blurRadius: WebGLUniformLocation;
   readonly blurRowCount: WebGLUniformLocation;
+  readonly rescaleProgram: WebGLProgram;
+  readonly rescaleTexture: WebGLUniformLocation;
+  readonly rescaleSize: WebGLUniformLocation;
+  readonly rescaleRowCount: WebGLUniformLocation;
+  readonly rescaleOldScale: WebGLUniformLocation;
+  readonly rescaleNewScale: WebGLUniformLocation;
   readonly depositProgram: WebGLProgram;
   readonly depositHistory: WebGLUniformLocation;
   readonly depositSource: WebGLUniformLocation;
@@ -149,10 +155,11 @@ class SharedWebGLPressureRenderer {
         const displaced = this.captureLiveChanges(state, input);
 
         if (state.volumePerCssPixel !== input.volumePerCssPixel) {
-          // History is intentionally visual residue: changing the share scale
-          // rescales the authoritative live book and future deposits, but does
-          // not rewind and reinterpret already-cured resin.
-          state.volumePerCssPixel = input.volumePerCssPixel;
+          const oldScale = state.volumePerCssPixel;
+          const newScale = input.volumePerCssPixel;
+          if (state.historyActive)
+            this.rescaleHistory(resources, state, oldScale, newScale);
+          state.volumePerCssPixel = newScale;
           this.rebuildCurrentAll(gl, state, input);
         } else {
           this.rebuildDirtyCurrentRows(gl, state, input);
@@ -232,6 +239,7 @@ class SharedWebGLPressureRenderer {
       if (!framebuffer) throw new Error("Could not create WebGL framebuffer");
 
       const blurProgram = createProgram(gl, VERTEX_SHADER, BLUR_SHADER);
+      const rescaleProgram = createProgram(gl, VERTEX_SHADER, RESCALE_SHADER);
       const depositProgram = createProgram(gl, VERTEX_SHADER, DEPOSIT_SHADER);
       const presentProgram = createProgram(gl, VERTEX_SHADER, PRESENT_SHADER);
       const resources: GlResources = {
@@ -243,6 +251,12 @@ class SharedWebGLPressureRenderer {
         blurSigma: requiredUniform(gl, blurProgram, "u_sigma"),
         blurRadius: requiredUniform(gl, blurProgram, "u_radius"),
         blurRowCount: requiredUniform(gl, blurProgram, "u_row_count"),
+        rescaleProgram,
+        rescaleTexture: requiredUniform(gl, rescaleProgram, "u_texture"),
+        rescaleSize: requiredUniform(gl, rescaleProgram, "u_size"),
+        rescaleRowCount: requiredUniform(gl, rescaleProgram, "u_row_count"),
+        rescaleOldScale: requiredUniform(gl, rescaleProgram, "u_old_scale"),
+        rescaleNewScale: requiredUniform(gl, rescaleProgram, "u_new_scale"),
         depositProgram,
         depositHistory: requiredUniform(gl, depositProgram, "u_history"),
         depositSource: requiredUniform(gl, depositProgram, "u_deposit"),
@@ -462,6 +476,32 @@ class SharedWebGLPressureRenderer {
       Math.min(MAX_SHADER_RADIUS, Math.max(1, Math.ceil(3 * sigmaDevicePx))),
     );
     gl.uniform1i(resources.blurRowCount, state.rowCount);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    state.historyFront = destination;
+  }
+
+  private rescaleHistory(
+    resources: GlResources,
+    state: PressureState,
+    oldScale: number,
+    newScale: number,
+  ): void {
+    if (!state.historyActive || oldScale === newScale) return;
+
+    const { gl } = resources;
+    const destination: 0 | 1 = state.historyFront === 0 ? 1 : 0;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, resources.framebuffer);
+    attachTexture(gl, resources.framebuffer, state.historyTextures[destination]);
+    gl.viewport(0, 0, state.width, state.height);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.useProgram(resources.rescaleProgram);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, state.historyTextures[state.historyFront]);
+    gl.uniform1i(resources.rescaleTexture, 0);
+    gl.uniform2i(resources.rescaleSize, state.width, state.height);
+    gl.uniform1i(resources.rescaleRowCount, state.rowCount);
+    gl.uniform1f(resources.rescaleOldScale, oldScale);
+    gl.uniform1f(resources.rescaleNewScale, newScale);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     state.historyFront = destination;
   }
@@ -997,6 +1037,47 @@ void main() {
   }
 
   outColor = vec4(norm > 0.0 ? sum / norm : vec2(0.0), 0.0, 0.0);
+}`;
+
+const RESCALE_SHADER = `#version 300 es
+precision highp float;
+precision highp int;
+uniform sampler2D u_texture;
+uniform ivec2 u_size;
+uniform int u_row_count;
+uniform float u_old_scale;
+uniform float u_new_scale;
+out vec4 outColor;
+void main() {
+  ivec2 pixel = ivec2(gl_FragCoord.xy);
+  int row = int(floor(gl_FragCoord.y * float(u_row_count) / float(u_size.y)));
+  int rowBottom = int(floor(float(row) * float(u_size.y) / float(u_row_count)));
+  int rowTop = int(floor(float(row + 1) * float(u_size.y) / float(u_row_count)));
+
+  float center = 0.5 * float(rowBottom + rowTop);
+  float halfHeight = max(0.5, 0.5 * float(rowTop - rowBottom));
+  float direction = gl_FragCoord.y >= center ? 1.0 : -1.0;
+  float newFraction = clamp(abs(gl_FragCoord.y - center) / halfHeight, 0.0, 1.0);
+
+  float numerator = u_new_scale * newFraction;
+  float denominator = numerator + u_old_scale * (1.0 - newFraction);
+  float oldFraction = denominator > 0.0 ? numerator / denominator : newFraction;
+  float sourceCenterY = center + direction * oldFraction * halfHeight;
+
+  // Convert the source pixel-center coordinate to a texel index and linearly
+  // interpolate vertically. This avoids stair-stepping after repeated wheel
+  // rescalings while keeping the texture itself NEAREST for normal rendering.
+  float sourceIndex = clamp(
+    sourceCenterY - 0.5,
+    float(rowBottom),
+    float(max(rowBottom, rowTop - 1))
+  );
+  int y0 = int(floor(sourceIndex));
+  int y1 = min(y0 + 1, rowTop - 1);
+  float t = fract(sourceIndex);
+  vec2 a = texelFetch(u_texture, ivec2(pixel.x, y0), 0).rg;
+  vec2 b = texelFetch(u_texture, ivec2(pixel.x, y1), 0).rg;
+  outColor = vec4(mix(a, b, t), 0.0, 0.0);
 }`;
 
 const DEPOSIT_SHADER = `#version 300 es

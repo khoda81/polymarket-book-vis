@@ -697,18 +697,18 @@ function loadTuning(): AgeStripTuning {
       ageScaleSeconds:
         typeof parsed.ageScaleSeconds === "number"
           ? clamp(
-              parsed.ageScaleSeconds,
-              MIN_AGE_SCALE_SECONDS,
-              MAX_AGE_SCALE_SECONDS,
-            )
+            parsed.ageScaleSeconds,
+            MIN_AGE_SCALE_SECONDS,
+            MAX_AGE_SCALE_SECONDS,
+          )
           : fallback.ageScaleSeconds,
       volumePerCssPixel:
         typeof storedVolumeScale === "number"
           ? clamp(
-              storedVolumeScale,
-              MIN_VOLUME_PER_CSS_PIXEL,
-              MAX_VOLUME_PER_CSS_PIXEL,
-            )
+            storedVolumeScale,
+            MIN_VOLUME_PER_CSS_PIXEL,
+            MAX_VOLUME_PER_CSS_PIXEL,
+          )
           : fallback.volumePerCssPixel,
     };
   } catch {

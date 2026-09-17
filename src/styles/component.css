@@ -117,6 +117,7 @@
     z-index: 6;
     pointer-events: none;
     font-size: 11px;
+    text-align: right;
 }
 
 .cpv-toggles--age-axis label {
@@ -196,6 +197,12 @@
     height: 8px;
     border-radius: 50%;
     flex: 0 0 auto;
+}
+
+.cpv-toggles--age-axis .cpv-market-dot,
+.cpv-hidden-markets .cpv-market-dot {
+    /* Override the inline display used by volume-mode dots. */
+    display: none !important;
 }
 
 /* ── Search ──────────────────────────────────────────────────────────────── */
