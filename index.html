@@ -22,6 +22,22 @@
                 </div>
                 <span class="dashboard-add-status" id="add-event-status" aria-live="polite"></span>
             </form>
+
+            <div class="dashboard-meta">
+                <div class="recorder-status" id="recorder-status" data-state="connecting">
+                    <span class="recorder-status-dot" aria-hidden="true"></span>
+                    <span id="recorder-status-text">recorder…</span>
+                </div>
+
+                <section class="volume-legend" aria-label="Global signed force color scale">
+                    <div class="volume-legend-header">
+                        <span>signed force</span>
+                        <span class="volume-legend-scale" id="volume-legend-scale"></span>
+                    </div>
+                    <div class="volume-legend-bar" id="volume-legend-bar"></div>
+                    <div class="volume-legend-ticks" id="volume-legend-ticks"></div>
+                </section>
+            </div>
         </header>
         <div class="grid" id="grid"></div>
         <script type="module" src="/src/main.ts"></script>
