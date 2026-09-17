@@ -95,8 +95,10 @@ export class PolymarketCPV {
     });
     this.bindEvents();
 
-    this.resizeObserver = new ResizeObserver(() => {
-      this.plotter.resize();
+    this.resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      this.plotter.resizeTo(entry.contentRect.width, entry.contentRect.height);
       this.reqDraw();
     });
     this.resizeObserver.observe(this.refs.canvas);
