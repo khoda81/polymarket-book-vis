@@ -1,5 +1,16 @@
 import "@/styles/global.css";
+import {
+  getAgeStripTuning,
+  subscribeAgeStripTuning,
+  type AgeStripTuning,
+} from "./ageStrips";
 import { PolymarketCPV } from "./component";
+import { fmtRelativeTime, fmtVol } from "./lib/math";
+import {
+  DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+  signedVolumeColorAtPosition,
+  signedVolumePosition,
+} from "./lib/signedVolume";
 import { createPublicClient, Event } from "@polymarket/client";
 
 const grid = document.getElementById("grid")!;
@@ -7,6 +18,11 @@ const addEventForm = document.getElementById("add-event-form") as HTMLFormElemen
 const eventSlugInput = document.getElementById("event-slug") as HTMLInputElement;
 const addEventStatus = document.getElementById("add-event-status")!;
 const addEventButton = addEventForm.querySelector("button")!;
+const recorderStatus = document.getElementById("recorder-status")!;
+const recorderStatusText = document.getElementById("recorder-status-text")!;
+const volumeLegendBar = document.getElementById("volume-legend-bar")!;
+const volumeLegendTicks = document.getElementById("volume-legend-ticks")!;
+const volumeLegendScale = document.getElementById("volume-legend-scale")!;
 const client = createPublicClient();
 const cards = new Map<string, { card: HTMLElement; chart: PolymarketCPV }>();
 
@@ -43,6 +59,7 @@ async function createCard(event: Event) {
   try {
     await chart.load(event);
     closeButton.disabled = false;
+    void refreshRecorderStatus();
     return true;
   } catch (error) {
     chart.destroy();
@@ -83,6 +100,68 @@ addEventForm.addEventListener("submit", async (submitEvent) => {
     addEventButton.disabled = false;
   }
 });
+
+function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
+  const scale = {
+    ...DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+    softLimit: tuning.volumeSoftLimit,
+  };
+  const stops = Array.from({ length: 33 }, (_, index) => {
+    const position = index / 32;
+    return `${signedVolumeColorAtPosition(position, scale)} ${position * 100}%`;
+  });
+  volumeLegendBar.style.background = `linear-gradient(90deg, ${stops.join(", ")})`;
+  volumeLegendScale.textContent = `half-saturation ±${fmtVol(tuning.volumeSoftLimit)} YES`;
+
+  const values = [
+    -10 * tuning.volumeSoftLimit,
+    -tuning.volumeSoftLimit,
+    0,
+    tuning.volumeSoftLimit,
+    10 * tuning.volumeSoftLimit,
+  ];
+  volumeLegendTicks.replaceChildren();
+  for (const value of values) {
+    const tick = document.createElement("span");
+    tick.style.left = `${signedVolumePosition(value, tuning.volumeSoftLimit) * 100}%`;
+    tick.textContent =
+      value === 0
+        ? "0"
+        : `${value > 0 ? "+" : "−"}${fmtVol(Math.abs(value))}`;
+    volumeLegendTicks.appendChild(tick);
+  }
+}
+
+interface RecorderHealth {
+  watchedTokens: number;
+  connected: boolean;
+  oldestRecordingSinceMs: number | null;
+}
+
+async function refreshRecorderStatus(): Promise<void> {
+  try {
+    const response = await fetch("/api/recorder/health", { cache: "no-store" });
+    if (!response.ok) throw new Error(`recorder returned ${response.status}`);
+    const health = (await response.json()) as RecorderHealth;
+    recorderStatus.dataset.state = health.connected ? "live" : "connecting";
+
+    const history =
+      health.oldestRecordingSinceMs === null
+        ? "no history yet"
+        : `${fmtRelativeTime((Date.now() - health.oldestRecordingSinceMs) / 1000)} history`;
+    recorderStatusText.textContent = health.connected
+      ? `recorder · ${history} · ${health.watchedTokens} markets`
+      : `recorder reconnecting · ${history}`;
+  } catch {
+    recorderStatus.dataset.state = "offline";
+    recorderStatusText.textContent = "recorder offline";
+  }
+}
+
+renderVolumeLegend(getAgeStripTuning());
+subscribeAgeStripTuning(renderVolumeLegend);
+void refreshRecorderStatus();
+window.setInterval(() => void refreshRecorderStatus(), 5_000);
 
 const eventSlugs = ["israel-closes-its-airspace-by"];
 
