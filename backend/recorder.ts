@@ -41,10 +41,10 @@ class AgeRecorder {
 
   async start(): Promise<void> {
     await this.restoreFromDisk();
-    await this.restartSubscription();
+    void this.restartSubscription();
   }
 
-  async watch(tokenIds: Iterable<string>): Promise<boolean> {
+  watch(tokenIds: Iterable<string>): boolean {
     let changed = false;
     for (const tokenId of tokenIds) {
       if (!tokenId || this.watched.has(tokenId)) continue;
@@ -54,7 +54,8 @@ class AgeRecorder {
     if (!changed) return false;
 
     this.schedulePersist();
-    await this.restartSubscription();
+    // Registration/hydration must never block the UI on recorder connectivity.
+    void this.restartSubscription();
     return true;
   }
 
@@ -78,37 +79,44 @@ class AgeRecorder {
     };
   }
 
-  private async restartSubscription(): Promise<void> {
-    this.restartChain = this.restartChain.then(async () => {
-      const generation = ++this.subscriptionGeneration;
-      const previous = this.subscription;
-      this.subscription = null;
-      if (previous) await previous.close().catch(() => undefined);
-
-      const tokenIds = [...this.watched];
-      if (tokenIds.length === 0) return;
-
-      for (;;) {
-        try {
-          const subscription = await this.client.subscribe([
-            { topic: "market", tokenIds },
-          ]);
-          if (generation !== this.subscriptionGeneration) {
-            await subscription.close().catch(() => undefined);
-            return;
-          }
-          this.subscription = subscription;
-          void this.consume(subscription, generation);
-          return;
-        } catch (error) {
-          if (!(error instanceof TransportError)) throw error;
-          console.error("Recorder websocket connection failed; retrying…", error);
-          await Bun.sleep(1_000);
-          if (generation !== this.subscriptionGeneration) return;
-        }
-      }
-    });
+  private restartSubscription(): Promise<void> {
+    // Increment immediately so any currently retrying connection attempt can
+    // observe that it is stale before the queued restart gets its turn.
+    const generation = ++this.subscriptionGeneration;
+    this.restartChain = this.restartChain.then(() => this.connect(generation));
     return this.restartChain;
+  }
+
+  private async connect(generation: number): Promise<void> {
+    if (generation !== this.subscriptionGeneration) return;
+
+    const previous = this.subscription;
+    this.subscription = null;
+    if (previous) await previous.close().catch(() => undefined);
+    if (generation !== this.subscriptionGeneration) return;
+
+    const tokenIds = [...this.watched];
+    if (tokenIds.length === 0) return;
+
+    for (;;) {
+      try {
+        const subscription = await this.client.subscribe([
+          { topic: "market", tokenIds },
+        ]);
+        if (generation !== this.subscriptionGeneration) {
+          await subscription.close().catch(() => undefined);
+          return;
+        }
+        this.subscription = subscription;
+        void this.consume(subscription, generation);
+        return;
+      } catch (error) {
+        if (!(error instanceof TransportError)) throw error;
+        console.error("Recorder websocket connection failed; retrying…", error);
+        await Bun.sleep(1_000);
+        if (generation !== this.subscriptionGeneration) return;
+      }
+    }
   }
 
   private async consume(
@@ -288,7 +296,7 @@ Bun.serve({
 
     if (url.pathname === "/api/recorder/state" && request.method === "GET") {
       const tokenIds = parseTokenIds(url.searchParams);
-      await recorder.watch(tokenIds);
+      recorder.watch(tokenIds);
       return response(recorder.state(tokenIds));
     }
 
@@ -297,7 +305,7 @@ Bun.serve({
       const tokenIds = Array.isArray(body.tokenIds)
         ? body.tokenIds.filter((value): value is string => typeof value === "string")
         : [];
-      const changed = await recorder.watch(tokenIds);
+      const changed = recorder.watch(tokenIds);
       return response({ changed, ...recorder.stats() });
     }
 
