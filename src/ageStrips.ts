@@ -375,7 +375,7 @@ export class AgeStripView {
       );
     } else {
       tuning.ageScaleSeconds = clamp(
-        tuning.ageScaleSeconds * factor,
+        tuning.ageScaleSeconds / factor,
         MIN_AGE_SCALE_SECONDS,
         MAX_AGE_SCALE_SECONDS,
       );
