@@ -1,26 +1,38 @@
-export const DEFAULT_VOLUME_PER_CSS_PIXEL = 10_000;
+export const DEFAULT_VOLUME_SOFT_LIMIT = 10_000;
 export const DIFFUSION_VARIANCE_PER_TIME_SCALE = 8;
 
 /**
- * Convert absolute signed volume into vertical opaque-pixel-equivalents.
+ * Soft-saturating fraction of one row occupied by fresh pressure.
  *
- * One CSS pixel of fully opaque ink represents `volumePerCssPixel` YES. The
- * fresh stripe is centered in its row and clips only when it fills the row.
+ *   0 volume        -> 0
+ *   softLimit       -> 1/2 row
+ *   infinite volume -> full row
  */
+export function pressureInkAreaFraction(
+  volume: number,
+  softLimit: number = DEFAULT_VOLUME_SOFT_LIMIT,
+): number {
+  validatePositiveFinite(softLimit, "volume soft limit");
+  if (volume === 0 || Number.isNaN(volume)) return 0;
+  if (!Number.isFinite(volume)) return 1;
+  const magnitude = Math.abs(volume);
+  return magnitude / (magnitude + softLimit);
+}
+
+/** Convert signed volume into fresh vertical ink thickness in CSS pixels. */
 export function pressureInkThicknessCss(
   volume: number,
-  volumePerCssPixel: number = DEFAULT_VOLUME_PER_CSS_PIXEL,
+  softLimit: number = DEFAULT_VOLUME_SOFT_LIMIT,
   rowHeightCss = Infinity,
 ): number {
-  validatePositiveFinite(volumePerCssPixel, "volume per pixel");
   if (!(rowHeightCss > 0) || Number.isNaN(rowHeightCss))
     throw new RangeError("row height must be positive");
-  if (volume === 0 || Number.isNaN(volume)) return 0;
-
-  const raw = Number.isFinite(volume)
-    ? Math.abs(volume) / volumePerCssPixel
-    : Infinity;
-  return Math.min(raw, rowHeightCss);
+  if (!Number.isFinite(rowHeightCss)) {
+    if (rowHeightCss !== Infinity)
+      throw new RangeError("row height must be positive");
+    return pressureInkAreaFraction(volume, softLimit) === 0 ? 0 : Infinity;
+  }
+  return rowHeightCss * pressureInkAreaFraction(volume, softLimit);
 }
 
 /** Standard deviation accumulated by diffusion over `ageMs`. */
@@ -43,16 +55,16 @@ export function diffusionSigmaCss(
 /**
  * Rasterize one pressure value into a vertically diffused row profile.
  *
- * The fresh profile is a centered top-hat whose integral in CSS pixels is
- * `abs(volume) / volumePerCssPixel`, clipped to the row height. Fractional
- * device-pixel coverage naturally represents subpixel volume. For finite age
- * the top-hat is convolved with the heat kernel, so diffusion redistributes the
- * same ink mass until row clipping lets old haze dissipate out of view.
+ * Fresh pressure is a centered top-hat whose area fraction is
+ * `abs(volume) / (abs(volume) + softLimit)`. Fractional physical-pixel
+ * coverage naturally represents subpixel area. For finite age the top-hat is
+ * convolved with the heat kernel, so diffusion redistributes the same ink mass
+ * until row clipping lets old haze dissipate out of view.
  */
 export function pressureInkProfile(
   volume: number,
   ageMs: number,
-  volumePerCssPixel: number,
+  softLimit: number,
   timeScaleSeconds: number,
   dpr: number,
   deviceHeight: number,
@@ -66,7 +78,7 @@ export function pressureInkProfile(
 
   const thicknessCss = pressureInkThicknessCss(
     volume,
-    volumePerCssPixel,
+    softLimit,
     deviceHeight / dpr,
   );
   const thicknessDevice = Math.min(deviceHeight, thicknessCss * dpr);
