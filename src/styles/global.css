@@ -100,6 +100,10 @@ body {
     background: #38b886;
 }
 
+.recorder-status[data-state="idle"] .recorder-status-dot {
+    background: #6f9db8;
+}
+
 .recorder-status[data-state="connecting"] .recorder-status-dot {
     background: #d7a43b;
 }
