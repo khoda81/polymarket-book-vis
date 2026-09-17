@@ -7,7 +7,7 @@ export interface SignedVolumeSegment {
 }
 
 export interface SignedVolumeColorScale {
-  /** Absolute volume mapped halfway from neutral to full chroma. */
+  /** Absolute volume mapped halfway from zero to full ink intensity. */
   readonly softLimit: number;
   readonly luminance: number;
   readonly chroma: number;
@@ -15,10 +15,17 @@ export interface SignedVolumeColorScale {
   readonly negativeHue: number;
 }
 
+export interface SignedVolumeInk {
+  /** Full-strength sign color. */
+  readonly color: string;
+  /** Force amplitude in [0, 1]. Zero volume means zero ink. */
+  readonly intensity: number;
+}
+
 /**
- * Shared by every chart so equal signed volumes always have equal colors.
- * Teal and violet are deliberately valence-neutral: neither reads as
- * good/bad in the way a red/green diverging scale tends to.
+ * Shared by every chart so equal signed volumes always have equal visual force.
+ * Teal and violet are deliberately valence-neutral: neither reads as good/bad
+ * in the way a red/green diverging scale tends to.
  */
 export const DEFAULT_SIGNED_VOLUME_COLOR_SCALE: SignedVolumeColorScale = {
   softLimit: 10_000,
@@ -103,6 +110,49 @@ export function signedVolumeAtPosition(
   return Math.sign(signed) * softLimit * Math.abs(signed) / (1 - Math.abs(signed));
 }
 
+/**
+ * Decompose the diverging map into orthogonal channels:
+ * sign -> hue, magnitude -> ink amplitude.
+ */
+export function signedVolumeInkAtPosition(
+  position: number,
+  scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+): SignedVolumeInk {
+  const signed = 2 * Math.max(0, Math.min(1, position)) - 1;
+  const intensity = Math.abs(signed);
+  const hue = signed < 0 ? scale.negativeHue : scale.positiveHue;
+  return {
+    color: `oklch(${scale.luminance} ${scale.chroma} ${hue})`,
+    intensity,
+  };
+}
+
+export function signedVolumeInk(
+  volume: number,
+  scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+): SignedVolumeInk {
+  return signedVolumeInkAtPosition(
+    signedVolumePosition(volume, scale.softLimit),
+    scale,
+  );
+}
+
+/** CSS color for legends: the force magnitude is encoded directly as alpha. */
+export function signedVolumeInkCssAtPosition(
+  position: number,
+  scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+): string {
+  const signed = 2 * Math.max(0, Math.min(1, position)) - 1;
+  const intensity = Math.abs(signed);
+  if (intensity === 0) return "transparent";
+  const hue = signed < 0 ? scale.negativeHue : scale.positiveHue;
+  return `oklch(${scale.luminance} ${scale.chroma} ${hue} / ${intensity})`;
+}
+
+/**
+ * Legacy solid-color helper retained for non-diffusion views. Magnitude is
+ * encoded as chroma here; the age view uses signedVolumeInk instead.
+ */
 export function signedVolumeColorAtPosition(
   position: number,
   scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
