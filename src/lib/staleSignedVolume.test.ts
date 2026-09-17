@@ -32,9 +32,21 @@ describe("StaleSignedVolume", () => {
     const field = new StaleSignedVolume();
     field.update(makeBook([[0.4, 10]], [[0.6, 20]]), 0);
 
-    expect(at(field, 1000, 0.3)).toMatchObject({ volume: 10, ageMs: 1000 });
-    expect(at(field, 1000, 0.5)).toMatchObject({ volume: 0, ageMs: Infinity });
-    expect(at(field, 1000, 0.7)).toMatchObject({ volume: -20, ageMs: 1000 });
+    expect(at(field, 1000, 0.3)).toMatchObject({
+      volume: 10,
+      sweepCost: 6,
+      ageMs: 1000,
+    });
+    expect(at(field, 1000, 0.5)).toMatchObject({
+      volume: 0,
+      sweepCost: null,
+      ageMs: Infinity,
+    });
+    expect(at(field, 1000, 0.7)).toMatchObject({
+      volume: -20,
+      sweepCost: 12,
+      ageMs: 1000,
+    });
   });
 
   test("a bid update refreshes its whole cumulative prefix but not better prices or asks", () => {
@@ -55,19 +67,22 @@ describe("StaleSignedVolume", () => {
 
     expect(at(field, 15_000, 0.2)).toMatchObject({
       volume: 17,
+      sweepCost: 10.9,
       ageMs: 5_000,
     });
     expect(at(field, 15_000, 0.35)).toMatchObject({
       volume: 10,
+      sweepCost: 6,
       ageMs: 15_000,
     });
     expect(at(field, 15_000, 0.7)).toMatchObject({
       volume: -20,
+      sweepCost: 12,
       ageMs: 15_000,
     });
   });
 
-  test("removing the best bid freezes the disappeared pressure exactly at the event", () => {
+  test("removing the best bid freezes its shares and sweep cost exactly at the event", () => {
     const field = new StaleSignedVolume();
     field.update(makeBook([[0.45, 12]], [[0.6, 20]]), 0);
 
@@ -79,14 +94,17 @@ describe("StaleSignedVolume", () => {
 
     expect(at(field, 15_000, 0.3)).toMatchObject({
       volume: 10,
+      sweepCost: 6,
       ageMs: 5_000,
     });
     expect(at(field, 15_000, 0.425)).toMatchObject({
       volume: 12,
+      sweepCost: 6.6,
       ageMs: 5_000,
     });
     expect(at(field, 15_000, 0.7)).toMatchObject({
       volume: -20,
+      sweepCost: 12,
       ageMs: 15_000,
     });
   });
@@ -115,8 +133,6 @@ describe("StaleSignedVolume", () => {
     const field = new StaleSignedVolume();
     field.update(makeBook([[0.45, 12]], [[0.6, 20]]), 0);
 
-    // Imagine reconnecting after missing the cancellation event. The snapshot
-    // proves current pressure outside the spread, but not when 0.425 emptied.
     field.update(makeBook([[0.4, 10]], [[0.6, 20]]), 20_000);
 
     expect(at(field, 30_000, 0.3)).toMatchObject({
@@ -125,11 +141,12 @@ describe("StaleSignedVolume", () => {
     });
     expect(at(field, 30_000, 0.425)).toMatchObject({
       volume: 12,
+      sweepCost: 6.6,
       ageMs: 30_000,
     });
   });
 
-  test("snapshot/restore preserves v3 observation timestamps and explicit unknowns", () => {
+  test("snapshot/restore preserves v4 economic samples and explicit unknowns", () => {
     const field = new StaleSignedVolume();
     field.update(makeBook([[0.45, 12]], [[0.55, 7]]), 10_000);
     field.update(
@@ -139,13 +156,14 @@ describe("StaleSignedVolume", () => {
     );
 
     const snapshot = field.snapshot();
-    expect(snapshot.version).toBe(3);
+    expect(snapshot.version).toBe(4);
     expect("spread" in snapshot).toBe(false);
 
     const restored = new StaleSignedVolume();
     restored.restore(snapshot);
     expect(at(restored, 35_000, 0.425)).toMatchObject({
       volume: 12,
+      sweepCost: 6.6,
       ageMs: 15_000,
     });
 
@@ -153,10 +171,13 @@ describe("StaleSignedVolume", () => {
     initiallyUnknown.update(makeBook([[0.4, 10]], [[0.6, 20]]), 10_000);
     const restoredUnknown = new StaleSignedVolume();
     restoredUnknown.restore(initiallyUnknown.snapshot());
-    expect(at(restoredUnknown, 35_000, 0.5).ageMs).toBe(Infinity);
+    expect(at(restoredUnknown, 35_000, 0.5)).toMatchObject({
+      sweepCost: null,
+      ageMs: Infinity,
+    });
   });
 
-  test("restore still migrates legacy v2 timestamps", () => {
+  test("restore still migrates legacy v2 timestamps with unknown sweep cost", () => {
     const restored = new StaleSignedVolume();
     restored.restore({
       version: 2,
@@ -168,12 +189,12 @@ describe("StaleSignedVolume", () => {
       ],
     });
 
-    expect(at(restored, 30_000, 0.2).ageMs).toBe(20_000);
-    expect(at(restored, 30_000, 0.5).ageMs).toBe(Infinity);
-    expect(at(restored, 30_000, 0.8).ageMs).toBe(10_000);
+    expect(at(restored, 30_000, 0.2)).toMatchObject({ ageMs: 20_000, sweepCost: null });
+    expect(at(restored, 30_000, 0.5)).toMatchObject({ ageMs: Infinity, sweepCost: null });
+    expect(at(restored, 30_000, 0.8)).toMatchObject({ ageMs: 10_000, sweepCost: null });
   });
 
-  test("transport hydration rebases finite ages and preserves Infinity", () => {
+  test("transport hydration rebases finite ages and preserves sweep cost", () => {
     const source = new StaleSignedVolume();
     source.update(makeBook([[0.45, 12]], [[0.55, 7]]), 10_000);
     source.update(
@@ -187,6 +208,7 @@ describe("StaleSignedVolume", () => {
 
     expect(at(hydrated, 2_000, 0.425)).toMatchObject({
       volume: 12,
+      sweepCost: 6.6,
       ageMs: 16_000,
     });
 
