@@ -8,8 +8,8 @@ import type {
 import { HalfBook, type TokenBook } from "../src/lib/orderBook";
 import {
   StaleSignedVolume,
+  type PressureObservationRange,
   type StaleSignedVolumeSnapshot,
-  type StaleSignedVolumeSpread,
 } from "../src/lib/staleSignedVolume";
 
 const PORT = Number(process.env.RECORDER_PORT ?? 3001);
@@ -37,7 +37,6 @@ interface TransportSegment {
 
 interface TransportState {
   segments: TransportSegment[];
-  spread?: StaleSignedVolumeSpread;
 }
 
 interface StateResponse {
@@ -93,7 +92,6 @@ class AgeRecorder {
           ...segment,
           ageMs: ageMs === Infinity ? null : ageMs,
         })),
-        spread: memory.spread(),
       };
     }
 
@@ -180,17 +178,26 @@ class AgeRecorder {
           this.books.set(tokenId, book);
           this.updateMemory(tokenId, book);
         } else if (stream.type === "price_change") {
-          const affected = new Set<string>();
+          const observedByToken = new Map<string, PressureObservationRange[]>();
           for (const change of stream.payload.priceChanges) {
             const tokenId = String(change.tokenId);
             const book = this.books.get(tokenId);
             if (!book) continue;
+
             applyPriceChange(book, change);
-            affected.add(tokenId);
+            const price = Number(change.price);
+            const ranges = observedByToken.get(tokenId) ?? [];
+            ranges.push(
+              change.side === OrderSide.BUY
+                ? { lo: 0, hi: price }
+                : { lo: price, hi: 1 },
+            );
+            observedByToken.set(tokenId, ranges);
           }
-          for (const tokenId of affected) {
+
+          for (const [tokenId, observedRanges] of observedByToken) {
             const book = this.books.get(tokenId);
-            if (book) this.updateMemory(tokenId, book);
+            if (book) this.updateMemory(tokenId, book, observedRanges);
           }
         } else if (stream.type === "market_resolved") {
           let changed = false;
@@ -220,10 +227,14 @@ class AgeRecorder {
     }
   }
 
-  private updateMemory(tokenId: string, book: TokenBook<string>): void {
+  private updateMemory(
+    tokenId: string,
+    book: TokenBook<string>,
+    observedRanges?: readonly PressureObservationRange[],
+  ): void {
     const nowMs = Date.now();
     const memory = this.memories.get(tokenId) ?? new StaleSignedVolume();
-    memory.update(book, nowMs);
+    memory.update(book, nowMs, observedRanges);
     this.memories.set(tokenId, memory);
     this.schedulePersist();
   }
@@ -325,7 +336,10 @@ function earliestSnapshotObservationMs(
 
   let earliest: number | undefined;
   for (const segment of snapshot.segments ?? []) {
-    const observedAt = validWallClockMs(segment.staleSinceMs, nowMs);
+    const observedAt = validWallClockMs(
+      segment.observedAtMs ?? segment.staleSinceMs,
+      nowMs,
+    );
     if (observedAt === undefined) continue;
     earliest = earliest === undefined ? observedAt : Math.min(earliest, observedAt);
   }
