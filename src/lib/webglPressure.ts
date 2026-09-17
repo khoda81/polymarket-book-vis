@@ -1,16 +1,25 @@
+import type { TokenBook } from "./orderBook";
 import {
   diffusionSigmaCss,
   pressureInkProfile,
+  pressureInkThicknessCss,
 } from "./pressureInk";
-import type { SignedVolumeColorScale } from "./signedVolume";
+import { displacedPressureSegments } from "./resinHistory";
+import {
+  signedVolumeSegments,
+  type SignedVolumeColorScale,
+  type SignedVolumeSegment,
+} from "./signedVolume";
 import type { StaleSignedVolumeSegment } from "./staleSignedVolume";
 
-const MAX_SIGMA_PER_PASS_DEVICE_PX = 4;
-const MAX_BLUR_PASSES = 8;
-const MAX_SHADER_RADIUS = 16;
+const MIN_DIFFUSION_SIGMA_DEVICE_PX = 0.05;
+const MAX_SIGMA_PER_PASS_DEVICE_PX = 8;
+const MAX_BLUR_PASSES = 24;
+const MAX_SHADER_RADIUS = 32;
 
 export interface WebGLPressureRow {
   readonly tokenId: string;
+  /** Legacy sample-and-hold field, used only to seed history after a rebuild. */
   readonly segments: readonly StaleSignedVolumeSegment[];
 }
 
@@ -19,8 +28,10 @@ export interface WebGLPressureRenderInput {
   readonly key: object;
   /** Rows ordered top-to-bottom, matching the visible age-strip layout. */
   readonly rows: readonly WebGLPressureRow[];
-  /** Rows whose authoritative CPU state changed since the previous render. */
+  /** Rows whose authoritative live book changed since the previous render. */
   readonly dirtyTokens: ReadonlySet<string>;
+  /** Read the exact live book used for the sharp foreground. */
+  readonly getBook: (tokenId: string) => TokenBook<string> | undefined;
   /** Plot-area dimensions only; axes/padding are composed by Canvas2D. */
   readonly widthCss: number;
   readonly heightCss: number;
@@ -34,14 +45,18 @@ export interface WebGLPressureRenderInput {
 }
 
 interface PressureState {
-  readonly textures: [WebGLTexture, WebGLTexture];
-  front: 0 | 1;
+  readonly historyTextures: [WebGLTexture, WebGLTexture];
+  historyFront: 0 | 1;
+  readonly currentTexture: WebGLTexture;
+  readonly depositTexture: WebGLTexture;
+  readonly currentByToken: Map<string, readonly SignedVolumeSegment[]>;
   width: number;
   height: number;
+  rowCount: number;
   layoutSignature: string;
-  ageScaleSeconds: number;
   volumePerCssPixel: number;
-  lastTimeMs: number;
+  lastDiffuseMs: number;
+  historyActive: boolean;
   generation: number;
   requestRedraw: () => void;
 }
@@ -50,26 +65,36 @@ interface GlResources {
   readonly gl: WebGL2RenderingContext;
   readonly framebuffer: WebGLFramebuffer;
   readonly blurProgram: WebGLProgram;
-  readonly presentProgram: WebGLProgram;
   readonly blurTexture: WebGLUniformLocation;
   readonly blurSize: WebGLUniformLocation;
   readonly blurSigma: WebGLUniformLocation;
   readonly blurRadius: WebGLUniformLocation;
   readonly blurRowCount: WebGLUniformLocation;
-  readonly presentTexture: WebGLUniformLocation;
+  readonly depositProgram: WebGLProgram;
+  readonly depositHistory: WebGLUniformLocation;
+  readonly depositSource: WebGLUniformLocation;
+  readonly presentProgram: WebGLProgram;
+  readonly presentHistory: WebGLUniformLocation;
+  readonly presentCurrent: WebGLUniformLocation;
+  readonly presentSize: WebGLUniformLocation;
+  readonly presentRowCount: WebGLUniformLocation;
   readonly presentPositive: WebGLUniformLocation;
   readonly presentNegative: WebGLUniformLocation;
 }
 
 /**
- * Shared, disposable GPU cache for age-pressure fields.
+ * Shared, disposable GPU renderer for the age view.
  *
- * CPU/backend sample-and-hold state remains authoritative. Browser resources
- * are created lazily so importing this module is harmless in tests/SSR, and
- * any WebGL failure can fall back to the Canvas2D reference renderer.
+ * The live order book is always rendered as a sharp foreground. Time exists in
+ * a separate resin texture: whenever live pressure changes, the displaced old
+ * silhouette is deposited into history, then history diffuses vertically on
+ * the GPU. Presentation suppresses history in every x-column where the live
+ * book has pressure, so stale information can never deform the authoritative
+ * current outline.
  *
- * Fresh vertical occupancy uses the local soft share mapping Q/(Q+C). Age
- * diffusion is still the legacy temporal treatment on this branch.
+ * CPU sample-and-hold history is consulted only when a GPU state must be
+ * reconstructed (first render, resize, row-layout change, context restore).
+ * Ordinary diffusion therefore performs no Gaussian/erf work on the CPU.
  */
 class SharedWebGLPressureRenderer {
   private readonly states = new Map<object, PressureState>();
@@ -108,9 +133,7 @@ class SharedWebGLPressureRenderer {
         previous.generation !== this.generation ||
         previous.width !== width ||
         previous.height !== height ||
-        previous.layoutSignature !== layoutSignature ||
-        previous.ageScaleSeconds !== input.ageScaleSeconds ||
-        previous.volumePerCssPixel !== input.volumePerCssPixel;
+        previous.layoutSignature !== layoutSignature;
 
       let state: PressureState;
       if (mustRebuild) {
@@ -122,29 +145,36 @@ class SharedWebGLPressureRenderer {
         state = previous;
         state.requestRedraw = input.requestRedraw;
 
-        const dtMs = Math.max(0, input.nowMs - state.lastTimeMs);
-        const sigmaDevicePx =
-          diffusionSigmaCss(dtMs, input.ageScaleSeconds) * input.dpr;
+        this.advanceHistory(resources, state, input);
+        const displaced = this.captureLiveChanges(state, input);
 
-        if (!this.advance(resources, state, sigmaDevicePx)) {
-          this.rebuildAll(gl, state, input);
+        if (state.volumePerCssPixel !== input.volumePerCssPixel) {
+          // History is intentionally visual residue: changing the share scale
+          // rescales the authoritative live book and future deposits, but does
+          // not rewind and reinterpret already-cured resin.
+          state.volumePerCssPixel = input.volumePerCssPixel;
+          this.rebuildCurrentAll(gl, state, input);
         } else {
-          this.rebuildDirtyRows(gl, state, input);
-          // If advance skipped a subpixel step, leave lastTime untouched so the
-          // variance accumulates instead of silently disappearing.
-          if (sigmaDevicePx >= 0.05) state.lastTimeMs = input.nowMs;
+          this.rebuildDirtyCurrentRows(gl, state, input);
         }
+
+        if (displaced.length > 0)
+          this.depositHistory(resources, state, input, displaced);
       }
 
       this.present(resources, state, input.colorScale);
       return canvas;
     } catch (error) {
-      console.warn("WebGL pressure renderer disabled for this session:", error);
+      console.warn("WebGL resin pressure renderer disabled for this session:", error);
       this.permanentlyDisabled = true;
       this.resources = undefined;
       this.requestAllRedraws();
       return null;
     }
+  }
+
+  hasHistory(key: object): boolean {
+    return this.states.get(key)?.historyActive ?? false;
   }
 
   release(key: object): void {
@@ -202,23 +232,29 @@ class SharedWebGLPressureRenderer {
       if (!framebuffer) throw new Error("Could not create WebGL framebuffer");
 
       const blurProgram = createProgram(gl, VERTEX_SHADER, BLUR_SHADER);
+      const depositProgram = createProgram(gl, VERTEX_SHADER, DEPOSIT_SHADER);
       const presentProgram = createProgram(gl, VERTEX_SHADER, PRESENT_SHADER);
       const resources: GlResources = {
         gl,
         framebuffer,
         blurProgram,
-        presentProgram,
         blurTexture: requiredUniform(gl, blurProgram, "u_texture"),
         blurSize: requiredUniform(gl, blurProgram, "u_size"),
         blurSigma: requiredUniform(gl, blurProgram, "u_sigma"),
         blurRadius: requiredUniform(gl, blurProgram, "u_radius"),
         blurRowCount: requiredUniform(gl, blurProgram, "u_row_count"),
-        presentTexture: requiredUniform(gl, presentProgram, "u_texture"),
+        depositProgram,
+        depositHistory: requiredUniform(gl, depositProgram, "u_history"),
+        depositSource: requiredUniform(gl, depositProgram, "u_deposit"),
+        presentProgram,
+        presentHistory: requiredUniform(gl, presentProgram, "u_history"),
+        presentCurrent: requiredUniform(gl, presentProgram, "u_current"),
+        presentSize: requiredUniform(gl, presentProgram, "u_size"),
+        presentRowCount: requiredUniform(gl, presentProgram, "u_row_count"),
         presentPositive: requiredUniform(gl, presentProgram, "u_positive"),
         presentNegative: requiredUniform(gl, presentProgram, "u_negative"),
       };
 
-      // Tiny framebuffer self-test: fail early rather than ever blanking a card.
       const probe = createTexture(gl, 2, 2);
       gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
       gl.framebufferTexture2D(
@@ -236,7 +272,7 @@ class SharedWebGLPressureRenderer {
       this.resources = resources;
       return resources;
     } catch (error) {
-      console.warn("WebGL2 pressure renderer unavailable; using Canvas2D:", error);
+      console.warn("WebGL2 resin renderer unavailable; using Canvas2D:", error);
       this.permanentlyDisabled = true;
       return undefined;
     }
@@ -250,14 +286,18 @@ class SharedWebGLPressureRenderer {
     layoutSignature: string,
   ): PressureState {
     return {
-      textures: [createTexture(gl, width, height), createTexture(gl, width, height)],
-      front: 0,
+      historyTextures: [createTexture(gl, width, height), createTexture(gl, width, height)],
+      historyFront: 0,
+      currentTexture: createTexture(gl, width, height),
+      depositTexture: createTexture(gl, width, height),
+      currentByToken: new Map(),
       width,
       height,
+      rowCount: input.rows.length,
       layoutSignature,
-      ageScaleSeconds: input.ageScaleSeconds,
       volumePerCssPixel: input.volumePerCssPixel,
-      lastTimeMs: input.nowMs,
+      lastDiffuseMs: input.nowMs,
+      historyActive: false,
       generation: this.generation,
       requestRedraw: input.requestRedraw,
     };
@@ -268,106 +308,152 @@ class SharedWebGLPressureRenderer {
     state: PressureState,
     input: WebGLPressureRenderInput,
   ): void {
-    const pixels = buildPressurePixels(
+    state.currentByToken.clear();
+    for (const row of input.rows)
+      state.currentByToken.set(row.tokenId, this.readCurrent(row.tokenId, input));
+
+    const seed = buildHistorySeedPixels(
       input.rows,
+      state.currentByToken,
       state.width,
       state.height,
       input.dpr,
       input.ageScaleSeconds,
       input.volumePerCssPixel,
     );
-    uploadWholeTexture(gl, state.textures[0], state.width, state.height, pixels);
-    uploadWholeTexture(
-      gl,
-      state.textures[1],
-      state.width,
-      state.height,
-      new Uint8Array(state.width * state.height * 4),
-    );
-    state.front = 0;
-    state.lastTimeMs = input.nowMs;
-    state.ageScaleSeconds = input.ageScaleSeconds;
+    uploadWholeTexture(gl, state.historyTextures[0], state.width, state.height, seed.pixels);
+    clearTexture(gl, state.historyTextures[1], state.width, state.height);
+    clearTexture(gl, state.depositTexture, state.width, state.height);
+
+    state.historyFront = 0;
+    state.historyActive = seed.active;
+    state.lastDiffuseMs = input.nowMs;
     state.volumePerCssPixel = input.volumePerCssPixel;
+    state.rowCount = input.rows.length;
     state.generation = this.generation;
+    this.rebuildCurrentAll(gl, state, input);
   }
 
-  private rebuildDirtyRows(
+  private readCurrent(
+    tokenId: string,
+    input: WebGLPressureRenderInput,
+  ): readonly SignedVolumeSegment[] {
+    const book = input.getBook(tokenId);
+    return book ? signedVolumeSegments(book) : [];
+  }
+
+  private captureLiveChanges(
+    state: PressureState,
+    input: WebGLPressureRenderInput,
+  ): readonly { rowIndex: number; segments: readonly SignedVolumeSegment[] }[] {
+    if (input.dirtyTokens.size === 0) return [];
+
+    const displaced: { rowIndex: number; segments: readonly SignedVolumeSegment[] }[] = [];
+    for (const [rowIndex, row] of input.rows.entries()) {
+      if (!input.dirtyTokens.has(row.tokenId)) continue;
+      const next = this.readCurrent(row.tokenId, input);
+      const previous = state.currentByToken.get(row.tokenId);
+      if (previous) {
+        const segments = displacedPressureSegments(previous, next);
+        if (segments.length > 0) displaced.push({ rowIndex, segments });
+      }
+      state.currentByToken.set(row.tokenId, next);
+    }
+    return displaced;
+  }
+
+  private rebuildCurrentAll(
+    gl: WebGL2RenderingContext,
+    state: PressureState,
+    input: WebGLPressureRenderInput,
+  ): void {
+    const pixels = buildCurrentPixels(
+      input.rows,
+      state.currentByToken,
+      state.width,
+      state.height,
+      input.dpr,
+      input.volumePerCssPixel,
+    );
+    uploadWholeTexture(gl, state.currentTexture, state.width, state.height, pixels);
+  }
+
+  private rebuildDirtyCurrentRows(
     gl: WebGL2RenderingContext,
     state: PressureState,
     input: WebGLPressureRenderInput,
   ): void {
     if (input.dirtyTokens.size === 0) return;
-    gl.bindTexture(gl.TEXTURE_2D, state.textures[state.front]);
+    gl.bindTexture(gl.TEXTURE_2D, state.currentTexture);
 
     for (const [rowIndex, row] of input.rows.entries()) {
       if (!input.dirtyTokens.has(row.tokenId)) continue;
       const bounds = deviceRowBounds(rowIndex, input.rows.length, state.height);
       const rowHeight = bounds.top - bounds.bottom;
-      const pixels = buildPressureRowPixels(
-        row.segments,
+      const pixels = buildSharpRowPixels(
+        state.currentByToken.get(row.tokenId) ?? [],
         state.width,
         rowHeight,
         input.dpr,
-        input.ageScaleSeconds,
         input.volumePerCssPixel,
+        false,
       );
-      gl.texSubImage2D(
-        gl.TEXTURE_2D,
-        0,
-        0,
-        bounds.bottom,
-        state.width,
-        rowHeight,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        pixels,
-      );
+      uploadRow(gl, state.currentTexture, state.width, bounds.bottom, rowHeight, pixels);
     }
   }
 
-  /** Return false when reconstructing from CPU state is cheaper than many passes. */
-  private advance(
+  private advanceHistory(
     resources: GlResources,
     state: PressureState,
-    sigmaDevicePx: number,
-  ): boolean {
-    if (!(sigmaDevicePx >= 0.05)) return true;
+    input: WebGLPressureRenderInput,
+  ): void {
+    if (!state.historyActive) {
+      state.lastDiffuseMs = input.nowMs;
+      return;
+    }
 
+    const dtMs = Math.max(0, input.nowMs - state.lastDiffuseMs);
+    const sigmaDevicePx =
+      diffusionSigmaCss(dtMs, input.ageScaleSeconds) * input.dpr;
+    if (!(sigmaDevicePx >= MIN_DIFFUSION_SIGMA_DEVICE_PX)) return;
+
+    const rowHeight = state.height / Math.max(1, state.rowCount);
     const passes = Math.max(
       1,
       Math.ceil(
         (sigmaDevicePx * sigmaDevicePx) /
-          (MAX_SIGMA_PER_PASS_DEVICE_PX ** 2),
+          (MAX_SIGMA_PER_PASS_DEVICE_PX * MAX_SIGMA_PER_PASS_DEVICE_PX),
       ),
     );
-    if (passes > MAX_BLUR_PASSES) return false;
+
+    // After a long suspension the residue is visually below usefulness anyway.
+    // Clearing is preferable to an enormous burst of GPU passes on tab resume.
+    if (passes > MAX_BLUR_PASSES || sigmaDevicePx > rowHeight * 2) {
+      this.clearHistory(resources.gl, state);
+      state.lastDiffuseMs = input.nowMs;
+      return;
+    }
 
     const sigmaPerPass = sigmaDevicePx / Math.sqrt(passes);
-    for (let i = 0; i < passes; i++)
-      this.blurOnce(resources, state, sigmaPerPass);
-    return true;
+    for (let pass = 0; pass < passes; pass++)
+      this.blurHistoryOnce(resources, state, sigmaPerPass);
+    state.lastDiffuseMs = input.nowMs;
   }
 
-  private blurOnce(
+  private blurHistoryOnce(
     resources: GlResources,
     state: PressureState,
     sigmaDevicePx: number,
   ): void {
     const { gl } = resources;
-    const destination: 0 | 1 = state.front === 0 ? 1 : 0;
+    const destination: 0 | 1 = state.historyFront === 0 ? 1 : 0;
     gl.bindFramebuffer(gl.FRAMEBUFFER, resources.framebuffer);
-    gl.framebufferTexture2D(
-      gl.FRAMEBUFFER,
-      gl.COLOR_ATTACHMENT0,
-      gl.TEXTURE_2D,
-      state.textures[destination],
-      0,
-    );
+    attachTexture(gl, resources.framebuffer, state.historyTextures[destination]);
     gl.viewport(0, 0, state.width, state.height);
     gl.disable(gl.SCISSOR_TEST);
     gl.useProgram(resources.blurProgram);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, state.textures[state.front]);
+    gl.bindTexture(gl.TEXTURE_2D, state.historyTextures[state.historyFront]);
     gl.uniform1i(resources.blurTexture, 0);
     gl.uniform2i(resources.blurSize, state.width, state.height);
     gl.uniform1f(resources.blurSigma, sigmaDevicePx);
@@ -375,12 +461,60 @@ class SharedWebGLPressureRenderer {
       resources.blurRadius,
       Math.min(MAX_SHADER_RADIUS, Math.max(1, Math.ceil(3 * sigmaDevicePx))),
     );
-    gl.uniform1i(
-      resources.blurRowCount,
-      state.layoutSignature.split("\u0000").length,
-    );
+    gl.uniform1i(resources.blurRowCount, state.rowCount);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    state.front = destination;
+    state.historyFront = destination;
+  }
+
+  private depositHistory(
+    resources: GlResources,
+    state: PressureState,
+    input: WebGLPressureRenderInput,
+    displaced: readonly {
+      rowIndex: number;
+      segments: readonly SignedVolumeSegment[];
+    }[],
+  ): void {
+    const { gl } = resources;
+    clearTextureWithFramebuffer(
+      gl,
+      resources.framebuffer,
+      state.depositTexture,
+      state.width,
+      state.height,
+    );
+
+    for (const { rowIndex, segments } of displaced) {
+      const bounds = deviceRowBounds(rowIndex, input.rows.length, state.height);
+      const rowHeight = bounds.top - bounds.bottom;
+      const pixels = buildSharpRowPixels(
+        segments,
+        state.width,
+        rowHeight,
+        input.dpr,
+        input.volumePerCssPixel,
+        true,
+      );
+      uploadRow(gl, state.depositTexture, state.width, bounds.bottom, rowHeight, pixels);
+    }
+
+    const destination: 0 | 1 = state.historyFront === 0 ? 1 : 0;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, resources.framebuffer);
+    attachTexture(gl, resources.framebuffer, state.historyTextures[destination]);
+    gl.viewport(0, 0, state.width, state.height);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.useProgram(resources.depositProgram);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, state.historyTextures[state.historyFront]);
+    gl.uniform1i(resources.depositHistory, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, state.depositTexture);
+    gl.uniform1i(resources.depositSource, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    state.historyFront = destination;
+    state.historyActive = true;
   }
 
   private present(
@@ -395,9 +529,15 @@ class SharedWebGLPressureRenderer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(resources.presentProgram);
+
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, state.textures[state.front]);
-    gl.uniform1i(resources.presentTexture, 0);
+    gl.bindTexture(gl.TEXTURE_2D, state.historyTextures[state.historyFront]);
+    gl.uniform1i(resources.presentHistory, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, state.currentTexture);
+    gl.uniform1i(resources.presentCurrent, 1);
+    gl.uniform2i(resources.presentSize, state.width, state.height);
+    gl.uniform1i(resources.presentRowCount, state.rowCount);
 
     const positive = cssColorToRgb(
       `oklch(${scale.luminance} ${scale.chroma} ${scale.positiveHue})`,
@@ -410,9 +550,18 @@ class SharedWebGLPressureRenderer {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
+  private clearHistory(gl: WebGL2RenderingContext, state: PressureState): void {
+    clearTexture(gl, state.historyTextures[0], state.width, state.height);
+    clearTexture(gl, state.historyTextures[1], state.width, state.height);
+    state.historyFront = 0;
+    state.historyActive = false;
+  }
+
   private deleteStateTextures(gl: WebGL2RenderingContext, state: PressureState): void {
-    gl.deleteTexture(state.textures[0]);
-    gl.deleteTexture(state.textures[1]);
+    gl.deleteTexture(state.historyTextures[0]);
+    gl.deleteTexture(state.historyTextures[1]);
+    gl.deleteTexture(state.currentTexture);
+    gl.deleteTexture(state.depositTexture);
   }
 
   private requestAllRedraws(): void {
@@ -422,19 +571,53 @@ class SharedWebGLPressureRenderer {
 
 export const sharedWebGLPressureRenderer = new SharedWebGLPressureRenderer();
 
-function buildPressurePixels(
+function buildCurrentPixels(
   rows: readonly WebGLPressureRow[],
+  currentByToken: ReadonlyMap<string, readonly SignedVolumeSegment[]>,
   width: number,
   height: number,
   dpr: number,
-  ageScaleSeconds: number,
   volumePerCssPixel: number,
 ): Uint8Array {
   const pixels = new Uint8Array(width * height * 4);
   for (const [rowIndex, row] of rows.entries()) {
     const bounds = deviceRowBounds(rowIndex, rows.length, height);
-    const rowPixels = buildPressureRowPixels(
+    const rowPixels = buildSharpRowPixels(
+      currentByToken.get(row.tokenId) ?? [],
+      width,
+      bounds.top - bounds.bottom,
+      dpr,
+      volumePerCssPixel,
+      false,
+    );
+    pixels.set(rowPixels, bounds.bottom * width * 4);
+  }
+  return pixels;
+}
+
+function buildHistorySeedPixels(
+  rows: readonly WebGLPressureRow[],
+  currentByToken: ReadonlyMap<string, readonly SignedVolumeSegment[]>,
+  width: number,
+  height: number,
+  dpr: number,
+  ageScaleSeconds: number,
+  volumePerCssPixel: number,
+): { pixels: Uint8Array; active: boolean } {
+  const pixels = new Uint8Array(width * height * 4);
+  let active = false;
+
+  for (const [rowIndex, row] of rows.entries()) {
+    const historical = historicalOnlySegments(
       row.segments,
+      currentByToken.get(row.tokenId) ?? [],
+    );
+    if (historical.length === 0) continue;
+    active = true;
+
+    const bounds = deviceRowBounds(rowIndex, rows.length, height);
+    const rowPixels = buildAgedHistoryRowPixels(
+      historical,
       width,
       bounds.top - bounds.bottom,
       dpr,
@@ -443,10 +626,42 @@ function buildPressurePixels(
     );
     pixels.set(rowPixels, bounds.bottom * width * 4);
   }
-  return pixels;
+
+  return { pixels, active };
 }
 
-function buildPressureRowPixels(
+function historicalOnlySegments(
+  stale: readonly StaleSignedVolumeSegment[],
+  current: readonly SignedVolumeSegment[],
+): StaleSignedVolumeSegment[] {
+  if (stale.length === 0) return [];
+  if (current.length === 0)
+    return stale.filter((segment) => segment.volume !== 0 && segment.ageMs !== Infinity);
+
+  const result: StaleSignedVolumeSegment[] = [];
+  let staleIndex = 0;
+  let currentIndex = 0;
+
+  while (staleIndex < stale.length && currentIndex < current.length) {
+    const remembered = stale[staleIndex]!;
+    const live = current[currentIndex]!;
+    const lo = Math.max(remembered.lo, live.lo);
+    const hi = Math.min(remembered.hi, live.hi);
+    if (
+      hi > lo &&
+      remembered.volume !== 0 &&
+      remembered.ageMs !== Infinity &&
+      !approximatelyEqual(remembered.volume, live.volume)
+    ) {
+      result.push({ ...remembered, lo, hi });
+    }
+    if (remembered.hi <= live.hi) staleIndex++;
+    if (live.hi <= remembered.hi) currentIndex++;
+  }
+  return result;
+}
+
+function buildAgedHistoryRowPixels(
   segments: readonly StaleSignedVolumeSegment[],
   width: number,
   height: number,
@@ -455,9 +670,7 @@ function buildPressureRowPixels(
   volumePerCssPixel: number,
 ): Uint8Array {
   const pixels = new Uint8Array(width * height * 4);
-
   for (const segment of segments) {
-    if (segment.ageMs === Infinity || segment.volume === 0) continue;
     const profile = pressureInkProfile(
       segment.volume,
       segment.ageMs,
@@ -476,7 +689,59 @@ function buildPressureRowPixels(
       if (value <= 0) continue;
       let offset = (y * width + x0) * 4 + channel;
       for (let x = x0; x < x1; x++, offset += 4)
-        pixels[offset] = value;
+        pixels[offset] = Math.max(pixels[offset]!, value);
+    }
+  }
+  return pixels;
+}
+
+function buildSharpRowPixels(
+  segments: readonly SignedVolumeSegment[],
+  width: number,
+  height: number,
+  dpr: number,
+  volumePerCssPixel: number,
+  composite: boolean,
+): Uint8Array {
+  const pixels = new Uint8Array(width * height * 4);
+  const rowHeightCss = height / dpr;
+  const reserveShares = volumePerCssPixel * rowHeightCss;
+  const center = Math.floor((height - 1) / 2) + 0.5;
+
+  for (const segment of segments) {
+    if (segment.volume === 0 || Number.isNaN(segment.volume)) continue;
+    const thicknessCss = pressureInkThicknessCss(
+      segment.volume,
+      reserveShares,
+      rowHeightCss,
+    );
+    const thickness = Math.min(height, thicknessCss * dpr);
+    if (!(thickness > 0)) continue;
+
+    const y0 = center - thickness / 2;
+    const y1 = center + thickness / 2;
+    const x0 = clampInt(Math.round(clamp01(segment.lo) * width), 0, width);
+    const x1 = clampInt(Math.round(clamp01(segment.hi) * width), 0, width);
+    if (!(x1 > x0)) continue;
+    const channel = segment.volume > 0 ? 0 : 1;
+
+    const firstY = clampInt(Math.floor(y0), 0, height - 1);
+    const lastY = clampInt(Math.ceil(y1) - 1, 0, height - 1);
+    for (let y = firstY; y <= lastY; y++) {
+      const coverage = clamp01(Math.min(y + 1, y1) - Math.max(y, y0));
+      const source = Math.round(255 * coverage);
+      if (source <= 0) continue;
+      let offset = (y * width + x0) * 4 + channel;
+      for (let x = x0; x < x1; x++, offset += 4) {
+        if (!composite) {
+          pixels[offset] = source;
+          continue;
+        }
+        const previous = pixels[offset]!;
+        pixels[offset] = Math.round(
+          255 - ((255 - previous) * (255 - source)) / 255,
+        );
+      }
     }
   }
   return pixels;
@@ -500,6 +765,68 @@ function uploadWholeTexture(
     gl.RGBA,
     gl.UNSIGNED_BYTE,
     pixels,
+  );
+}
+
+function uploadRow(
+  gl: WebGL2RenderingContext,
+  texture: WebGLTexture,
+  width: number,
+  bottom: number,
+  height: number,
+  pixels: Uint8Array,
+): void {
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texSubImage2D(
+    gl.TEXTURE_2D,
+    0,
+    0,
+    bottom,
+    width,
+    height,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    pixels,
+  );
+}
+
+function clearTexture(
+  gl: WebGL2RenderingContext,
+  texture: WebGLTexture,
+  width: number,
+  height: number,
+): void {
+  uploadWholeTexture(gl, texture, width, height, new Uint8Array(width * height * 4));
+}
+
+function clearTextureWithFramebuffer(
+  gl: WebGL2RenderingContext,
+  framebuffer: WebGLFramebuffer,
+  texture: WebGLTexture,
+  width: number,
+  height: number,
+): void {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+  attachTexture(gl, framebuffer, texture);
+  gl.viewport(0, 0, width, height);
+  gl.disable(gl.SCISSOR_TEST);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+function attachTexture(
+  gl: WebGL2RenderingContext,
+  framebuffer: WebGLFramebuffer,
+  texture: WebGLTexture,
+): void {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+  gl.framebufferTexture2D(
+    gl.FRAMEBUFFER,
+    gl.COLOR_ATTACHMENT0,
+    gl.TEXTURE_2D,
+    texture,
+    0,
   );
 }
 
@@ -614,6 +941,12 @@ function cssColorToRgb(css: string): [number, number, number] {
   return rgb;
 }
 
+function approximatelyEqual(a: number, b: number): boolean {
+  if (a === b) return true;
+  const scale = Math.max(1, Math.abs(a), Math.abs(b));
+  return Math.abs(a - b) <= 1e-10 * scale;
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -663,23 +996,52 @@ void main() {
     sum += texelFetch(u_texture, ivec2(pixel.x, sy), 0).rg * weight;
   }
 
-  outColor = vec4(norm > 0.0 ? sum / norm : vec2(0.0), 0.0, 1.0);
+  outColor = vec4(norm > 0.0 ? sum / norm : vec2(0.0), 0.0, 0.0);
+}`;
+
+const DEPOSIT_SHADER = `#version 300 es
+precision highp float;
+uniform sampler2D u_history;
+uniform sampler2D u_deposit;
+out vec4 outColor;
+void main() {
+  ivec2 pixel = ivec2(gl_FragCoord.xy);
+  vec2 history = texelFetch(u_history, pixel, 0).rg;
+  vec2 deposit = texelFetch(u_deposit, pixel, 0).rg;
+  vec2 combined = vec2(1.0) - (vec2(1.0) - history) * (vec2(1.0) - deposit);
+  outColor = vec4(combined, 0.0, 0.0);
 }`;
 
 const PRESENT_SHADER = `#version 300 es
 precision highp float;
-uniform sampler2D u_texture;
+precision highp int;
+uniform sampler2D u_history;
+uniform sampler2D u_current;
+uniform ivec2 u_size;
+uniform int u_row_count;
 uniform vec3 u_positive;
 uniform vec3 u_negative;
 out vec4 outColor;
 void main() {
   ivec2 pixel = ivec2(gl_FragCoord.xy);
-  vec2 pressure = texelFetch(u_texture, pixel, 0).rg;
+  vec2 current = texelFetch(u_current, pixel, 0).rg;
+
+  int row = int(floor(gl_FragCoord.y * float(u_row_count) / float(u_size.y)));
+  int rowBottom = int(floor(float(row) * float(u_size.y) / float(u_row_count)));
+  int rowTop = int(floor(float(row + 1) * float(u_size.y) / float(u_row_count)));
+  int centerY = clamp((rowBottom + rowTop - 1) / 2, 0, u_size.y - 1);
+  vec2 currentCenter = texelFetch(u_current, ivec2(pixel.x, centerY), 0).rg;
+  bool hasCurrentColumn = currentCenter.r + currentCenter.g > 0.00001;
+
+  vec2 pressure = hasCurrentColumn
+    ? current
+    : texelFetch(u_history, pixel, 0).rg;
   float mass = pressure.r + pressure.g;
   if (mass <= 0.00001) {
     outColor = vec4(0.0);
     return;
   }
+
   float alpha = clamp(mass, 0.0, 1.0);
   vec3 color = (pressure.r * u_positive + pressure.g * u_negative) / mass;
   outColor = vec4(color, alpha);
