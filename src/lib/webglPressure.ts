@@ -133,8 +133,8 @@ class SharedWebGLPressureRenderer {
         const sigmaDevicePx =
           Math.sqrt(
             VARIANCE_PER_TIME_SCALE *
-              (dtMs / 1000) /
-              input.ageScaleSeconds,
+            (dtMs / 1000) /
+            input.ageScaleSeconds,
           ) * input.dpr;
 
         if (!this.advance(resources, state, sigmaDevicePx)) {
@@ -326,7 +326,7 @@ class SharedWebGLPressureRenderer {
       1,
       Math.ceil(
         (sigmaDevicePx * sigmaDevicePx) /
-          (MAX_SIGMA_PER_PASS_DEVICE_PX ** 2),
+        (MAX_SIGMA_PER_PASS_DEVICE_PX ** 2),
       ),
     );
     if (passes > MAX_BLUR_PASSES) return false;
@@ -450,9 +450,9 @@ function buildPressureRowPixels(
 
     const sigmaCss = Math.sqrt(
       BASE_SIGMA_CSS_PX * BASE_SIGMA_CSS_PX +
-        VARIANCE_PER_TIME_SCALE *
-          (segment.ageMs / 1000) /
-          ageScaleSeconds,
+      VARIANCE_PER_TIME_SCALE *
+      (segment.ageMs / 1000) /
+      ageScaleSeconds,
     );
     const sigma = Math.max(0.01, sigmaCss * dpr);
     const peak = Math.min(1, (BASE_SIGMA_CSS_PX * dpr) / sigma);

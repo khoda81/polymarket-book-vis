@@ -1,5 +1,6 @@
 import { fetchRecordedAgeState } from "@/lib/ageRecorderClient";
 import { fmtVol, marketColor } from "@/lib/math";
+import { orderMarkets } from "@/lib/marketOrder";
 import {
   BookOrder,
   HalfBook,
@@ -16,7 +17,6 @@ import {
 import "@/styles/component.css";
 import { AgeStripView } from "./ageStrips";
 import {
-  Market,
   Event,
   OrderSide,
   TokenId,
@@ -212,19 +212,13 @@ export class PolymarketCPV {
 
     const rawEvent = await response.json();
     const rawMarkets: unknown[] = rawEvent.markets ?? [];
-    const groupItemIndex: Record<MarketId, number> = {};
 
     for (const rawMarket of rawMarkets as any[]) {
       if (rawMarket.groupItemTitle)
         this.titles[rawMarket.id] = rawMarket.groupItemTitle;
-      if (rawMarket.groupItemThreshold)
-        groupItemIndex[rawMarket.id] = parseFloat(rawMarket.groupItemThreshold);
     }
 
-    event.markets.sort(
-      (a: Market, b: Market) => groupItemIndex[a.id] - groupItemIndex[b.id],
-    );
-    if (event.display.sortBy === "descending") event.markets.reverse();
+    event = { ...event, markets: orderMarkets(event, rawMarkets) };
 
     const tokenIds = event.markets
       .map((market) =>
