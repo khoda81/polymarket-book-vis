@@ -20,6 +20,11 @@ export interface StaleSignedVolumeSegment {
   readonly ageMs: number;
 }
 
+export interface StaleSignedVolumeSnapshot {
+  readonly lastUpdateMs?: number;
+  readonly segments: readonly HeldVolumeSegment[];
+}
+
 /**
  * Sample-and-hold extension of the current signed cumulative volume field.
  *
@@ -33,10 +38,7 @@ export class StaleSignedVolume {
   private lastUpdateMs: number | undefined;
 
   update(book: TokenBook<unknown>, nowMs: number): void {
-    if (!Number.isFinite(nowMs))
-      throw new RangeError("StaleSignedVolume timestamp must be finite");
-    if (this.lastUpdateMs !== undefined && nowMs < this.lastUpdateMs)
-      throw new RangeError("StaleSignedVolume timestamps must be monotonic");
+    this.validateTime(nowMs);
 
     const live = signedVolumeSegments(book);
     const { bid, ask } = canonicalSpread(book);
@@ -108,13 +110,7 @@ export class StaleSignedVolume {
   }
 
   segments(nowMs: number): readonly StaleSignedVolumeSegment[] {
-    if (!Number.isFinite(nowMs))
-      throw new RangeError("StaleSignedVolume timestamp must be finite");
-    if (this.lastUpdateMs !== undefined && nowMs < this.lastUpdateMs)
-      throw new RangeError(
-        "StaleSignedVolume render time precedes its latest update",
-      );
-
+    this.validateTime(nowMs);
     return this.current.map(({ lo, hi, volume, staleSinceMs }) => ({
       lo,
       hi,
@@ -123,9 +119,90 @@ export class StaleSignedVolume {
     }));
   }
 
+  /** Serialize the compact piecewise state without expanding it into history. */
+  snapshot(): StaleSignedVolumeSnapshot {
+    return {
+      lastUpdateMs: this.lastUpdateMs,
+      segments: this.current.map((segment) => ({ ...segment })),
+    };
+  }
+
+  /** Restore a snapshot produced by `snapshot()`. Timestamps stay absolute. */
+  restore(snapshot: StaleSignedVolumeSnapshot): void {
+    const segments = snapshot.segments
+      .filter(StaleSignedVolume.validHeldSegment)
+      .sort((a, b) => a.lo - b.lo)
+      .map((segment) => ({ ...segment }));
+    this.current = StaleSignedVolume.mergeAdjacent(segments);
+    this.lastUpdateMs =
+      snapshot.lastUpdateMs !== undefined && Number.isFinite(snapshot.lastUpdateMs)
+        ? snapshot.lastUpdateMs
+        : undefined;
+  }
+
+  /**
+   * Hydrate from transport-friendly ages. This rebases backend wall-clock age
+   * onto the caller's local clock, so the browser can keep using performance.now().
+   */
+  restoreSegments(
+    segments: readonly StaleSignedVolumeSegment[],
+    nowMs: number,
+  ): void {
+    if (!Number.isFinite(nowMs))
+      throw new RangeError("StaleSignedVolume timestamp must be finite");
+    this.current = StaleSignedVolume.mergeAdjacent(
+      segments
+        .filter(
+          (segment) =>
+            Number.isFinite(segment.ageMs) &&
+            segment.ageMs >= 0 &&
+            StaleSignedVolume.validRange(segment),
+        )
+        .sort((a, b) => a.lo - b.lo)
+        .map(({ lo, hi, volume, ageMs }) => ({
+          lo,
+          hi,
+          volume,
+          staleSinceMs: ageMs > 0 ? nowMs - ageMs : null,
+        })),
+    );
+    this.lastUpdateMs = nowMs;
+  }
+
   clear(): void {
     this.current = [];
     this.lastUpdateMs = undefined;
+  }
+
+  private validateTime(nowMs: number): void {
+    if (!Number.isFinite(nowMs))
+      throw new RangeError("StaleSignedVolume timestamp must be finite");
+    if (this.lastUpdateMs !== undefined && nowMs < this.lastUpdateMs)
+      throw new RangeError("StaleSignedVolume timestamps must be monotonic");
+  }
+
+  private static validRange(segment: {
+    lo: number;
+    hi: number;
+    volume: number;
+  }): boolean {
+    return (
+      Number.isFinite(segment.lo) &&
+      Number.isFinite(segment.hi) &&
+      !Number.isNaN(segment.volume) &&
+      segment.lo >= 0 &&
+      segment.hi <= 1 &&
+      segment.hi > segment.lo
+    );
+  }
+
+  private static validHeldSegment(
+    segment: HeldVolumeSegment,
+  ): boolean {
+    return (
+      StaleSignedVolume.validRange(segment) &&
+      (segment.staleSinceMs === null || Number.isFinite(segment.staleSinceMs))
+    );
   }
 
   private static volumeAt(
