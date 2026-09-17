@@ -137,7 +137,7 @@ export function signedVolumeInk(
   );
 }
 
-/** CSS color for legends: the force magnitude is encoded directly as alpha. */
+/** CSS/canvas color with force magnitude encoded as alpha. */
 export function signedVolumeInkCssAtPosition(
   position: number,
   scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
@@ -149,18 +149,12 @@ export function signedVolumeInkCssAtPosition(
   return `oklch(${scale.luminance} ${scale.chroma} ${hue} / ${intensity})`;
 }
 
-/**
- * Legacy solid-color helper retained for non-diffusion views. Magnitude is
- * encoded as chroma here; the age view uses signedVolumeInk instead.
- */
+/** Canonical rendered color: sign is hue and magnitude is ink opacity. */
 export function signedVolumeColorAtPosition(
   position: number,
   scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
 ): string {
-  const signed = 2 * Math.max(0, Math.min(1, position)) - 1;
-  const chroma = Math.abs(signed) * scale.chroma;
-  const hue = signed < 0 ? scale.negativeHue : scale.positiveHue;
-  return `oklch(${scale.luminance} ${chroma} ${hue})`;
+  return signedVolumeInkCssAtPosition(position, scale);
 }
 
 export function signedVolumeColor(
