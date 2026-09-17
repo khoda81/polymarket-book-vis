@@ -1,8 +1,31 @@
-import type { StaleSignedVolumeSegment } from "./staleSignedVolume";
+import type {
+  StaleSignedVolumeSegment,
+  StaleSignedVolumeSpread,
+} from "./staleSignedVolume";
+
+interface RecorderTransportSegment {
+  lo: number;
+  hi: number;
+  volume: number;
+  /** null is the backend wire encoding of age Infinity / never observed. */
+  ageMs: number | null;
+}
+
+interface RecorderTransportState {
+  segments: RecorderTransportSegment[];
+  spread?: StaleSignedVolumeSpread;
+}
 
 interface RecorderStateResponse {
   serverNowMs: number;
-  states: Record<string, readonly StaleSignedVolumeSegment[]>;
+  connected: boolean;
+  recordingSinceMs: number | null;
+  states: Record<string, RecorderTransportState>;
+}
+
+export interface RecordedAgeState {
+  segments: readonly StaleSignedVolumeSegment[];
+  spread?: StaleSignedVolumeSpread;
 }
 
 /**
@@ -12,7 +35,7 @@ interface RecorderStateResponse {
  */
 export async function fetchRecordedAgeState(
   tokenIds: readonly string[],
-): Promise<Record<string, readonly StaleSignedVolumeSegment[]>> {
+): Promise<Record<string, RecordedAgeState>> {
   if (tokenIds.length === 0) return {};
 
   const params = new URLSearchParams();
@@ -22,7 +45,19 @@ export async function fetchRecordedAgeState(
     const response = await fetch(`/api/recorder/state?${params}`);
     if (!response.ok) throw new Error(`recorder returned ${response.status}`);
     const body = (await response.json()) as RecorderStateResponse;
-    return body.states ?? {};
+
+    return Object.fromEntries(
+      Object.entries(body.states ?? {}).map(([tokenId, state]) => [
+        tokenId,
+        {
+          spread: state.spread,
+          segments: state.segments.map(({ ageMs, ...segment }) => ({
+            ...segment,
+            ageMs: ageMs === null ? Infinity : ageMs,
+          })),
+        } satisfies RecordedAgeState,
+      ]),
+    );
   } catch (error) {
     console.warn("Age recorder unavailable; starting age state locally", error);
     return {};
