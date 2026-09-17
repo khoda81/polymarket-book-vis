@@ -17,11 +17,12 @@ const STATE_PATH = resolve(
   process.env.RECORDER_STATE_PATH ?? ".data/age-recorder.json",
 );
 const PERSIST_DEBOUNCE_MS = 250;
+const MAX_CLOCK_SKEW_MS = 60_000;
 
 interface PersistedRecorderState {
   version: 1;
   watchedTokenIds: string[];
-  /** First time this recorder installation began watching each token. */
+  /** Earliest known recorder coverage start for each token. */
   recordingSinceMs?: Record<string, number>;
   states: Record<string, StaleSignedVolumeSnapshot>;
 }
@@ -273,16 +274,29 @@ class AgeRecorder {
     }
 
     const migrationNowMs = Date.now();
+    let repairedCoverageMetadata = false;
+
     for (const tokenId of parsed.watchedTokenIds ?? []) {
       if (typeof tokenId !== "string" || !tokenId) continue;
       this.watched.add(tokenId);
-      const storedStart = parsed.recordingSinceMs?.[tokenId];
-      this.recordingSince.set(
-        tokenId,
-        typeof storedStart === "number" && Number.isFinite(storedStart)
-          ? storedStart
-          : migrationNowMs,
+
+      const storedStart = validWallClockMs(
+        parsed.recordingSinceMs?.[tokenId],
+        migrationNowMs,
       );
+      const inferredStart = earliestSnapshotObservationMs(
+        parsed.states?.[tokenId],
+        migrationNowMs,
+      );
+      const knownStarts = [storedStart, inferredStart].filter(
+        (value): value is number => value !== undefined,
+      );
+      const repairedStart = knownStarts.length
+        ? Math.min(...knownStarts)
+        : migrationNowMs;
+
+      this.recordingSince.set(tokenId, repairedStart);
+      if (storedStart !== repairedStart) repairedCoverageMetadata = true;
     }
 
     for (const [tokenId, snapshot] of Object.entries(parsed.states ?? {})) {
@@ -294,7 +308,40 @@ class AgeRecorder {
         console.warn(`Ignoring invalid recorder state for ${tokenId}`, error);
       }
     }
+
+    // Older recorder versions did not persist coverage starts. A later version
+    // initially migrated those missing values to restart time, which can also
+    // leave already-written metadata newer than observations still present in
+    // the snapshots. Repair both cases and persist the correction immediately.
+    if (repairedCoverageMetadata) this.schedulePersist();
   }
+}
+
+function earliestSnapshotObservationMs(
+  snapshot: StaleSignedVolumeSnapshot | undefined,
+  nowMs: number,
+): number | undefined {
+  if (!snapshot) return undefined;
+
+  let earliest: number | undefined;
+  for (const segment of snapshot.segments ?? []) {
+    const observedAt = validWallClockMs(segment.staleSinceMs, nowMs);
+    if (observedAt === undefined) continue;
+    earliest = earliest === undefined ? observedAt : Math.min(earliest, observedAt);
+  }
+
+  // lastUpdateMs is weaker evidence than an actual held observation, but it is
+  // still a truthful lower bound when a snapshot contains only unknown ranges.
+  return earliest ?? validWallClockMs(snapshot.lastUpdateMs, nowMs);
+}
+
+function validWallClockMs(value: unknown, nowMs: number): number | undefined {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= nowMs + MAX_CLOCK_SKEW_MS
+    ? value
+    : undefined;
 }
 
 function bookFromSnapshot(payload: {
