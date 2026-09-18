@@ -7,9 +7,14 @@ export type ThresholdFamilyDirection = "prefix" | "suffix";
 export interface ThresholdOutcomeColor {
   readonly marketId: string;
   readonly yesTokenId: string;
+  readonly noTokenId: string;
   readonly thresholdIndex: number;
   readonly hue: number;
   readonly magnitude: number;
+  readonly noHue: number;
+  readonly noMagnitude: number;
+  readonly yesAtomIndices: readonly number[];
+  readonly noAtomIndices: readonly number[];
   readonly scale: SignedVolumeColorScale;
 }
 
@@ -17,6 +22,7 @@ export interface ThresholdPalette {
   readonly direction: ThresholdFamilyDirection;
   readonly outcomes: readonly ThresholdOutcomeColor[];
   readonly byYesTokenId: ReadonlyMap<string, ThresholdOutcomeColor>;
+  readonly byNoTokenId: ReadonlyMap<string, ThresholdOutcomeColor>;
 }
 
 interface RawThresholdMarket {
@@ -26,7 +32,6 @@ interface RawThresholdMarket {
 
 const SEMANTIC_LUMINANCE = 0.72;
 const SEMANTIC_CHROMA = 0.16;
-const NEUTRAL_NO_LUMINANCE = 0.88;
 const PRICE_MONOTONIC_EPSILON = 0.015;
 const MIN_TOTAL_PRICE_TREND = 0.03;
 
@@ -43,7 +48,8 @@ export function buildThresholdPalette(
   event: Event,
   rawMarkets: readonly unknown[],
 ): ThresholdPalette | null {
-  if (event.trading.negRisk === true || event.markets.length < 2) return null;
+  if (event.trading.negRiskAugmented === true || event.markets.length < 2)
+    return null;
 
   const rawById = new Map<string, RawThresholdMarket>();
   for (const raw of rawMarkets) {
@@ -57,11 +63,19 @@ export function buildThresholdPalette(
     const raw = rawById.get(String(market.id));
     const thresholdIndex = parseThresholdIndex(raw?.groupItemThreshold);
     const yesTokenId = market.outcomes.yes.tokenId;
+    const noTokenId = market.outcomes.no.tokenId;
     const yesPrice = parseProbability(market.outcomes.yes.price);
-    if (thresholdIndex === null || !yesTokenId || yesPrice === null) return null;
+    if (
+      thresholdIndex === null ||
+      !yesTokenId ||
+      !noTokenId ||
+      yesPrice === null
+    )
+      return null;
     return {
       marketId: String(market.id),
       yesTokenId: String(yesTokenId),
+      noTokenId: String(noTokenId),
       thresholdIndex,
       yesPrice,
     };
@@ -90,22 +104,37 @@ export function buildThresholdPalette(
     return { x: Math.cos(angle), y: Math.sin(angle) };
   });
 
+  const allAtomIndices = rangeInclusive(0, atomCount - 1);
   const outcomes = ordered.map((row): ThresholdOutcomeColor => {
-    const atomIndices =
+    // Keep latent atom numbering aligned with threshold row order. A growing
+    // family is A0 vs rest, then A0+A1 vs rest. A shrinking family is the
+    // reverse nesting: all-but-last vs last, then all-but-last-two vs those two.
+    const yesAtomIndices =
       direction === "prefix"
         ? rangeInclusive(0, row.thresholdIndex)
-        : rangeInclusive(row.thresholdIndex + 1, atomCount - 1);
-    const vector = meanVector(atomIndices.map((index) => atoms[index]!));
-    const hue = normalizeHue(radiansToDegrees(Math.atan2(vector.y, vector.x)));
-    const magnitude = Math.min(1, Math.hypot(vector.x, vector.y));
+        : rangeInclusive(0, atomCount - row.thresholdIndex - 2);
+    const yesAtoms = new Set(yesAtomIndices);
+    const noAtomIndices = allAtomIndices.filter((index) => !yesAtoms.has(index));
+
+    const yesVector = meanVector(yesAtomIndices.map((index) => atoms[index]!));
+    const noVector = meanVector(noAtomIndices.map((index) => atoms[index]!));
+    const hue = vectorHue(yesVector);
+    const magnitude = vectorMagnitude(yesVector);
+    const noHue = vectorHue(noVector);
+    const noMagnitude = vectorMagnitude(noVector);
 
     return {
       marketId: row.marketId,
       yesTokenId: row.yesTokenId,
+      noTokenId: row.noTokenId,
       thresholdIndex: row.thresholdIndex,
       hue,
       magnitude,
-      scale: semanticYesNeutralNoScale(hue, magnitude),
+      noHue,
+      noMagnitude,
+      yesAtomIndices,
+      noAtomIndices,
+      scale: semanticPairScale(hue, magnitude, noHue, noMagnitude),
     };
   });
 
@@ -113,23 +142,38 @@ export function buildThresholdPalette(
     direction,
     outcomes,
     byYesTokenId: new Map(outcomes.map((outcome) => [outcome.yesTokenId, outcome])),
+    byNoTokenId: new Map(outcomes.map((outcome) => [outcome.noTokenId, outcome])),
   };
 }
 
-export function semanticYesNeutralNoScale(
-  hue: number,
-  magnitude = 1,
+export function semanticBinaryScale(hue: number): SignedVolumeColorScale {
+  return semanticPairScale(hue, 1, normalizeHue(hue + 180), 1);
+}
+
+function semanticPairScale(
+  yesHue: number,
+  yesMagnitude: number,
+  noHue: number,
+  noMagnitude: number,
 ): SignedVolumeColorScale {
   return {
     luminance: SEMANTIC_LUMINANCE,
     chroma: SEMANTIC_CHROMA,
     positiveLuminance: SEMANTIC_LUMINANCE,
-    negativeLuminance: NEUTRAL_NO_LUMINANCE,
-    positiveHue: normalizeHue(hue),
-    negativeHue: 0,
-    positiveChroma: SEMANTIC_CHROMA * Math.max(0, Math.min(1, magnitude)),
-    negativeChroma: 0,
+    negativeLuminance: SEMANTIC_LUMINANCE,
+    positiveHue: normalizeHue(yesHue),
+    negativeHue: normalizeHue(noHue),
+    positiveChroma: SEMANTIC_CHROMA * clamp01(yesMagnitude),
+    negativeChroma: SEMANTIC_CHROMA * clamp01(noMagnitude),
   };
+}
+
+function vectorHue(vector: { readonly x: number; readonly y: number }): number {
+  return normalizeHue(radiansToDegrees(Math.atan2(vector.y, vector.x)));
+}
+
+function vectorMagnitude(vector: { readonly x: number; readonly y: number }): number {
+  return clamp01(Math.hypot(vector.x, vector.y));
 }
 
 function monotoneDirection(
@@ -204,4 +248,8 @@ function radiansToDegrees(radians: number): number {
 
 function normalizeHue(hue: number): number {
   return ((hue % 360) + 360) % 360;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }

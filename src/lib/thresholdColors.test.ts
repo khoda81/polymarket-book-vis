@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Event } from "@polymarket/client";
 import {
   buildThresholdPalette,
-  semanticYesNeutralNoScale,
+  semanticBinaryScale,
 } from "./thresholdColors";
 
 function thresholdEvent(prices: readonly number[]): Event {
@@ -52,9 +52,16 @@ describe("nested threshold color geometry", () => {
     expect(middle.magnitude).toBeCloseTo(Math.SQRT1_2, 12);
     expect(last.magnitude).toBeCloseTo(1 / 3, 12);
 
+    expect(first.noMagnitude).toBeCloseTo(1 / 3, 12);
+    expect(middle.noMagnitude).toBeCloseTo(Math.SQRT1_2, 12);
+    expect(last.noMagnitude).toBeCloseTo(1, 12);
+
     for (const outcome of palette!.outcomes) {
-      expect(outcome.scale.negativeChroma).toBe(0);
-      expect(outcome.scale.negativeLuminance).toBe(0.88);
+      expect(outcome.scale.negativeChroma).toBeCloseTo(
+        0.16 * outcome.noMagnitude,
+        12,
+      );
+      expect(outcome.scale.negativeLuminance).toBe(0.72);
     }
   });
 
@@ -69,6 +76,39 @@ describe("nested threshold color geometry", () => {
     expect(first.magnitude).toBeCloseTo(1 / 3, 12);
     expect(middle.magnitude).toBeCloseTo(Math.SQRT1_2, 12);
     expect(last.magnitude).toBeCloseTo(1, 12);
+    expect(first.noMagnitude).toBeCloseTo(1, 12);
+    expect(middle.noMagnitude).toBeCloseTo(Math.SQRT1_2, 12);
+    expect(last.noMagnitude).toBeCloseTo(1 / 3, 12);
+  });
+
+  test("uses the requested shrinking partition geometry for four thresholds", () => {
+    const palette = buildThresholdPalette(
+      thresholdEvent([0.94, 0.83, 0.75, 0.56]),
+      rawThresholds(4),
+    )!;
+    expect(palette.direction).toBe("suffix");
+
+    const expectedYes = [
+      [0, 1, 2, 3],
+      [0, 1, 2],
+      [0, 1],
+      [0],
+    ];
+    const expectedNo = [
+      [4],
+      [3, 4],
+      [2, 3, 4],
+      [1, 2, 3, 4],
+    ];
+
+    for (const [index, outcome] of palette.outcomes.entries()) {
+      expect(outcome.yesAtomIndices).toEqual(expectedYes[index]);
+      expect(outcome.noAtomIndices).toEqual(expectedNo[index]);
+      expect(outcome.scale.negativeChroma).toBeGreaterThan(0);
+      expect(
+        ((outcome.noHue - outcome.hue) % 360 + 360) % 360,
+      ).toBeCloseTo(180, 10);
+    }
   });
 
   test("maps token identity independently of event row order", () => {
@@ -113,19 +153,44 @@ describe("nested threshold color geometry", () => {
       ),
     ).toBeNull();
 
-    const negRisk = thresholdEvent([0.1, 0.5, 0.9]);
+    const augmented = thresholdEvent([0.1, 0.5, 0.9]);
     const marked = {
-      ...negRisk,
-      trading: { ...negRisk.trading, negRisk: true },
+      ...augmented,
+      trading: {
+        ...augmented.trading,
+        negRisk: true,
+        negRiskAugmented: true,
+      },
     } as Event;
     expect(buildThresholdPalette(marked, rawThresholds(3))).toBeNull();
   });
 
-  test("semantic YES / neutral NO scale is explicit", () => {
-    const scale = semanticYesNeutralNoScale(123, 0.5);
+  test("accepts threshold metadata inside ordinary negative-risk events", () => {
+    const event = thresholdEvent([0.91, 0.7, 0.42]);
+    const marked = {
+      ...event,
+      trading: { ...event.trading, negRisk: true },
+      markets: event.markets.map((market) => ({
+        ...market,
+        state: { ...market.state, negRisk: true },
+      })),
+    } as Event;
+
+    const palette = buildThresholdPalette(marked, rawThresholds(3));
+    expect(palette?.direction).toBe("suffix");
+    expect(palette?.outcomes.map((outcome) => outcome.yesAtomIndices)).toEqual([
+      [0, 1, 2],
+      [0, 1],
+      [0],
+    ]);
+  });
+
+  test("standalone binary scale colors both opposite tokens", () => {
+    const scale = semanticBinaryScale(123);
     expect(scale.positiveHue).toBe(123);
-    expect(scale.positiveChroma).toBeCloseTo(0.08, 12);
-    expect(scale.negativeChroma).toBe(0);
-    expect(scale.negativeLuminance).toBe(0.88);
+    expect(scale.negativeHue).toBe(303);
+    expect(scale.positiveChroma).toBe(0.16);
+    expect(scale.negativeChroma).toBe(0.16);
+    expect(scale.negativeLuminance).toBe(0.72);
   });
 });

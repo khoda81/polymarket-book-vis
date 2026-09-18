@@ -6,7 +6,7 @@ import {
 } from "@/lib/negRiskColors";
 import {
   buildThresholdPalette,
-  semanticYesNeutralNoScale,
+  semanticBinaryScale,
   type ThresholdPalette,
 } from "@/lib/thresholdColors";
 import {
@@ -294,10 +294,13 @@ export class PolymarketCPV {
     }
 
     event = { ...event, markets: orderMarkets(event, rawMarkets) };
-    this.negRiskPalette = buildNegRiskPalette(event);
-    this.thresholdPalette = this.negRiskPalette
+    // Threshold metadata is more specific than the event-level neg-risk flag:
+    // some neg-risk groups are nested cumulative partitions, not categorical
+    // one-hot outcomes. Detect those first, then fall back to categorical.
+    this.thresholdPalette = buildThresholdPalette(event, rawMarkets);
+    this.negRiskPalette = this.thresholdPalette
       ? null
-      : buildThresholdPalette(event, rawMarkets);
+      : buildNegRiskPalette(event);
 
     if (this.thresholdPalette) {
       for (const outcome of this.thresholdPalette.outcomes)
@@ -313,7 +316,7 @@ export class PolymarketCPV {
       if (market && yesTokenId)
         this.semanticPressureScales.set(
           yesTokenId,
-          semanticYesNeutralNoScale(marketHue(event.id, 0)),
+          semanticBinaryScale(marketHue(event.id, 0)),
         );
     }
 

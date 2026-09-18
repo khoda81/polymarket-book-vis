@@ -63,6 +63,7 @@ export function buildNegRiskPalette(event: Event): NegRiskPalette | null {
     event.trading.negRiskMarketId?.trim() || String(event.id);
   const phase = stableHue(groupId);
   const count = slots.length;
+  const complementMagnitude = 1 / (count - 1);
 
   const outcomes = slots.map((slot, index): NegRiskOutcomeColor => {
     const hue = normalizeHue(phase + (360 * index) / count);
@@ -72,11 +73,12 @@ export function buildNegRiskPalette(event: Event): NegRiskPalette | null {
       scale: {
         ...DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
         positiveLuminance: 0.72,
-        negativeLuminance: 0.88,
+        negativeLuminance: 0.72,
         positiveHue: hue,
-        negativeHue: 0,
+        negativeHue: normalizeHue(hue + 180),
         positiveChroma: DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma,
-        negativeChroma: 0,
+        negativeChroma:
+          DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma * complementMagnitude,
       },
     };
   });
