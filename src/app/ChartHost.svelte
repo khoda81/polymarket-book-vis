@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import {
     ChartController,
-    type AutoHiddenReason,
     type ChartSurfaceElements,
   } from "../chart/controller";
   import {
@@ -21,6 +20,7 @@
     persistUserVisibility,
     setMarketVisibility,
     setUserMarketVisible,
+    type AutoHiddenReason,
     type MarketVisibility,
   } from "../lib/marketVisibility";
   import MarketControl from "./MarketControl.svelte";

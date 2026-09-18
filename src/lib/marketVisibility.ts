@@ -4,6 +4,11 @@ export type HiddenMarketReason =
   | "empty-book"
   | "resolved";
 
+export type AutoHiddenReason = Extract<
+  HiddenMarketReason,
+  "empty-book" | "resolved"
+>;
+
 export type MarketVisibility =
   | { readonly kind: "visible" }
   | {

@@ -1,5 +1,6 @@
 import { fetchRecorderCoverage } from "@/lib/ageRecorderClient";
 import type { ConnectionStatus, ViewMode } from "@/lib/chartState";
+import type { AutoHiddenReason } from "@/lib/marketVisibility";
 import {
   pressureScaleForToken,
   type ChartDefinition,
@@ -40,8 +41,6 @@ export interface ChartSurfaceElements {
   readonly toggles: HTMLElement;
 }
 
-export type AutoHiddenReason = "empty-book" | "resolved";
-
 export interface ChartControllerOptions {
   readonly onConnectionStatus?: (status: ConnectionStatus) => void;
   readonly onMarketAutoHidden?: (
@@ -67,8 +66,7 @@ export class ChartController {
   private raf: number | null = null;
   private readonly definition: ChartDefinition;
   private viewMode: ViewMode = "age";
-  private started = false;
-  private destroyed = false;
+  private lifecycle: "new" | "started" | "destroyed" = "new";
 
   constructor(
     surface: ChartSurfaceElements,
@@ -150,9 +148,11 @@ export class ChartController {
   async start(
     hiddenMarketIds: ReadonlySet<string>,
   ): Promise<void> {
-    if (this.started) throw new Error("ChartController already started");
-    if (this.destroyed) throw new Error("ChartController is destroyed");
-    this.started = true;
+    if (this.lifecycle !== "new")
+      throw new Error(
+        `ChartController cannot start from ${this.lifecycle}`,
+      );
+    this.lifecycle = "started";
 
     const { event } = this.definition;
     const tokenIds = this.definition.controls.map(
@@ -168,7 +168,7 @@ export class ChartController {
     // Recorder registration/metadata is optional and must never gate the live
     // websocket.
     void fetchRecorderCoverage(tokenIds).then((hydration) => {
-      if (this.destroyed) return;
+      if (this.lifecycle === "destroyed") return;
       this.ageView.setRecordingCoverage(
         hydration.recordingSinceMsByToken,
       );
@@ -176,7 +176,7 @@ export class ChartController {
     });
 
     await this.feed.start(tokenIds);
-    if (!this.destroyed) this.reqDraw();
+    if (this.lifecycle === "started") this.reqDraw();
   }
 
   setViewMode(mode: ViewMode): void {
@@ -197,7 +197,7 @@ export class ChartController {
   }
 
   destroy() {
-    if (this.destroyed) return;
+    if (this.lifecycle === "destroyed") return;
     this.destroyed = true;
     this.feed.destroy();
     if (this.raf !== null) cancelAnimationFrame(this.raf);
