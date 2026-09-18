@@ -8,17 +8,23 @@
     <body>
         <header class="dashboard-toolbar">
             <form class="dashboard-add-form" id="add-event-form">
-                <label for="event-slug">Add event by slug</label>
-                <div class="dashboard-add-row">
+                <label for="event-search">Add event</label>
+                <div class="dashboard-search">
                     <input
-                        id="event-slug"
-                        name="slug"
+                        id="event-search"
+                        name="query"
                         type="text"
-                        placeholder="btc-updown-5m-1789556100"
+                        placeholder="Search events or paste an exact slug…"
                         autocomplete="off"
-                        required
+                        aria-autocomplete="list"
+                        aria-controls="event-search-results"
+                        aria-expanded="false"
                     />
-                    <button type="submit">Add event</button>
+                    <div
+                        class="dashboard-search-results"
+                        id="event-search-results"
+                        role="listbox"
+                    ></div>
                 </div>
                 <span class="dashboard-add-status" id="add-event-status" aria-live="polite"></span>
             </form>
