@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Event } from "@polymarket/client";
-import { AgeStripView, type AgeStripHost } from "./ageStrips";
+import { AgeStripView, type AgeStripHost } from "./chart/ageStripView";
 import { getAgeStripTuning } from "./lib/ageStripTuning";
 
 test("only Ctrl+wheel changes share scale in age mode", () => {

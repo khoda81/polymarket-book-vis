@@ -23,7 +23,7 @@ import {
   OrderBookPlotter,
   StackDirection,
 } from "@/lib/renderer";
-import { AgeStripView } from "../ageStrips";
+import { AgeStripView } from "./ageStripView";
 import {
   Event,
   OrderSide,
