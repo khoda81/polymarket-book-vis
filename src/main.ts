@@ -6,7 +6,7 @@ import {
   type AgeStripTuning,
 } from "./ageStrips";
 import { PolymarketCPV } from "./component";
-import { fmtRelativeTime, fmtVol } from "./lib/math";
+import { fmtVol } from "./lib/math";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
@@ -22,8 +22,6 @@ const addEventForm = document.getElementById("add-event-form") as HTMLFormElemen
 const eventSlugInput = document.getElementById("event-slug") as HTMLInputElement;
 const addEventStatus = document.getElementById("add-event-status")!;
 const addEventButton = addEventForm.querySelector("button")!;
-const recorderStatus = document.getElementById("recorder-status")!;
-const recorderStatusText = document.getElementById("recorder-status-text")!;
 const volumeLegendBar = document.getElementById("volume-legend-bar")!;
 const volumeLegendTicks = document.getElementById("volume-legend-ticks")!;
 const volumeLegendScale = document.getElementById("volume-legend-scale")!;
@@ -63,7 +61,6 @@ async function createCard(event: Event) {
   try {
     await chart.load(event);
     closeButton.disabled = false;
-    void refreshRecorderStatus();
     return true;
   } catch (error) {
     chart.destroy();
@@ -213,48 +210,10 @@ function formatShareTick(value: number): string {
   return `${value > 0 ? "+" : "−"}${magnitude}`;
 }
 
-interface RecorderHealth {
-  watchedTokens: number;
-  connected: boolean;
-  // Optional so a frontend update remains readable while an older recorder
-  // process is still running and has not been restarted yet.
-  oldestRecordingSinceMs?: number | null;
-}
-
-async function refreshRecorderStatus(): Promise<void> {
-  try {
-    const response = await fetch("/api/recorder/health", { cache: "no-store" });
-    if (!response.ok) throw new Error(`recorder returned ${response.status}`);
-    const health = (await response.json()) as RecorderHealth;
-
-    if (health.watchedTokens === 0) {
-      recorderStatus.dataset.state = "idle";
-      recorderStatusText.textContent = "recorder ready · no markets watched";
-      return;
-    }
-
-    const oldestRecording =
-      typeof health.oldestRecordingSinceMs === "number" &&
-      Number.isFinite(health.oldestRecordingSinceMs)
-        ? `${fmtRelativeTime((Date.now() - health.oldestRecordingSinceMs) / 1000)} oldest recording`
-        : "history age unavailable";
-
-    recorderStatus.dataset.state = health.connected ? "live" : "connecting";
-    recorderStatusText.textContent = health.connected
-      ? `recorder live · ${oldestRecording} · ${health.watchedTokens} markets`
-      : `recorder reconnecting · ${oldestRecording}`;
-  } catch {
-    recorderStatus.dataset.state = "offline";
-    recorderStatusText.textContent = "recorder offline";
-  }
-}
-
 const renderGlobalLegend = () => renderVolumeLegend(getAgeStripTuning());
 renderGlobalLegend();
 subscribeAgeStripTuning(renderGlobalLegend);
 new ResizeObserver(renderGlobalLegend).observe(volumeLegendBar);
-void refreshRecorderStatus();
-window.setInterval(() => void refreshRecorderStatus(), 5_000);
 
 const eventSlugs = ["israel-closes-its-airspace-by"];
 
