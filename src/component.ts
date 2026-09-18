@@ -1,4 +1,4 @@
-import { fetchRecordedAgeState } from "@/lib/ageRecorderClient";
+import { fetchRecorderCoverage } from "@/lib/ageRecorderClient";
 import { fmtVol, marketColor } from "@/lib/math";
 import { orderMarkets } from "@/lib/marketOrder";
 import {
@@ -274,7 +274,7 @@ export class PolymarketCPV {
 
     // Recorder registration/metadata is optional and must never gate the live
     // websocket. Apply it only if this load still owns the chart when it lands.
-    void fetchRecordedAgeState(tokenIds).then((hydration) => {
+    void fetchRecorderCoverage(tokenIds).then((hydration) => {
       if (!this.ownsLoad(generation)) return;
       this.ageView.setRecordingCoverage(hydration.recordingSinceMsByToken);
       this.reqDraw();
