@@ -18,13 +18,13 @@
 
 ## Next
 
-1. [ ] **Event search / add UX**
-   - Replace the slug-only input with a searchable event picker, matching the useful dropdown behavior of the per-card event search.
-   - Show enough result metadata to disambiguate events without clutter (title plus compact secondary metadata such as slug, volume, and timing when available).
-   - Add the selected result on click.
-   - Add the best/current selection on Enter.
-   - Remove the separate **Add event** button.
-   - Preserve direct slug entry as a fast path when the typed value is an exact slug.
+1. [x] **Event search / add UX**
+   - One dashboard-level searchable event picker; per-card event replacement/search UI removed.
+   - Results show title, slug, and volume.
+   - Click or Enter adds the selected result.
+   - Exact slug entry remains a fast path.
+   - Separate **Add event** button removed.
+   - Per-card visualization mode moved beside pin/close controls.
 
 2. [ ] **Resin historical visualization**
    - Keep the current live book sharp and authoritative.
