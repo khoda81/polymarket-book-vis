@@ -99,19 +99,21 @@ class AgeRecorder {
     return true;
   }
 
-  state(tokenIds: Iterable<string>): StateResponse {
+  state(tokenIds: Iterable<string>, includeStates = true): StateResponse {
     const requested = [...tokenIds];
     const nowMs = Date.now();
     const states: Record<string, TransportState> = {};
-    for (const tokenId of requested) {
-      const memory = this.memories.get(tokenId);
-      if (!memory) continue;
-      states[tokenId] = {
-        segments: memory.segments(nowMs).map(({ ageMs, ...segment }) => ({
-          ...segment,
-          ageMs: ageMs === Infinity ? null : ageMs,
-        })),
-      };
+    if (includeStates) {
+      for (const tokenId of requested) {
+        const memory = this.memories.get(tokenId);
+        if (!memory) continue;
+        states[tokenId] = {
+          segments: memory.segments(nowMs).map(({ ageMs, ...segment }) => ({
+            ...segment,
+            ageMs: ageMs === Infinity ? null : ageMs,
+          })),
+        };
+      }
     }
 
     const coverageStarts = requested
@@ -520,7 +522,8 @@ const server = Bun.serve({
     if (url.pathname === "/api/recorder/state" && request.method === "GET") {
       const tokenIds = parseTokenIds(url.searchParams);
       recorder.watch(tokenIds);
-      return response(recorder.state(tokenIds));
+      const includeStates = url.searchParams.get("metadataOnly") !== "1";
+      return response(recorder.state(tokenIds, includeStates));
     }
 
     if (url.pathname === "/api/recorder/watch" && request.method === "POST") {
