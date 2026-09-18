@@ -53,6 +53,18 @@
     color: var(--color-text-secondary, #666);
 }
 
+.cpv-history-age {
+    font-size: 11px;
+    color: var(--color-text-secondary, #666);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.cpv-history-age::before {
+    content: "·";
+    margin-right: 10px;
+}
+
 /* ── Controls ────────────────────────────────────────────────────────────── */
 
 .cpv-controls {
