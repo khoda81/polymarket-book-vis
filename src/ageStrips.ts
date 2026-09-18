@@ -1,4 +1,5 @@
 import type { RecordedAgeState } from "@/lib/ageRecorderClient";
+import { fmtRelativeTime } from "@/lib/math";
 import { bookHoverAtPrice, type BookHoverSnapshot } from "@/lib/bookHover";
 import {
   DEFAULT_VOLUME_PER_CSS_PIXEL,
@@ -24,6 +25,8 @@ import type { Event } from "@polymarket/client";
 const AGE_LABEL_MIN_GUTTER_PX = 44;
 const AGE_LABEL_MAX_GUTTER_PX = 180;
 const AGE_LABEL_HORIZONTAL_INSET_PX = 8;
+const AGE_RECORDING_AGE_WIDTH_PX = 44;
+const AGE_LABEL_GAP_PX = 6;
 const VOLUME_LEFT_PADDING_PX = 60;
 export const AGE_ROW_BAND_PX = 36;
 
@@ -52,6 +55,7 @@ interface StoredAgeStripTuning {
 interface MarketRuntimeState {
   readonly field: StaleSignedVolume;
   visibilityInitialized: boolean;
+  recordingSinceMs: number | null;
 }
 
 interface HoverRow {
@@ -123,6 +127,7 @@ export class AgeStripView {
   private diffusionTimer: number | undefined;
   private layoutMode: "age" | "volume" | null = null;
   private hoverGeometry: HoverGeometry | null = null;
+  private lastRecordingAgeLabelUpdateMs = 0;
 
   constructor(host: AgeStripHost) {
     this.host = host;
@@ -164,18 +169,31 @@ export class AgeStripView {
   }
 
   /** Seed sample-and-hold fields recorded by the always-on backend. */
-  hydrate(states: Readonly<Record<string, RecordedAgeState>>): void {
+  hydrate(
+    states: Readonly<Record<string, RecordedAgeState>>,
+    recordingSinceMsByToken: Readonly<Record<string, number>> = {},
+  ): void {
     sharedWebGLPressureRenderer.release(this.gpuKey);
     this.dirtyTokens.clear();
     const nowMs = performance.now();
-    for (const [tokenId, state] of Object.entries(states)) {
+
+    for (const tokenId of new Set([
+      ...Object.keys(states),
+      ...Object.keys(recordingSinceMsByToken),
+    ])) {
       const field = new StaleSignedVolume();
-      field.restoreSegments(state.segments, nowMs);
+      const recorded = states[tokenId];
+      if (recorded) field.restoreSegments(recorded.segments, nowMs);
+      const since = recordingSinceMsByToken[tokenId];
       this.markets.set(tokenId, {
         field,
         visibilityInitialized: false,
+        recordingSinceMs:
+          typeof since === "number" && Number.isFinite(since) ? since : null,
       });
     }
+
+    this.refreshRecordingAgeLabels(true);
   }
 
   configureMarkets(event: Event, rawMarkets: readonly unknown[]): void {
@@ -212,6 +230,11 @@ export class AgeStripView {
       textSpan.textContent = text;
       label.appendChild(textSpan);
       label.dataset.ageLabelWidth = String(measureIntrinsicTextWidth(textSpan));
+
+      const recordingAge = document.createElement("span");
+      recordingAge.className = "cpv-recording-age";
+      recordingAge.hidden = true;
+      label.appendChild(recordingAge);
       label.title = text;
 
       const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -247,6 +270,7 @@ export class AgeStripView {
       state = {
         field: new StaleSignedVolume(),
         visibilityInitialized: false,
+        recordingSinceMs: null,
       };
       this.markets.set(tokenId, state);
     }
@@ -270,6 +294,7 @@ export class AgeStripView {
 
   draw(): void {
     this.cancelDiffusionTimer();
+    this.refreshRecordingAgeLabels();
 
     const controls = this.collectControls();
     this.syncControlPlacement(controls);
@@ -589,6 +614,30 @@ export class AgeStripView {
     );
   }
 
+  private refreshRecordingAgeLabels(force = false): void {
+    const nowMs = Date.now();
+    if (!force && nowMs - this.lastRecordingAgeLabelUpdateMs < 30_000) return;
+    this.lastRecordingAgeLabelUpdateMs = nowMs;
+
+    for (const label of this.collectControls()) {
+      const age = label.querySelector<HTMLElement>(".cpv-recording-age");
+      const tokenId = label.dataset.tokenId;
+      if (!age || !tokenId) continue;
+
+      const since = this.markets.get(tokenId)?.recordingSinceMs ?? null;
+      if (since === null || !Number.isFinite(since)) {
+        age.hidden = true;
+        age.textContent = "";
+        continue;
+      }
+
+      const duration = fmtRelativeTime((nowMs - since) / 1000);
+      age.hidden = false;
+      age.textContent = duration;
+      age.title = `${duration} recorder history`;
+    }
+  }
+
   private scheduleDiffusionTimer(delayMs: number): void {
     if (this.host.getViewMode() !== "age") return;
     this.diffusionTimer = window.setTimeout(() => {
@@ -610,7 +659,11 @@ function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
   let widest = 0;
   for (const label of labels) {
     const cached = Number(label.dataset.ageLabelWidth);
-    if (Number.isFinite(cached)) widest = Math.max(widest, cached);
+    if (!Number.isFinite(cached)) continue;
+    const age = label.querySelector<HTMLElement>(".cpv-recording-age");
+    const ageWidth =
+      age && !age.hidden ? AGE_RECORDING_AGE_WIDTH_PX + AGE_LABEL_GAP_PX : 0;
+    widest = Math.max(widest, cached + ageWidth);
   }
 
   return Math.ceil(
