@@ -615,24 +615,46 @@ export class AgeStripView {
     );
   }
 
-  private refreshVisibleTimeLabels(
-    labels: readonly HTMLLabelElement[],
-  ): void {
+  private renderClockLayer(): void {
     this.cancelTimeLabelRefresh();
-    this.timeLabelsDirty = false;
+
+    const geometry = this.clockGeometry;
+    if (
+      !geometry ||
+      this.clockRows.length === 0 ||
+      !this.viewportVisible ||
+      this.host.getViewMode() !== "age"
+    )
+      return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(geometry.canvasWidth * dpr));
+    const height = Math.max(1, Math.round(geometry.canvasHeight * dpr));
+    if (this.clockCanvas.width !== width) this.clockCanvas.width = width;
+    if (this.clockCanvas.height !== height) this.clockCanvas.height = height;
+
+    const ctx = this.clockCanvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, geometry.canvasWidth, geometry.canvasHeight);
+    ctx.font = "9px sans-serif";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = this.host.getTheme().text;
 
     const nowMs = Date.now();
+    const { viewport: vp } = geometry;
+    const rowCount = this.clockRows.length;
+    const textX = Math.max(4, vp.l - AGE_LABEL_HORIZONTAL_INSET_PX);
     let nextChangeMs = Infinity;
 
-    for (const label of labels) {
-      const tokenId = label.dataset.tokenId;
-      if (!tokenId) continue;
-
+    for (const [rowIndex, tokenId] of this.clockRows.entries()) {
       const state = this.markets.get(tokenId);
-      const elements = state?.timeElements;
-      if (!state || !elements) continue;
+      if (!state) continue;
 
-      let hasVisibleTime = false;
+      const rowCenterY =
+        vp.t + ((rowIndex + 0.5) / rowCount) * vp.height;
 
       const since = state.recordingSinceMs;
       if (since !== null && Number.isFinite(since)) {
@@ -640,14 +662,10 @@ export class AgeStripView {
           Math.max(0, nowMs - since) / 1000,
           "elapsed",
         );
-        setTextIfChanged(elements.age, display.text);
-        setHiddenIfChanged(elements.age, false);
-        hasVisibleTime = true;
+        ctx.globalAlpha = 0.55;
+        ctx.fillText(display.text, textX, rowCenterY - 5);
         if (display.nextChangeMs !== null)
           nextChangeMs = Math.min(nextChangeMs, display.nextChangeMs);
-      } else {
-        setHiddenIfChanged(elements.age, true);
-        setTextIfChanged(elements.age, "");
       }
 
       const resolutionMs = state.resolutionMs;
@@ -656,24 +674,26 @@ export class AgeStripView {
           Math.max(0, resolutionMs - nowMs) / 1000,
           "remaining",
         );
-        setTextIfChanged(
-          elements.resolution,
+        ctx.globalAlpha = 0.82;
+        ctx.fillText(
           display.text === "due" ? "due" : `T−${display.text}`,
+          textX,
+          rowCenterY + 5,
         );
-        setHiddenIfChanged(elements.resolution, false);
-        hasVisibleTime = true;
         if (display.nextChangeMs !== null)
           nextChangeMs = Math.min(nextChangeMs, display.nextChangeMs);
-      } else {
-        setHiddenIfChanged(elements.resolution, true);
-        setTextIfChanged(elements.resolution, "");
       }
-
-      setHiddenIfChanged(elements.container, !hasVisibleTime);
     }
 
+    ctx.globalAlpha = 1;
     if (Number.isFinite(nextChangeMs))
       this.scheduleTimeLabelRefresh(nextChangeMs);
+  }
+
+  private clearClockLayer(): void {
+    const ctx = this.clockCanvas.getContext?.("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, this.clockCanvas.width, this.clockCanvas.height);
   }
 
   private scheduleTimeLabelRefresh(delayMs: number): void {
@@ -683,9 +703,7 @@ export class AgeStripView {
       this.timeLabelRaf = requestAnimationFrame(() => {
         this.timeLabelRaf = undefined;
         if (!this.viewportVisible || this.host.getViewMode() !== "age") return;
-        this.refreshVisibleTimeLabels(
-          this.collectControls().filter((label) => this.isActive(label)),
-        );
+        this.renderClockLayer();
       });
       return;
     }
@@ -693,9 +711,7 @@ export class AgeStripView {
     this.timeLabelTimer = window.setTimeout(() => {
       this.timeLabelTimer = undefined;
       if (!this.viewportVisible || this.host.getViewMode() !== "age") return;
-      this.refreshVisibleTimeLabels(
-        this.collectControls().filter((label) => this.isActive(label)),
-      );
+      this.renderClockLayer();
     }, Math.max(1, Math.ceil(delayMs) + 1));
   }
 
@@ -720,10 +736,10 @@ function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
   for (const label of labels) {
     const cached = Number(label.dataset.ageLabelWidth);
     if (!Number.isFinite(cached)) continue;
-    const times = label.querySelector<HTMLElement>(".cpv-market-times");
-    const timeWidth =
-      times && !times.hidden ? AGE_TIME_META_WIDTH_PX + AGE_LABEL_GAP_PX : 0;
-    widest = Math.max(widest, cached + timeWidth);
+    widest = Math.max(
+      widest,
+      cached + AGE_TIME_META_WIDTH_PX + AGE_LABEL_GAP_PX,
+    );
   }
 
   return Math.ceil(
@@ -766,14 +782,6 @@ function measureIntrinsicTextWidth(text: HTMLElement): number {
   text.style.overflow = previous.overflow;
   text.style.textOverflow = previous.textOverflow;
   return width;
-}
-
-function setTextIfChanged(element: HTMLElement, text: string): void {
-  if (element.textContent !== text) element.textContent = text;
-}
-
-function setHiddenIfChanged(element: HTMLElement, hidden: boolean): void {
-  if (element.hidden !== hidden) element.hidden = hidden;
 }
 
 function tooltipSignature(
