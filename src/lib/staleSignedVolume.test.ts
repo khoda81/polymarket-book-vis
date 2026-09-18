@@ -232,3 +232,36 @@ test("repeated empty observations do not refresh stale liquidity", () => {
   );
   expect(stillStale?.ageMs).toBe(1_000);
 });
+
+
+test("restore rejects overlapping snapshots without mutating current state", () => {
+  const memory = new StaleSignedVolume();
+  const live = makeBook([[0.4, 10]], [[0.6, 10]]);
+  memory.update(live, 100);
+  const before = memory.snapshot();
+
+  expect(() =>
+    memory.restore({
+      version: 4,
+      lastUpdateMs: 200,
+      segments: [
+        {
+          lo: 0,
+          hi: 0.6,
+          volume: 1,
+          sweepCost: 1,
+          observedAtMs: 100,
+        },
+        {
+          lo: 0.5,
+          hi: 1,
+          volume: -1,
+          sweepCost: 1,
+          observedAtMs: 100,
+        },
+      ],
+    }),
+  ).toThrow(/overlap/i);
+
+  expect(memory.snapshot()).toEqual(before);
+});
