@@ -79,6 +79,7 @@ export interface AgeStripHost {
   readonly getBook: (tokenId: string) => TokenBook<string> | undefined;
   readonly getTitle: (marketId: string) => string | undefined;
   readonly getTokenName: (tokenId: string) => string | undefined;
+  readonly getOppositeTokenName: (tokenId: string) => string | undefined;
   readonly getTheme: () => ChartTheme;
   readonly getViewMode: () => "volume" | "age";
   readonly requestDraw: () => void;
@@ -455,9 +456,13 @@ export class AgeStripView {
       return;
     }
 
+    const tokenName =
+      hover.side === "bid"
+        ? this.host.getTokenName(row.tokenId)
+        : this.host.getOppositeTokenName(row.tokenId);
     renderAgeTooltip(
       this.overlay,
-      this.host.getTokenName(row.tokenId) ?? "(unknown)",
+      tokenName ?? "(unknown)",
       hover,
     );
 
@@ -634,18 +639,27 @@ function renderAgeTooltip(
 ): void {
   overlay.replaceChildren();
 
+  const isBid = hover.side === "bid";
+  const tokenPrice = isBid ? hover.price : 1 - hover.price;
+  const effectivePrice =
+    hover.effectivePrice === null
+      ? null
+      : isBid
+        ? hover.effectivePrice
+        : 1 - hover.effectivePrice;
+
   const title = document.createElement("div");
   title.className = "cpv-ov-label";
-  title.textContent = `${tokenName}@${formatProbability(hover.price)}`;
+  title.textContent = `${tokenName}@${formatProbability(tokenPrice)}`;
   title.style.color = signedVolumeColor(
-    hover.side === "bid" ? 1 : -1,
+    isBid ? 1 : -1,
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   );
   overlay.appendChild(title);
   overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
-  if (hover.effectivePrice !== null)
+  if (effectivePrice !== null)
     overlay.appendChild(
-      tooltipRow("Effective", formatProbability(hover.effectivePrice)),
+      tooltipRow("Effective", formatProbability(effectivePrice)),
     );
 }
 
