@@ -55,39 +55,6 @@
 
 /* ── Controls ────────────────────────────────────────────────────────────── */
 
-.cpv-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 0.75rem;
-}
-
-.cpv-top-controls {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    flex-wrap: wrap;
-    width: 100%;
-    margin: 1rem 0;
-}
-
-.cpv-view-control {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--color-text-secondary, #666);
-}
-
-.cpv-view-control select {
-    padding: 4px 8px;
-    font: inherit;
-    color: var(--color-text-primary, #333);
-    background: var(--color-background-primary, #fff);
-    border: 0.5px solid var(--color-border-secondary, #ccc);
-    border-radius: 6px;
-}
-
 .cpv-toggles {
     display: flex;
     flex-wrap: wrap;
@@ -221,66 +188,6 @@
 .cpv-hidden-markets .cpv-market-dot {
     /* Override the inline display used by volume-mode dots. */
     display: none !important;
-}
-
-/* ── Search ──────────────────────────────────────────────────────────────── */
-
-.cpv-search-container {
-    position: relative;
-    display: flex;
-    gap: 8px;
-    flex: 1;
-    min-width: 200px;
-    max-width: 420px;
-}
-
-.cpv-search-input {
-    flex: 1;
-    padding: 5px 10px;
-    font-size: 12px;
-    border: 0.5px solid var(--color-border-secondary, #ccc);
-    border-radius: 6px;
-    background: transparent;
-    color: var(--color-text-primary, #333);
-}
-.cpv-search-input:focus {
-    outline: none;
-    border-color: #1d9e75;
-}
-
-.cpv-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    background: var(--color-background-primary, #fff);
-    border: 0.5px solid var(--color-border-secondary, #ccc);
-    border-radius: 6px;
-    max-height: 240px;
-    overflow-y: auto;
-    z-index: 100;
-    margin-top: 4px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    display: none;
-}
-
-.cpv-dropdown-item {
-    padding: 8px 12px;
-    font-size: 12px;
-    cursor: pointer;
-    color: var(--color-text-primary, #333);
-    border-bottom: 0.5px solid var(--color-border-tertiary, #eee);
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
-}
-.cpv-dropdown-item:hover {
-    background: var(--color-background-secondary, #eee);
-}
-.cpv-vol-tag {
-    color: #1d9e75;
-    font-weight: 500;
-    white-space: nowrap;
 }
 
 /* ── Canvas ──────────────────────────────────────────────────────────────── */
