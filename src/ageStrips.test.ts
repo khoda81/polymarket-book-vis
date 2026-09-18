@@ -3,7 +3,13 @@ import type { Event } from "@polymarket/client";
 import { AgeStripView, getAgeStripTuning, type AgeStripHost } from "./ageStrips";
 
 test("only Ctrl+wheel changes share scale in age mode", () => {
-  const globals = ["document", "window", "WheelEvent", "requestAnimationFrame"];
+  const globals = [
+    "document",
+    "window",
+    "WheelEvent",
+    "requestAnimationFrame",
+    "IntersectionObserver",
+  ];
   const originals = globals.map((key) =>
     Object.getOwnPropertyDescriptor(globalThis, key),
   );
@@ -11,6 +17,7 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
   let redraw!: FrameRequestCallback;
   const replacements = [
     {
+      body: { appendChild() {} },
       createElement: () => ({
         remove() {},
         setAttribute() {},
@@ -23,6 +30,10 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
     (callback: FrameRequestCallback) => {
       redraw = callback;
       return 1;
+    },
+    class {
+      observe() {}
+      disconnect() {}
     },
   ];
   globals.forEach((key, index) =>
