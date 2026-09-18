@@ -1,5 +1,14 @@
 import { fetchRecorderCoverage } from "@/lib/ageRecorderClient";
 import { marketColor } from "@/lib/math";
+import {
+  buildNegRiskPalette,
+  type NegRiskPalette,
+} from "@/lib/negRiskColors";
+import {
+  DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+  signedVolumeColor,
+  type SignedVolumeColorScale,
+} from "@/lib/signedVolume";
 import { orderMarkets } from "@/lib/marketOrder";
 import {
   BookOrder,
@@ -86,6 +95,7 @@ export class PolymarketCPV {
   private tokenNames: Record<TokenId, string> = {};
   private oppositeTokenNames: Record<TokenId, string> = {};
   private event: Event | undefined;
+  private negRiskPalette: NegRiskPalette | null = null;
   private books: Record<TokenId, TokenBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private volScale = 4.5;
@@ -112,6 +122,8 @@ export class PolymarketCPV {
       getTokenName: (tokenId) => this.tokenNames[tokenId as TokenId],
       getOppositeTokenName: (tokenId) =>
         this.oppositeTokenNames[tokenId as TokenId],
+      getPressureColorScale: (tokenId) =>
+        this.pressureColorScale(tokenId as TokenId),
       getTheme: () => this.theme,
       getViewMode: () => this.viewMode,
       requestDraw: () => this.reqDraw(),
@@ -206,6 +218,7 @@ export class PolymarketCPV {
     this.titles = {};
     this.tokenNames = {};
     this.oppositeTokenNames = {};
+    this.negRiskPalette = null;
     this.activeTokens.clear();
     this.ageView.reset();
 
@@ -272,6 +285,8 @@ export class PolymarketCPV {
     }
 
     event = { ...event, markets: orderMarkets(event, rawMarkets) };
+    this.negRiskPalette = buildNegRiskPalette(event);
+
     const tokenIds = event.markets
       .map((market) =>
         market.state.active ? market.outcomes.yes.tokenId : null,
@@ -343,13 +358,23 @@ export class PolymarketCPV {
       });
 
       const dot = document.createElement("span");
-      const color = marketColor(event.id, index);
+      const colorScale = this.pressureColorScale(yesToken);
+      const color = this.negRiskPalette
+        ? signedVolumeColor(1, colorScale)
+        : marketColor(event.id, index);
       dot.style.cssText =
         `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
 
       label.append(checkbox, dot, this.titles[market.id] ?? market.question);
       container.appendChild(label);
     }
+  }
+
+  private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
+    return (
+      this.negRiskPalette?.byYesTokenId.get(String(tokenId))?.scale ??
+      DEFAULT_SIGNED_VOLUME_COLOR_SCALE
+    );
   }
 
   private setDot(status: ConnectionStatus) {
@@ -439,17 +464,25 @@ export class PolymarketCPV {
       if (!tokenId || !this.activeTokens.has(tokenId)) continue;
 
       const book = this.books[tokenId] ?? emptyTokenBook();
-      const color = marketColor(this.event!.id, index);
+      const semanticScale =
+        this.negRiskPalette?.byYesTokenId.get(String(tokenId))?.scale;
+      const yesColor = semanticScale
+        ? signedVolumeColor(1, semanticScale)
+        : marketColor(this.event!.id, index);
+      const noColor = semanticScale
+        ? signedVolumeColor(-1, semanticScale)
+        : yesColor;
+
       this.drawBookView(frame, {
         direction: "up",
         orders: book.usdToYes.asOrders(),
-        color,
+        color: yesColor,
         fillDepth: pointerData ? Math.max(pointerData.y, 0) : undefined,
       });
       this.drawBookView(frame, {
         direction: "down",
         orders: book.yesToUsd.asSellOrders(),
-        color,
+        color: noColor,
         fillDepth: pointerData ? Math.max(-pointerData.y, 0) : undefined,
       });
     }
