@@ -141,7 +141,22 @@
 
 .cpv-toggles--age-axis input[type="checkbox"],
 .cpv-hidden-markets input[type="checkbox"] {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+.cpv-toggles--age-axis label:has(input[type="checkbox"]:focus-visible),
+.cpv-hidden-markets label:has(input[type="checkbox"]:focus-visible) {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
 }
 
 .cpv-toggles--age-axis .cpv-market-label-text {
