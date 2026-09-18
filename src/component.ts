@@ -81,6 +81,7 @@ export class PolymarketCPV {
   private pointer: { sx: number; sy: number } | null = null;
   private titles: Record<MarketId, string> = {};
   private tokenNames: Record<TokenId, string> = {};
+  private oppositeTokenNames: Record<TokenId, string> = {};
   private event: Event | undefined;
   private books: Record<TokenId, TokenBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
@@ -105,6 +106,8 @@ export class PolymarketCPV {
       getBook: (tokenId) => this.books[tokenId as TokenId],
       getTitle: (marketId) => this.titles[marketId as MarketId],
       getTokenName: (tokenId) => this.tokenNames[tokenId as TokenId],
+      getOppositeTokenName: (tokenId) =>
+        this.oppositeTokenNames[tokenId as TokenId],
       getTheme: () => this.theme,
       getViewMode: () => this.viewMode,
       requestDraw: () => this.reqDraw(),
@@ -206,6 +209,7 @@ export class PolymarketCPV {
     this.books = {};
     this.titles = {};
     this.tokenNames = {};
+    this.oppositeTokenNames = {};
     this.activeTokens.clear();
     this.ageView.reset();
 
@@ -235,7 +239,14 @@ export class PolymarketCPV {
       for (let i = 0; i < Math.min(outcomes.length, tokenIds.length); i++) {
         const tokenId = tokenIds[i];
         const outcome = outcomes[i];
-        if (tokenId && outcome) this.tokenNames[tokenId as TokenId] = outcome;
+        if (!tokenId || !outcome) continue;
+
+        this.tokenNames[tokenId as TokenId] = outcome;
+        if (outcomes.length === 2 && tokenIds.length === 2) {
+          const opposite = outcomes[1 - i];
+          if (opposite)
+            this.oppositeTokenNames[tokenId as TokenId] = opposite;
+        }
       }
     }
 
