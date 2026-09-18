@@ -5,14 +5,15 @@
 - [x] Fast Canvas2D live pressure view.
 - [x] Exact spread semantics and direct live-book hover queries.
 - [x] Recorder durability and async ownership cleanup.
-- [x] Adaptive visible market clocks:
+- [x] Canvas annotation layer for age mode:
+  - market labels, recorder age, and resolution countdowns are rendered outside DOM layout;
   - recorder age updates only when its rendered text can change;
-  - clock deadlines update DOM directly and never redraw the pressure canvas;
+  - clock deadlines redraw only the annotation canvas and never redraw the pressure canvas;
   - sub-frame deadlines coalesce to the next animation frame;
   - hidden markets do not schedule clock work;
   - known market resolution times render as per-market countdowns.
 - [x] Floating tooltip portal outside the clipped canvas wrapper.
-- [x] Event pinning via persisted slugs; pinned events restore on reload.
+- [x] Event pinning via persisted slugs; pinned events restore at the top on reload and closing a card unpins it.
 - [x] Independent startup card loads (no batch-of-four gating).
 
 ## Next
