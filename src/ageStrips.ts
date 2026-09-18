@@ -114,6 +114,7 @@ export class AgeStripView {
   private readonly toggleHomeNextSibling: ChildNode | null;
   private layoutMode: "age" | "volume" | null = null;
   private hoverGeometry: HoverGeometry | null = null;
+  private hoverPointer: { sx: number; sy: number } | null = null;
   private lastRecordingAgeLabelUpdateMs = 0;
 
   constructor(host: AgeStripHost) {
@@ -141,13 +142,14 @@ export class AgeStripView {
       passive: false,
     });
     host.canvas.addEventListener("pointermove", this.handlePointerMove);
-    host.canvas.addEventListener("pointerleave", this.hideTooltip);
+    host.canvas.addEventListener("pointerleave", this.handlePointerLeave);
   }
 
   reset(): void {
     this.markets.clear();
     this.hiddenTray.replaceChildren();
     this.hoverGeometry = null;
+    this.hoverPointer = null;
     this.hideTooltip();
     this.layoutMode = null;
   }
@@ -259,7 +261,6 @@ export class AgeStripView {
   }
 
   draw(): void {
-    this.cancelDiffusionTimer();
     this.refreshRecordingAgeLabels();
 
     const controls = this.collectControls();
@@ -303,10 +304,11 @@ export class AgeStripView {
     }
 
     drawAgeAxes(frame);
+    if (this.hoverPointer)
+      this.renderHoverTooltip(this.hoverPointer.sx, this.hoverPointer.sy);
   }
 
   prepareVolumeView(): void {
-    this.cancelDiffusionTimer();
     this.hoverGeometry = null;
     this.hideTooltip();
     if (this.layoutMode === "volume") return;
@@ -348,16 +350,25 @@ export class AgeStripView {
   }
 
   destroy(): void {
-    this.cancelDiffusionTimer();
     redrawCallbacks.delete(this.host.requestDraw);
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.host.canvas.removeEventListener("pointermove", this.handlePointerMove);
-    this.host.canvas.removeEventListener("pointerleave", this.hideTooltip);
+    this.host.canvas.removeEventListener("pointerleave", this.handlePointerLeave);
     this.hideTooltip();
     this.hiddenTray.remove();
   }
 
   private readonly handlePointerMove = (event: PointerEvent) => {
+    this.hoverPointer = { sx: event.offsetX, sy: event.offsetY };
+    this.renderHoverTooltip(event.offsetX, event.offsetY);
+  };
+
+  private readonly handlePointerLeave = () => {
+    this.hoverPointer = null;
+    this.hideTooltip();
+  };
+
+  private renderHoverTooltip(sx: number, sy: number): void {
     if (this.host.getViewMode() !== "age") {
       this.hideTooltip();
       return;
@@ -369,8 +380,6 @@ export class AgeStripView {
       return;
     }
 
-    const sx = event.offsetX;
-    const sy = event.offsetY;
     const { viewport: vp } = geometry;
     if (
       sx < vp.l ||
@@ -405,14 +414,13 @@ export class AgeStripView {
       hover.side === "bid"
         ? this.host.getTokenName(row.tokenId)
         : this.host.getOppositeTokenName(row.tokenId);
-    renderAgeTooltip(
-      this.overlay,
-      tokenName ?? "(unknown)",
-      hover,
-    );
+    renderAgeTooltip(this.overlay, tokenName ?? "(unknown)", hover);
 
-    const tooltipWidth = 180;
-    const tooltipHeight = 82;
+    // Measure the actual tooltip instead of assuming its content fits a fixed
+    // 180×82 box. This read only occurs while the pointer is active.
+    this.overlay.style.display = "block";
+    const tooltipWidth = this.overlay.offsetWidth;
+    const tooltipHeight = this.overlay.offsetHeight;
     const rowCenterY =
       vp.t + ((rowIndex + 0.5) / geometry.rows.length) * vp.height;
     let left = sx + 12;
@@ -424,8 +432,7 @@ export class AgeStripView {
 
     this.overlay.style.left = `${left}px`;
     this.overlay.style.top = `${top}px`;
-    this.overlay.style.display = "block";
-  };
+  }
 
   private readonly hideTooltip = () => {
     this.overlay.style.display = "none";
