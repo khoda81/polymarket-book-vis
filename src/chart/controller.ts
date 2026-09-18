@@ -12,8 +12,6 @@ import {
 } from "@/lib/signedVolume";
 import {
   BookOrder,
-  HalfBook,
-  TokenBook,
   emptyTokenBook,
 } from "@/lib/orderBook";
 import {
@@ -24,13 +22,11 @@ import {
   StackDirection,
 } from "@/lib/renderer";
 import { AgeStripView } from "./ageStripView";
+import { LiveBookFeed } from "./liveBookFeed";
 import {
-  OrderSide,
   TokenId,
-  TransportError,
   PublicClient,
 } from "@polymarket/client";
-import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
 
 interface BookBoxView {
   readonly direction: StackDirection;
@@ -53,10 +49,6 @@ const DARK_THEME: ChartTheme = {
   text: "#aaaaaa",
 };
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
 export interface ChartSurfaceElements {
   readonly canvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
@@ -75,10 +67,7 @@ export interface ChartControllerOptions {
 }
 
 export class ChartController {
-  readonly polyMarketClient: PublicClient;
-
-  private readonly surface: ChartSurfaceElements;
-  private readonly onConnectionStatus: (status: ConnectionStatus) => void;
+  private readonly feed: LiveBookFeed;
   private readonly onMarketAutoHidden: (
     marketId: string,
     reason: AutoHiddenReason,
@@ -93,8 +82,6 @@ export class ChartController {
   private raf: number | null = null;
   private pointer: { sx: number; sy: number } | null = null;
   private readonly definition: ChartDefinition;
-  private books: Record<TokenId, TokenBook<string>> = {};
-  private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private volScale = 4.5;
   private viewMode: ViewMode = "age";
   private started = false;
@@ -106,13 +93,22 @@ export class ChartController {
     definition: ChartDefinition,
     options: ChartControllerOptions = {},
   ) {
-    this.polyMarketClient = polyMarketClient;
-    this.surface = surface;
     this.definition = definition;
-    this.onConnectionStatus =
-      options.onConnectionStatus ?? (() => undefined);
     this.onMarketAutoHidden =
       options.onMarketAutoHidden ?? (() => undefined);
+
+    this.feed = new LiveBookFeed(polyMarketClient, {
+      onConnectionStatus:
+        options.onConnectionStatus ?? (() => undefined),
+      onBookUpdated: (tokenId) => {
+        this.ageView.onBookUpdate(tokenId);
+        this.reqDraw();
+      },
+      onMarketResolved: (tokenIds) => {
+        for (const tokenId of tokenIds)
+          this.autoHideToken(tokenId, "resolved");
+      },
+    });
 
     this.themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
     this.theme = this.themeQuery.matches ? DARK_THEME : LIGHT_THEME;
@@ -135,7 +131,7 @@ export class ChartController {
       hiddenTray: surface.hiddenTray,
       plotter: this.plotter,
       activeTokens: this.activeTokens,
-      getBook: (tokenId) => this.books[tokenId as TokenId],
+      getBook: (tokenId) => this.feed.getBook(tokenId),
       getTitle: (marketId) =>
         this.definition.controls.find(
           (control) => control.marketId === String(marketId),
@@ -175,7 +171,6 @@ export class ChartController {
     if (this.destroyed) throw new Error("ChartController is destroyed");
     this.started = true;
 
-    this.setConnectionStatus("connecting");
     const { event, rawMarkets } = this.definition;
     const tokenIds = this.definition.controls.map(
       (control) => control.tokenId,
@@ -197,17 +192,8 @@ export class ChartController {
       this.reqDraw();
     });
 
-    const events = await this.subscribeWithRetry(tokenIds);
-    if (!events) return;
-    if (this.destroyed) {
-      await events.close().catch(() => undefined);
-      return;
-    }
-
-    this.bookEventStream = events;
-    this.setConnectionStatus("live");
-    void this.readEvents(events);
-    this.reqDraw();
+    await this.feed.start(tokenIds);
+    if (!this.destroyed) this.reqDraw();
   }
 
   setViewMode(mode: ViewMode): void {
@@ -230,7 +216,7 @@ export class ChartController {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    void this.closeWS();
+    this.feed.destroy();
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.ageView.destroy();
     this.plotter.destroy();
@@ -240,10 +226,6 @@ export class ChartController {
 
   private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
     return pressureScaleForToken(this.definition, String(tokenId));
-  }
-
-  private setConnectionStatus(status: ConnectionStatus): void {
-    this.onConnectionStatus(status);
   }
 
   private autoHideToken(
@@ -256,33 +238,6 @@ export class ChartController {
     );
     if (control) this.onMarketAutoHidden(control.marketId, reason);
     this.reqDraw();
-  }
-
-  private async closeWS(): Promise<void> {
-    const stream = this.bookEventStream;
-    this.bookEventStream = null;
-    if (stream) await stream.close().catch(() => undefined);
-  }
-
-  private async subscribeWithRetry(
-    tokenIds: readonly TokenId[],
-  ): Promise<SubscriptionHandle<MarketEvent> | null> {
-    while (!this.destroyed) {
-      try {
-        const events = await this.polyMarketClient.subscribe([
-          { topic: "market", tokenIds: [...tokenIds] },
-        ]);
-        if (!this.destroyed) return events;
-        await events.close().catch(() => undefined);
-        return null;
-      } catch (error) {
-        if (this.destroyed) return null;
-        if (!(error instanceof TransportError)) throw error;
-        console.error("Error connecting to websocket; retrying in 1s", error);
-        await delay(1_000);
-      }
-    }
-    return null;
   }
 
   private reqDraw() {
@@ -325,7 +280,7 @@ export class ChartController {
       const tokenId = market.outcomes.yes.tokenId;
       if (!tokenId || !this.activeTokens.has(tokenId)) continue;
 
-      const book = this.books[tokenId] ?? emptyTokenBook();
+      const book = this.feed.getBook(tokenId) ?? emptyTokenBook();
       const semanticScale =
         this.definition.pressureScales.get(String(tokenId));
       const yesColor = semanticScale
@@ -400,75 +355,5 @@ export class ChartController {
     };
   }
 
-  private async readEvents(
-    events: SubscriptionHandle<MarketEvent>,
-  ): Promise<void> {
-    try {
-      for await (const stream of events) {
-        if (this.destroyed || this.bookEventStream !== events) return;
-
-        if (stream.type === "book") {
-          const usdToYes = new HalfBook<string>();
-          for (const bid of stream.payload.bids) {
-            usdToYes.setLevel(bid.price, {
-              price: parseFloat(bid.price),
-              take: parseFloat(bid.size),
-            });
-          }
-
-          const yesToUsd = new HalfBook<string>();
-          for (const ask of stream.payload.asks) {
-            const canonicalPrice = parseFloat(ask.price);
-            yesToUsd.setLevel(ask.price, {
-              price: 1 / canonicalPrice,
-              take: parseFloat(ask.size) * canonicalPrice,
-            });
-          }
-          yesToUsd.setLevel("mint", { price: 1, take: Infinity });
-
-          const tokenId = stream.payload.tokenId as TokenId;
-          this.books[tokenId] = { usdToYes, yesToUsd };
-          this.ageView.onBookUpdate(tokenId);
-        } else if (stream.type === "price_change") {
-          const touchedTokens = new Set<TokenId>();
-          for (const change of stream.payload.priceChanges) {
-            const tokenId = change.tokenId as TokenId;
-            const book = this.books[tokenId];
-            if (!book) continue;
-
-            const price = parseFloat(change.price);
-            const size = parseFloat(change.size);
-            if (change.side === OrderSide.BUY) {
-              book.usdToYes.setLevel(change.price, { price, take: size });
-            } else {
-              book.yesToUsd.setLevel(change.price, {
-                price: 1 / price,
-                take: size * price,
-              });
-            }
-            touchedTokens.add(tokenId);
-          }
-
-          for (const tokenId of touchedTokens)
-            this.ageView.onBookUpdate(tokenId);
-        } else if (stream.type === "market_resolved") {
-          for (const tokenId of stream.payload.assetIds ?? [])
-            this.autoHideToken(tokenId as TokenId, "resolved");
-        } else {
-          continue;
-        }
-
-        this.reqDraw();
-      }
-    } catch (error) {
-      if (!this.destroyed && this.bookEventStream === events)
-        console.error("Market websocket stream ended with error", error);
-    } finally {
-      if (!this.destroyed && this.bookEventStream === events) {
-        this.bookEventStream = null;
-        this.setConnectionStatus("disconnected");
-      }
-    }
-  }
 
 }
