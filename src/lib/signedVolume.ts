@@ -1,4 +1,4 @@
-import type { TokenBook } from "./orderBook";
+import { canonicalSpread, type TokenBook } from "./orderBook";
 
 export interface SignedVolumeSegment {
   readonly lo: number;
@@ -52,6 +52,8 @@ export function signedVolumeSegments(
   book: TokenBook<unknown>,
 ): readonly SignedVolumeSegment[] {
   const changes = new Map<number, { volume: number; sweepCost: number }>();
+  const spread = canonicalSpread(book);
+  const hasOpenSpread = spread.bid < spread.ask;
   let volume = 0;
   let sweepCost = 0;
 
@@ -83,10 +85,13 @@ export function signedVolumeSegments(
     if (price > cursor) result.push({ lo: cursor, hi: price, volume, sweepCost });
     volume += delta.volume;
     sweepCost += delta.sweepCost;
-    // Floating point cancellation around the spread should represent an exact
-    // empty field, not a tiny negative cost.
-    if (Math.abs(volume) < 1e-12) volume = 0;
-    if (Math.abs(sweepCost) < 1e-12) sweepCost = 0;
+
+    // The bid field ends exactly at the best bid. Do not rely on floating-point
+    // cancellation of many bid deltas to manufacture the empty spread.
+    if (hasOpenSpread && price === spread.bid) {
+      volume = 0;
+      sweepCost = 0;
+    }
     cursor = price;
   }
   if (cursor < 1) result.push({ lo: cursor, hi: 1, volume, sweepCost });
