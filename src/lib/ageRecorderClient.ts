@@ -18,6 +18,7 @@ interface RecorderStateResponse {
   serverNowMs: number;
   connected: boolean;
   recordingSinceMs: number | null;
+  recordingSinceMsByToken?: Record<string, number>;
   states: Record<string, RecorderTransportState>;
 }
 
@@ -31,6 +32,8 @@ export interface RecordedAgeHydration {
   readonly serverNowMs: number;
   /** Start of recorder coverage shared by every requested token. */
   readonly recordingSinceMs: number | null;
+  /** Individual recorder coverage starts, keyed by token id. */
+  readonly recordingSinceMsByToken: Readonly<Record<string, number>>;
 }
 
 /**
@@ -47,6 +50,7 @@ export async function fetchRecordedAgeState(
       connected: false,
       serverNowMs: Date.now(),
       recordingSinceMs: null,
+      recordingSinceMsByToken: {},
     };
 
   const params = new URLSearchParams();
@@ -73,15 +77,28 @@ export async function fetchRecordedAgeState(
       ]),
     );
 
+    const commonRecordingSince =
+      typeof body.recordingSinceMs === "number" &&
+      Number.isFinite(body.recordingSinceMs)
+        ? body.recordingSinceMs
+        : null;
+    const perToken = Object.fromEntries(
+      Object.entries(body.recordingSinceMsByToken ?? {}).filter(
+        (entry): entry is [string, number] =>
+          typeof entry[1] === "number" && Number.isFinite(entry[1]),
+      ),
+    );
+    // Older recorder processes do not expose the per-token map yet. The common
+    // coverage start is a conservative fallback until that process restarts.
+    if (Object.keys(perToken).length === 0 && commonRecordingSince !== null)
+      for (const tokenId of tokenIds) perToken[tokenId] = commonRecordingSince;
+
     return {
       states,
       connected: body.connected,
       serverNowMs: body.serverNowMs,
-      recordingSinceMs:
-        typeof body.recordingSinceMs === "number" &&
-        Number.isFinite(body.recordingSinceMs)
-          ? body.recordingSinceMs
-          : null,
+      recordingSinceMs: commonRecordingSince,
+      recordingSinceMsByToken: perToken,
     };
   } catch (error) {
     console.warn("Age recorder unavailable; starting age state locally", error);
@@ -90,6 +107,7 @@ export async function fetchRecordedAgeState(
       connected: false,
       serverNowMs: Date.now(),
       recordingSinceMs: null,
+      recordingSinceMsByToken: {},
     };
   }
 }
