@@ -53,17 +53,6 @@
     color: var(--color-text-secondary, #666);
 }
 
-.cpv-history-age {
-    font-size: 11px;
-    color: var(--color-text-secondary, #666);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-}
-
-.cpv-history-age::before {
-    content: "·";
-    margin-right: 10px;
-}
 
 /* ── Controls ────────────────────────────────────────────────────────────── */
 
@@ -162,6 +151,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.cpv-recording-age {
+    flex: 0 0 44px;
+    width: 44px;
+    overflow: hidden;
+    text-align: right;
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text-secondary, #666);
+    opacity: 0.7;
+}
+
+.cpv-recording-age[hidden] {
+    display: none;
 }
 
 .cpv-hidden-markets {
