@@ -25,7 +25,6 @@ import {
 } from "@/lib/renderer";
 import { AgeStripView } from "./ageStripView";
 import {
-  Event,
   OrderSide,
   TokenId,
   TransportError,
@@ -93,22 +92,23 @@ export class ChartController {
   private ageView!: AgeStripView;
   private raf: number | null = null;
   private pointer: { sx: number; sy: number } | null = null;
-  private definition: ChartDefinition | null = null;
-  private event: Event | undefined;
+  private readonly definition: ChartDefinition;
   private books: Record<TokenId, TokenBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private volScale = 4.5;
   private viewMode: ViewMode = "age";
-  private loadGeneration = 0;
+  private started = false;
   private destroyed = false;
 
   constructor(
     surface: ChartSurfaceElements,
     polyMarketClient: PublicClient,
+    definition: ChartDefinition,
     options: ChartControllerOptions = {},
   ) {
     this.polyMarketClient = polyMarketClient;
     this.surface = surface;
+    this.definition = definition;
     this.onConnectionStatus =
       options.onConnectionStatus ?? (() => undefined);
     this.onMarketAutoHidden =
@@ -137,13 +137,13 @@ export class ChartController {
       activeTokens: this.activeTokens,
       getBook: (tokenId) => this.books[tokenId as TokenId],
       getTitle: (marketId) =>
-        this.definition?.controls.find(
+        this.definition.controls.find(
           (control) => control.marketId === String(marketId),
         )?.title,
       getTokenName: (tokenId) =>
-        this.definition?.tokenNames.get(String(tokenId)),
+        this.definition.tokenNames.get(String(tokenId)),
       getOppositeTokenName: (tokenId) =>
-        this.definition?.oppositeTokenNames.get(String(tokenId)),
+        this.definition.oppositeTokenNames.get(String(tokenId)),
       getPressureColorScale: (tokenId) =>
         this.pressureColorScale(tokenId as TokenId),
       getTheme: () => this.theme,
@@ -168,47 +168,45 @@ export class ChartController {
     this.reqDraw();
   };
 
-  async load(
-    definition: ChartDefinition,
+  async start(
     hiddenMarketIds: ReadonlySet<string>,
   ): Promise<void> {
-    const generation = ++this.loadGeneration;
-    await this.closeWS();
-    if (!this.ownsLoad(generation)) return;
+    if (this.started) throw new Error("ChartController already started");
+    if (this.destroyed) throw new Error("ChartController is destroyed");
+    this.started = true;
 
     this.setConnectionStatus("connecting");
-    this.books = {};
-    this.definition = definition;
-    this.activeTokens.clear();
-    this.ageView.reset();
+    const { event, rawMarkets } = this.definition;
+    const tokenIds = this.definition.controls.map(
+      (control) => control.tokenId,
+    );
 
-    const { event, rawMarkets } = definition;
-    const tokenIds = definition.controls.map((control) => control.tokenId);
-
-    for (const control of definition.controls)
+    for (const control of this.definition.controls)
       if (!hiddenMarketIds.has(control.marketId))
         this.activeTokens.add(control.tokenId);
+
     this.ageView.configureMarkets(event, rawMarkets);
 
     // Recorder registration/metadata is optional and must never gate the live
-    // websocket. Apply it only if this load still owns the chart when it lands.
+    // websocket.
     void fetchRecorderCoverage(tokenIds).then((hydration) => {
-      if (!this.ownsLoad(generation)) return;
-      this.ageView.setRecordingCoverage(hydration.recordingSinceMsByToken);
+      if (this.destroyed) return;
+      this.ageView.setRecordingCoverage(
+        hydration.recordingSinceMsByToken,
+      );
       this.reqDraw();
     });
 
-    const events = await this.subscribeWithRetry(tokenIds, generation);
+    const events = await this.subscribeWithRetry(tokenIds);
     if (!events) return;
-    if (!this.ownsLoad(generation)) {
+    if (this.destroyed) {
       await events.close().catch(() => undefined);
       return;
     }
 
     this.bookEventStream = events;
-    this.event = event;
     this.setConnectionStatus("live");
-    void this.readEvents(events, generation);
+    void this.readEvents(events);
     this.reqDraw();
   }
 
@@ -219,7 +217,7 @@ export class ChartController {
   }
 
   setMarketVisible(marketId: string, visible: boolean): void {
-    const control = this.definition?.controls.find(
+    const control = this.definition.controls.find(
       (candidate) => candidate.marketId === marketId,
     );
     if (!control) return;
@@ -232,7 +230,6 @@ export class ChartController {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.loadGeneration++;
     void this.closeWS();
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.ageView.destroy();
@@ -242,9 +239,7 @@ export class ChartController {
   }
 
   private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
-    return this.definition
-      ? pressureScaleForToken(this.definition, String(tokenId))
-      : DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
+    return pressureScaleForToken(this.definition, String(tokenId));
   }
 
   private setConnectionStatus(status: ConnectionStatus): void {
@@ -256,15 +251,11 @@ export class ChartController {
     reason: AutoHiddenReason,
   ): void {
     if (!this.activeTokens.delete(tokenId)) return;
-    const control = this.definition?.controls.find(
+    const control = this.definition.controls.find(
       (candidate) => candidate.tokenId === tokenId,
     );
     if (control) this.onMarketAutoHidden(control.marketId, reason);
     this.reqDraw();
-  }
-
-  private ownsLoad(generation: number): boolean {
-    return !this.destroyed && generation === this.loadGeneration;
   }
 
   private async closeWS(): Promise<void> {
@@ -275,18 +266,17 @@ export class ChartController {
 
   private async subscribeWithRetry(
     tokenIds: readonly TokenId[],
-    generation: number,
   ): Promise<SubscriptionHandle<MarketEvent> | null> {
-    while (this.ownsLoad(generation)) {
+    while (!this.destroyed) {
       try {
         const events = await this.polyMarketClient.subscribe([
           { topic: "market", tokenIds: [...tokenIds] },
         ]);
-        if (this.ownsLoad(generation)) return events;
+        if (!this.destroyed) return events;
         await events.close().catch(() => undefined);
         return null;
       } catch (error) {
-        if (!this.ownsLoad(generation)) return null;
+        if (this.destroyed) return null;
         if (!(error instanceof TransportError)) throw error;
         console.error("Error connecting to websocket; retrying in 1s", error);
         await delay(1_000);
@@ -331,16 +321,16 @@ export class ChartController {
       color: placeholderColor,
     });
 
-    for (const [index, market] of (this.event?.markets ?? []).entries()) {
+    for (const [index, market] of this.definition.event.markets.entries()) {
       const tokenId = market.outcomes.yes.tokenId;
       if (!tokenId || !this.activeTokens.has(tokenId)) continue;
 
       const book = this.books[tokenId] ?? emptyTokenBook();
       const semanticScale =
-        this.definition?.pressureScales.get(String(tokenId));
+        this.definition.pressureScales.get(String(tokenId));
       const yesColor = semanticScale
         ? signedVolumeColor(1, semanticScale)
-        : marketColor(this.event!.id, index);
+        : marketColor(this.definition.event.id, index);
       const noColor = semanticScale
         ? signedVolumeColor(-1, semanticScale)
         : yesColor;
@@ -412,11 +402,10 @@ export class ChartController {
 
   private async readEvents(
     events: SubscriptionHandle<MarketEvent>,
-    generation: number,
   ): Promise<void> {
     try {
       for await (const stream of events) {
-        if (!this.ownsLoad(generation) || this.bookEventStream !== events) return;
+        if (this.destroyed || this.bookEventStream !== events) return;
 
         if (stream.type === "book") {
           const usdToYes = new HalfBook<string>();
@@ -472,10 +461,10 @@ export class ChartController {
         this.reqDraw();
       }
     } catch (error) {
-      if (this.ownsLoad(generation) && this.bookEventStream === events)
+      if (!this.destroyed && this.bookEventStream === events)
         console.error("Market websocket stream ended with error", error);
     } finally {
-      if (this.ownsLoad(generation) && this.bookEventStream === events) {
+      if (!this.destroyed && this.bookEventStream === events) {
         this.bookEventStream = null;
         this.setConnectionStatus("disconnected");
       }

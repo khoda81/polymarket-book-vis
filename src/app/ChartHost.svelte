@@ -122,7 +122,7 @@
       toggles,
       hiddenTray,
     };
-    const next = new ChartController(surface, client, {
+    const next = new ChartController(surface, client, definition, {
       onConnectionStatus: (status) => {
         if (alive) onconnection(status);
       },
@@ -133,7 +133,7 @@
     chart = next;
     next.setViewMode(viewMode);
 
-    void next.load(definition, initialHiddenMarketIds()).then(
+    void next.start(initialHiddenMarketIds()).then(
       () => {
         if (alive) onready();
       },
