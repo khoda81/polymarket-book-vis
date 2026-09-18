@@ -18,6 +18,7 @@ export interface ChartMarketControl {
   readonly title: string;
   readonly iconUrl: string | null;
   readonly dotColor: string;
+  readonly acceptingOrders: boolean;
 }
 
 export interface ChartDefinition {
@@ -54,6 +55,7 @@ export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
         "(untitled)",
       iconUrl: bundle.marketIcons.get(marketId) ?? null,
       dotColor,
+      acceptingOrders: market.state.acceptingOrders === true,
     }];
   });
 

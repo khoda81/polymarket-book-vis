@@ -61,6 +61,7 @@ test("chart definition contains only renderable active primary-token rows", () =
     tokenId: "yes-1",
     title: "First label",
     iconUrl: "https://example.com/m1.png",
+    acceptingOrders: false,
   });
   expect(definition.controls[0]?.dotColor).toBe(
     signedVolumeColor(
