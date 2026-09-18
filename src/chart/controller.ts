@@ -2,6 +2,11 @@ import { fetchRecorderCoverage } from "@/lib/ageRecorderClient";
 import type { ConnectionStatus, ViewMode } from "@/lib/chartState";
 import type { AutoHiddenReason } from "@/lib/marketVisibility";
 import {
+  resolveMarketLifecycle,
+  type MarketLifecycle,
+  type MarketResolutionUpdate,
+} from "@/lib/marketLifecycle";
+import {
   pressureScaleForToken,
   type ChartDefinition,
 } from "@/lib/chartDefinition";
@@ -47,6 +52,10 @@ export interface ChartControllerOptions {
     marketId: string,
     reason: AutoHiddenReason,
   ) => void;
+  readonly onMarketLifecycleChanged?: (
+    marketId: string,
+    lifecycle: MarketLifecycle,
+  ) => void;
 }
 
 export class ChartController {
@@ -55,6 +64,14 @@ export class ChartController {
     marketId: string,
     reason: AutoHiddenReason,
   ) => void;
+  private readonly onMarketLifecycleChanged: (
+    marketId: string,
+    lifecycle: MarketLifecycle,
+  ) => void;
+  private readonly lifecycleByMarketId = new Map<
+    string,
+    MarketLifecycle
+  >();
   private readonly themeQuery: MediaQueryList;
   private readonly resizeObserver: ResizeObserver;
   private readonly activeTokens = new Set<TokenId>();
@@ -77,6 +94,13 @@ export class ChartController {
     this.definition = definition;
     this.onMarketAutoHidden =
       options.onMarketAutoHidden ?? (() => undefined);
+    this.onMarketLifecycleChanged =
+      options.onMarketLifecycleChanged ?? (() => undefined);
+    for (const control of definition.controls)
+      this.lifecycleByMarketId.set(
+        control.marketId,
+        control.lifecycle,
+      );
 
     this.feed = new LiveBookFeed(polyMarketClient, {
       onConnectionStatus:
@@ -85,9 +109,8 @@ export class ChartController {
         this.ageView.onBookUpdate(tokenId);
         this.reqDraw();
       },
-      onMarketResolved: (tokenIds) => {
-        for (const tokenId of tokenIds)
-          this.autoHideToken(tokenId, "resolved");
+      onMarketResolved: (resolution) => {
+        this.applyResolution(resolution);
       },
     });
 
@@ -215,11 +238,54 @@ export class ChartController {
     tokenId: TokenId,
     reason: AutoHiddenReason,
   ): void {
-    if (!this.activeTokens.delete(tokenId)) return;
     const control = this.definition.controls.find(
       (candidate) => candidate.tokenId === tokenId,
     );
-    if (control) this.onMarketAutoHidden(control.marketId, reason);
+    if (!control) return;
+
+    const lifecycle = this.lifecycleByMarketId.get(control.marketId);
+    if (lifecycle && lifecycle.kind !== "live") return;
+
+    if (!this.activeTokens.delete(tokenId)) return;
+    this.onMarketAutoHidden(control.marketId, reason);
+    this.reqDraw();
+  }
+
+  private applyResolution(
+    resolution: MarketResolutionUpdate,
+  ): void {
+    for (const control of this.definition.controls) {
+      const belongsToMarket =
+        (control.conditionId !== null &&
+          control.conditionId === resolution.conditionId) ||
+        resolution.assetIds.includes(String(control.tokenId)) ||
+        (control.oppositeTokenId !== null &&
+          resolution.assetIds.includes(
+            String(control.oppositeTokenId),
+          )) ||
+        resolution.winningTokenId === String(control.tokenId) ||
+        (control.oppositeTokenId !== null &&
+          resolution.winningTokenId ===
+            String(control.oppositeTokenId));
+      if (!belongsToMarket) continue;
+
+      const current =
+        this.lifecycleByMarketId.get(control.marketId) ??
+        control.lifecycle;
+      const next = resolveMarketLifecycle(
+        current,
+        resolution,
+        control.tokenId,
+        control.oppositeTokenId,
+        control.primaryOutcome,
+        control.oppositeOutcome,
+      );
+      if (next === current) continue;
+
+      this.lifecycleByMarketId.set(control.marketId, next);
+      this.activeTokens.add(control.tokenId);
+      this.onMarketLifecycleChanged(control.marketId, next);
+    }
     this.reqDraw();
   }
 
