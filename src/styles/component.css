@@ -287,6 +287,16 @@
     align-self: center;
 }
 
+/* If only some markets have distinct artwork, reserve the same icon column
+   for every row so all titles begin at one readable x-position. */
+.cpv-toggles--age-axis:has(.cpv-market-icon)
+    label:not([data-age-suppress-market-identity="true"]):not(:has(.cpv-market-icon))::before {
+    content: "";
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+}
+
 .cpv-toggles--age-axis
     label[data-age-suppress-market-identity="true"]
     .cpv-market-icon,

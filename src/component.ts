@@ -100,6 +100,23 @@ function artworkUrl(...candidates: readonly unknown[]): string | null {
   return null;
 }
 
+function sameArtworkUrl(a: string, b: string | null): boolean {
+  if (!b) return false;
+  if (a === b) return true;
+  return normalizeArtworkUrl(a) === normalizeArtworkUrl(b);
+}
+
+function normalizeArtworkUrl(value: string): string {
+  try {
+    const url = new URL(value, "https://polymarket.com");
+    // CDN transforms often differ only by query params while still pointing to
+    // the exact same source asset.
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return value.split(/[?#]/, 1)[0] ?? value;
+  }
+}
+
 export class PolymarketCPV {
   readonly polyMarketClient: PublicClient;
 
@@ -331,7 +348,14 @@ export class PolymarketCPV {
         this.titles[rawMarket.id] = rawMarket.groupItemTitle;
 
       const marketIconUrl = artworkUrl(rawMarket.icon, rawMarket.image);
-      if (marketIconUrl) this.marketIcons[rawMarket.id] = marketIconUrl;
+      // Gamma commonly repeats the event artwork on every child market. That
+      // adds no information and turns the right axis into a wall of duplicate
+      // icons, so only keep genuinely market-specific artwork.
+      if (
+        marketIconUrl &&
+        !sameArtworkUrl(marketIconUrl, eventIconUrl)
+      )
+        this.marketIcons[rawMarket.id] = marketIconUrl;
 
       const outcomes = parseStringArray(rawMarket.outcomes);
       const tokenIds = parseStringArray(rawMarket.clobTokenIds);
