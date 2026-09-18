@@ -19,3 +19,30 @@ test("canonicalSpread extracts bid/ask prices and their fallbacks", () => {
   book.yesToUsd.setLevel("ask", { price: 1 / 0.6, take: 6 });
   expect(canonicalSpread(book)).toEqual({ bid: 0.4, ask: 0.6 });
 });
+
+
+test("HalfBook owns inserted orders and does not expose mutable storage", () => {
+  const book = new HalfBook<string>();
+  const inserted = { price: 0.4, take: 10 };
+  book.setLevel("bid", inserted);
+
+  inserted.price = 0.9;
+  inserted.take = 99;
+  expect(book.bestOrder()).toEqual({ key: "bid", price: 0.4, take: 10 });
+
+  const exposed = book.getOrder("bid");
+  exposed.price = 0.1;
+  exposed.take = 1;
+  expect(book.bestOrder()).toEqual({ key: "bid", price: 0.4, take: 10 });
+
+  const iterated = [...book.asOrders()][0]!;
+  iterated.price = 0.2;
+  expect(book.bestOrder()?.price).toBe(0.4);
+});
+
+test("HalfBook rejects NaN without corrupting its ordering", () => {
+  const book = new HalfBook<string>();
+  expect(book.setLevel("bad-price", { price: NaN, take: 1 })).toBe(false);
+  expect(book.setLevel("bad-take", { price: 0.5, take: NaN })).toBe(false);
+  expect(book.size).toBe(0);
+});
