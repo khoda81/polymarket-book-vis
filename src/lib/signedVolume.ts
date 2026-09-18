@@ -17,9 +17,12 @@ export interface SignedVolumeSegment {
 
 export interface SignedVolumeColorScale {
   readonly luminance: number;
+  /** Default chroma used when a side-specific chroma is not provided. */
   readonly chroma: number;
   readonly positiveHue: number;
   readonly negativeHue: number;
+  readonly positiveChroma?: number;
+  readonly negativeChroma?: number;
 }
 
 /**
@@ -106,6 +109,10 @@ export function signedVolumeColor(
   scale: SignedVolumeColorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
 ): string {
   if (volume === 0 || Number.isNaN(volume)) return "transparent";
-  const hue = volume < 0 ? scale.negativeHue : scale.positiveHue;
-  return `oklch(${scale.luminance} ${scale.chroma} ${hue})`;
+  const negative = volume < 0;
+  const hue = negative ? scale.negativeHue : scale.positiveHue;
+  const chroma = negative
+    ? (scale.negativeChroma ?? scale.chroma)
+    : (scale.positiveChroma ?? scale.chroma);
+  return `oklch(${scale.luminance} ${chroma} ${hue})`;
 }
