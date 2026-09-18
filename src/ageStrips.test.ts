@@ -3,26 +3,100 @@ import type { Event } from "@polymarket/client";
 import { AgeStripView, getAgeStripTuning, type AgeStripHost } from "./ageStrips";
 
 test("only Ctrl+wheel changes share scale in age mode", () => {
-  const { view, listeners } = createAgeViewHarness();
-  const before = getAgeStripTuning().volumePerCssPixel;
+  const globals = ["document", "window", "WheelEvent", "requestAnimationFrame"];
+  const originals = globals.map((key) =>
+    Object.getOwnPropertyDescriptor(globalThis, key),
+  );
+  let wheel!: (event: WheelEvent) => void;
+  let redraw!: FrameRequestCallback;
+  const replacements = [
+    {
+      createElement: () => ({
+        remove() {},
+        style: {},
+        className: "",
+      }),
+    },
+    { setTimeout: () => undefined },
+    { DOM_DELTA_LINE: 1, DOM_DELTA_PAGE: 2 },
+    (callback: FrameRequestCallback) => {
+      redraw = callback;
+      return 1;
+    },
+  ];
+  globals.forEach((key, index) =>
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      value: replacements[index],
+    }),
+  );
 
-  const ordinary = wheelEvent(-100, false);
-  listeners.wheel?.(ordinary);
-  expect(getAgeStripTuning().volumePerCssPixel).toBe(before);
-  expect(ordinary.defaultPrevented).toBe(false);
+  let view: AgeStripView | undefined;
+  try {
+    view = new AgeStripView({
+      canvas: {
+        addEventListener(type: string, listener: typeof wheel) {
+          if (type === "wheel") wheel = listener;
+        },
+        removeEventListener() {},
+      },
+      canvasWrap: {
+        insertAdjacentElement() {},
+        querySelector() {
+          return null;
+        },
+        appendChild() {},
+      },
+      toggles: { parentElement: null, nextSibling: null },
+      getViewMode: () => "age",
+      requestDraw() {},
+    } as unknown as AgeStripHost);
 
-  const ctrlUp = wheelEvent(-100, true);
-  listeners.wheel?.(ctrlUp);
-  const afterUp = getAgeStripTuning().volumePerCssPixel;
-  expect(afterUp).toBeLessThan(before);
-  expect(ctrlUp.defaultPrevented).toBe(true);
+    const initial = getAgeStripTuning().volumePerCssPixel;
 
-  const ctrlDown = wheelEvent(100, true);
-  listeners.wheel?.(ctrlDown);
-  expect(getAgeStripTuning().volumePerCssPixel).toBeCloseTo(before);
-  expect(ctrlDown.defaultPrevented).toBe(true);
+    let prevented = false;
+    wheel({
+      deltaY: -100,
+      deltaMode: 0,
+      ctrlKey: false,
+      preventDefault() {
+        prevented = true;
+      },
+      stopImmediatePropagation() {},
+    } as WheelEvent);
+    expect(getAgeStripTuning().volumePerCssPixel).toBe(initial);
+    expect(prevented).toBe(false);
 
-  view.destroy();
+    wheel({
+      deltaY: -100,
+      deltaMode: 0,
+      ctrlKey: true,
+      preventDefault() {
+        prevented = true;
+      },
+      stopImmediatePropagation() {},
+    } as WheelEvent);
+    redraw(0);
+    expect(getAgeStripTuning().volumePerCssPixel).toBeLessThan(initial);
+    expect(prevented).toBe(true);
+
+    wheel({
+      deltaY: 100,
+      deltaMode: 0,
+      ctrlKey: true,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    } as WheelEvent);
+    redraw(0);
+    expect(getAgeStripTuning().volumePerCssPixel).toBeCloseTo(initial);
+  } finally {
+    view?.destroy();
+    globals.forEach((key, index) => {
+      const original = originals[index];
+      if (original) Object.defineProperty(globalThis, key, original);
+      else Reflect.deleteProperty(globalThis, key);
+    });
+  }
 });
 
 test("markets not accepting orders start unchecked but retain their controls", () => {
