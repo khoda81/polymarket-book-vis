@@ -63,15 +63,17 @@ describe("signedVolumeColor", () => {
 });
 
 
-test("signedVolumeColor supports side-specific chroma", () => {
+test("signedVolumeColor supports side-specific luminance and chroma", () => {
   const scale = {
     luminance: 0.7,
     chroma: 0.15,
     positiveHue: 30,
     negativeHue: 210,
+    positiveLuminance: 0.72,
+    negativeLuminance: 0.88,
     positiveChroma: 0.18,
     negativeChroma: 0.04,
   };
-  expect(signedVolumeColor(1, scale)).toBe("oklch(0.7 0.18 30)");
-  expect(signedVolumeColor(-1, scale)).toBe("oklch(0.7 0.04 210)");
+  expect(signedVolumeColor(1, scale)).toBe("oklch(0.72 0.18 30)");
+  expect(signedVolumeColor(-1, scale)).toBe("oklch(0.88 0.04 210)");
 });
