@@ -14,7 +14,7 @@ import {
 import type { Event } from "@polymarket/client";
 
 const AGE_LABEL_MIN_GUTTER_PX = 16;
-const AGE_LABEL_MAX_GUTTER_PX = 300;
+const AGE_LABEL_MAX_GUTTER_PX = 200;
 const AGE_LABEL_HORIZONTAL_INSET_PX = 8;
 const AGE_TIME_META_WIDTH_PX = 52;
 const AGE_MARKET_ICON_SIZE_PX = 16;

@@ -303,9 +303,15 @@ body {
     }
 }
 
-@media (min-width: 1200px) {
+@media (min-width: 800px) {
     .grid {
         column-count: 2;
+    }
+}
+
+@media (min-width: 1200px) {
+    .grid {
+        column-count: 3;
     }
 }
 
@@ -321,9 +327,5 @@ body {
 }
 
 .card--pinned {
-    border-color: color-mix(
-        in oklab,
-        var(--color-border-secondary, #ddd) 78%,
-        #d7a900 22%
-    );
+    border-color: color-mix(in oklab, var(--color-border-secondary, #ddd) 78%, #d7a900 22%);
 }
