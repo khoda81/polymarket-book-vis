@@ -4,36 +4,21 @@ import {
   pressureScaleForToken,
   type ChartDefinition,
 } from "@/lib/chartDefinition";
-import { marketColor } from "@/lib/math";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
 import {
-  BookOrder,
-  emptyTokenBook,
-} from "@/lib/orderBook";
-import {
-  BoxStyle,
   ChartTheme,
-  Frame,
   OrderBookPlotter,
-  StackDirection,
 } from "@/lib/renderer";
 import { AgeStripView } from "./ageStripView";
 import { LiveBookFeed } from "./liveBookFeed";
+import { VolumeBookView } from "./volumeBookView";
 import {
   TokenId,
   PublicClient,
 } from "@polymarket/client";
-
-interface BookBoxView {
-  readonly direction: StackDirection;
-  readonly orders: Iterable<BookOrder>;
-  readonly color: string;
-  readonly fillDepth?: number;
-}
 
 const LIGHT_THEME: ChartTheme = {
   bg: "#ffffff",
@@ -79,10 +64,9 @@ export class ChartController {
   private theme: ChartTheme;
   private plotter!: OrderBookPlotter;
   private ageView!: AgeStripView;
+  private volumeView!: VolumeBookView;
   private raf: number | null = null;
-  private pointer: { sx: number; sy: number } | null = null;
   private readonly definition: ChartDefinition;
-  private volScale = 4.5;
   private viewMode: ViewMode = "age";
   private started = false;
   private destroyed = false;
@@ -114,15 +98,6 @@ export class ChartController {
     this.theme = this.themeQuery.matches ? DARK_THEME : LIGHT_THEME;
 
     this.plotter = new OrderBookPlotter(surface.canvas);
-    this.plotter.onZoom = (delta) => {
-      if (this.viewMode !== "volume") return;
-      this.volScale += delta;
-      this.reqDraw();
-    };
-    this.plotter.onPointer = (pointer) => {
-      this.pointer = pointer;
-      if (this.viewMode === "volume") this.reqDraw();
-    };
 
     this.ageView = new AgeStripView({
       canvas: surface.canvas,
@@ -144,6 +119,20 @@ export class ChartController {
         this.autoHideToken(tokenId as TokenId, "empty-book"),
       requestDraw: () => this.reqDraw(),
     });
+
+    this.volumeView = new VolumeBookView({
+      plotter: this.plotter,
+      definition: this.definition,
+      activeTokens: this.activeTokens,
+      getBook: (tokenId) => this.feed.getBook(tokenId),
+      getTheme: () => this.theme,
+      isActive: () => this.viewMode === "volume",
+      requestDraw: () => this.reqDraw(),
+    });
+    this.plotter.onZoom = (delta) =>
+      this.volumeView.zoom(delta);
+    this.plotter.onPointer = (pointer) =>
+      this.volumeView.setPointer(pointer);
 
     this.resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -243,113 +232,15 @@ export class ChartController {
 
   private performDraw() {
     this.raf = null;
-    if (this.viewMode === "age") this.ageView.draw();
-    else this.drawVolumeView();
-  }
+    if (this.viewMode === "age") {
+      this.ageView.draw();
+      return;
+    }
 
-  private drawVolumeView() {
     this.ageView.prepareVolumeView();
-
-    const yAbsMax = Math.pow(10, this.volScale);
-    const frame = this.plotter.beginFrame(this.theme, {
-      xRange: { min: 0, max: 1 },
-      yRange: { min: -yAbsMax, max: yAbsMax },
-    });
-    frame.drawAxes();
-
-    const pointerData = this.pointer ? frame.toData(this.pointer) : null;
-    const empty = emptyTokenBook();
-    const placeholderColor = marketColor("", 0);
-
-    this.drawBookView(frame, {
-      direction: "up",
-      orders: empty.usdToYes.asOrders(),
-      color: placeholderColor,
-    });
-    this.drawBookView(frame, {
-      direction: "down",
-      orders: empty.yesToUsd.asSellOrders(),
-      color: placeholderColor,
-    });
-
-    for (const [index, market] of this.definition.event.markets.entries()) {
-      const tokenId = market.outcomes.yes.tokenId;
-      if (!tokenId || !this.activeTokens.has(tokenId)) continue;
-
-      const book = this.feed.getBook(tokenId) ?? emptyTokenBook();
-      const semanticScale =
-        this.definition.pressureScales.get(String(tokenId));
-      const yesColor = semanticScale
-        ? signedVolumeColor(1, semanticScale)
-        : marketColor(this.definition.event.id, index);
-      const noColor = semanticScale
-        ? signedVolumeColor(-1, semanticScale)
-        : yesColor;
-
-      this.drawBookView(frame, {
-        direction: "up",
-        orders: book.usdToYes.asOrders(),
-        color: yesColor,
-        fillDepth: pointerData ? Math.max(pointerData.y, 0) : undefined,
-      });
-      this.drawBookView(frame, {
-        direction: "down",
-        orders: book.yesToUsd.asSellOrders(),
-        color: noColor,
-        fillDepth: pointerData ? Math.max(-pointerData.y, 0) : undefined,
-      });
-    }
-
-    if (this.pointer && pointerData) frame.drawPointer(pointerData, this.pointer);
+    this.volumeView.draw();
   }
 
-  private drawBookView(frame: Frame, view: BookBoxView) {
-    const emptyStyle = ChartController.boxStyle(view.color, false);
-    const filledStyle = ChartController.boxStyle(view.color, true);
-    const pen = frame.boxPen(
-      { direction: view.direction, anchor: "left" },
-      emptyStyle,
-    );
-
-    let remainingHeight = frame.domain.yRange.max;
-    let fillRemaining = Math.min(view.fillDepth ?? 0, remainingHeight);
-
-    for (const level of view.orders) {
-      const rowHeight = Math.min(level.take, remainingHeight);
-      if (rowHeight <= 0) continue;
-
-      const filledHeight = Math.min(rowHeight, fillRemaining);
-      if (filledHeight > 0) {
-        ChartController.commitBoxRow(pen, level.price, filledHeight, filledStyle);
-        fillRemaining -= filledHeight;
-      }
-
-      const emptyHeight = rowHeight - filledHeight;
-      if (emptyHeight > 0)
-        ChartController.commitBoxRow(pen, level.price, emptyHeight, emptyStyle);
-
-      remainingHeight -= rowHeight;
-      if (remainingHeight <= 0) break;
-    }
-  }
-
-  private static commitBoxRow(
-    pen: ReturnType<Frame["boxPen"]>,
-    width: number,
-    height: number,
-    style: BoxStyle,
-  ) {
-    pen.newBox(style);
-    pen.extendBox(width);
-    pen.commitRow(height);
-  }
-
-  private static boxStyle(color: string, filled: boolean): BoxStyle {
-    return {
-      stroke: color,
-      fill: filled ? { kind: "solid-dim", alpha: 0.25 } : { kind: "none" },
-    };
-  }
 
 
 }
