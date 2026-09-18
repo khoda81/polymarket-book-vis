@@ -1,5 +1,10 @@
 import { fetchRecorderCoverage } from "@/lib/ageRecorderClient";
-import { marketColor } from "@/lib/math";
+import {
+  MARKET_COLOR_CHROMA,
+  MARKET_COLOR_LUMINANCE,
+  marketColor,
+  marketHue,
+} from "@/lib/math";
 import {
   buildNegRiskPalette,
   type NegRiskPalette,
@@ -96,6 +101,7 @@ export class PolymarketCPV {
   private oppositeTokenNames: Record<TokenId, string> = {};
   private event: Event | undefined;
   private negRiskPalette: NegRiskPalette | null = null;
+  private ordinaryPressureScales = new Map<TokenId, SignedVolumeColorScale>();
   private books: Record<TokenId, TokenBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private volScale = 4.5;
@@ -219,6 +225,7 @@ export class PolymarketCPV {
     this.tokenNames = {};
     this.oppositeTokenNames = {};
     this.negRiskPalette = null;
+    this.ordinaryPressureScales.clear();
     this.activeTokens.clear();
     this.ageView.reset();
 
@@ -286,6 +293,22 @@ export class PolymarketCPV {
 
     event = { ...event, markets: orderMarkets(event, rawMarkets) };
     this.negRiskPalette = buildNegRiskPalette(event);
+
+    // Ordinary single-market events get a deterministic binary pair from the
+    // exact hue already used by their market identity dot / volume view.
+    if (!this.negRiskPalette && event.markets.length === 1) {
+      const market = event.markets[0];
+      const yesTokenId = market?.outcomes.yes.tokenId;
+      if (market && yesTokenId) {
+        const hue = marketHue(event.id, 0);
+        this.ordinaryPressureScales.set(yesTokenId, {
+          luminance: MARKET_COLOR_LUMINANCE,
+          chroma: MARKET_COLOR_CHROMA,
+          positiveHue: hue,
+          negativeHue: (hue + 180) % 360,
+        });
+      }
+    }
 
     const tokenIds = event.markets
       .map((market) =>
@@ -373,6 +396,7 @@ export class PolymarketCPV {
   private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
     return (
       this.negRiskPalette?.byYesTokenId.get(String(tokenId))?.scale ??
+      this.ordinaryPressureScales.get(tokenId) ??
       DEFAULT_SIGNED_VOLUME_COLOR_SCALE
     );
   }
@@ -465,7 +489,8 @@ export class PolymarketCPV {
 
       const book = this.books[tokenId] ?? emptyTokenBook();
       const semanticScale =
-        this.negRiskPalette?.byYesTokenId.get(String(tokenId))?.scale;
+        this.negRiskPalette?.byYesTokenId.get(String(tokenId))?.scale ??
+        this.ordinaryPressureScales.get(tokenId);
       const yesColor = semanticScale
         ? signedVolumeColor(1, semanticScale)
         : marketColor(this.event!.id, index);
