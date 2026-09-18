@@ -12,6 +12,8 @@
   - hidden markets do not schedule clock work;
   - known market resolution times render as per-market countdowns.
 - [x] Floating tooltip portal outside the clipped canvas wrapper.
+- [x] Event pinning via persisted slugs; pinned events restore on reload.
+- [x] Independent startup card loads (no batch-of-four gating).
 
 ## Next
 
