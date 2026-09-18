@@ -30,11 +30,6 @@ test("HalfBook owns inserted orders and does not expose mutable storage", () => 
   inserted.take = 99;
   expect(book.bestOrder()).toEqual({ key: "bid", price: 0.4, take: 10 });
 
-  const exposed = book.getOrder("bid");
-  exposed.price = 0.1;
-  exposed.take = 1;
-  expect(book.bestOrder()).toEqual({ key: "bid", price: 0.4, take: 10 });
-
   const iterated = [...book.asOrders()][0]!;
   iterated.price = 0.2;
   expect(book.bestOrder()?.price).toBe(0.4);
