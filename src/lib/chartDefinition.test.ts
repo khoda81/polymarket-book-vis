@@ -76,3 +76,53 @@ test("chart definition contains only renderable active primary-token rows", () =
   expect(definition.tokenNames.get("yes-1")).toBe("Primary");
   expect(definition.oppositeTokenNames.get("yes-1")).toBe("Opposite");
 });
+
+
+test("single-market wrapper metadata survives DOM recreation", () => {
+  const title = "Putin meets with Iranian officials by December 31?";
+  const event = {
+    id: "event-2",
+    title,
+    trading: {
+      negRisk: false,
+      negRiskAugmented: false,
+    },
+    markets: [
+      {
+        id: "m1",
+        question: title,
+        state: {
+          active: true,
+          acceptingOrders: true,
+        },
+        outcomes: {
+          yes: { tokenId: "yes-1" },
+          no: { tokenId: "no-1" },
+        },
+      },
+    ],
+  } as unknown as Event;
+  const endDate = "2026-12-31T23:59:00Z";
+  const bundle: EventBundle = {
+    event,
+    rawMarkets: [{ id: "m1", endDate }],
+    presentation: {
+      iconUrl: null,
+      description: null,
+      marketRules: [],
+    },
+    marketTitles: new Map(),
+    marketIcons: new Map(),
+    tokenNames: new Map(),
+    oppositeTokenNames: new Map(),
+  };
+
+  const control = buildChartDefinition(bundle).controls[0];
+  expect(control).toMatchObject({
+    marketId: "m1",
+    ageLabel: "",
+    suppressAgeIdentity: true,
+    order: 0,
+    resolutionMs: Date.parse(endDate),
+  });
+});
