@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { HalfBook, type TokenBook } from "./orderBook";
+import { HalfBook, emptyTokenBook, type TokenBook } from "./orderBook";
 import { StaleSignedVolume } from "./staleSignedVolume";
 
 function makeBook(
