@@ -14,7 +14,7 @@ import {
 import type { Event } from "@polymarket/client";
 
 const AGE_LABEL_MIN_GUTTER_PX = 44;
-const AGE_LABEL_MAX_GUTTER_PX = 180;
+const AGE_LABEL_MAX_GUTTER_PX = 300;
 const AGE_LABEL_HORIZONTAL_INSET_PX = 8;
 const AGE_TIME_META_WIDTH_PX = 52;
 const AGE_LABEL_GAP_PX = 6;
@@ -266,15 +266,23 @@ export class AgeStripView {
         this.host.getTitle(market.id) ??
         market.question ??
         "(untitled)";
+      const redundantSingleMarketIdentity =
+        event.markets.length === 1 && sameDisplayTitle(text, event.title);
+      const ageText = redundantSingleMarketIdentity ? "" : text;
+
       const textSpan = document.createElement("span");
       textSpan.className = "cpv-market-label-text";
       textSpan.textContent = text;
       label.appendChild(textSpan);
-      label.dataset.marketLabel = text;
-      label.dataset.ageLabelWidth = String(measureAgeLabelTextWidth(text));
+      label.dataset.marketLabel = ageText;
+      label.dataset.ageLabelWidth = String(measureAgeLabelTextWidth(ageText));
+      label.dataset.ageSuppressMarketIdentity = String(
+        redundantSingleMarketIdentity,
+      );
 
-      // DOM text is retained only as the semantic/accessibility control and for
-      // the hidden-market tray. The visible age-axis annotation is canvas-only.
+      // Keep the full DOM label for volume mode/accessibility, but omit the
+      // redundant title+icon from the age axis when the event is merely a
+      // single-market wrapper.
       label.title = text;
 
       const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -354,7 +362,9 @@ export class AgeStripView {
     this.clockRows = activeControls.map((label, index) => ({
       tokenId: label.dataset.tokenId ?? `missing-row-${index}`,
       label: label.dataset.marketLabel ?? "(untitled)",
-      hasIcon: label.querySelector(".cpv-market-icon") !== null,
+      hasIcon:
+        label.dataset.ageSuppressMarketIdentity !== "true" &&
+        label.querySelector(".cpv-market-icon") !== null,
     }));
     if (this.viewportVisible) this.renderClockLayer();
 
@@ -663,8 +673,14 @@ export class AgeStripView {
     const { viewport: vp } = geometry;
     const rowCount = this.clockRows.length;
     const timeX = Math.max(4, vp.l - AGE_LABEL_HORIZONTAL_INSET_PX);
+    const hasAnyIcon = this.clockRows.some((row) => row.hasIcon);
+    const iconSlotWidth = hasAnyIcon
+      ? AGE_MARKET_ICON_SIZE_PX + AGE_MARKET_ICON_GAP_PX
+      : 0;
+    // Keep a fixed icon column immediately to the left of the time metadata.
+    // Labels stay right-aligned, so both names and faces line up cleanly.
     const labelX =
-      timeX - AGE_TIME_META_WIDTH_PX - AGE_LABEL_GAP_PX;
+      timeX - AGE_TIME_META_WIDTH_PX - AGE_LABEL_GAP_PX - iconSlotWidth;
     const maxLabelWidth = Math.max(
       0,
       labelX - AGE_LABEL_HORIZONTAL_INSET_PX,
@@ -678,13 +694,8 @@ export class AgeStripView {
 
       ctx.font = "11px sans-serif";
       ctx.globalAlpha = 1;
-      const rowMaxLabelWidth = Math.max(
-        0,
-        maxLabelWidth -
-          (row.hasIcon ? AGE_MARKET_ICON_SIZE_PX + AGE_MARKET_ICON_GAP_PX : 0),
-      );
       ctx.fillText(
-        ellipsizeCanvasText(ctx, row.label, rowMaxLabelWidth),
+        ellipsizeCanvasText(ctx, row.label, maxLabelWidth),
         labelX,
         rowCenterY,
       );
@@ -769,14 +780,18 @@ export class AgeStripView {
 function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
   if (labels.length === 0) return AGE_LABEL_MIN_GUTTER_PX;
 
+  const iconExtra = labels.some(
+    (label) =>
+      label.dataset.ageSuppressMarketIdentity !== "true" &&
+      label.querySelector(".cpv-market-icon") !== null,
+  )
+    ? AGE_MARKET_ICON_SIZE_PX + AGE_MARKET_ICON_GAP_PX
+    : 0;
+
   let widest = 0;
   for (const label of labels) {
     const cached = Number(label.dataset.ageLabelWidth);
     if (!Number.isFinite(cached)) continue;
-    const iconExtra =
-      label.querySelector(".cpv-market-icon") !== null
-        ? AGE_MARKET_ICON_SIZE_PX + AGE_MARKET_ICON_GAP_PX
-        : 0;
     widest = Math.max(
       widest,
       cached + AGE_TIME_META_WIDTH_PX + AGE_LABEL_GAP_PX + iconExtra,
@@ -807,6 +822,15 @@ function measureAgeLabelTextWidth(text: string): number {
   if (!ctx) return text.length * 6;
   ctx.font = "11px sans-serif";
   return ctx.measureText(text).width;
+}
+
+function sameDisplayTitle(a: string, b: string | null | undefined): boolean {
+  if (!b) return false;
+  return normalizeDisplayTitle(a) === normalizeDisplayTitle(b);
+}
+
+function normalizeDisplayTitle(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function ellipsizeCanvasText(
@@ -917,30 +941,14 @@ function positionRowControls(
     const top = `${geometry.centerCss}px`;
     if (label.style.top !== top) label.style.top = top;
 
-    const icon = label.querySelector<HTMLImageElement>(".cpv-market-icon");
+    const icon =
+      label.dataset.ageSuppressMarketIdentity === "true"
+        ? null
+        : label.querySelector<HTMLImageElement>(".cpv-market-icon");
     if (icon) {
-      const maxTextWidth = Math.max(
-        0,
-        frame.viewport.l -
-          AGE_LABEL_HORIZONTAL_INSET_PX * 2 -
-          AGE_TIME_META_WIDTH_PX -
-          AGE_LABEL_GAP_PX -
-          AGE_MARKET_ICON_SIZE_PX -
-          AGE_MARKET_ICON_GAP_PX,
-      );
-      const measuredTextWidth = Number(label.dataset.ageLabelWidth ?? 0);
-      const renderedTextWidth = Math.min(
-        Number.isFinite(measuredTextWidth) ? measuredTextWidth : 0,
-        maxTextWidth,
-      );
       label.style.setProperty(
         "--cpv-age-market-icon-right",
-        `${
-          AGE_TIME_META_WIDTH_PX +
-          AGE_LABEL_GAP_PX +
-          renderedTextWidth +
-          AGE_MARKET_ICON_GAP_PX
-        }px`,
+        `${AGE_TIME_META_WIDTH_PX + AGE_LABEL_GAP_PX}px`,
       );
     } else {
       label.style.removeProperty("--cpv-age-market-icon-right");

@@ -284,6 +284,12 @@
     height: 16px;
 }
 
+.cpv-toggles--age-axis
+    label[data-age-suppress-market-identity="true"]
+    .cpv-market-icon {
+    display: none;
+}
+
 .cpv-hidden-markets {
     display: flex;
     align-items: center;

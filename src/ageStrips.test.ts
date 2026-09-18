@@ -165,3 +165,60 @@ test("markets not accepting orders start unchecked but retain their controls", (
     else Reflect.deleteProperty(globalThis, "document");
   }
 });
+
+test("single-market wrapper suppresses duplicate age-axis title", () => {
+  const market = {
+    id: "m1",
+    question: "Putin meets with Iranian officials by December 31?",
+    state: { acceptingOrders: true },
+    outcomes: { yes: { tokenId: "yes-1" } },
+  };
+  const activeTokens = new Set(["yes-1"]);
+  const checkbox = { checked: true, addEventListener() {} };
+  const control = {
+    dataset: {} as Record<string, string>,
+    childNodes: [],
+    querySelector(selector: string) {
+      return selector.startsWith("input") ? checkbox : null;
+    },
+    appendChild() {},
+  };
+
+  const view = Object.assign(Object.create(AgeStripView.prototype), {
+    markets: new Map(),
+    host: {
+      activeTokens,
+      toggles: { querySelectorAll: () => [control] },
+      getTitle: () => undefined,
+    },
+  }) as AgeStripView;
+
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: {
+      createElement: () => ({
+        append() {},
+        className: "",
+        textContent: "",
+      }),
+    },
+  });
+
+  try {
+    view.configureMarkets(
+      {
+        title: "Putin meets with Iranian officials by December 31?",
+        markets: [market],
+      } as unknown as Event,
+      [],
+    );
+    expect(control.dataset.marketLabel).toBe("");
+    expect(control.dataset.ageLabelWidth).toBe("0");
+    expect(control.dataset.ageSuppressMarketIdentity).toBe("true");
+  } finally {
+    if (originalDocument)
+      Object.defineProperty(globalThis, "document", originalDocument);
+    else Reflect.deleteProperty(globalThis, "document");
+  }
+});
