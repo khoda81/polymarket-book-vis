@@ -65,6 +65,10 @@ function parseStringArray(value: unknown): string[] {
   }
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export class PolymarketCPV {
   readonly polyMarketClient: PublicClient;
 
@@ -88,6 +92,9 @@ export class PolymarketCPV {
   private volScale = 4.5;
   private viewMode: ViewMode = "age";
   private searchTimeout: number | undefined;
+  private loadGeneration = 0;
+  private searchGeneration = 0;
+  private destroyed = false;
 
   constructor(container: HTMLElement, polyMarketClient: PublicClient) {
     this.polyMarketClient = polyMarketClient;
@@ -202,10 +209,12 @@ export class PolymarketCPV {
       this.refs.dropdown.style.display = "none";
   };
 
-  async load(event: Event) {
+  async load(event: Event): Promise<void> {
+    const generation = ++this.loadGeneration;
     await this.closeWS();
-    this.setDot("connecting");
+    if (!this.ownsLoad(generation)) return;
 
+    this.setDot("connecting");
     this.books = {};
     this.titles = {};
     this.tokenNames = {};
@@ -223,11 +232,14 @@ export class PolymarketCPV {
     const request = await (this.polyMarketClient as any).gamma.get(
       `/events/${event.id}`,
     );
+    if (!this.ownsLoad(generation)) return;
+
     const response = request.value;
     if (!response.ok)
       throw new Error(`Gamma API returned status ${response.status}`);
 
     const rawEvent = await response.json();
+    if (!this.ownsLoad(generation)) return;
     const rawMarkets: unknown[] = rawEvent.markets ?? [];
 
     for (const rawMarket of rawMarkets as any[]) {
@@ -251,7 +263,6 @@ export class PolymarketCPV {
     }
 
     event = { ...event, markets: orderMarkets(event, rawMarkets) };
-
     const tokenIds = event.markets
       .map((market) =>
         market.state.active ? market.outcomes.yes.tokenId : null,
@@ -262,33 +273,33 @@ export class PolymarketCPV {
     this.buildToggles(event);
     this.ageView.configureMarkets(event, rawMarkets);
 
-    // GET also registers these tokens with the always-on recorder. Hydration is
-    // best-effort, so the chart still works normally when the backend is down.
-    const hydration = await fetchRecordedAgeState(tokenIds);
-    this.ageView.hydrate(
-      hydration.states,
-      hydration.recordingSinceMsByToken,
-    );
+    // Recorder registration/metadata is optional and must never gate the live
+    // websocket. Apply it only if this load still owns the chart when it lands.
+    void fetchRecordedAgeState(tokenIds).then((hydration) => {
+      if (!this.ownsLoad(generation)) return;
+      this.ageView.setRecordingCoverage(hydration.recordingSinceMsByToken);
+      this.reqDraw();
+    });
 
-    for (; ;) {
-      try {
-        this.bookEventStream = await this.polyMarketClient.subscribe([
-          { topic: "market", tokenIds },
-        ]);
-        break;
-      } catch (error) {
-        if (!(error instanceof TransportError)) throw error;
-        console.error("Error connecting to websocket, retrying...");
-      }
+    const events = await this.subscribeWithRetry(tokenIds, generation);
+    if (!events) return;
+    if (!this.ownsLoad(generation)) {
+      await events.close().catch(() => undefined);
+      return;
     }
 
+    this.bookEventStream = events;
     this.event = event;
     this.setDot("live");
-    void this.readEvents(this.bookEventStream);
+    void this.readEvents(events, generation);
     this.reqDraw();
   }
 
   destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.loadGeneration++;
+    this.searchGeneration++;
     void this.closeWS();
     clearTimeout(this.searchTimeout);
     if (this.raf !== null) cancelAnimationFrame(this.raf);
@@ -343,26 +354,61 @@ export class PolymarketCPV {
     }
   }
 
-  private async closeWS() {
+  private ownsLoad(generation: number): boolean {
+    return !this.destroyed && generation === this.loadGeneration;
+  }
+
+  private async closeWS(): Promise<void> {
     const stream = this.bookEventStream;
     this.bookEventStream = null;
-    if (stream) await stream.close();
+    if (stream) await stream.close().catch(() => undefined);
+  }
+
+  private async subscribeWithRetry(
+    tokenIds: readonly TokenId[],
+    generation: number,
+  ): Promise<SubscriptionHandle<MarketEvent> | null> {
+    while (this.ownsLoad(generation)) {
+      try {
+        const events = await this.polyMarketClient.subscribe([
+          { topic: "market", tokenIds: [...tokenIds] },
+        ]);
+        if (this.ownsLoad(generation)) return events;
+        await events.close().catch(() => undefined);
+        return null;
+      } catch (error) {
+        if (!this.ownsLoad(generation)) return null;
+        if (!(error instanceof TransportError)) throw error;
+        console.error("Error connecting to websocket; retrying in 1s", error);
+        await delay(1_000);
+      }
+    }
+    return null;
   }
 
   private onSearchInput() {
     clearTimeout(this.searchTimeout);
+    const generation = ++this.searchGeneration;
     const query = (this.refs.searchInput as HTMLInputElement).value.trim();
     if (!query) {
       this.refs.dropdown.style.display = "none";
       return;
     }
 
-    this.searchTimeout = window.setTimeout(async () => {
+    this.searchTimeout = window.setTimeout(() => {
+      void this.runSearch(query, generation);
+    }, 250);
+  }
+
+  private async runSearch(query: string, generation: number): Promise<void> {
+    try {
       const suggestions = this.polyMarketClient.search({
         q: query,
         pageSize: 20,
       });
       const page = await suggestions.firstPage();
+      if (this.destroyed || generation !== this.searchGeneration) return;
+
       if (!page.totalCount) {
         this.refs.dropdown.style.display = "none";
         return;
@@ -384,11 +430,23 @@ export class PolymarketCPV {
         volumeTag.className = "cpv-vol-tag";
         volumeTag.textContent = `$${fmtVol(volume)}`;
         option.appendChild(volumeTag);
-        option.addEventListener("click", () => void this.load(event));
+        option.addEventListener("click", () => {
+          this.searchGeneration++;
+          dropdown.style.display = "none";
+          void this.load(event).catch((error) => {
+            if (this.destroyed) return;
+            console.error("Could not load selected event", error);
+            this.setDot("disconnected");
+          });
+        });
         dropdown.appendChild(option);
       }
       dropdown.style.display = "block";
-    }, 250);
+    } catch (error) {
+      if (this.destroyed || generation !== this.searchGeneration) return;
+      console.error("Market search failed", error);
+      this.refs.dropdown.style.display = "none";
+    }
   }
 
   private reqDraw() {
@@ -498,74 +556,84 @@ export class PolymarketCPV {
     };
   }
 
-  private async readEvents(events: SubscriptionHandle<MarketEvent>) {
-    for await (const stream of events) {
-      if (stream.type === "book") {
-        const usdToYes = new HalfBook<string>();
-        for (const bid of stream.payload.bids) {
-          usdToYes.setLevel(bid.price, {
-            price: parseFloat(bid.price),
-            take: parseFloat(bid.size),
-          });
-        }
+  private async readEvents(
+    events: SubscriptionHandle<MarketEvent>,
+    generation: number,
+  ): Promise<void> {
+    try {
+      for await (const stream of events) {
+        if (!this.ownsLoad(generation) || this.bookEventStream !== events) return;
 
-        const yesToUsd = new HalfBook<string>();
-        for (const ask of stream.payload.asks) {
-          const canonicalPrice = parseFloat(ask.price);
-          yesToUsd.setLevel(ask.price, {
-            price: 1 / canonicalPrice,
-            take: parseFloat(ask.size) * canonicalPrice,
-          });
-        }
-        yesToUsd.setLevel("mint", { price: 1, take: Infinity });
-
-        const tokenId = stream.payload.tokenId as TokenId;
-        const nowMs = performance.now();
-        this.books[tokenId] = { usdToYes, yesToUsd };
-        this.ageView.onBookUpdate(tokenId, nowMs);
-      } else if (stream.type === "price_change") {
-        const observedByToken = new Map<TokenId, PressureObservationRange[]>();
-        for (const change of stream.payload.priceChanges) {
-          const tokenId = change.tokenId as TokenId;
-          const book = this.books[tokenId];
-          if (!book) continue;
-
-          const price = parseFloat(change.price);
-          const size = parseFloat(change.size);
-          if (change.side === OrderSide.BUY) {
-            book.usdToYes.setLevel(change.price, { price, take: size });
-          } else {
-            book.yesToUsd.setLevel(change.price, {
-              price: 1 / price,
-              take: size * price,
+        if (stream.type === "book") {
+          const usdToYes = new HalfBook<string>();
+          for (const bid of stream.payload.bids) {
+            usdToYes.setLevel(bid.price, {
+              price: parseFloat(bid.price),
+              take: parseFloat(bid.size),
             });
           }
 
-          const ranges = observedByToken.get(tokenId) ?? [];
-          ranges.push(
-            change.side === OrderSide.BUY
-              ? { lo: 0, hi: price }
-              : { lo: price, hi: 1 },
-          );
-          observedByToken.set(tokenId, ranges);
+          const yesToUsd = new HalfBook<string>();
+          for (const ask of stream.payload.asks) {
+            const canonicalPrice = parseFloat(ask.price);
+            yesToUsd.setLevel(ask.price, {
+              price: 1 / canonicalPrice,
+              take: parseFloat(ask.size) * canonicalPrice,
+            });
+          }
+          yesToUsd.setLevel("mint", { price: 1, take: Infinity });
+
+          const tokenId = stream.payload.tokenId as TokenId;
+          this.books[tokenId] = { usdToYes, yesToUsd };
+          this.ageView.onBookUpdate(tokenId, performance.now());
+        } else if (stream.type === "price_change") {
+          const observedByToken = new Map<TokenId, PressureObservationRange[]>();
+          for (const change of stream.payload.priceChanges) {
+            const tokenId = change.tokenId as TokenId;
+            const book = this.books[tokenId];
+            if (!book) continue;
+
+            const price = parseFloat(change.price);
+            const size = parseFloat(change.size);
+            if (change.side === OrderSide.BUY) {
+              book.usdToYes.setLevel(change.price, { price, take: size });
+            } else {
+              book.yesToUsd.setLevel(change.price, {
+                price: 1 / price,
+                take: size * price,
+              });
+            }
+
+            const ranges = observedByToken.get(tokenId) ?? [];
+            ranges.push(
+              change.side === OrderSide.BUY
+                ? { lo: 0, hi: price }
+                : { lo: price, hi: 1 },
+            );
+            observedByToken.set(tokenId, ranges);
+          }
+
+          const nowMs = performance.now();
+          for (const [tokenId, observedRanges] of observedByToken)
+            this.ageView.onBookUpdate(tokenId, nowMs, observedRanges);
+        } else if (stream.type === "market_resolved") {
+          for (const tokenId of stream.payload.assetIds ?? [])
+            this.activeTokens.delete(tokenId as TokenId);
+        } else {
+          continue;
         }
 
-        const nowMs = performance.now();
-        for (const [tokenId, observedRanges] of observedByToken)
-          this.ageView.onBookUpdate(tokenId, nowMs, observedRanges);
-      } else if (stream.type === "market_resolved") {
-        for (const tokenId of stream.payload.assetIds ?? [])
-          this.activeTokens.delete(tokenId as TokenId);
-      } else {
-        continue;
+        this.reqDraw();
       }
-
-      this.reqDraw();
-    }
-
-    if (this.bookEventStream === events) {
-      this.bookEventStream = null;
-      this.setDot("disconnected");
+    } catch (error) {
+      if (this.ownsLoad(generation) && this.bookEventStream === events)
+        console.error("Market websocket stream ended with error", error);
+    } finally {
+      if (this.ownsLoad(generation) && this.bookEventStream === events) {
+        this.bookEventStream = null;
+        this.setDot("disconnected");
+      }
     }
   }
+
 }
