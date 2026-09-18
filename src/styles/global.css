@@ -219,7 +219,8 @@ body {
 
 .card-actions {
     position: absolute;
-    top: 10px;
+    /* Match .cpv-wrap's 1rem top padding so the controls share the header baseline. */
+    top: 16px;
     right: 10px;
     z-index: 20;
     display: flex;
