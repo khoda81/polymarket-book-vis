@@ -13,14 +13,17 @@ import {
 } from "@/lib/signedVolume";
 import type { Event } from "@polymarket/client";
 
-const AGE_LABEL_MIN_GUTTER_PX = 44;
+const AGE_LABEL_MIN_GUTTER_PX = 16;
 const AGE_LABEL_MAX_GUTTER_PX = 300;
 const AGE_LABEL_HORIZONTAL_INSET_PX = 8;
 const AGE_TIME_META_WIDTH_PX = 52;
 const AGE_LABEL_GAP_PX = 6;
 const AGE_MARKET_ICON_SIZE_PX = 16;
 const AGE_MARKET_ICON_GAP_PX = 5;
+const AGE_TIME_GUTTER_PX =
+  AGE_TIME_META_WIDTH_PX + AGE_LABEL_HORIZONTAL_INSET_PX * 2 + 1;
 const VOLUME_LEFT_PADDING_PX = 60;
+const VOLUME_RIGHT_PADDING_PX = 16;
 export const AGE_ROW_BAND_PX = 28;
 
 const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
@@ -416,6 +419,10 @@ export class AgeStripView {
       this.host.plotter.padding.l = VOLUME_LEFT_PADDING_PX;
       resize = true;
     }
+    if (this.host.plotter.padding.r !== VOLUME_RIGHT_PADDING_PX) {
+      this.host.plotter.padding.r = VOLUME_RIGHT_PADDING_PX;
+      resize = true;
+    }
     if (this.host.canvasWrap.style.height !== "") {
       this.host.canvasWrap.style.height = "";
       resize = true;
@@ -569,10 +576,15 @@ export class AgeStripView {
     rowCount: number,
     labels: readonly HTMLLabelElement[],
   ): void {
-    const leftPadding = ageLabelGutterWidth(labels);
+    const leftPadding = AGE_TIME_GUTTER_PX;
+    const rightPadding = ageLabelGutterWidth(labels);
     let resize = false;
     if (this.host.plotter.padding.l !== leftPadding) {
       this.host.plotter.padding.l = leftPadding;
+      resize = true;
+    }
+    if (this.host.plotter.padding.r !== rightPadding) {
+      this.host.plotter.padding.r = rightPadding;
       resize = true;
     }
 
@@ -591,7 +603,7 @@ export class AgeStripView {
       resize = true;
     }
     this.host.toggles.classList.add("cpv-toggles--age-axis");
-    const widthCss = `${leftPadding}px`;
+    const widthCss = `${rightPadding}px`;
     if (this.host.toggles.style.width !== widthCss)
       this.host.toggles.style.width = widthCss;
 
@@ -665,7 +677,6 @@ export class AgeStripView {
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, geometry.canvasWidth, geometry.canvasHeight);
-    ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     ctx.fillStyle = this.host.getTheme().text;
 
@@ -677,13 +688,16 @@ export class AgeStripView {
     const iconSlotWidth = hasAnyIcon
       ? AGE_MARKET_ICON_SIZE_PX + AGE_MARKET_ICON_GAP_PX
       : 0;
-    // Keep a fixed icon column immediately to the left of the time metadata.
-    // Labels stay right-aligned, so both names and faces line up cleanly.
+    // Reading order is now: times | NO↔YES plot | icon | title.
+    // The identity column is left-aligned so rows scan naturally.
     const labelX =
-      timeX - AGE_TIME_META_WIDTH_PX - AGE_LABEL_GAP_PX - iconSlotWidth;
+      vp.l +
+      vp.width +
+      AGE_LABEL_HORIZONTAL_INSET_PX +
+      iconSlotWidth;
     const maxLabelWidth = Math.max(
       0,
-      labelX - AGE_LABEL_HORIZONTAL_INSET_PX,
+      geometry.canvasWidth - AGE_LABEL_HORIZONTAL_INSET_PX - labelX,
     );
     let nextChangeMs = Infinity;
 
@@ -693,6 +707,7 @@ export class AgeStripView {
         vp.t + ((rowIndex + 0.5) / rowCount) * vp.height;
 
       ctx.font = "11px sans-serif";
+      ctx.textAlign = "left";
       ctx.globalAlpha = 1;
       ctx.fillText(
         ellipsizeCanvasText(ctx, row.label, maxLabelWidth),
@@ -703,6 +718,7 @@ export class AgeStripView {
       if (!state) continue;
 
       ctx.font = "9px sans-serif";
+      ctx.textAlign = "right";
 
       const since = state.recordingSinceMs;
       if (since !== null && Number.isFinite(since)) {
@@ -792,10 +808,7 @@ function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
   for (const label of labels) {
     const cached = Number(label.dataset.ageLabelWidth);
     if (!Number.isFinite(cached)) continue;
-    widest = Math.max(
-      widest,
-      cached + AGE_TIME_META_WIDTH_PX + AGE_LABEL_GAP_PX + iconExtra,
-    );
+    widest = Math.max(widest, cached);
   }
 
   return Math.ceil(
@@ -947,11 +960,11 @@ function positionRowControls(
         : label.querySelector<HTMLImageElement>(".cpv-market-icon");
     if (icon) {
       label.style.setProperty(
-        "--cpv-age-market-icon-right",
-        `${AGE_TIME_META_WIDTH_PX + AGE_LABEL_GAP_PX}px`,
+        "--cpv-age-market-icon-left",
+        `${AGE_LABEL_HORIZONTAL_INSET_PX}px`,
       );
     } else {
-      label.style.removeProperty("--cpv-age-market-icon-right");
+      label.style.removeProperty("--cpv-age-market-icon-left");
     }
   }
 }

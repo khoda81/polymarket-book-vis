@@ -219,14 +219,15 @@
 .cpv-toggles--age-axis {
     position: absolute;
     top: 0;
+    right: 0;
     bottom: 0;
-    left: 0;
+    left: auto;
     display: block;
     margin: 0;
     z-index: 6;
     pointer-events: none;
     font-size: 11px;
-    text-align: right;
+    text-align: left;
 }
 
 .cpv-toggles--age-axis label {
@@ -279,7 +280,7 @@
 
 .cpv-toggles--age-axis .cpv-market-icon {
     position: absolute;
-    right: var(--cpv-age-market-icon-right, 0);
+    left: var(--cpv-age-market-icon-left, 8px);
     width: 16px;
     height: 16px;
 }
