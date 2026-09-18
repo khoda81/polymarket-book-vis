@@ -22,6 +22,20 @@ describe("book hover statistics", () => {
     expect(hover.effectivePrice).toBeCloseTo((100 * 0.4 + 50 * 0.3) / 150);
   });
 
+  test("includes a bid exactly at its limit price", () => {
+    const hover = bookHoverAtPrice(makeBook(), 0.4);
+    expect(hover.side).toBe("bid");
+    expect(hover.shares).toBe(100);
+    expect(hover.effectivePrice).toBeCloseTo(0.4);
+  });
+
+  test("includes an ask exactly at its limit price", () => {
+    const hover = bookHoverAtPrice(makeBook(), 0.6);
+    expect(hover.side).toBe("ask");
+    expect(hover.shares).toBe(100);
+    expect(hover.effectivePrice).toBeCloseTo(0.6);
+  });
+
   test("reports the live spread as empty", () => {
     expect(bookHoverAtPrice(makeBook(), 0.5)).toEqual({
       price: 0.5,
