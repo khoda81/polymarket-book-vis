@@ -72,6 +72,8 @@ export interface StaleSignedVolumeSnapshot {
  */
 export class StaleSignedVolume {
   private current: HeldVolumeSegment[] = [];
+  /** Exact live field from the immediately previous update. */
+  private previousLive: readonly SignedVolumeSegment[] = [];
   private lastUpdateMs: number | undefined;
 
   update(
@@ -95,6 +97,10 @@ export class StaleSignedVolume {
       boundaries.add(segment.lo);
       boundaries.add(segment.hi);
     }
+    for (const segment of this.previousLive) {
+      boundaries.add(segment.lo);
+      boundaries.add(segment.hi);
+    }
     for (const range of ranges ?? []) {
       boundaries.add(range.lo);
       boundaries.add(range.hi);
@@ -106,6 +112,7 @@ export class StaleSignedVolume {
 
     const next: HeldVolumeSegment[] = [];
     let liveIndex = 0;
+    let previousLiveIndex = 0;
     let previousIndex = 0;
     let rangeIndex = 0;
 
@@ -117,6 +124,11 @@ export class StaleSignedVolume {
 
       while (liveIndex + 1 < live.length && midpoint >= live[liveIndex].hi)
         liveIndex++;
+      while (
+        previousLiveIndex + 1 < this.previousLive.length &&
+        midpoint >= this.previousLive[previousLiveIndex].hi
+      )
+        previousLiveIndex++;
       while (
         previousIndex + 1 < this.current.length &&
         midpoint >= this.current[previousIndex].hi
@@ -131,6 +143,12 @@ export class StaleSignedVolume {
 
       const liveSample = StaleSignedVolume.liveAt(live, liveIndex, midpoint);
       const liveVolume = liveSample?.volume ?? 0;
+      const previousLiveSample = StaleSignedVolume.liveAt(
+        this.previousLive,
+        previousLiveIndex,
+        midpoint,
+      );
+      const previousLiveVolume = previousLiveSample?.volume ?? 0;
       const previous = StaleSignedVolume.segmentAt(
         this.current,
         previousIndex,
@@ -157,9 +175,14 @@ export class StaleSignedVolume {
         continue;
       }
 
-      if (previous && previous.volume !== 0) {
-        // This observed range just lost its live pressure. Preserve the last
-        // economic sample, but its freshness ends exactly at this update.
+      if (
+        previous &&
+        previous.volume !== 0 &&
+        previousLiveVolume !== 0
+      ) {
+        // Stamp only a genuine live→empty transition. Re-observing a range
+        // that was already empty must not make its remembered liquidity young
+        // again.
         next.push({
           lo,
           hi,
@@ -177,6 +200,7 @@ export class StaleSignedVolume {
     }
 
     this.current = StaleSignedVolume.mergeAdjacent(next);
+    this.previousLive = live;
     this.lastUpdateMs = nowMs;
   }
 
@@ -233,6 +257,7 @@ export class StaleSignedVolume {
       }));
 
     this.current = StaleSignedVolume.mergeAdjacent(segments);
+    this.previousLive = [];
     this.lastUpdateMs = lastUpdateMs;
   }
 
@@ -265,11 +290,13 @@ export class StaleSignedVolume {
             ageMs === Infinity ? UNKNOWN_SINCE_MS : nowMs - ageMs,
         })),
     );
+    this.previousLive = [];
     this.lastUpdateMs = nowMs;
   }
 
   clear(): void {
     this.current = [];
+    this.previousLive = [];
     this.lastUpdateMs = undefined;
   }
 
