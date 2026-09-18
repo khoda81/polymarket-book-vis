@@ -27,6 +27,28 @@ const volumeLegendTicks = document.getElementById("volume-legend-ticks")!;
 const volumeLegendScale = document.getElementById("volume-legend-scale")!;
 const client = createPublicClient();
 const cards = new Map<string, { card: HTMLElement; chart: PolymarketCPV }>();
+const PINNED_EVENT_SLUGS_STORAGE_KEY =
+  "polymarket-book-vis:pinned-event-slugs:v1";
+const DEFAULT_EVENT_SLUGS = ["israel-closes-its-airspace-by"] as const;
+const pinnedEventSlugs = loadStringSet(PINNED_EVENT_SLUGS_STORAGE_KEY);
+
+function loadStringSet(key: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? new Set(parsed.filter((value): value is string => typeof value === "string"))
+      : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function persistStringSet(key: string, values: ReadonlySet<string>): void {
+  localStorage.setItem(key, JSON.stringify([...values]));
+}
+
 
 async function createCard(event: Event) {
   const existing = cards.get(event.id);
@@ -38,6 +60,13 @@ async function createCard(event: Event) {
   const card = document.createElement("article");
   card.classList.add("card");
   const chartHost = document.createElement("div");
+  const eventSlug = event.slug ?? null;
+
+  const pinButton = document.createElement("button");
+  pinButton.type = "button";
+  pinButton.className = "card-pin";
+  pinButton.disabled = eventSlug === null;
+
   const closeButton = document.createElement("button");
   closeButton.type = "button";
   closeButton.className = "card-close";
@@ -46,7 +75,29 @@ async function createCard(event: Event) {
   closeButton.textContent = "×";
   closeButton.disabled = true;
 
-  card.append(closeButton, chartHost);
+  const renderPin = () => {
+    const pinned = eventSlug !== null && pinnedEventSlugs.has(eventSlug);
+    pinButton.setAttribute("aria-pressed", String(pinned));
+    pinButton.setAttribute(
+      "aria-label",
+      pinned ? "Unpin event" : "Pin event across reloads",
+    );
+    pinButton.title = pinned
+      ? "Pinned — click to stop restoring this event on reload"
+      : "Pin this event so it returns after reload";
+    pinButton.textContent = pinned ? "★" : "☆";
+  };
+  renderPin();
+
+  pinButton.addEventListener("click", () => {
+    if (eventSlug === null) return;
+    if (pinnedEventSlugs.has(eventSlug)) pinnedEventSlugs.delete(eventSlug);
+    else pinnedEventSlugs.add(eventSlug);
+    persistStringSet(PINNED_EVENT_SLUGS_STORAGE_KEY, pinnedEventSlugs);
+    renderPin();
+  });
+
+  card.append(pinButton, closeButton, chartHost);
   grid.prepend(card);
   const chart = new PolymarketCPV(chartHost, client);
   cards.set(event.id, { card, chart });
@@ -215,9 +266,11 @@ renderGlobalLegend();
 subscribeAgeStripTuning(renderGlobalLegend);
 new ResizeObserver(renderGlobalLegend).observe(volumeLegendBar);
 
-const eventSlugs = ["israel-closes-its-airspace-by"];
+const startupSlugs = [
+  ...new Set([...DEFAULT_EVENT_SLUGS, ...pinnedEventSlugs]),
+];
 
-for (const slug of eventSlugs)
+for (const slug of startupSlugs)
   void addEventBySlug(slug, false).catch((error) =>
     console.error(`Could not load ${slug}:`, error),
   );
@@ -232,20 +285,13 @@ const extraEvents = client.listEvents({
 // TODO: For each two transactions with (p0, t0) -> (p1, t1), compute the kl divergence between p0 and p1 and divide by the delta t:
 // TODO: kl(p0, p1) / (t1 - t0)
 // And we need to do this for all consecutive transactions given the market's transaction history since a given timestamp till now.
-const CARD_LOAD_CONCURRENCY = 4;
-
 for await (const eventPage of extraEvents) {
-  const events = eventPage.items.filter(
-    (event) => !eventSlugs.includes(event.slug ?? ""),
-  );
-  for (let i = 0; i < events.length; i += CARD_LOAD_CONCURRENCY) {
-    await Promise.all(
-      events.slice(i, i + CARD_LOAD_CONCURRENCY).map((event) =>
-        createCard(event).catch((error) => {
-          console.error(`Could not load ${event.slug ?? event.id}:`, error);
-          return false;
-        }),
-      ),
+  for (const event of eventPage.items) {
+    if (startupSlugs.includes(event.slug ?? "")) continue;
+    // Event cards are independent. Do not make a slow Gamma/subscription load
+    // gate unrelated cards; startup discovery should fan out immediately.
+    void createCard(event).catch((error) =>
+      console.error(`Could not load ${event.slug ?? event.id}:`, error),
     );
   }
 }
