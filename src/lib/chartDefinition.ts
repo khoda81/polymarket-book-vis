@@ -1,5 +1,9 @@
 import { marketColor, marketHue } from "./math";
 import {
+  initialMarketLifecycle,
+  type MarketLifecycle,
+} from "./marketLifecycle";
+import {
   indexRawMarketsById,
   resolutionOrder,
   resolutionTimestamp,
@@ -21,6 +25,11 @@ import type { Event, TokenId } from "@polymarket/client";
 export interface ChartMarketControl {
   readonly marketId: string;
   readonly tokenId: TokenId;
+  readonly oppositeTokenId: TokenId | null;
+  readonly conditionId: string | null;
+  readonly primaryOutcome: string;
+  readonly oppositeOutcome: string;
+  readonly lifecycle: MarketLifecycle;
   readonly title: string;
   readonly iconUrl: string | null;
   readonly dotColor: string;
@@ -46,8 +55,6 @@ export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
   const orderByToken = resolutionOrder(event, rawMarkets);
 
   const controls = event.markets.flatMap((market, index) => {
-    if (!market.state.active) return [];
-
     const tokenId = market.outcomes.yes.tokenId;
     if (!tokenId) return [];
 
@@ -71,6 +78,13 @@ export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
     return [{
       marketId,
       tokenId,
+      oppositeTokenId: market.outcomes.no.tokenId,
+      conditionId: market.conditionId
+        ? String(market.conditionId)
+        : null,
+      primaryOutcome: market.outcomes.yes.label,
+      oppositeOutcome: market.outcomes.no.label,
+      lifecycle: initialMarketLifecycle(market),
       title,
       iconUrl: bundle.marketIcons.get(marketId) ?? null,
       dotColor,

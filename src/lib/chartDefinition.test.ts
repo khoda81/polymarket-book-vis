@@ -59,6 +59,11 @@ test("chart definition contains only renderable active primary-token rows", () =
   expect(definition.controls[0]).toMatchObject({
     marketId: "m1",
     tokenId: "yes-1",
+    oppositeTokenId: "no-1",
+    conditionId: null,
+    primaryOutcome: "",
+    oppositeOutcome: "",
+    lifecycle: { kind: "live" },
     title: "First label",
     iconUrl: "https://example.com/m1.png",
     acceptingOrders: false,
