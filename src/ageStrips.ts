@@ -159,14 +159,15 @@ export class AgeStripView {
 
         if (!visible) {
           this.cancelTimeLabelRefresh();
-          this.hideTooltip();
           return;
         }
 
-        // One catch-up frame reconstructs canvas geometry and visible clocks;
-        // websocket state continued updating while this view was dormant.
-        this.timeLabelsDirty = true;
-        this.host.requestDraw();
+        // Canvas rendering has its own lifecycle. Visibility controls only the
+        // clocks, whose values are presentation-only and can catch up directly.
+        this.timeLabelsDirty = false;
+        this.refreshVisibleTimeLabels(
+          this.collectControls().filter((label) => this.isActive(label)),
+        );
       },
       // Start work just before the card enters the viewport so scrolling never
       // exposes a stale/blank canvas.
@@ -342,14 +343,13 @@ export class AgeStripView {
   }
 
   draw(): void {
-    if (!this.viewportVisible) return;
-
     const controls = this.collectControls();
     this.syncControlPlacement(controls);
     const activeControls = controls.filter((label) => this.isActive(label));
     const rowCount = Math.max(1, activeControls.length);
 
-    if (this.timeLabelsDirty) this.refreshVisibleTimeLabels(activeControls);
+    if (this.timeLabelsDirty && this.viewportVisible)
+      this.refreshVisibleTimeLabels(activeControls);
     this.installAgeLayout(rowCount, activeControls);
 
     const frame = this.host.plotter.beginFrame(this.host.getTheme(), {
@@ -462,7 +462,7 @@ export class AgeStripView {
 
   private renderHoverTooltip(pointer: HoverPointer): void {
     const { sx, sy } = pointer;
-    if (!this.viewportVisible || this.host.getViewMode() !== "age") {
+    if (this.host.getViewMode() !== "age") {
       this.hideTooltip();
       return;
     }
