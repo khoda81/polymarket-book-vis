@@ -59,6 +59,7 @@ class AgeRecorder {
   private subscriptionGeneration = 0;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
   private persistDirty = false;
+  private persistenceBlocked = false;
   private persistChain: Promise<void> = Promise.resolve();
   private restartChain = Promise.resolve();
 
@@ -274,6 +275,7 @@ class AgeRecorder {
 
   private schedulePersist(): void {
     this.persistDirty = true;
+    if (this.persistenceBlocked) return;
     // Bounded checkpoint latency: once armed, later updates do not postpone
     // this write. Updates arriving while a write is in flight arm the next
     // checkpoint independently.
@@ -320,62 +322,113 @@ class AgeRecorder {
   private async restoreFromDisk(): Promise<void> {
     let parsed: PersistedRecorderState;
     try {
-      parsed = JSON.parse(
-        await readFile(STATE_PATH, "utf8"),
-      ) as PersistedRecorderState;
+      const raw = JSON.parse(await readFile(STATE_PATH, "utf8")) as unknown;
+      parsed = parsePersistedRecorderState(raw);
     } catch (error: any) {
-      if (error?.code !== "ENOENT")
-        console.warn("Ignoring unreadable recorder state", error);
-      return;
-    }
-
-    if (parsed.version !== 1) {
-      console.warn(`Ignoring unsupported recorder state v${parsed.version}`);
+      if (error?.code === "ENOENT") return;
+      await this.quarantineUnreadableState(error);
       return;
     }
 
     const migrationNowMs = Date.now();
+    const restoredWatched = new Set<string>();
+    const restoredRecordingSince = new Map<string, number>();
+    const restoredMemories = new Map<string, StaleSignedVolume>();
     let repairedCoverageMetadata = false;
 
-    for (const tokenId of parsed.watchedTokenIds ?? []) {
-      if (typeof tokenId !== "string" || !tokenId) continue;
-      this.watched.add(tokenId);
+    try {
+      for (const tokenId of parsed.watchedTokenIds) {
+        if (!tokenId) continue;
+        restoredWatched.add(tokenId);
 
-      const storedStart = validWallClockMs(
-        parsed.recordingSinceMs?.[tokenId],
-        migrationNowMs,
-      );
-      const inferredStart = earliestSnapshotObservationMs(
-        parsed.states?.[tokenId],
-        migrationNowMs,
-      );
-      const knownStarts = [storedStart, inferredStart].filter(
-        (value): value is number => value !== undefined,
-      );
-      const repairedStart = knownStarts.length
-        ? Math.min(...knownStarts)
-        : migrationNowMs;
+        const storedStart = validWallClockMs(
+          parsed.recordingSinceMs?.[tokenId],
+          migrationNowMs,
+        );
+        const inferredStart = earliestSnapshotObservationMs(
+          parsed.states[tokenId],
+          migrationNowMs,
+        );
+        const knownStarts = [storedStart, inferredStart].filter(
+          (value): value is number => value !== undefined,
+        );
+        const repairedStart = knownStarts.length
+          ? Math.min(...knownStarts)
+          : migrationNowMs;
 
-      this.recordingSince.set(tokenId, repairedStart);
-      if (storedStart !== repairedStart) repairedCoverageMetadata = true;
-    }
+        restoredRecordingSince.set(tokenId, repairedStart);
+        if (storedStart !== repairedStart) repairedCoverageMetadata = true;
+      }
 
-    for (const [tokenId, snapshot] of Object.entries(parsed.states ?? {})) {
-      try {
+      for (const [tokenId, snapshot] of Object.entries(parsed.states)) {
         const memory = new StaleSignedVolume();
         memory.restore(snapshot);
-        this.memories.set(tokenId, memory);
-      } catch (error) {
-        console.warn(`Ignoring invalid recorder state for ${tokenId}`, error);
+        restoredMemories.set(tokenId, memory);
       }
+    } catch (error) {
+      await this.quarantineUnreadableState(error);
+      return;
     }
 
-    // Older recorder versions did not persist coverage starts. A later version
-    // initially migrated those missing values to restart time, which can also
-    // leave already-written metadata newer than observations still present in
-    // the snapshots. Repair both cases and persist the correction immediately.
+    this.watched.clear();
+    for (const tokenId of restoredWatched) this.watched.add(tokenId);
+    this.recordingSince.clear();
+    for (const [tokenId, since] of restoredRecordingSince)
+      this.recordingSince.set(tokenId, since);
+    this.memories.clear();
+    for (const [tokenId, memory] of restoredMemories)
+      this.memories.set(tokenId, memory);
+
+    // Older recorder versions did not persist coverage starts. Repair truthful
+    // metadata immediately after a fully successful restore.
     if (repairedCoverageMetadata) this.schedulePersist();
   }
+
+  private async quarantineUnreadableState(error: unknown): Promise<void> {
+    console.warn("Recorder state is invalid; preserving it before continuing", error);
+    const backup = `${STATE_PATH}.corrupt-${Date.now()}`;
+    try {
+      await rename(STATE_PATH, backup);
+      console.warn(`Moved invalid recorder state to ${backup}`);
+    } catch (renameError) {
+      this.persistenceBlocked = true;
+      console.error(
+        "Could not preserve invalid recorder state; persistence is blocked",
+        renameError,
+      );
+    }
+  }
+}
+
+function parsePersistedRecorderState(value: unknown): PersistedRecorderState {
+  if (!isRecord(value) || value.version !== 1)
+    throw new TypeError("Unsupported or malformed recorder state");
+  if (!Array.isArray(value.watchedTokenIds))
+    throw new TypeError("Recorder watchedTokenIds must be an array");
+  if (!isRecord(value.states))
+    throw new TypeError("Recorder states must be an object");
+  if (
+    value.recordingSinceMs !== undefined &&
+    !isRecord(value.recordingSinceMs)
+  )
+    throw new TypeError("Recorder recordingSinceMs must be an object");
+
+  const watchedTokenIds = value.watchedTokenIds.map((tokenId) => {
+    if (typeof tokenId !== "string")
+      throw new TypeError("Recorder token ids must be strings");
+    return tokenId;
+  });
+
+  return {
+    version: 1,
+    watchedTokenIds,
+    recordingSinceMs: value.recordingSinceMs as Record<string, number> | undefined,
+    states: value.states as Record<string, StaleSignedVolumeSnapshot>,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function earliestSnapshotObservationMs(
