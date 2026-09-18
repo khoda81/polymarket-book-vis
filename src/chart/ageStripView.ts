@@ -14,13 +14,8 @@ import {
   VOLUME_RIGHT_PADDING_PX,
   ageLabelGutterWidth,
   hasRealOrders,
-  indexRawMarketsById,
-  measureAgeLabelTextWidth,
   normalizedWheelDelta,
   positionRowControls,
-  resolutionOrder,
-  resolutionTimestamp,
-  sameDisplayTitle,
 } from "./ageStripLayout";
 import {
   drawAgeAxes,
@@ -28,7 +23,7 @@ import {
 } from "./ageStripRendering";
 import { AgeStripClock } from "./ageStripClock";
 import { AgeStripTooltip } from "./ageStripTooltip";
-import type { Event } from "@polymarket/client";
+import type { ChartMarketControl } from "@/lib/chartDefinition";
 
 interface MarketRuntimeState {
   visibilityInitialized: boolean;
@@ -44,7 +39,6 @@ export interface AgeStripHost {
   readonly plotter: OrderBookPlotter;
   readonly activeTokens: Set<string>;
   readonly getBook: (tokenId: string) => TokenBook<string> | undefined;
-  readonly getTitle: (marketId: string) => string | undefined;
   readonly getTokenName: (tokenId: string) => string | undefined;
   readonly getOppositeTokenName: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
@@ -68,15 +62,10 @@ export class AgeStripView {
   private readonly tooltip: AgeStripTooltip;
   private readonly unsubscribeTuning: () => void;
   private readonly markets = new Map<string, MarketRuntimeState>();
-  private readonly toggleHomeParent: HTMLElement | null;
-  private readonly toggleHomeNextSibling: ChildNode | null;
   private layoutMode: "age" | "volume" | null = null;
 
   constructor(host: AgeStripHost) {
     this.host = host;
-    this.toggleHomeParent = host.toggles.parentElement;
-    this.toggleHomeNextSibling = host.toggles.nextSibling;
-
     this.hiddenTray = host.hiddenTray;
 
     this.clock = new AgeStripClock({
@@ -130,57 +119,16 @@ export class AgeStripView {
     this.clock.refresh();
   }
 
-  configureMarkets(event: Event, rawMarkets: readonly unknown[]): void {
-    const labels = this.collectControls();
-    const marketById = new Map(
-      event.markets.map((market) => [String(market.id), market]),
-    );
-    const rawById = indexRawMarketsById(rawMarkets);
-    const orderByToken = resolutionOrder(event, rawMarkets);
-
-    for (const [index, label] of labels.entries()) {
-      const marketId = label.dataset.marketId;
-      const tokenId = label.dataset.tokenId;
-      if (!marketId || !tokenId) continue;
-
-      const market = marketById.get(marketId);
-      if (!market) continue;
-
-      label.dataset.marketOrder = String(
-        orderByToken.get(tokenId) ?? index,
-      );
-
-      const state = this.markets.get(tokenId) ?? {
+  configureMarkets(
+    controls: readonly ChartMarketControl[],
+  ): void {
+    this.markets.clear();
+    for (const control of controls) {
+      this.markets.set(String(control.tokenId), {
         visibilityInitialized: false,
         recordingSinceMs: null,
-        resolutionMs: null,
-      };
-      const resolutionMs = resolutionTimestamp(
-        rawById.get(marketId),
-        market,
-      );
-      state.resolutionMs = Number.isFinite(resolutionMs)
-        ? resolutionMs
-        : null;
-      this.markets.set(tokenId, state);
-
-      const text =
-        this.host.getTitle(marketId) ??
-        market.question ??
-        "(untitled)";
-      const redundantSingleMarketIdentity =
-        event.markets.length === 1 &&
-        sameDisplayTitle(text, event.title);
-      const ageText = redundantSingleMarketIdentity ? "" : text;
-
-      label.dataset.marketLabel = ageText;
-      label.dataset.ageLabelWidth = String(
-        measureAgeLabelTextWidth(ageText),
-      );
-      label.dataset.ageSuppressMarketIdentity = String(
-        redundantSingleMarketIdentity,
-      );
-      label.title = text;
+        resolutionMs: control.resolutionMs,
+      });
     }
   }
 
@@ -287,20 +235,8 @@ export class AgeStripView {
       resize = true;
     }
 
-    this.host.toggles.classList.remove("cpv-toggles--age-axis");
-    if (this.host.toggles.style.width !== "") this.host.toggles.style.width = "";
-
-    if (
-      this.toggleHomeParent &&
-      this.host.toggles.parentElement !== this.toggleHomeParent
-    ) {
-      if (this.toggleHomeNextSibling?.parentNode === this.toggleHomeParent)
-        this.toggleHomeParent.insertBefore(
-          this.host.toggles,
-          this.toggleHomeNextSibling,
-        );
-      else this.toggleHomeParent.appendChild(this.host.toggles);
-    }
+    if (this.host.toggles.style.width !== "")
+      this.host.toggles.style.width = "";
 
     if (resize) this.host.plotter.resize();
     this.layoutMode = "volume";
@@ -353,11 +289,6 @@ export class AgeStripView {
       resize = true;
     }
 
-    if (this.host.toggles.parentElement !== this.host.canvasWrap) {
-      this.host.canvasWrap.appendChild(this.host.toggles);
-      resize = true;
-    }
-    this.host.toggles.classList.add("cpv-toggles--age-axis");
     const widthCss = `${rightPadding}px`;
     if (this.host.toggles.style.width !== widthCss)
       this.host.toggles.style.width = widthCss;

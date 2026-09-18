@@ -1,7 +1,6 @@
 import { AGE_ROW_BAND_PX } from "@/lib/ageStripTuning";
 import type { Frame } from "@/lib/renderer";
 import type { TokenBook } from "@/lib/orderBook";
-import type { Event } from "@polymarket/client";
 
 const AGE_LABEL_MIN_GUTTER_PX = 16;
 const AGE_LABEL_MAX_GUTTER_PX = 100;
@@ -33,9 +32,10 @@ export function ageLabelGutterWidth(
 
   let widest = 0;
   for (const label of labels) {
-    const cached = Number(label.dataset.ageLabelWidth);
-    if (!Number.isFinite(cached)) continue;
-    widest = Math.max(widest, cached);
+    widest = Math.max(
+      widest,
+      measureAgeLabelTextWidth(label.dataset.ageLabel ?? ""),
+    );
   }
 
   return Math.ceil(
@@ -50,7 +50,7 @@ export function ageLabelGutterWidth(
   );
 }
 
-export function measureAgeLabelTextWidth(text: string): number {
+function measureAgeLabelTextWidth(text: string): number {
   const ctx = getAgeLabelMeasureContext();
   if (!ctx) return text.length * 6;
   ctx.font = "11px sans-serif";
@@ -119,88 +119,6 @@ export function rowRasterGeometry(
 export function hasRealOrders(book: TokenBook<string>): boolean {
   // yesToUsd always includes the synthetic mint level.
   return book.usdToYes.size > 0 || book.yesToUsd.size > 1;
-}
-
-export function indexRawMarketsById(
-  rawMarkets: readonly unknown[],
-): Map<string, unknown> {
-  const indexed = new Map<string, unknown>();
-  for (const rawMarket of rawMarkets) {
-    const record = asRecord(rawMarket);
-    if (record?.id !== undefined)
-      indexed.set(String(record.id), rawMarket);
-  }
-  return indexed;
-}
-
-export function resolutionOrder(
-  event: Event,
-  rawMarkets: readonly unknown[],
-): Map<string, number> {
-  const rawById = new Map<string, unknown>();
-  for (const rawMarket of rawMarkets) {
-    const record = asRecord(rawMarket);
-    if (typeof record?.id === "string")
-      rawById.set(record.id, rawMarket);
-  }
-
-  const sorted = event.markets
-    .map((market, originalIndex) => ({
-      market,
-      originalIndex,
-      timestamp: resolutionTimestamp(
-        rawById.get(market.id),
-        market,
-      ),
-    }))
-    .sort((a, b) => {
-      const aKnown = Number.isFinite(a.timestamp);
-      const bKnown = Number.isFinite(b.timestamp);
-      if (aKnown && bKnown)
-        return (
-          a.timestamp - b.timestamp ||
-          a.originalIndex - b.originalIndex
-        );
-      if (aKnown !== bKnown) return aKnown ? -1 : 1;
-      return a.originalIndex - b.originalIndex;
-    });
-
-  const order = new Map<string, number>();
-  for (const [index, { market }] of sorted.entries()) {
-    const tokenId = market.outcomes.yes.tokenId;
-    if (tokenId) order.set(tokenId, index);
-  }
-  return order;
-}
-
-export function resolutionTimestamp(
-  ...sources: readonly unknown[]
-): number {
-  for (const source of sources) {
-    const record = asRecord(source);
-    if (!record) continue;
-    const state = asRecord(record.state);
-    for (const candidate of [
-      state?.endDate,
-      state?.end_date,
-      record.endDate,
-      record.endDateIso,
-      record.end_date,
-      record.end_date_iso,
-    ]) {
-      if (candidate instanceof Date) return candidate.getTime();
-      if (
-        typeof candidate === "number" &&
-        Number.isFinite(candidate)
-      )
-        return candidate;
-      if (typeof candidate === "string") {
-        const parsed = Date.parse(candidate);
-        if (Number.isFinite(parsed)) return parsed;
-      }
-    }
-  }
-  return Infinity;
 }
 
 export function normalizedWheelDelta(event: WheelEvent): number {

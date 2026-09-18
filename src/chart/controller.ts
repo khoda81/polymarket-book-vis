@@ -132,10 +132,6 @@ export class ChartController {
       plotter: this.plotter,
       activeTokens: this.activeTokens,
       getBook: (tokenId) => this.feed.getBook(tokenId),
-      getTitle: (marketId) =>
-        this.definition.controls.find(
-          (control) => control.marketId === String(marketId),
-        )?.title,
       getTokenName: (tokenId) =>
         this.definition.tokenNames.get(String(tokenId)),
       getOppositeTokenName: (tokenId) =>
@@ -171,7 +167,7 @@ export class ChartController {
     if (this.destroyed) throw new Error("ChartController is destroyed");
     this.started = true;
 
-    const { event, rawMarkets } = this.definition;
+    const { event } = this.definition;
     const tokenIds = this.definition.controls.map(
       (control) => control.tokenId,
     );
@@ -180,7 +176,7 @@ export class ChartController {
       if (!hiddenMarketIds.has(control.marketId))
         this.activeTokens.add(control.tokenId);
 
-    this.ageView.configureMarkets(event, rawMarkets);
+    this.ageView.configureMarkets(this.definition.controls);
 
     // Recorder registration/metadata is optional and must never gate the live
     // websocket.

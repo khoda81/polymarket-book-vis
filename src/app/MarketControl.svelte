@@ -11,6 +11,9 @@
 <label
   data-token-id={control.tokenId}
   data-market-id={control.marketId}
+  data-market-order={control.order}
+  data-age-label={control.ageLabel}
+  data-age-suppress-market-identity={control.suppressAgeIdentity}
   title={control.title}
 >
   <input
