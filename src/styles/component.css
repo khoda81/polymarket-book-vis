@@ -167,19 +167,42 @@
     white-space: nowrap;
 }
 
-.cpv-recording-age {
-    flex: 0 0 44px;
-    width: 44px;
-    overflow: hidden;
+.cpv-market-times {
+    flex: 0 0 52px;
+    width: 52px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    line-height: 1.05;
     text-align: right;
     font-size: 9px;
     font-variant-numeric: tabular-nums;
     color: var(--color-text-secondary, #666);
-    opacity: 0.7;
 }
 
-.cpv-recording-age[hidden] {
+.cpv-market-times[hidden],
+.cpv-recording-age[hidden],
+.cpv-resolution-countdown[hidden],
+.cpv-hidden-markets .cpv-market-times {
     display: none;
+}
+
+.cpv-recording-age,
+.cpv-resolution-countdown {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: clip;
+    white-space: nowrap;
+}
+
+.cpv-recording-age {
+    opacity: 0.62;
+}
+
+.cpv-resolution-countdown {
+    opacity: 0.9;
 }
 
 .cpv-hidden-markets {
