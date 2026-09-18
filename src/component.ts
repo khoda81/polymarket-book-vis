@@ -194,6 +194,7 @@ export class PolymarketCPV {
           <span class="cpv-event-description-preview" data-ref="descriptionPreview">
             Description
           </span>
+          <span class="cpv-event-description-label">Description</span>
         </summary>
         <div class="cpv-event-description-body" data-ref="description"></div>
       </details>

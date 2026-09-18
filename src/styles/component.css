@@ -120,6 +120,18 @@
     white-space: nowrap;
 }
 
+.cpv-event-description-label {
+    display: none;
+}
+
+.cpv-event-description[open] .cpv-event-description-preview {
+    display: none;
+}
+
+.cpv-event-description[open] .cpv-event-description-label {
+    display: inline;
+}
+
 .cpv-event-description-body {
     max-width: 90ch;
     margin-top: 7px;
