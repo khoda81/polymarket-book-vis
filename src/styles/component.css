@@ -53,7 +53,6 @@
     color: var(--color-text-secondary, #666);
 }
 
-
 /* ── Controls ────────────────────────────────────────────────────────────── */
 
 .cpv-controls {
@@ -180,11 +179,6 @@
 
 .cpv-hidden-markets[hidden] {
     display: none;
-}
-
-.cpv-hidden-markets::before {
-    content: "Hidden:";
-    margin-right: 2px;
 }
 
 .cpv-hidden-markets label {

@@ -3,23 +3,20 @@ import { fmtRelativeTime } from "@/lib/math";
 import { bookHoverAtPrice, type BookHoverSnapshot } from "@/lib/bookHover";
 import {
   DEFAULT_VOLUME_PER_CSS_PIXEL,
-  pressureInkProfile,
+  pressureInkThicknessCss,
 } from "@/lib/pressureInk";
 import type { TokenBook } from "@/lib/orderBook";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
+  signedVolumeSegments,
 } from "@/lib/signedVolume";
 import {
   StaleSignedVolume,
   type PressureObservationRange,
   type StaleSignedVolumeSegment,
 } from "@/lib/staleSignedVolume";
-import {
-  sharedWebGLPressureRenderer,
-  type WebGLPressureRow,
-} from "@/lib/webglPressure";
 import type { Event } from "@polymarket/client";
 
 const AGE_LABEL_MIN_GUTTER_PX = 44;
@@ -110,9 +107,9 @@ export function subscribeAgeStripTuning(
 /**
  * Age-mode projection of the live order books.
  *
- * The WebGL path renders the authoritative live book sharply and keeps time in
- * a separate diffusing resin texture. CPU sample-and-hold segments are retained
- * as rebuild/hydration history and as the reliable Canvas2D fallback.
+ * Performance benchmark path: render the authoritative live book directly into
+ * the visible Canvas2D surface. There is no WebGL texture construction, upload,
+ * offscreen presentation, canvas copy, or historical rendering in this branch.
  */
 export class AgeStripView {
   private readonly host: AgeStripHost;
@@ -121,7 +118,6 @@ export class AgeStripView {
   private readonly markets = new Map<string, MarketRuntimeState>();
   private readonly toggleHomeParent: HTMLElement | null;
   private readonly toggleHomeNextSibling: ChildNode | null;
-  private readonly gpuKey = {};
   private readonly dirtyTokens = new Set<string>();
 
   private diffusionTimer: number | undefined;
@@ -159,7 +155,6 @@ export class AgeStripView {
 
   reset(): void {
     this.cancelDiffusionTimer();
-    sharedWebGLPressureRenderer.release(this.gpuKey);
     this.dirtyTokens.clear();
     this.markets.clear();
     this.hiddenTray.replaceChildren();
@@ -173,7 +168,6 @@ export class AgeStripView {
     states: Readonly<Record<string, RecordedAgeState>>,
     recordingSinceMsByToken: Readonly<Record<string, number>> = {},
   ): void {
-    sharedWebGLPressureRenderer.release(this.gpuKey);
     this.dirtyTokens.clear();
     const nowMs = performance.now();
 
@@ -322,67 +316,25 @@ export class AgeStripView {
       canvasHeight: vp.t + vp.height + this.host.plotter.padding.b,
     };
 
-    const nowMs = performance.now();
     const colorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
-    const rows: WebGLPressureRow[] = activeControls.map((label, index) => {
-      const tokenId = label.dataset.tokenId ?? `missing-row-${index}`;
-      return {
-        tokenId,
-        segments: [],
-      };
-    });
+    for (const [index, label] of activeControls.entries()) {
+      const tokenId = label.dataset.tokenId;
+      if (!tokenId) continue;
+      const book = this.host.getBook(tokenId);
+      if (!book) continue;
 
-    const gpuCanvas = sharedWebGLPressureRenderer.render({
-      key: this.gpuKey,
-      rows,
-      dirtyTokens: this.dirtyTokens,
-      getBook: this.host.getBook,
-      widthCss: vp.width,
-      heightCss: vp.height,
-      dpr: window.devicePixelRatio || 1,
-      nowMs,
-      ageScaleSeconds: tuning.ageScaleSeconds,
-      volumePerCssPixel: tuning.volumePerCssPixel,
-      colorScale,
-      requestRedraw: this.host.requestDraw,
-    });
-
-    if (gpuCanvas) {
-      const { ctx } = frame;
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(vp.l, vp.t, vp.width, vp.height);
-      ctx.clip();
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(gpuCanvas, vp.l, vp.t, vp.width, vp.height);
-      ctx.restore();
-      drawAgeAxes(frame);
-      this.dirtyTokens.clear();
-      return;
-    }
-
-    // Reliable reference/fallback path: reconstruct the legacy vertical
-    // sample-and-hold profiles directly in Canvas2D.
-    let hasDiffusingPressure = false;
-    for (const [index, row] of rows.entries()) {
-      if (row.segments.length === 0) continue;
       const y = rowCount - 1 - index;
-      drawPressureStrip(
+      drawLivePressureStrip(
         frame,
         y,
-        row.segments,
+        book,
         colorScale,
         tuning.volumePerCssPixel,
-        tuning.ageScaleSeconds,
-      );
-      hasDiffusingPressure ||= row.segments.some(
-        (segment) => segment.volume !== 0 && segment.ageMs !== Infinity,
       );
     }
+
     drawAgeAxes(frame);
     this.dirtyTokens.clear();
-    if (hasDiffusingPressure)
-      this.scheduleDiffusionTimer(gpuDiffusionDelayMs(tuning.ageScaleSeconds));
   }
 
   prepareVolumeView(): void {
@@ -429,7 +381,6 @@ export class AgeStripView {
 
   destroy(): void {
     this.cancelDiffusionTimer();
-    sharedWebGLPressureRenderer.release(this.gpuKey);
     redrawCallbacks.delete(this.host.requestDraw);
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.host.canvas.removeEventListener("pointermove", this.handlePointerMove);
@@ -802,25 +753,26 @@ function drawAgeAxes(frame: any): void {
   ctx.clip();
 }
 
-function drawPressureStrip(
+function drawLivePressureStrip(
   frame: any,
   y: number,
-  segments: readonly StaleSignedVolumeSegment[],
+  book: TokenBook<string>,
   colorScale: typeof DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   volumePerCssPixel: number,
-  timeScaleSeconds: number,
 ): void {
   const { ctx, viewport: vp } = frame;
   const dpr = window.devicePixelRatio || 1;
   const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+  const reserveShares = volumePerCssPixel * geometry.heightCss;
 
   ctx.save();
   ctx.beginPath();
   ctx.rect(vp.l, geometry.topCss, vp.width, geometry.heightCss);
   ctx.clip();
 
-  for (const segment of segments) {
-    if (segment.volume === 0 || segment.ageMs === Infinity) continue;
+  for (const segment of signedVolumeSegments(book)) {
+    if (segment.volume === 0 || Number.isNaN(segment.volume)) continue;
+
     const x0 = snapToDevicePixel(
       vp.l + clamp(segment.lo, 0, 1) * vp.width,
       dpr,
@@ -831,27 +783,20 @@ function drawPressureStrip(
     );
     if (!(x1 > x0)) continue;
 
-    const profile = pressureInkProfile(
+    const thickness = pressureInkThicknessCss(
       segment.volume,
-      segment.ageMs,
-      volumePerCssPixel,
-      timeScaleSeconds,
-      dpr,
-      geometry.deviceHeight,
+      reserveShares,
+      geometry.heightCss,
     );
-    ctx.fillStyle = signedVolumeColor(segment.volume, colorScale);
+    if (!(thickness > 0)) continue;
 
-    for (let py = 0; py < profile.length; py++) {
-      const alpha = profile[py]!;
-      if (!(alpha > 0)) continue;
-      ctx.globalAlpha = alpha;
-      ctx.fillRect(
-        x0,
-        geometry.topCss + py / dpr,
-        x1 - x0,
-        1 / dpr,
-      );
-    }
+    ctx.fillStyle = signedVolumeColor(segment.volume, colorScale);
+    ctx.fillRect(
+      x0,
+      geometry.centerCss - thickness / 2,
+      x1 - x0,
+      thickness,
+    );
   }
 
   ctx.restore();
