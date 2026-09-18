@@ -294,13 +294,16 @@ export class PolymarketCPV {
     event = { ...event, markets: orderMarkets(event, rawMarkets) };
     this.negRiskPalette = buildNegRiskPalette(event);
 
-    // Ordinary single-market events get a deterministic binary pair from the
-    // exact hue already used by their market identity dot / volume view.
-    if (!this.negRiskPalette && event.markets.length === 1) {
-      const market = event.markets[0];
-      const yesTokenId = market?.outcomes.yes.tokenId;
-      if (market && yesTokenId) {
-        const hue = marketHue(event.id, 0);
+    // Every ordinary constituent market is itself binary. Reuse the exact
+    // per-row identity hue already assigned by marketColor(), then give its
+    // opposite token the antipodal hue. This keeps age/volume/dot semantics
+    // consistent even when one event contains many independent binary markets.
+    if (!this.negRiskPalette) {
+      for (const [index, market] of event.markets.entries()) {
+        const yesTokenId = market.outcomes.yes.tokenId;
+        if (!yesTokenId) continue;
+
+        const hue = marketHue(event.id, index);
         this.ordinaryPressureScales.set(yesTokenId, {
           luminance: MARKET_COLOR_LUMINANCE,
           chroma: MARKET_COLOR_CHROMA,
