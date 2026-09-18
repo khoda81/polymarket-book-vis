@@ -19,19 +19,23 @@ function fakeBundle(): EventBundle {
       {
         id: "m1",
         question: "First?",
-        state: { active: true },
+        conditionId: null,
+        state: { active: true, closed: false },
+        resolution: { umaResolutionStatus: null },
         outcomes: {
-          yes: { tokenId: "yes-1" },
-          no: { tokenId: "no-1" },
+          yes: { label: "Yes", tokenId: "yes-1", price: "0.5" },
+          no: { label: "No", tokenId: "no-1", price: "0.5" },
         },
       },
       {
         id: "m2",
         question: "Inactive?",
-        state: { active: false },
+        conditionId: null,
+        state: { active: false, closed: true },
+        resolution: { umaResolutionStatus: null },
         outcomes: {
-          yes: { tokenId: "yes-2" },
-          no: { tokenId: "no-2" },
+          yes: { label: "Yes", tokenId: "yes-2", price: "1" },
+          no: { label: "No", tokenId: "no-2", price: "0" },
         },
       },
     ],
@@ -52,17 +56,17 @@ function fakeBundle(): EventBundle {
   };
 }
 
-test("chart definition contains only renderable active primary-token rows", () => {
+test("chart definition keeps resolved markets renderable", () => {
   const definition = buildChartDefinition(fakeBundle());
 
-  expect(definition.controls).toHaveLength(1);
+  expect(definition.controls).toHaveLength(2);
   expect(definition.controls[0]).toMatchObject({
     marketId: "m1",
     tokenId: "yes-1",
     oppositeTokenId: "no-1",
     conditionId: null,
-    primaryOutcome: "",
-    oppositeOutcome: "",
+    primaryOutcome: "Yes",
+    oppositeOutcome: "No",
     lifecycle: { kind: "live" },
     title: "First label",
     iconUrl: "https://example.com/m1.png",

@@ -16,6 +16,7 @@
     eventSlug,
     type PinState,
   } from "./model";
+  import type { EventMarketStatus } from "../lib/marketLifecycle";
   import {
     createPublicClient,
     type Event,
@@ -47,6 +48,7 @@
 
   let viewMode: ViewMode = "age";
   let runtime: RuntimeState = { kind: "metadata-loading" };
+  let marketStatus: EventMarketStatus = { kind: "trading" };
 
   $: slug = eventSlug(event);
   $: pinned = pin.kind === "pinned";
@@ -179,6 +181,7 @@
       {slug}
       iconUrl={presentation?.iconUrl ?? null}
       {connection}
+      {marketStatus}
     />
 
     {#if presentation?.description}
@@ -197,6 +200,7 @@
         onready={chartReady}
         onfailure={fail}
         onconnection={chartConnectionChanged}
+        onmarketstatus={(status) => (marketStatus = status)}
       />
     {/if}
   </div>

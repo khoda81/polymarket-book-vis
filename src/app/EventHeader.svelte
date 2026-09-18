@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ConnectionStatus } from "../lib/chartState";
+  import type { EventMarketStatus } from "../lib/marketLifecycle";
   import type { Event } from "@polymarket/client";
   import type { EventSlug } from "./model";
 
@@ -7,6 +8,7 @@
   export let slug: EventSlug | null;
   export let iconUrl: string | null;
   export let connection: ConnectionStatus;
+  export let marketStatus: EventMarketStatus;
 
   let iconFailed = false;
 
@@ -18,17 +20,25 @@
   }
 
   $: statusClass =
-    connection === "live"
-      ? "cpv-dot--live"
-      : connection === "connecting"
+    marketStatus.kind === "resolved"
+      ? "cpv-dot--resolved"
+      : marketStatus.kind === "awaiting-resolution"
         ? "cpv-dot--conn"
-        : "cpv-dot--err";
+        : connection === "live"
+          ? "cpv-dot--live"
+          : connection === "connecting"
+            ? "cpv-dot--conn"
+            : "cpv-dot--err";
   $: statusText =
-    connection === "live"
-      ? "live"
-      : connection === "connecting"
-        ? "connecting…"
-        : "disconnected";
+    marketStatus.kind === "resolved"
+      ? "resolved"
+      : marketStatus.kind === "awaiting-resolution"
+        ? "awaiting resolution"
+        : connection === "live"
+          ? "live"
+          : connection === "connecting"
+            ? "connecting…"
+            : "disconnected";
 </script>
 
 <div class="cpv-header">
