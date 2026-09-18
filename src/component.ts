@@ -10,6 +10,11 @@ import {
   type NegRiskPalette,
 } from "@/lib/negRiskColors";
 import {
+  buildThresholdPalette,
+  semanticYesNeutralNoScale,
+  type ThresholdPalette,
+} from "@/lib/thresholdColors";
+import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
   type SignedVolumeColorScale,
@@ -101,7 +106,8 @@ export class PolymarketCPV {
   private oppositeTokenNames: Record<TokenId, string> = {};
   private event: Event | undefined;
   private negRiskPalette: NegRiskPalette | null = null;
-  private ordinaryPressureScales = new Map<TokenId, SignedVolumeColorScale>();
+  private thresholdPalette: ThresholdPalette | null = null;
+  private semanticPressureScales = new Map<TokenId, SignedVolumeColorScale>();
   private books: Record<TokenId, TokenBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private volScale = 4.5;
@@ -225,7 +231,8 @@ export class PolymarketCPV {
     this.tokenNames = {};
     this.oppositeTokenNames = {};
     this.negRiskPalette = null;
-    this.ordinaryPressureScales.clear();
+    this.thresholdPalette = null;
+    this.semanticPressureScales.clear();
     this.activeTokens.clear();
     this.ageView.reset();
 
@@ -271,26 +278,6 @@ export class PolymarketCPV {
 
     const rawMarkets: unknown[] = rawEvent.markets ?? [];
 
-    console.debug(
-      "gamma market grouping metadata",
-      rawMarkets.map((market: any) => ({
-        id: market.id,
-        question: market.question,
-        groupItemTitle: market.groupItemTitle,
-        marketGroup: market.marketGroup,
-        groupItemThreshold: market.groupItemThreshold,
-        groupItemRange: market.groupItemRange,
-        xAxisValue: market.xAxisValue,
-        yAxisValue: market.yAxisValue,
-        lowerBound: market.lowerBound,
-        upperBound: market.upperBound,
-        lowerBoundDate: market.lowerBoundDate,
-        upperBoundDate: market.upperBoundDate,
-        marketType: market.marketType,
-        formatType: market.formatType,
-      })),
-    );
-
     for (const rawMarket of rawMarkets as any[]) {
       if (rawMarket.groupItemTitle)
         this.titles[rawMarket.id] = rawMarket.groupItemTitle;
@@ -313,23 +300,26 @@ export class PolymarketCPV {
 
     event = { ...event, markets: orderMarkets(event, rawMarkets) };
     this.negRiskPalette = buildNegRiskPalette(event);
+    this.thresholdPalette = this.negRiskPalette
+      ? null
+      : buildThresholdPalette(event, rawMarkets);
 
-    // Only a genuinely standalone binary market gets the arbitrary identity
-    // hue pair. Multi-market events keep the neutral pressure palette unless we
-    // can construct a shared semantic outcome geometry (neg-risk now; threshold
-    // families next). Do not imply relationships we cannot justify.
-    if (!this.negRiskPalette && event.markets.length === 1) {
+    if (this.thresholdPalette) {
+      for (const outcome of this.thresholdPalette.outcomes)
+        this.semanticPressureScales.set(
+          outcome.yesTokenId as TokenId,
+          outcome.scale,
+        );
+    } else if (!this.negRiskPalette && event.markets.length === 1) {
+      // A standalone binary has no shared latent geometry to infer. Keep its
+      // existing stable market identity hue for YES and make NO neutral.
       const market = event.markets[0];
       const yesTokenId = market?.outcomes.yes.tokenId;
-      if (market && yesTokenId) {
-        const hue = marketHue(event.id, 0);
-        this.ordinaryPressureScales.set(yesTokenId, {
-          luminance: MARKET_COLOR_LUMINANCE,
-          chroma: MARKET_COLOR_CHROMA,
-          positiveHue: hue,
-          negativeHue: (hue + 180) % 360,
-        });
-      }
+      if (market && yesTokenId)
+        this.semanticPressureScales.set(
+          yesTokenId,
+          semanticYesNeutralNoScale(marketHue(event.id, 0)),
+        );
     }
 
     const tokenIds = event.markets
@@ -404,9 +394,10 @@ export class PolymarketCPV {
 
       const dot = document.createElement("span");
       const colorScale = this.pressureColorScale(yesToken);
-      const color = this.negRiskPalette
-        ? signedVolumeColor(1, colorScale)
-        : marketColor(event.id, index);
+      const color =
+        this.negRiskPalette || this.semanticPressureScales.has(yesToken)
+          ? signedVolumeColor(1, colorScale)
+          : marketColor(event.id, index);
       dot.style.cssText =
         `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
 
@@ -418,7 +409,7 @@ export class PolymarketCPV {
   private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
     return (
       this.negRiskPalette?.byYesTokenId.get(String(tokenId))?.scale ??
-      this.ordinaryPressureScales.get(tokenId) ??
+      this.semanticPressureScales.get(tokenId) ??
       DEFAULT_SIGNED_VOLUME_COLOR_SCALE
     );
   }
@@ -512,7 +503,7 @@ export class PolymarketCPV {
       const book = this.books[tokenId] ?? emptyTokenBook();
       const semanticScale =
         this.negRiskPalette?.byYesTokenId.get(String(tokenId))?.scale ??
-        this.ordinaryPressureScales.get(tokenId);
+        this.semanticPressureScales.get(tokenId);
       const yesColor = semanticScale
         ? signedVolumeColor(1, semanticScale)
         : marketColor(this.event!.id, index);
