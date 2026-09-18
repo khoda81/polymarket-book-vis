@@ -61,3 +61,17 @@ describe("signedVolumeColor", () => {
     expect(signedVolumeColor(0)).toBe("transparent");
   });
 });
+
+
+test("signedVolumeColor supports side-specific chroma", () => {
+  const scale = {
+    luminance: 0.7,
+    chroma: 0.15,
+    positiveHue: 30,
+    negativeHue: 210,
+    positiveChroma: 0.18,
+    negativeChroma: 0.04,
+  };
+  expect(signedVolumeColor(1, scale)).toBe("oklch(0.7 0.18 30)");
+  expect(signedVolumeColor(-1, scale)).toBe("oklch(0.7 0.04 210)");
+});
