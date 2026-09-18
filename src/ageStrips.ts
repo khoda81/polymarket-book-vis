@@ -7,7 +7,6 @@ import {
 import type { TokenBook } from "@/lib/orderBook";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import {
-  DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
   signedVolumeSegments,
   type SignedVolumeColorScale,
@@ -20,14 +19,10 @@ const AGE_LABEL_HORIZONTAL_INSET_PX = 8;
 const AGE_TIME_META_WIDTH_PX = 52;
 const AGE_LABEL_GAP_PX = 6;
 const VOLUME_LEFT_PADDING_PX = 60;
-export const AGE_ROW_BAND_PX = 36;
-
-const MIN_VOLUME_PER_CSS_PIXEL = 1;
-const MAX_VOLUME_PER_CSS_PIXEL = 1e9;
+export const AGE_ROW_BAND_PX = 28;
 
 const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
-const HIDDEN_MARKETS_STORAGE_KEY =
-  "polymarket-book-vis.age-strip-hidden-markets.v1";
+const HIDDEN_MARKETS_STORAGE_KEY = "polymarket-book-vis.age-strip-hidden-markets.v1";
 
 export interface AgeStripTuning {
   /** Share scale parameter, expressed as shares per CSS pixel of row height. */
@@ -534,8 +529,8 @@ export class AgeStripView {
       `${anchorX > window.innerWidth / 2
         ? "translateX(calc(-100% - 12px))"
         : "translateX(12px)"} ${rowCenterY > window.innerHeight / 2
-        ? "translateY(calc(-100% - 12px))"
-        : "translateY(12px)"}`;
+          ? "translateY(calc(-100% - 12px))"
+          : "translateY(12px)"}`;
   }
 
   private readonly hideTooltip = () => {
@@ -549,11 +544,7 @@ export class AgeStripView {
     event.stopImmediatePropagation();
 
     const factor = Math.exp(normalizedWheelDelta(event) * 0.002);
-    tuning.volumePerCssPixel = clamp(
-      tuning.volumePerCssPixel * factor,
-      MIN_VOLUME_PER_CSS_PIXEL,
-      MAX_VOLUME_PER_CSS_PIXEL,
-    );
+    tuning.volumePerCssPixel *= factor;
 
     schedulePersistTuning();
     notifyTuningListeners();
@@ -838,8 +829,8 @@ function tooltipSignature(
     hover.effectivePrice === null
       ? ""
       : formatProbability(
-          isBid ? hover.effectivePrice : 1 - hover.effectivePrice,
-        );
+        isBid ? hover.effectivePrice : 1 - hover.effectivePrice,
+      );
   return [
     tokenName,
     hover.side,
@@ -1127,11 +1118,7 @@ function loadTuning(): AgeStripTuning {
     return {
       volumePerCssPixel:
         typeof storedVolumeScale === "number"
-          ? clamp(
-            storedVolumeScale,
-            MIN_VOLUME_PER_CSS_PIXEL,
-            MAX_VOLUME_PER_CSS_PIXEL,
-          )
+          ? storedVolumeScale
           : fallback.volumePerCssPixel,
     };
   } catch {
