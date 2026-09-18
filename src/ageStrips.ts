@@ -39,17 +39,10 @@ interface StoredAgeStripTuning {
   volumeSoftLimit?: number;
 }
 
-interface MarketTimeElements {
-  readonly container: HTMLElement;
-  readonly age: HTMLElement;
-  readonly resolution: HTMLElement;
-}
-
 interface MarketRuntimeState {
   visibilityInitialized: boolean;
   recordingSinceMs: number | null;
   resolutionMs: number | null;
-  timeElements?: MarketTimeElements;
 }
 
 interface HoverRow {
@@ -120,6 +113,7 @@ export class AgeStripView {
   private readonly host: AgeStripHost;
   private readonly hiddenTray: HTMLDivElement;
   private readonly overlay: HTMLDivElement;
+  private readonly clockCanvas: HTMLCanvasElement;
   private readonly intersectionObserver: IntersectionObserver;
   private readonly markets = new Map<string, MarketRuntimeState>();
   private readonly toggleHomeParent: HTMLElement | null;
@@ -129,9 +123,10 @@ export class AgeStripView {
   private hoverPointer: HoverPointer | null = null;
   private timeLabelTimer: number | undefined;
   private timeLabelRaf: number | undefined;
-  private timeLabelsDirty = true;
   private tooltipSignature = "";
   private viewportVisible = true;
+  private clockRows: readonly string[] = [];
+  private clockGeometry: HoverGeometry | null = null;
 
   constructor(host: AgeStripHost) {
     this.host = host;
@@ -142,6 +137,11 @@ export class AgeStripView {
     this.hiddenTray.className = "cpv-hidden-markets";
     this.hiddenTray.hidden = true;
     host.canvasWrap.insertAdjacentElement("afterend", this.hiddenTray);
+
+    this.clockCanvas = document.createElement("canvas");
+    this.clockCanvas.className = "cpv-clock-canvas";
+    this.clockCanvas.setAttribute("aria-hidden", "true");
+    host.canvasWrap.appendChild(this.clockCanvas);
 
     // The tooltip is a portal sibling, not a canvas child. Keeping it outside
     // the clipped canvas wrapper makes overflow impossible while preserving the
@@ -162,12 +162,9 @@ export class AgeStripView {
           return;
         }
 
-        // Canvas rendering has its own lifecycle. Visibility controls only the
-        // clocks, whose values are presentation-only and can catch up directly.
-        this.timeLabelsDirty = false;
-        this.refreshVisibleTimeLabels(
-          this.collectControls().filter((label) => this.isActive(label)),
-        );
+        // Pressure rendering has its own lifecycle. Visibility controls only
+        // this independent clock layer.
+        this.renderClockLayer();
       },
       // Start work just before the card enters the viewport so scrolling never
       // exposes a stale/blank canvas.
@@ -190,9 +187,11 @@ export class AgeStripView {
     this.markets.clear();
     this.hiddenTray.replaceChildren();
     this.hoverGeometry = null;
+    this.clockGeometry = null;
+    this.clockRows = [];
     this.hoverPointer = null;
-    this.timeLabelsDirty = true;
     this.tooltipSignature = "";
+    this.clearClockLayer();
     this.hideTooltip();
     this.layoutMode = null;
   }
@@ -213,7 +212,7 @@ export class AgeStripView {
       state.recordingSinceMs =
         Number.isFinite(since) && since >= 0 ? since : null;
     }
-    this.timeLabelsDirty = true;
+    if (this.viewportVisible) this.renderClockLayer();
   }
 
   configureMarkets(event: Event, rawMarkets: readonly unknown[]): void {
@@ -268,27 +267,6 @@ export class AgeStripView {
       label.appendChild(textSpan);
       label.dataset.ageLabelWidth = String(measureIntrinsicTextWidth(textSpan));
 
-      const times = document.createElement("span");
-      times.className = "cpv-market-times";
-      times.hidden = true;
-
-      const recordingAge = document.createElement("span");
-      recordingAge.className = "cpv-recording-age";
-      recordingAge.hidden = true;
-
-      const resolutionCountdown = document.createElement("span");
-      resolutionCountdown.className = "cpv-resolution-countdown";
-      resolutionCountdown.hidden = true;
-
-      times.append(recordingAge, resolutionCountdown);
-      label.appendChild(times);
-      state.timeElements = {
-        container: times,
-        age: recordingAge,
-        resolution: resolutionCountdown,
-      };
-      recordingAge.title = "Recorder history";
-      resolutionCountdown.title = "Time until scheduled resolution";
       label.title = text;
 
       const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -307,10 +285,8 @@ export class AgeStripView {
           userHiddenMarketIds.delete(market.id);
         else userHiddenMarketIds.add(market.id);
         persistStringSet(HIDDEN_MARKETS_STORAGE_KEY, userHiddenMarketIds);
-        this.timeLabelsDirty = true;
       });
     }
-    this.timeLabelsDirty = true;
   }
 
   onBookUpdate(tokenId: string): void {
@@ -339,17 +315,15 @@ export class AgeStripView {
     if (!checkbox) return;
     checkbox.checked = false;
     this.host.activeTokens.delete(tokenId);
-    this.timeLabelsDirty = true;
   }
 
   draw(): void {
+    this.clockCanvas.style.display = "block";
     const controls = this.collectControls();
     this.syncControlPlacement(controls);
     const activeControls = controls.filter((label) => this.isActive(label));
     const rowCount = Math.max(1, activeControls.length);
 
-    if (this.timeLabelsDirty && this.viewportVisible)
-      this.refreshVisibleTimeLabels(activeControls);
     this.installAgeLayout(rowCount, activeControls);
 
     const frame = this.host.plotter.beginFrame(this.host.getTheme(), {
@@ -367,6 +341,10 @@ export class AgeStripView {
       canvasWidth: vp.l + vp.width + this.host.plotter.padding.r,
       canvasHeight: vp.t + vp.height + this.host.plotter.padding.b,
     };
+
+    this.clockGeometry = this.hoverGeometry;
+    this.clockRows = this.hoverGeometry.rows.map((row) => row.tokenId);
+    if (this.viewportVisible) this.renderClockLayer();
 
     const colorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
     for (const [index, label] of activeControls.entries()) {
@@ -392,8 +370,11 @@ export class AgeStripView {
   prepareVolumeView(): void {
     this.cancelTimeLabelRefresh();
     this.hoverGeometry = null;
+    this.clockGeometry = null;
+    this.clockRows = [];
+    this.clearClockLayer();
+    this.clockCanvas.style.display = "none";
     this.hoverPointer = null;
-    this.timeLabelsDirty = true;
     this.hideTooltip();
     if (this.layoutMode === "volume") return;
 
@@ -442,6 +423,7 @@ export class AgeStripView {
     this.host.canvas.removeEventListener("pointerleave", this.handlePointerLeave);
     this.hideTooltip();
     this.overlay.remove();
+    this.clockCanvas.remove();
     this.hiddenTray.remove();
   }
 
