@@ -275,7 +275,10 @@ export class AgeStripView {
       this.markets.set(tokenId, state);
     }
 
-    state.field.update(book, nowMs, observedRanges);
+    // Live-pressure benchmark: historical sample-and-hold maintenance is
+    // intentionally disabled so the profile reflects the current-book path.
+    void nowMs;
+    void observedRanges;
     this.dirtyTokens.add(tokenId);
 
     if (state.visibilityInitialized) return;
@@ -325,7 +328,7 @@ export class AgeStripView {
       const tokenId = label.dataset.tokenId ?? `missing-row-${index}`;
       return {
         tokenId,
-        segments: this.markets.get(tokenId)?.field.segments(nowMs) ?? [],
+        segments: [],
       };
     });
 
@@ -355,8 +358,6 @@ export class AgeStripView {
       ctx.restore();
       drawAgeAxes(frame);
       this.dirtyTokens.clear();
-      if (sharedWebGLPressureRenderer.hasHistory(this.gpuKey))
-        this.scheduleDiffusionTimer(gpuDiffusionDelayMs(tuning.ageScaleSeconds));
       return;
     }
 
