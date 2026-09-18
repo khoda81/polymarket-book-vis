@@ -146,8 +146,19 @@ export function buildThresholdPalette(
   };
 }
 
-export function semanticBinaryScale(hue: number): SignedVolumeColorScale {
-  return semanticPairScale(hue, 1, normalizeHue(hue + 180), 1);
+export function semanticYesNeutralNoScale(
+  hue: number,
+): SignedVolumeColorScale {
+  return {
+    luminance: SEMANTIC_LUMINANCE,
+    chroma: SEMANTIC_CHROMA,
+    positiveLuminance: SEMANTIC_LUMINANCE,
+    negativeLuminance: SEMANTIC_LUMINANCE,
+    positiveHue: normalizeHue(hue),
+    negativeHue: 0,
+    positiveChroma: SEMANTIC_CHROMA,
+    negativeChroma: 0,
+  };
 }
 
 function semanticPairScale(

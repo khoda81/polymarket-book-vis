@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Event } from "@polymarket/client";
 import {
   buildThresholdPalette,
-  semanticBinaryScale,
+  semanticYesNeutralNoScale,
 } from "./thresholdColors";
 
 function thresholdEvent(prices: readonly number[]): Event {
@@ -185,12 +185,11 @@ describe("nested threshold color geometry", () => {
     ]);
   });
 
-  test("standalone binary scale colors both opposite tokens", () => {
-    const scale = semanticBinaryScale(123);
+  test("generic binary scale keeps YES semantic and NO neutral", () => {
+    const scale = semanticYesNeutralNoScale(123);
     expect(scale.positiveHue).toBe(123);
-    expect(scale.negativeHue).toBe(303);
     expect(scale.positiveChroma).toBe(0.16);
-    expect(scale.negativeChroma).toBe(0.16);
+    expect(scale.negativeChroma).toBe(0);
     expect(scale.negativeLuminance).toBe(0.72);
   });
 });

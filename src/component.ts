@@ -6,7 +6,7 @@ import {
 } from "@/lib/negRiskColors";
 import {
   buildThresholdPalette,
-  semanticBinaryScale,
+  semanticYesNeutralNoScale,
   type ThresholdPalette,
 } from "@/lib/thresholdColors";
 import {
@@ -308,16 +308,40 @@ export class PolymarketCPV {
           outcome.yesTokenId as TokenId,
           outcome.scale,
         );
-    } else if (!this.negRiskPalette && event.markets.length === 1) {
-      // A standalone binary has no shared latent geometry to infer. Keep its
-      // existing stable market identity hue for YES and make NO neutral.
-      const market = event.markets[0];
-      const yesTokenId = market?.outcomes.yes.tokenId;
-      if (market && yesTokenId)
+    } else if (!this.negRiskPalette) {
+      // Ordinary binary rows do not imply any relationship between their NO
+      // outcomes. Give YES its stable per-market semantic hue, but keep NO a
+      // neutral gray so large unrelated event groups do not become a wall of
+      // complementary magenta.
+      for (const [index, market] of event.markets.entries()) {
+        const yesTokenId = market.outcomes.yes.tokenId;
+        if (!yesTokenId) continue;
         this.semanticPressureScales.set(
           yesTokenId,
-          semanticBinaryScale(marketHue(event.id, 0)),
+          semanticYesNeutralNoScale(marketHue(event.id, index)),
         );
+      }
+
+      console.debug("[cpv palette fallback]", {
+        eventId: event.id,
+        slug: event.slug,
+        trading: event.trading,
+        markets: event.markets.map((market) => {
+          const raw = (rawMarkets as any[]).find(
+            (candidate) => String(candidate?.id) === String(market.id),
+          );
+          return {
+            id: market.id,
+            question: market.question,
+            groupItemTitle: raw?.groupItemTitle,
+            groupItemThreshold: raw?.groupItemThreshold,
+            groupItemRange: raw?.groupItemRange,
+            endDate: raw?.endDate ?? raw?.endDateIso ?? market.state.endDate,
+            yesPrice: market.outcomes.yes.price,
+            negRisk: market.state.negRisk,
+          };
+        }),
+      });
     }
 
     const tokenIds = event.markets
