@@ -56,6 +56,8 @@ export function relativeTimeDisplay(
   const clamped = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
   if (direction === "remaining" && clamped <= 0)
     return { text: "due", nextChangeMs: null };
+  if (direction === "elapsed" && clamped === 0)
+    return { text: "0s", nextChangeMs: 1 };
 
   const { unitSeconds, rangeCeiling } =
     clamped < 1
