@@ -41,6 +41,8 @@ export interface RecordedAgeHydration {
  * recorder. Failure is intentionally non-fatal: the UI can always fall back
  * to starting from the live websocket state.
  */
+const RECORDER_FETCH_TIMEOUT_MS = 1_500;
+
 export async function fetchRecordedAgeState(
   tokenIds: readonly string[],
 ): Promise<RecordedAgeHydration> {
@@ -56,8 +58,16 @@ export async function fetchRecordedAgeState(
   const params = new URLSearchParams();
   for (const tokenId of tokenIds) params.append("tokenId", tokenId);
 
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    RECORDER_FETCH_TIMEOUT_MS,
+  );
+
   try {
-    const response = await fetch(`/api/recorder/state?${params}`);
+    const response = await fetch(`/api/recorder/state?${params}`, {
+      signal: controller.signal,
+    });
     if (!response.ok) throw new Error(`recorder returned ${response.status}`);
     const body = (await response.json()) as RecorderStateResponse;
 
@@ -101,7 +111,8 @@ export async function fetchRecordedAgeState(
       recordingSinceMsByToken: perToken,
     };
   } catch (error) {
-    console.warn("Age recorder unavailable; starting age state locally", error);
+    if (!(error instanceof DOMException && error.name === "AbortError"))
+      console.warn("Age recorder unavailable; starting age state locally", error);
     return {
       states: {},
       connected: false,
@@ -109,5 +120,7 @@ export async function fetchRecordedAgeState(
       recordingSinceMs: null,
       recordingSinceMsByToken: {},
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
