@@ -1,16 +1,10 @@
 import { fetchRecorderCoverage } from "@/lib/ageRecorderClient";
 import type { ConnectionStatus, ViewMode } from "@/lib/chartState";
-import type { EventBundle } from "@/lib/eventBundle";
-import { marketColor, marketHue } from "@/lib/math";
 import {
-  buildNegRiskPalette,
-  type NegRiskPalette,
-} from "@/lib/negRiskColors";
-import {
-  buildThresholdPalette,
-  semanticYesNeutralNoScale,
-  type ThresholdPalette,
-} from "@/lib/thresholdColors";
+  pressureScaleForToken,
+  type ChartDefinition,
+} from "@/lib/chartDefinition";
+import { marketColor } from "@/lib/math";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
@@ -64,6 +58,12 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+export interface ChartSurfaceElements {
+  readonly canvas: HTMLCanvasElement;
+  readonly canvasWrap: HTMLElement;
+  readonly toggles: HTMLElement;
+}
+
 export interface ChartControllerOptions {
   readonly onConnectionStatus?: (status: ConnectionStatus) => void;
 }
@@ -71,9 +71,8 @@ export interface ChartControllerOptions {
 export class ChartController {
   readonly polyMarketClient: PublicClient;
 
-  private readonly container: HTMLElement;
+  private readonly surface: ChartSurfaceElements;
   private readonly onConnectionStatus: (status: ConnectionStatus) => void;
-  private readonly refs: Record<string, HTMLElement> = {};
   private readonly themeQuery: MediaQueryList;
   private readonly resizeObserver: ResizeObserver;
   private readonly activeTokens = new Set<TokenId>();
@@ -83,14 +82,8 @@ export class ChartController {
   private ageView!: AgeStripView;
   private raf: number | null = null;
   private pointer: { sx: number; sy: number } | null = null;
-  private titles: ReadonlyMap<string, string> = new Map();
-  private marketIcons: ReadonlyMap<string, string> = new Map();
-  private tokenNames: ReadonlyMap<string, string> = new Map();
-  private oppositeTokenNames: ReadonlyMap<string, string> = new Map();
+  private definition: ChartDefinition | null = null;
   private event: Event | undefined;
-  private negRiskPalette: NegRiskPalette | null = null;
-  private thresholdPalette: ThresholdPalette | null = null;
-  private semanticPressureScales = new Map<TokenId, SignedVolumeColorScale>();
   private books: Record<TokenId, TokenBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private volScale = 4.5;
@@ -99,30 +92,44 @@ export class ChartController {
   private destroyed = false;
 
   constructor(
-    container: HTMLElement,
+    surface: ChartSurfaceElements,
     polyMarketClient: PublicClient,
     options: ChartControllerOptions = {},
   ) {
     this.polyMarketClient = polyMarketClient;
-    this.container = container;
+    this.surface = surface;
     this.onConnectionStatus =
       options.onConnectionStatus ?? (() => undefined);
 
     this.themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
     this.theme = this.themeQuery.matches ? DARK_THEME : LIGHT_THEME;
 
-    this.buildDOM();
+    this.plotter = new OrderBookPlotter(surface.canvas);
+    this.plotter.onZoom = (delta) => {
+      if (this.viewMode !== "volume") return;
+      this.volScale += delta;
+      this.reqDraw();
+    };
+    this.plotter.onPointer = (pointer) => {
+      this.pointer = pointer;
+      if (this.viewMode === "volume") this.reqDraw();
+    };
+
     this.ageView = new AgeStripView({
-      canvas: this.refs.canvas as HTMLCanvasElement,
-      canvasWrap: this.refs.canvasWrap,
-      toggles: this.refs.toggles,
+      canvas: surface.canvas,
+      canvasWrap: surface.canvasWrap,
+      toggles: surface.toggles,
       plotter: this.plotter,
       activeTokens: this.activeTokens,
       getBook: (tokenId) => this.books[tokenId as TokenId],
-      getTitle: (marketId) => this.titles.get(String(marketId)),
-      getTokenName: (tokenId) => this.tokenNames.get(String(tokenId)),
+      getTitle: (marketId) =>
+        this.definition?.controls.find(
+          (control) => control.marketId === String(marketId),
+        )?.title,
+      getTokenName: (tokenId) =>
+        this.definition?.tokenNames.get(String(tokenId)),
       getOppositeTokenName: (tokenId) =>
-        this.oppositeTokenNames.get(String(tokenId)),
+        this.definition?.oppositeTokenNames.get(String(tokenId)),
       getPressureColorScale: (tokenId) =>
         this.pressureColorScale(tokenId as TokenId),
       getTheme: () => this.theme,
@@ -136,7 +143,7 @@ export class ChartController {
       this.plotter.resizeTo(entry.contentRect.width, entry.contentRect.height);
       this.reqDraw();
     });
-    this.resizeObserver.observe(this.refs.canvas);
+    this.resizeObserver.observe(surface.canvas);
     this.themeQuery.addEventListener("change", this.handleThemeChange);
   }
 
@@ -145,110 +152,21 @@ export class ChartController {
     this.reqDraw();
   };
 
-  private buildDOM() {
-    this.container.innerHTML = `
-      <div class="cpv-canvas-wrap" data-ref="canvasWrap">
-        <canvas data-ref="canvas"></canvas>
-      </div>
-
-      <div class="cpv-toggles" data-ref="toggles"></div>
-    `;
-
-    this.container.querySelectorAll("[data-ref]").forEach((element) => {
-      const ref = (element as HTMLElement).dataset.ref!;
-      this.refs[ref] = element as HTMLElement;
-    });
-
-    this.plotter = new OrderBookPlotter(this.refs.canvas as HTMLCanvasElement);
-    this.plotter.onZoom = (delta) => {
-      if (this.viewMode !== "volume") return;
-      this.volScale += delta;
-      this.reqDraw();
-    };
-    this.plotter.onPointer = (pointer) => {
-      this.pointer = pointer;
-      if (this.viewMode === "volume") this.reqDraw();
-    };
-  }
-
-  async load(bundle: EventBundle): Promise<void> {
+  async load(definition: ChartDefinition): Promise<void> {
     const generation = ++this.loadGeneration;
     await this.closeWS();
     if (!this.ownsLoad(generation)) return;
 
     this.setConnectionStatus("connecting");
     this.books = {};
-    this.titles = bundle.marketTitles;
-    this.marketIcons = bundle.marketIcons;
-    this.tokenNames = bundle.tokenNames;
-    this.oppositeTokenNames = bundle.oppositeTokenNames;
-    this.negRiskPalette = null;
-    this.thresholdPalette = null;
-    this.semanticPressureScales.clear();
+    this.definition = definition;
     this.activeTokens.clear();
     this.ageView.reset();
 
-    const event = bundle.event;
-    const rawMarkets = bundle.rawMarkets;
-
-    // Threshold metadata is more specific than the event-level neg-risk flag:
-    // some neg-risk groups are nested cumulative partitions, not categorical
-    // one-hot outcomes. Detect those first, then fall back to categorical.
-    this.thresholdPalette = buildThresholdPalette(event, rawMarkets);
-    this.negRiskPalette = this.thresholdPalette
-      ? null
-      : buildNegRiskPalette(event);
-
-    if (this.thresholdPalette) {
-      for (const outcome of this.thresholdPalette.outcomes)
-        this.semanticPressureScales.set(
-          outcome.yesTokenId as TokenId,
-          outcome.scale,
-        );
-    } else if (!this.negRiskPalette) {
-      // Ordinary binary rows do not imply any relationship between their NO
-      // outcomes. Give YES its stable per-market semantic hue, but keep NO a
-      // neutral gray so large unrelated event groups do not become a wall of
-      // complementary magenta.
-      for (const [index, market] of event.markets.entries()) {
-        const yesTokenId = market.outcomes.yes.tokenId;
-        if (!yesTokenId) continue;
-        this.semanticPressureScales.set(
-          yesTokenId,
-          semanticYesNeutralNoScale(marketHue(event.id, index)),
-        );
-      }
-
-      console.debug("[cpv palette fallback]", {
-        eventId: event.id,
-        slug: event.slug,
-        trading: event.trading,
-        markets: event.markets.map((market) => {
-          const raw = (rawMarkets as any[]).find(
-            (candidate) => String(candidate?.id) === String(market.id),
-          );
-          return {
-            id: market.id,
-            question: market.question,
-            groupItemTitle: raw?.groupItemTitle,
-            groupItemThreshold: raw?.groupItemThreshold,
-            groupItemRange: raw?.groupItemRange,
-            endDate: raw?.endDate ?? raw?.endDateIso ?? market.state.endDate,
-            yesPrice: market.outcomes.yes.price,
-            negRisk: market.state.negRisk,
-          };
-        }),
-      });
-    }
-
-    const tokenIds = event.markets
-      .map((market) =>
-        market.state.active ? market.outcomes.yes.tokenId : null,
-      )
-      .filter((tokenId): tokenId is TokenId => tokenId !== null);
+    const { event, rawMarkets } = definition;
+    const tokenIds = definition.controls.map((control) => control.tokenId);
 
     tokenIds.forEach((tokenId) => this.activeTokens.add(tokenId));
-    this.buildToggles(event);
     this.ageView.configureMarkets(event, rawMarkets);
 
     // Recorder registration/metadata is optional and must never gate the live
@@ -289,73 +207,12 @@ export class ChartController {
     this.plotter.destroy();
     this.resizeObserver.disconnect();
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
-    this.container.innerHTML = "";
-  }
-
-  private buildToggles(event: Event) {
-    const container = this.refs.toggles;
-    container.replaceChildren();
-
-    for (const [index, market] of event.markets.entries()) {
-      const yesToken = market.outcomes.yes.tokenId;
-      if (!yesToken || !this.activeTokens.has(yesToken)) continue;
-
-      const label = document.createElement("label");
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.checked = true;
-      checkbox.addEventListener("change", () => {
-        if (checkbox.checked) this.activeTokens.add(yesToken);
-        else this.activeTokens.delete(yesToken);
-        this.reqDraw();
-      });
-
-      const dot = document.createElement("span");
-      const colorScale = this.pressureColorScale(yesToken);
-      const color =
-        this.negRiskPalette || this.semanticPressureScales.has(yesToken)
-          ? signedVolumeColor(1, colorScale)
-          : marketColor(event.id, index);
-      dot.style.cssText =
-        `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
-
-      label.append(checkbox, dot);
-
-      const marketIconUrl = this.marketIcons.get(String(market.id));
-      if (marketIconUrl) {
-        const icon = document.createElement("img");
-        icon.className = "cpv-market-icon";
-        icon.src = marketIconUrl;
-        icon.alt = "";
-        icon.setAttribute("aria-hidden", "true");
-        icon.loading = "lazy";
-        icon.decoding = "async";
-        icon.addEventListener(
-          "error",
-          () => {
-            icon.remove();
-            this.reqDraw();
-          },
-          { once: true },
-        );
-        label.appendChild(icon);
-      }
-
-      label.append(
-        this.titles.get(String(market.id)) ??
-          market.question ??
-          "(untitled)",
-      );
-      container.appendChild(label);
-    }
   }
 
   private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
-    return (
-      this.negRiskPalette?.byYesTokenId.get(String(tokenId))?.scale ??
-      this.semanticPressureScales.get(tokenId) ??
-      DEFAULT_SIGNED_VOLUME_COLOR_SCALE
-    );
+    return this.definition
+      ? pressureScaleForToken(this.definition, String(tokenId))
+      : DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
   }
 
   private setConnectionStatus(status: ConnectionStatus): void {
@@ -436,8 +293,7 @@ export class ChartController {
 
       const book = this.books[tokenId] ?? emptyTokenBook();
       const semanticScale =
-        this.negRiskPalette?.byYesTokenId.get(String(tokenId))?.scale ??
-        this.semanticPressureScales.get(tokenId);
+        this.definition?.pressureScales.get(String(tokenId));
       const yesColor = semanticScale
         ? signedVolumeColor(1, semanticScale)
         : marketColor(this.event!.id, index);

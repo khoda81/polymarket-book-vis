@@ -256,12 +256,6 @@ export class AgeStripView {
       state.resolutionMs = Number.isFinite(resolutionMs) ? resolutionMs : null;
       this.markets.set(tokenId, state);
 
-      const dot = label.querySelector<HTMLSpanElement>("span");
-      dot?.classList.add("cpv-market-dot");
-
-      for (const node of Array.from(label.childNodes))
-        if (node.nodeType === Node.TEXT_NODE) node.remove();
-
       const text =
         this.host.getTitle(market.id) ??
         market.question ??
@@ -270,19 +264,16 @@ export class AgeStripView {
         event.markets.length === 1 && sameDisplayTitle(text, event.title);
       const ageText = redundantSingleMarketIdentity ? "" : text;
 
-      const textSpan = document.createElement("span");
-      textSpan.className = "cpv-market-label-text";
-      textSpan.textContent = text;
-      label.appendChild(textSpan);
+      const textSpan =
+        label.querySelector<HTMLSpanElement>(".cpv-market-label-text");
+      if (textSpan && textSpan.textContent !== text)
+        textSpan.textContent = text;
+
       label.dataset.marketLabel = ageText;
       label.dataset.ageLabelWidth = String(measureAgeLabelTextWidth(ageText));
       label.dataset.ageSuppressMarketIdentity = String(
         redundantSingleMarketIdentity,
       );
-
-      // Keep the full DOM label for volume mode/accessibility, but omit the
-      // redundant title+icon from the age axis when the event is merely a
-      // single-market wrapper.
       label.title = text;
 
       const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -297,10 +288,15 @@ export class AgeStripView {
       }
 
       checkbox.addEventListener("change", () => {
-        if (this.host.activeTokens.has(tokenId))
+        if (checkbox.checked) {
+          this.host.activeTokens.add(tokenId);
           userHiddenMarketIds.delete(market.id);
-        else userHiddenMarketIds.add(market.id);
+        } else {
+          this.host.activeTokens.delete(tokenId);
+          userHiddenMarketIds.add(market.id);
+        }
         persistStringSet(HIDDEN_MARKETS_STORAGE_KEY, userHiddenMarketIds);
+        this.host.requestDraw();
       });
     }
   }
