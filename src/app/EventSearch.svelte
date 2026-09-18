@@ -14,6 +14,7 @@
   type PublicClient = ReturnType<typeof createPublicClient>;
 
   export let client: PublicClient;
+  export let status: string;
   export let onchoose: (event: Event) => void;
   export let onstatus: (message: string) => void;
 
@@ -201,4 +202,5 @@
       {/each}
     </div>
   </div>
+  <span class="dashboard-add-status" aria-live="polite">{status}</span>
 </form>

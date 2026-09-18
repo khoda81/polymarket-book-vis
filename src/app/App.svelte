@@ -127,6 +127,7 @@
 <header class="dashboard-toolbar">
   <EventSearch
     {client}
+    {status}
     onchoose={addManualEvent}
     onstatus={(message) => (status = message)}
   />
@@ -135,7 +136,6 @@
     <PressureLegend />
   </div>
 
-  <span class="dashboard-add-status" aria-live="polite">{status}</span>
 </header>
 
 <div class="grid">
