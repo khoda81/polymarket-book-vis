@@ -13,6 +13,7 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
     {
       createElement: () => ({
         remove() {},
+        setAttribute() {},
         style: {},
         className: "",
       }),
