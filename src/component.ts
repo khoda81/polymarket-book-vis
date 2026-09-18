@@ -1,10 +1,5 @@
 import { fetchRecorderCoverage } from "@/lib/ageRecorderClient";
-import {
-  MARKET_COLOR_CHROMA,
-  MARKET_COLOR_LUMINANCE,
-  marketColor,
-  marketHue,
-} from "@/lib/math";
+import { marketColor, marketHue } from "@/lib/math";
 import {
   buildNegRiskPalette,
   type NegRiskPalette,
