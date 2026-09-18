@@ -232,11 +232,20 @@ const extraEvents = client.listEvents({
 // TODO: For each two transactions with (p0, t0) -> (p1, t1), compute the kl divergence between p0 and p1 and divide by the delta t:
 // TODO: kl(p0, p1) / (t1 - t0)
 // And we need to do this for all consecutive transactions given the market's transaction history since a given timestamp till now.
+const CARD_LOAD_CONCURRENCY = 4;
+
 for await (const eventPage of extraEvents) {
-  eventPage.items.forEach((e) => {
-    if (!eventSlugs.includes(e.slug ?? ""))
-      void createCard(e).catch((error) =>
-        console.error(`Could not load ${e.slug ?? e.id}:`, error),
-      );
-  });
+  const events = eventPage.items.filter(
+    (event) => !eventSlugs.includes(event.slug ?? ""),
+  );
+  for (let i = 0; i < events.length; i += CARD_LOAD_CONCURRENCY) {
+    await Promise.all(
+      events.slice(i, i + CARD_LOAD_CONCURRENCY).map((event) =>
+        createCard(event).catch((error) => {
+          console.error(`Could not load ${event.slug ?? event.id}:`, error);
+          return false;
+        }),
+      ),
+    );
+  }
 }
