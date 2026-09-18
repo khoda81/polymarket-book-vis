@@ -198,7 +198,7 @@ export class ChartController {
 
   destroy() {
     if (this.lifecycle === "destroyed") return;
-    this.destroyed = true;
+    this.lifecycle = "destroyed";
     this.feed.destroy();
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.ageView.destroy();
