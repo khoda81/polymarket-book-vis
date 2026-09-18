@@ -49,6 +49,11 @@ interface HoverRow {
   readonly tokenId: string;
 }
 
+interface AnnotationRow {
+  readonly tokenId: string;
+  readonly label: string;
+}
+
 interface HoverGeometry {
   readonly viewport: {
     readonly l: number;
@@ -125,7 +130,7 @@ export class AgeStripView {
   private timeLabelRaf: number | undefined;
   private tooltipSignature = "";
   private viewportVisible = true;
-  private clockRows: readonly string[] = [];
+  private clockRows: readonly AnnotationRow[] = [];
   private clockGeometry: HoverGeometry | null = null;
 
   constructor(host: AgeStripHost) {
@@ -265,8 +270,11 @@ export class AgeStripView {
       textSpan.className = "cpv-market-label-text";
       textSpan.textContent = text;
       label.appendChild(textSpan);
-      label.dataset.ageLabelWidth = String(measureIntrinsicTextWidth(textSpan));
+      label.dataset.marketLabel = text;
+      label.dataset.ageLabelWidth = String(measureAgeLabelTextWidth(text));
 
+      // DOM text is retained only as the semantic/accessibility control and for
+      // the hidden-market tray. The visible age-axis annotation is canvas-only.
       label.title = text;
 
       const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -343,7 +351,10 @@ export class AgeStripView {
     };
 
     this.clockGeometry = this.hoverGeometry;
-    this.clockRows = this.hoverGeometry.rows.map((row) => row.tokenId);
+    this.clockRows = activeControls.map((label, index) => ({
+      tokenId: label.dataset.tokenId ?? `missing-row-${index}`,
+      label: label.dataset.marketLabel ?? "(untitled)",
+    }));
     if (this.viewportVisible) this.renderClockLayer();
 
     const colorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
@@ -638,7 +649,6 @@ export class AgeStripView {
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, geometry.canvasWidth, geometry.canvasHeight);
-    ctx.font = "9px sans-serif";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     ctx.fillStyle = this.host.getTheme().text;
@@ -646,15 +656,31 @@ export class AgeStripView {
     const nowMs = Date.now();
     const { viewport: vp } = geometry;
     const rowCount = this.clockRows.length;
-    const textX = Math.max(4, vp.l - AGE_LABEL_HORIZONTAL_INSET_PX);
+    const timeX = Math.max(4, vp.l - AGE_LABEL_HORIZONTAL_INSET_PX);
+    const labelX =
+      timeX - AGE_TIME_META_WIDTH_PX - AGE_LABEL_GAP_PX;
+    const maxLabelWidth = Math.max(
+      0,
+      labelX - AGE_LABEL_HORIZONTAL_INSET_PX,
+    );
     let nextChangeMs = Infinity;
 
-    for (const [rowIndex, tokenId] of this.clockRows.entries()) {
-      const state = this.markets.get(tokenId);
-      if (!state) continue;
-
+    for (const [rowIndex, row] of this.clockRows.entries()) {
+      const state = this.markets.get(row.tokenId);
       const rowCenterY =
         vp.t + ((rowIndex + 0.5) / rowCount) * vp.height;
+
+      ctx.font = "11px sans-serif";
+      ctx.globalAlpha = 1;
+      ctx.fillText(
+        ellipsizeCanvasText(ctx, row.label, maxLabelWidth),
+        labelX,
+        rowCenterY,
+      );
+
+      if (!state) continue;
+
+      ctx.font = "9px sans-serif";
 
       const since = state.recordingSinceMs;
       if (since !== null && Number.isFinite(since)) {
@@ -663,7 +689,7 @@ export class AgeStripView {
           "elapsed",
         );
         ctx.globalAlpha = 0.55;
-        ctx.fillText(display.text, textX, rowCenterY - 5);
+        ctx.fillText(display.text, timeX, rowCenterY - 5);
         if (display.nextChangeMs !== null)
           nextChangeMs = Math.min(nextChangeMs, display.nextChangeMs);
       }
@@ -677,7 +703,7 @@ export class AgeStripView {
         ctx.globalAlpha = 0.82;
         ctx.fillText(
           display.text === "due" ? "due" : `T−${display.text}`,
-          textX,
+          timeX,
           rowCenterY + 5,
         );
         if (display.nextChangeMs !== null)
@@ -751,37 +777,44 @@ function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
   );
 }
 
-function measureIntrinsicTextWidth(text: HTMLElement): number {
-  if (
-    !text.style ||
-    typeof (text as HTMLElement & { getBoundingClientRect?: unknown })
-      .getBoundingClientRect !== "function"
-  )
-    return (text.textContent?.length ?? 0) * 6;
+let ageLabelMeasureCtx: CanvasRenderingContext2D | null | undefined;
 
-  const previous = {
-    flex: text.style.flex,
-    width: text.style.width,
-    maxWidth: text.style.maxWidth,
-    overflow: text.style.overflow,
-    textOverflow: text.style.textOverflow,
-  };
+function getAgeLabelMeasureContext(): CanvasRenderingContext2D | null {
+  if (ageLabelMeasureCtx !== undefined) return ageLabelMeasureCtx;
+  const canvas = document.createElement("canvas");
+  ageLabelMeasureCtx =
+    typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+  return ageLabelMeasureCtx;
+}
 
-  // Measure the actual DOM font at max-content width, independent of whatever
-  // gutter happened to be installed from the previous frame/event.
-  text.style.flex = "none";
-  text.style.width = "max-content";
-  text.style.maxWidth = "none";
-  text.style.overflow = "visible";
-  text.style.textOverflow = "clip";
-  const width = text.getBoundingClientRect().width;
+function measureAgeLabelTextWidth(text: string): number {
+  const ctx = getAgeLabelMeasureContext();
+  if (!ctx) return text.length * 6;
+  ctx.font = "11px sans-serif";
+  return ctx.measureText(text).width;
+}
 
-  text.style.flex = previous.flex;
-  text.style.width = previous.width;
-  text.style.maxWidth = previous.maxWidth;
-  text.style.overflow = previous.overflow;
-  text.style.textOverflow = previous.textOverflow;
-  return width;
+function ellipsizeCanvasText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string {
+  if (!(maxWidth > 0)) return "";
+  if (ctx.measureText(text).width <= maxWidth) return text;
+
+  const ellipsis = "…";
+  const ellipsisWidth = ctx.measureText(ellipsis).width;
+  if (ellipsisWidth >= maxWidth) return ellipsis;
+
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const candidate = text.slice(0, mid) + ellipsis;
+    if (ctx.measureText(candidate).width <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return text.slice(0, lo) + ellipsis;
 }
 
 function tooltipSignature(
