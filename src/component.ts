@@ -1,5 +1,5 @@
 import { fetchRecordedAgeState } from "@/lib/ageRecorderClient";
-import { fmtVol, marketColor } from "@/lib/math";
+import { fmtRelativeTime, fmtVol, marketColor } from "@/lib/math";
 import { orderMarkets } from "@/lib/marketOrder";
 import {
   BookOrder,
@@ -88,6 +88,8 @@ export class PolymarketCPV {
   private volScale = 4.5;
   private viewMode: ViewMode = "age";
   private searchTimeout: number | undefined;
+  private historyCoverageSinceMs: number | null = null;
+  private historyAgeTimer: number | undefined;
 
   constructor(container: HTMLElement, polyMarketClient: PublicClient) {
     this.polyMarketClient = polyMarketClient;
@@ -113,6 +115,7 @@ export class PolymarketCPV {
       requestDraw: () => this.reqDraw(),
     });
     this.bindEvents();
+    this.historyAgeTimer = window.setInterval(() => this.renderHistoryAge(), 30_000);
 
     this.resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -138,6 +141,7 @@ export class PolymarketCPV {
         <h5 class="cpv-title" data-ref="title">Loading…</h5>
         <div class="cpv-dot cpv-dot--conn" data-ref="dot"></div>
         <span class="cpv-stxt" data-ref="stxt">connecting…</span>
+        <span class="cpv-history-age" data-ref="historyAge" hidden></span>
       </div>
 
       <div class="cpv-top-controls">
@@ -264,7 +268,10 @@ export class PolymarketCPV {
 
     // GET also registers these tokens with the always-on recorder. Hydration is
     // best-effort, so the chart still works normally when the backend is down.
-    this.ageView.hydrate(await fetchRecordedAgeState(tokenIds));
+    const hydration = await fetchRecordedAgeState(tokenIds);
+    this.ageView.hydrate(hydration.states);
+    this.historyCoverageSinceMs = hydration.recordingSinceMs;
+    this.renderHistoryAge();
 
     for (; ;) {
       try {
@@ -287,6 +294,7 @@ export class PolymarketCPV {
   destroy() {
     void this.closeWS();
     clearTimeout(this.searchTimeout);
+    if (this.historyAgeTimer !== undefined) clearInterval(this.historyAgeTimer);
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.ageView.destroy();
     this.plotter.destroy();
@@ -323,6 +331,24 @@ export class PolymarketCPV {
       label.append(checkbox, dot, this.titles[market.id] ?? market.question);
       container.appendChild(label);
     }
+  }
+
+  private renderHistoryAge() {
+    const label = this.refs.historyAge;
+    if (!label) return;
+
+    const since = this.historyCoverageSinceMs;
+    if (since === null || !Number.isFinite(since)) {
+      label.hidden = true;
+      label.textContent = "";
+      return;
+    }
+
+    const age = fmtRelativeTime((Date.now() - since) / 1000);
+    label.hidden = false;
+    label.textContent = `${age} history`;
+    label.title =
+      "Recorder coverage shared by all outcomes in this chart";
   }
 
   private setDot(status: ConnectionStatus) {
