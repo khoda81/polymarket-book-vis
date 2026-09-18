@@ -202,6 +202,7 @@ export class OrderBookPlotter {
   private lastDragY = 0;
   private cssWidth = 0;
   private cssHeight = 0;
+  private backingDpr = 0;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -256,6 +257,7 @@ export class OrderBookPlotter {
     this.cssWidth = width;
     this.cssHeight = height;
 
+    this.backingDpr = dpr;
     const targetW = Math.floor(width * dpr);
     const targetH = Math.floor(height * dpr);
     if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
@@ -271,6 +273,8 @@ export class OrderBookPlotter {
    */
   beginFrame(theme: ChartTheme, domain: Domain): Frame {
     const dpr = window.devicePixelRatio || 1;
+    if (dpr !== this.backingDpr)
+      this.resizeTo(this.cssWidth, this.cssHeight);
 
     // Undo the previous frame's ctx state (clip path, styles, lineDash, …).
     // restore() is a no-op on the first frame when the state stack is empty.
