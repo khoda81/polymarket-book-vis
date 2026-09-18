@@ -190,6 +190,25 @@ export class AgeStripView {
     this.refreshRecordingAgeLabels(true);
   }
 
+  setRecordingCoverage(
+    recordingSinceMsByToken: Readonly<Record<string, number>>,
+  ): void {
+    for (const [tokenId, since] of Object.entries(recordingSinceMsByToken)) {
+      let state = this.markets.get(tokenId);
+      if (!state) {
+        state = {
+          field: new StaleSignedVolume(),
+          visibilityInitialized: false,
+          recordingSinceMs: null,
+        };
+        this.markets.set(tokenId, state);
+      }
+      state.recordingSinceMs =
+        Number.isFinite(since) && since >= 0 ? since : null;
+    }
+    this.refreshRecordingAgeLabels(true);
+  }
+
   configureMarkets(event: Event, rawMarkets: readonly unknown[]): void {
     const activeMarkets = event.markets.filter((market) => {
       const tokenId = market.outcomes.yes.tokenId;
