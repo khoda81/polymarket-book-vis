@@ -68,11 +68,11 @@ test("initial lifecycle distinguishes live, awaiting, and resolved", () => {
 
   const resolved = market();
   resolved.state.closed = true;
-  resolved.outcomes.yes.price = "1";
-  resolved.outcomes.no.price = "0";
+  resolved.outcomes.yes.price = "1" as Market["outcomes"]["yes"]["price"];
+  resolved.outcomes.no.price = "0" as Market["outcomes"]["no"]["price"];
   expect(initialMarketLifecycle(resolved)).toEqual({
     kind: "resolved",
-    winningTokenId: "yes-token",
+    winningTokenId: "yes-token" as TokenId,
     winningOutcome: "Up",
   });
 });
@@ -84,7 +84,7 @@ test("resolution update carries the actual winner instead of hiding the market",
       {
         conditionId: "condition-1",
         assetIds: ["yes-token", "no-token"],
-        winningTokenId: "no-token",
+        winningTokenId: "no-token" as TokenId,
         winningOutcome: "Down",
       },
       "yes-token" as TokenId,
@@ -94,7 +94,7 @@ test("resolution update carries the actual winner instead of hiding the market",
     ),
   ).toEqual({
     kind: "resolved",
-    winningTokenId: "no-token",
+    winningTokenId: "no-token" as TokenId,
     winningOutcome: "Down",
   });
 });
