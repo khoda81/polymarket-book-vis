@@ -406,6 +406,10 @@
 
 /* ── Canvas ──────────────────────────────────────────────────────────────── */
 
+.cpv-chart-stage {
+    position: relative;
+}
+
 .cpv-canvas-wrap {
     position: relative;
     width: 100%;

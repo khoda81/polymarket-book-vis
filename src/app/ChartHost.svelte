@@ -157,18 +157,24 @@
   $: chart?.setViewMode(viewMode);
 </script>
 
-<div class="cpv-canvas-wrap" bind:this={canvasWrap}>
-  <canvas bind:this={canvas}></canvas>
-</div>
+<div class="cpv-chart-stage">
+  <div class="cpv-canvas-wrap" bind:this={canvasWrap}>
+    <canvas bind:this={canvas}></canvas>
+  </div>
 
-<div class="cpv-toggles" bind:this={toggles}>
-  {#each toggledControls as control (control.marketId)}
-    <MarketControl
-      {control}
-      checked={isVisible(control)}
-      onchange={(checked) => userSetVisible(control, checked)}
-    />
-  {/each}
+  <div
+    class="cpv-toggles"
+    class:cpv-toggles--age-axis={viewMode === "age"}
+    bind:this={toggles}
+  >
+    {#each toggledControls as control (control.marketId)}
+      <MarketControl
+        {control}
+        checked={isVisible(control)}
+        onchange={(checked) => userSetVisible(control, checked)}
+      />
+    {/each}
+  </div>
 </div>
 
 <div
