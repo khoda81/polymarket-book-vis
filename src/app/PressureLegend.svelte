@@ -5,7 +5,7 @@
     getAgeStripTuning,
     subscribeAgeStripTuning,
     type AgeStripTuning,
-  } from "../ageStrips";
+  } from "../lib/ageStripTuning";
   import { fmtSI } from "../lib/math";
   import {
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,

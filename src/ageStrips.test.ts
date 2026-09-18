@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Event } from "@polymarket/client";
-import { AgeStripView, getAgeStripTuning, type AgeStripHost } from "./ageStrips";
+import { AgeStripView, type AgeStripHost } from "./ageStrips";
+import { getAgeStripTuning } from "./lib/ageStripTuning";
 
 test("only Ctrl+wheel changes share scale in age mode", () => {
   const globals = [
@@ -14,7 +15,6 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
     Object.getOwnPropertyDescriptor(globalThis, key),
   );
   let wheel!: (event: WheelEvent) => void;
-  let redraw!: FrameRequestCallback;
   const replacements = [
     {
       body: { appendChild() {} },
@@ -27,10 +27,7 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
     },
     { setTimeout: () => undefined },
     { DOM_DELTA_LINE: 1, DOM_DELTA_PAGE: 2 },
-    (callback: FrameRequestCallback) => {
-      redraw = callback;
-      return 1;
-    },
+    (_callback: FrameRequestCallback) => 1,
     class {
       observe() {}
       disconnect() {}
@@ -88,7 +85,6 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
       },
       stopImmediatePropagation() {},
     } as WheelEvent);
-    redraw(0);
     expect(getAgeStripTuning().volumePerCssPixel).toBeLessThan(initial);
     expect(prevented).toBe(true);
 
@@ -99,7 +95,6 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
       preventDefault() {},
       stopImmediatePropagation() {},
     } as WheelEvent);
-    redraw(0);
     expect(getAgeStripTuning().volumePerCssPixel).toBeCloseTo(initial);
   } finally {
     view?.destroy();

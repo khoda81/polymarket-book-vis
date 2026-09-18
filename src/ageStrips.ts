@@ -1,9 +1,12 @@
+import {
+  AGE_ROW_BAND_PX,
+  getAgeStripTuning,
+  scaleAgeStripVolumePerCssPixel,
+  subscribeAgeStripTuning,
+} from "@/lib/ageStripTuning";
 import { relativeTimeDisplay } from "@/lib/math";
 import { bookHoverAtPrice, type BookHoverSnapshot } from "@/lib/bookHover";
-import {
-  DEFAULT_VOLUME_PER_CSS_PIXEL,
-  pressureInkThicknessCss,
-} from "@/lib/pressureInk";
+import { pressureInkThicknessCss } from "@/lib/pressureInk";
 import type { TokenBook } from "@/lib/orderBook";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import {
@@ -23,21 +26,7 @@ const AGE_TIME_GUTTER_PX =
   AGE_TIME_META_WIDTH_PX + AGE_LABEL_HORIZONTAL_INSET_PX * 2 + 1;
 const VOLUME_LEFT_PADDING_PX = 60;
 const VOLUME_RIGHT_PADDING_PX = 16;
-export const AGE_ROW_BAND_PX = 28;
-
-const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
 const HIDDEN_MARKETS_STORAGE_KEY = "polymarket-book-vis.age-strip-hidden-markets.v1";
-
-export interface AgeStripTuning {
-  /** Share scale parameter, expressed as shares per CSS pixel of row height. */
-  volumePerCssPixel: number;
-}
-
-interface StoredAgeStripTuning {
-  volumePerCssPixel?: number;
-  /** Legacy v1 name; migrated in place to volumePerCssPixel. */
-  volumeSoftLimit?: number;
-}
 
 interface MarketRuntimeState {
   visibilityInitialized: boolean;
@@ -89,23 +78,7 @@ export interface AgeStripHost {
   readonly requestDraw: () => void;
 }
 
-const tuning = loadTuning();
 const userHiddenMarketIds = loadStringSet(HIDDEN_MARKETS_STORAGE_KEY);
-const redrawCallbacks = new Set<() => void>();
-const tuningListeners = new Set<(tuning: Readonly<AgeStripTuning>) => void>();
-let tuningPersistTimer: number | undefined;
-let globalRedrawRaf: number | undefined;
-
-export function getAgeStripTuning(): Readonly<AgeStripTuning> {
-  return { ...tuning };
-}
-
-export function subscribeAgeStripTuning(
-  listener: (tuning: Readonly<AgeStripTuning>) => void,
-): () => void {
-  tuningListeners.add(listener);
-  return () => tuningListeners.delete(listener);
-}
 
 /**
  * Age-mode projection of the live order books.
@@ -120,6 +93,7 @@ export class AgeStripView {
   private readonly overlay: HTMLDivElement;
   private readonly clockCanvas: HTMLCanvasElement;
   private readonly intersectionObserver: IntersectionObserver;
+  private readonly unsubscribeTuning: () => void;
   private readonly markets = new Map<string, MarketRuntimeState>();
   private readonly toggleHomeParent: HTMLElement | null;
   private readonly toggleHomeNextSibling: ChildNode | null;
@@ -177,7 +151,9 @@ export class AgeStripView {
     );
     this.intersectionObserver.observe(host.canvasWrap);
 
-    redrawCallbacks.add(host.requestDraw);
+    this.unsubscribeTuning = subscribeAgeStripTuning(() => {
+      host.requestDraw();
+    });
 
     host.canvas.addEventListener("wheel", this.handleWheel, {
       capture: true,
@@ -372,7 +348,7 @@ export class AgeStripView {
         y,
         book,
         this.host.getPressureColorScale(tokenId),
-        tuning.volumePerCssPixel,
+        getAgeStripTuning().volumePerCssPixel,
       );
     }
 
@@ -439,7 +415,7 @@ export class AgeStripView {
   destroy(): void {
     this.cancelTimeLabelRefresh();
     this.intersectionObserver.disconnect();
-    redrawCallbacks.delete(this.host.requestDraw);
+    this.unsubscribeTuning();
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.host.canvas.removeEventListener("pointermove", this.handlePointerMove);
     this.host.canvas.removeEventListener("pointerleave", this.handlePointerLeave);
@@ -558,11 +534,7 @@ export class AgeStripView {
     event.stopImmediatePropagation();
 
     const factor = Math.exp(normalizedWheelDelta(event) * 0.002);
-    tuning.volumePerCssPixel = Math.max(1e-3, tuning.volumePerCssPixel * factor);
-
-    schedulePersistTuning();
-    notifyTuningListeners();
-    scheduleGlobalRedraw();
+    scaleAgeStripVolumePerCssPixel(factor);
   };
 
   private installAgeLayout(
@@ -1115,55 +1087,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object"
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-function scheduleGlobalRedraw(): void {
-  if (globalRedrawRaf !== undefined) return;
-  globalRedrawRaf = requestAnimationFrame(() => {
-    globalRedrawRaf = undefined;
-    for (const redraw of redrawCallbacks) redraw();
-  });
-}
-
-function notifyTuningListeners(): void {
-  const snapshot = getAgeStripTuning();
-  for (const listener of tuningListeners) listener(snapshot);
-}
-
-function loadTuning(): AgeStripTuning {
-  const fallback: AgeStripTuning = {
-    volumePerCssPixel: DEFAULT_VOLUME_PER_CSS_PIXEL,
-  };
-
-  try {
-    const raw = window.localStorage.getItem(TUNING_STORAGE_KEY);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as StoredAgeStripTuning;
-    const storedVolumeScale =
-      typeof parsed.volumePerCssPixel === "number"
-        ? parsed.volumePerCssPixel
-        : parsed.volumeSoftLimit;
-    return {
-      volumePerCssPixel:
-        typeof storedVolumeScale === "number"
-          ? storedVolumeScale
-          : fallback.volumePerCssPixel,
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-function schedulePersistTuning(): void {
-  if (tuningPersistTimer !== undefined) clearTimeout(tuningPersistTimer);
-  tuningPersistTimer = window.setTimeout(() => {
-    tuningPersistTimer = undefined;
-    try {
-      window.localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(tuning));
-    } catch {
-      // Preferences are best effort.
-    }
-  }, 200);
 }
 
 function loadStringSet(key: string): Set<string> {
