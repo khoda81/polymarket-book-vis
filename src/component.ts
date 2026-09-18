@@ -271,6 +271,26 @@ export class PolymarketCPV {
 
     const rawMarkets: unknown[] = rawEvent.markets ?? [];
 
+    console.debug(
+      "gamma market grouping metadata",
+      rawMarkets.map((market: any) => ({
+        id: market.id,
+        question: market.question,
+        groupItemTitle: market.groupItemTitle,
+        marketGroup: market.marketGroup,
+        groupItemThreshold: market.groupItemThreshold,
+        groupItemRange: market.groupItemRange,
+        xAxisValue: market.xAxisValue,
+        yAxisValue: market.yAxisValue,
+        lowerBound: market.lowerBound,
+        upperBound: market.upperBound,
+        lowerBoundDate: market.lowerBoundDate,
+        upperBoundDate: market.upperBoundDate,
+        marketType: market.marketType,
+        formatType: market.formatType,
+      })),
+    );
+
     for (const rawMarket of rawMarkets as any[]) {
       if (rawMarket.groupItemTitle)
         this.titles[rawMarket.id] = rawMarket.groupItemTitle;
@@ -294,16 +314,15 @@ export class PolymarketCPV {
     event = { ...event, markets: orderMarkets(event, rawMarkets) };
     this.negRiskPalette = buildNegRiskPalette(event);
 
-    // Every ordinary constituent market is itself binary. Reuse the exact
-    // per-row identity hue already assigned by marketColor(), then give its
-    // opposite token the antipodal hue. This keeps age/volume/dot semantics
-    // consistent even when one event contains many independent binary markets.
-    if (!this.negRiskPalette) {
-      for (const [index, market] of event.markets.entries()) {
-        const yesTokenId = market.outcomes.yes.tokenId;
-        if (!yesTokenId) continue;
-
-        const hue = marketHue(event.id, index);
+    // Only a genuinely standalone binary market gets the arbitrary identity
+    // hue pair. Multi-market events keep the neutral pressure palette unless we
+    // can construct a shared semantic outcome geometry (neg-risk now; threshold
+    // families next). Do not imply relationships we cannot justify.
+    if (!this.negRiskPalette && event.markets.length === 1) {
+      const market = event.markets[0];
+      const yesTokenId = market?.outcomes.yes.tokenId;
+      if (market && yesTokenId) {
+        const hue = marketHue(event.id, 0);
         this.ordinaryPressureScales.set(yesTokenId, {
           luminance: MARKET_COLOR_LUMINANCE,
           chroma: MARKET_COLOR_CHROMA,
