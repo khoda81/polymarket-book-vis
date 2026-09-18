@@ -10,6 +10,7 @@ import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
   signedVolumeSegments,
+  type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
 import type { Event } from "@polymarket/client";
 
@@ -84,6 +85,7 @@ export interface AgeStripHost {
   readonly getTitle: (marketId: string) => string | undefined;
   readonly getTokenName: (tokenId: string) => string | undefined;
   readonly getOppositeTokenName: (tokenId: string) => string | undefined;
+  readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
   readonly getTheme: () => ChartTheme;
   readonly getViewMode: () => "volume" | "age";
   readonly requestDraw: () => void;
@@ -357,7 +359,6 @@ export class AgeStripView {
     }));
     if (this.viewportVisible) this.renderClockLayer();
 
-    const colorScale = DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
     for (const [index, label] of activeControls.entries()) {
       const tokenId = label.dataset.tokenId;
       if (!tokenId) continue;
@@ -369,12 +370,17 @@ export class AgeStripView {
         frame,
         y,
         book,
-        colorScale,
+        this.host.getPressureColorScale(tokenId),
         tuning.volumePerCssPixel,
       );
     }
 
-    drawAgeAxes(frame);
+    drawAgeAxes(
+      frame,
+      rowCount,
+      activeControls,
+      (tokenId) => this.host.getPressureColorScale(tokenId),
+    );
     if (this.hoverPointer) this.renderHoverTooltip(this.hoverPointer);
   }
 
@@ -503,7 +509,12 @@ export class AgeStripView {
     const resolvedName = tokenName ?? "(unknown)";
     const signature = tooltipSignature(resolvedName, hover);
     if (signature !== this.tooltipSignature) {
-      renderAgeTooltip(this.overlay, resolvedName, hover);
+      renderAgeTooltip(
+        this.overlay,
+        resolvedName,
+        hover,
+        this.host.getPressureColorScale(row.tokenId),
+      );
       this.tooltipSignature = signature;
     }
 
@@ -842,6 +853,7 @@ function renderAgeTooltip(
   overlay: HTMLDivElement,
   tokenName: string,
   hover: BookHoverSnapshot,
+  colorScale: SignedVolumeColorScale,
 ): void {
   overlay.replaceChildren();
 
@@ -857,10 +869,7 @@ function renderAgeTooltip(
   const title = document.createElement("div");
   title.className = "cpv-ov-label";
   title.textContent = `${tokenName}@${formatProbability(tokenPrice)}`;
-  title.style.color = signedVolumeColor(
-    isBid ? 1 : -1,
-    DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  );
+  title.style.color = signedVolumeColor(isBid ? 1 : -1, colorScale);
   overlay.appendChild(title);
   overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
   if (effectivePrice !== null)
@@ -906,29 +915,37 @@ function positionRowControls(
   }
 }
 
-/** Draw the probability rails as the limiting colors of each token side. */
-function drawAgeAxes(frame: any): void {
+/** Draw per-row probability rails using each market's semantic token colors. */
+function drawAgeAxes(
+  frame: any,
+  rowCount: number,
+  labels: readonly HTMLLabelElement[],
+  colorScaleForToken: (tokenId: string) => SignedVolumeColorScale,
+): void {
   const { ctx, viewport: vp, theme } = frame;
+  const dpr = window.devicePixelRatio || 1;
 
   ctx.lineWidth = 1;
+  for (const [index, label] of labels.entries()) {
+    const tokenId = label.dataset.tokenId;
+    if (!tokenId) continue;
 
-  ctx.strokeStyle = signedVolumeColor(
-    1,
-    DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  );
-  ctx.beginPath();
-  ctx.moveTo(vp.l, vp.t);
-  ctx.lineTo(vp.l, vp.t + vp.height);
-  ctx.stroke();
+    const y = rowCount - 1 - index;
+    const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+    const scale = colorScaleForToken(tokenId);
 
-  ctx.strokeStyle = signedVolumeColor(
-    -1,
-    DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  );
-  ctx.beginPath();
-  ctx.moveTo(vp.l + vp.width, vp.t);
-  ctx.lineTo(vp.l + vp.width, vp.t + vp.height);
-  ctx.stroke();
+    ctx.strokeStyle = signedVolumeColor(1, scale);
+    ctx.beginPath();
+    ctx.moveTo(vp.l, geometry.topCss);
+    ctx.lineTo(vp.l, geometry.topCss + geometry.heightCss);
+    ctx.stroke();
+
+    ctx.strokeStyle = signedVolumeColor(-1, scale);
+    ctx.beginPath();
+    ctx.moveTo(vp.l + vp.width, geometry.topCss);
+    ctx.lineTo(vp.l + vp.width, geometry.topCss + geometry.heightCss);
+    ctx.stroke();
+  }
 
   ctx.fillStyle = theme.text;
   if (ctx.font !== "11px sans-serif") ctx.font = "11px sans-serif";
@@ -946,7 +963,7 @@ function drawLivePressureStrip(
   frame: any,
   y: number,
   book: TokenBook<string>,
-  colorScale: typeof DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+  colorScale: SignedVolumeColorScale,
   volumePerCssPixel: number,
 ): void {
   const { ctx, viewport: vp } = frame;
