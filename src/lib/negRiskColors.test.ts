@@ -31,32 +31,27 @@ function hueDistance(a: number, b: number): number {
 }
 
 describe("negative-risk color geometry", () => {
-  test("places binary outcomes opposite one another with full-chroma complements", () => {
+  test("places binary YES outcomes opposite one another and keeps NO neutral", () => {
     const palette = buildNegRiskPalette(negRiskEvent(["10", "20"]));
     expect(palette).not.toBeNull();
 
     const [a, b] = palette!.outcomes;
     expect(hueDistance(a.hue, b.hue)).toBeCloseTo(180, 12);
-    expect(a.scale.negativeHue).toBeCloseTo(b.hue, 12);
-    expect(b.scale.negativeHue).toBeCloseTo(a.hue, 12);
-
     expect(a.scale.positiveChroma).toBe(DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma);
-    expect(a.scale.negativeChroma).toBe(DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma);
+    expect(a.scale.negativeChroma).toBe(0);
+    expect(a.scale.negativeLuminance).toBe(0.88);
   });
 
-  test("uses the equal-complement barycenter magnitude 1/(N-1)", () => {
+  test("keeps categorical YES outcomes evenly spaced while NO stays neutral", () => {
     const palette = buildNegRiskPalette(negRiskEvent(["1", "2", "3", "4"]));
     expect(palette).not.toBeNull();
 
-    const expectedNoChroma = DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma / 3;
     for (const outcome of palette!.outcomes) {
       expect(outcome.scale.positiveChroma).toBe(
         DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma,
       );
-      expect(outcome.scale.negativeChroma).toBeCloseTo(expectedNoChroma, 12);
-      expect(
-        hueDistance(outcome.hue, outcome.scale.negativeHue),
-      ).toBeCloseTo(180, 12);
+      expect(outcome.scale.negativeChroma).toBe(0);
+      expect(outcome.scale.negativeLuminance).toBe(0.88);
     }
 
     const hues = palette!.outcomes.map((outcome) => outcome.hue);
