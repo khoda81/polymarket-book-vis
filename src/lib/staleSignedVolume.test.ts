@@ -210,3 +210,25 @@ describe("StaleSignedVolume", () => {
     expect(at(unknownHydrated, 6_000, 0.5).ageMs).toBe(Infinity);
   });
 });
+
+
+test("repeated empty observations do not refresh stale liquidity", () => {
+  const book = emptyTokenBook();
+  book.usdToYes.setLevel("bid", { price: 0.4, take: 10 });
+
+  const memory = new StaleSignedVolume();
+  memory.update(book, 0);
+
+  book.usdToYes.setLevel("bid", { price: 0.4, take: 0 });
+  memory.update(book, 1_000, [{ lo: 0, hi: 0.4 }]);
+  const firstStale = memory.segments(1_000).find(
+    (segment) => segment.lo === 0 && segment.hi === 0.4,
+  );
+  expect(firstStale?.ageMs).toBe(0);
+
+  memory.update(book, 2_000, [{ lo: 0, hi: 0.4 }]);
+  const stillStale = memory.segments(2_000).find(
+    (segment) => segment.lo === 0 && segment.hi === 0.4,
+  );
+  expect(stillStale?.ageMs).toBe(1_000);
+});
