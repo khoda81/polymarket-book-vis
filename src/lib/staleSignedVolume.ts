@@ -233,28 +233,44 @@ export class StaleSignedVolume {
 
   /** Restore v4 snapshots and migrate legacy v1-v3 timestamp fields. */
   restore(snapshot: StaleSignedVolumeSnapshot): void {
-    const lastUpdateMs =
-      snapshot.lastUpdateMs !== undefined && Number.isFinite(snapshot.lastUpdateMs)
-        ? snapshot.lastUpdateMs
-        : undefined;
+    if (!snapshot || !Array.isArray(snapshot.segments))
+      throw new TypeError("StaleSignedVolume snapshot must contain segments");
+    if (
+      snapshot.version !== undefined &&
+      snapshot.version !== 2 &&
+      snapshot.version !== 3 &&
+      snapshot.version !== 4
+    )
+      throw new RangeError("Unsupported StaleSignedVolume snapshot version");
+    if (
+      snapshot.lastUpdateMs !== undefined &&
+      !Number.isFinite(snapshot.lastUpdateMs)
+    )
+      throw new RangeError("Invalid StaleSignedVolume lastUpdateMs");
 
-    const segments = snapshot.segments
-      .filter((segment) =>
-        StaleSignedVolume.validSnapshotSegment(segment, snapshot.version),
+    const lastUpdateMs = snapshot.lastUpdateMs;
+    const ordered = [...snapshot.segments].sort((a, b) => a.lo - b.lo);
+    if (
+      ordered.some(
+        (segment) =>
+          !StaleSignedVolume.validSnapshotSegment(segment, snapshot.version),
       )
-      .sort((a, b) => a.lo - b.lo)
-      .map((segment) => ({
-        lo: segment.lo,
-        hi: segment.hi,
-        volume: segment.volume,
-        sweepCost:
-          snapshot.version === 4 ? (segment.sweepCost ?? null) : null,
-        observedAtMs: StaleSignedVolume.snapshotObservedAt(
-          segment,
-          snapshot.version,
-          lastUpdateMs,
-        ),
-      }));
+    )
+      throw new RangeError("Invalid StaleSignedVolume snapshot segment");
+    StaleSignedVolume.assertNonOverlapping(ordered);
+
+    const segments = ordered.map((segment) => ({
+      lo: segment.lo,
+      hi: segment.hi,
+      volume: segment.volume,
+      sweepCost:
+        snapshot.version === 4 ? (segment.sweepCost ?? null) : null,
+      observedAtMs: StaleSignedVolume.snapshotObservedAt(
+        segment,
+        snapshot.version,
+        lastUpdateMs,
+      ),
+    }));
 
     this.current = StaleSignedVolume.mergeAdjacent(segments);
     this.previousLive = [];
@@ -272,23 +288,28 @@ export class StaleSignedVolume {
     if (!Number.isFinite(nowMs))
       throw new RangeError("StaleSignedVolume timestamp must be finite");
 
+    const ordered = [...segments].sort((a, b) => a.lo - b.lo);
+    if (
+      ordered.some(
+        (segment) =>
+          !(
+            segment.ageMs === Infinity ||
+            (Number.isFinite(segment.ageMs) && segment.ageMs >= 0)
+          ) || !StaleSignedVolume.validTransportSegment(segment),
+      )
+    )
+      throw new RangeError("Invalid StaleSignedVolume transport segment");
+    StaleSignedVolume.assertNonOverlapping(ordered);
+
     this.current = StaleSignedVolume.mergeAdjacent(
-      segments
-        .filter(
-          (segment) =>
-            (segment.ageMs === Infinity ||
-              (Number.isFinite(segment.ageMs) && segment.ageMs >= 0)) &&
-            StaleSignedVolume.validTransportSegment(segment),
-        )
-        .sort((a, b) => a.lo - b.lo)
-        .map(({ lo, hi, volume, sweepCost, ageMs }) => ({
-          lo,
-          hi,
-          volume,
-          sweepCost,
-          observedAtMs:
-            ageMs === Infinity ? UNKNOWN_SINCE_MS : nowMs - ageMs,
-        })),
+      ordered.map(({ lo, hi, volume, sweepCost, ageMs }) => ({
+        lo,
+        hi,
+        volume,
+        sweepCost,
+        observedAtMs:
+          ageMs === Infinity ? UNKNOWN_SINCE_MS : nowMs - ageMs,
+      })),
     );
     this.previousLive = [];
     this.lastUpdateMs = nowMs;
@@ -445,6 +466,15 @@ export class StaleSignedVolume {
     return segment && point >= segment.lo && point < segment.hi
       ? segment
       : undefined;
+  }
+
+  private static assertNonOverlapping(
+    segments: readonly { lo: number; hi: number }[],
+  ): void {
+    for (let i = 1; i < segments.length; i++) {
+      if (segments[i]!.lo < segments[i - 1]!.hi)
+        throw new RangeError("StaleSignedVolume segments must not overlap");
+    }
   }
 
   private static mergeAdjacent(
