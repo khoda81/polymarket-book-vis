@@ -14,6 +14,11 @@
   } from "../lib/chartState";
   import type { EventBundle } from "../lib/eventBundle";
   import {
+    summarizeEventMarketStatus,
+    type EventMarketStatus,
+    type MarketLifecycle,
+  } from "../lib/marketLifecycle";
+  import {
     isMarketVisible,
     loadMarketVisibility,
     partitionMarketVisibility,
@@ -35,12 +40,20 @@
   export let onfailure: (message: string) => void = () => undefined;
   export let onconnection: (status: ConnectionStatus) => void =
     () => undefined;
+  export let onmarketstatus: (status: EventMarketStatus) => void =
+    () => undefined;
 
   const definition = buildChartDefinition(bundle);
   const VISIBLE_MARKET: MarketVisibility = { kind: "visible" };
 
   let visibilityByMarketId = loadMarketVisibility(
     definition.controls,
+  );
+  let lifecycleByMarketId = new Map<string, MarketLifecycle>(
+    definition.controls.map((control) => [
+      control.marketId,
+      control.lifecycle,
+    ]),
   );
 
   let canvas: HTMLCanvasElement;
@@ -56,6 +69,9 @@
   $: hiddenControls = controlPartition.hidden;
   $: toggledControls =
     viewMode === "age" ? visibleControls : definition.controls;
+  $: onmarketstatus(
+    summarizeEventMarketStatus(lifecycleByMarketId.values()),
+  );
 
   function userSetVisible(
     control: ChartMarketControl,
@@ -68,6 +84,14 @@
     );
     persistUserVisibility(visibilityByMarketId);
     chart?.setMarketVisible(control.marketId, visible);
+  }
+
+  function marketLifecycleChanged(
+    marketId: string,
+    lifecycle: MarketLifecycle,
+  ): void {
+    lifecycleByMarketId = new Map(lifecycleByMarketId);
+    lifecycleByMarketId.set(marketId, lifecycle);
   }
 
   function autoHide(
@@ -103,6 +127,10 @@
       },
       onMarketAutoHidden: (marketId, reason) => {
         if (alive) autoHide(marketId, reason);
+      },
+      onMarketLifecycleChanged: (marketId, lifecycle) => {
+        if (alive)
+          marketLifecycleChanged(marketId, lifecycle);
       },
     });
     chart = next;
@@ -147,6 +175,8 @@
           visibilityByMarketId.get(control.marketId) ??
             VISIBLE_MARKET
         )}
+        lifecycle={lifecycleByMarketId.get(control.marketId) ??
+          control.lifecycle}
         onchange={(checked) => userSetVisible(control, checked)}
       />
     {/each}
@@ -162,6 +192,8 @@
       <MarketControl
         {control}
         checked={false}
+        lifecycle={lifecycleByMarketId.get(control.marketId) ??
+          control.lifecycle}
         onchange={(checked) => userSetVisible(control, checked)}
       />
     {/each}
