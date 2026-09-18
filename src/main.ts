@@ -26,7 +26,15 @@ const volumeLegendBar = document.getElementById("volume-legend-bar")!;
 const volumeLegendTicks = document.getElementById("volume-legend-ticks")!;
 const volumeLegendScale = document.getElementById("volume-legend-scale")!;
 const client = createPublicClient();
-const cards = new Map<string, { card: HTMLElement; chart: PolymarketCPV }>();
+const cards = new Map<
+  string,
+  {
+    card: HTMLElement;
+    chart: PolymarketCPV;
+    pinButton: HTMLButtonElement;
+    eventSlug: string | null;
+  }
+>();
 const PINNED_EVENT_SLUGS_STORAGE_KEY =
   "polymarket-book-vis:pinned-event-slugs:v1";
 const DEFAULT_EVENT_SLUGS = ["israel-closes-its-airspace-by"] as const;
@@ -54,6 +62,42 @@ function persistStringSet(key: string, values: ReadonlySet<string>): void {
   localStorage.setItem(key, JSON.stringify([...values]));
 }
 
+type PinPlacement = "start" | "end";
+
+function setPinnedEventSlug(
+  slug: string,
+  pinned: boolean,
+  placement: PinPlacement = "end",
+): void {
+  const ordered = [...pinnedEventSlugs].filter((candidate) => candidate !== slug);
+  if (pinned) {
+    if (placement === "start") ordered.unshift(slug);
+    else ordered.push(slug);
+  }
+
+  pinnedEventSlugs.clear();
+  for (const candidate of ordered) pinnedEventSlugs.add(candidate);
+  persistStringSet(PINNED_EVENT_SLUGS_STORAGE_KEY, pinnedEventSlugs);
+}
+
+function renderPinButton(
+  button: HTMLButtonElement,
+  card: HTMLElement,
+  eventSlug: string | null,
+): void {
+  const pinned = eventSlug !== null && pinnedEventSlugs.has(eventSlug);
+  button.setAttribute("aria-pressed", String(pinned));
+  button.setAttribute(
+    "aria-label",
+    pinned ? "Unpin event" : "Pin event across reloads",
+  );
+  button.title = pinned
+    ? "Pinned — click to stop restoring this event on reload"
+    : "Pin this event so it returns after reload";
+  button.textContent = pinned ? "★" : "☆";
+  card.classList.toggle("card--pinned", pinned);
+}
+
 function placeCard(card: HTMLElement, pinned: boolean): void {
   // Remove before classifying so the card itself cannot be mistaken for the
   // first member of its destination partition.
@@ -61,7 +105,29 @@ function placeCard(card: HTMLElement, pinned: boolean): void {
   card.classList.toggle("card--pinned", pinned);
 
   if (pinned) {
-    grid.prepend(card);
+    const slug = card.dataset.eventSlug ?? "";
+    const order = [...pinnedEventSlugs];
+    const rank = order.indexOf(slug);
+
+    // Preserve the user's pin order regardless of which async event load
+    // finishes first.
+    const nextPinned = Array.from(grid.children).find((child) => {
+      if (!child.classList.contains("card--pinned")) return false;
+      const childSlug = (child as HTMLElement).dataset.eventSlug ?? "";
+      const childRank = order.indexOf(childSlug);
+      return childRank >= 0 && (rank < 0 || childRank > rank);
+    });
+    if (nextPinned) {
+      grid.insertBefore(card, nextPinned);
+      return;
+    }
+
+    // No later pinned card exists: append to the pinned prefix.
+    const firstUnpinned = Array.from(grid.children).find(
+      (child) => !child.classList.contains("card--pinned"),
+    );
+    if (firstUnpinned) grid.insertBefore(card, firstUnpinned);
+    else grid.appendChild(card);
     return;
   }
 
@@ -77,13 +143,19 @@ function placeCard(card: HTMLElement, pinned: boolean): void {
 async function createCard(event: Event) {
   const existing = cards.get(event.id);
   if (existing) {
+    renderPinButton(existing.pinButton, existing.card, existing.eventSlug);
+    placeCard(
+      existing.card,
+      existing.eventSlug !== null && pinnedEventSlugs.has(existing.eventSlug),
+    );
     existing.card.scrollIntoView({ behavior: "smooth", block: "center" });
     return false;
   }
 
   const card = document.createElement("article");
   card.classList.add("card");
-  const eventSlug = event.slug ?? null;
+  const eventSlug = event.slug?.trim() || null;
+  card.dataset.eventSlug = eventSlug ?? "";
   const chartHost = document.createElement("div");
 
   const actions = document.createElement("div");
@@ -112,29 +184,14 @@ async function createCard(event: Event) {
   closeButton.textContent = "×";
   closeButton.disabled = true;
 
-  const renderPin = () => {
-    const pinned = eventSlug !== null && pinnedEventSlugs.has(eventSlug);
-    pinButton.setAttribute("aria-pressed", String(pinned));
-    pinButton.setAttribute(
-      "aria-label",
-      pinned ? "Unpin event" : "Pin event across reloads",
-    );
-    pinButton.title = pinned
-      ? "Pinned — click to stop restoring this event on reload"
-      : "Pin this event so it returns after reload";
-    pinButton.textContent = pinned ? "★" : "☆";
-    card.classList.toggle("card--pinned", pinned);
-  };
-  renderPin();
+  renderPinButton(pinButton, card, eventSlug);
 
   pinButton.addEventListener("click", () => {
     if (eventSlug === null) return;
-    if (pinnedEventSlugs.has(eventSlug)) pinnedEventSlugs.delete(eventSlug);
-    else pinnedEventSlugs.add(eventSlug);
-    persistStringSet(PINNED_EVENT_SLUGS_STORAGE_KEY, pinnedEventSlugs);
-    const pinned = pinnedEventSlugs.has(eventSlug);
-    renderPin();
-    placeCard(card, pinned);
+    const willPin = !pinnedEventSlugs.has(eventSlug);
+    setPinnedEventSlug(eventSlug, willPin, "end");
+    renderPinButton(pinButton, card, eventSlug);
+    placeCard(card, willPin);
   });
 
   actions.append(viewSelect, pinButton, closeButton);
@@ -145,11 +202,11 @@ async function createCard(event: Event) {
   viewSelect.addEventListener("change", () =>
     chart.setViewMode(viewSelect.value as "age" | "volume"),
   );
-  cards.set(event.id, { card, chart });
+  cards.set(event.id, { card, chart, pinButton, eventSlug });
 
   closeButton.addEventListener("click", () => {
-    if (eventSlug !== null && pinnedEventSlugs.delete(eventSlug))
-      persistStringSet(PINNED_EVENT_SLUGS_STORAGE_KEY, pinnedEventSlugs);
+    if (eventSlug !== null && pinnedEventSlugs.has(eventSlug))
+      setPinnedEventSlug(eventSlug, false);
 
     chart.destroy();
     cards.delete(event.id);
@@ -176,6 +233,12 @@ function errorMessage(error: unknown): string {
 async function addEvent(event: Event, announce = true): Promise<boolean> {
   if (announce)
     addEventStatus.textContent = `Loading ${event.title ?? event.slug ?? "event"}…`;
+
+  // Events explicitly added through the search box are intentional dashboard
+  // choices: pin them and put them first. Clicking ★ on an existing card uses
+  // the opposite policy and appends it to the end of the pinned group.
+  const eventSlug = event.slug?.trim() || null;
+  if (announce && eventSlug) setPinnedEventSlug(eventSlug, true, "start");
 
   const added = await createCard(event);
   if (announce) {

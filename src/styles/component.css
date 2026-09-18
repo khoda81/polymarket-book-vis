@@ -24,8 +24,24 @@
 }
 
 .cpv-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
     flex: 1;
     min-width: 180px;
+}
+
+.cpv-heading-copy {
+    flex: 1;
+    min-width: 0;
+}
+
+.cpv-event-icon {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+    border-radius: 6px;
+    object-fit: cover;
 }
 
 .cpv-title-line {
@@ -184,6 +200,14 @@
     min-width: 0;
 }
 
+.cpv-market-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    border-radius: 4px;
+    object-fit: cover;
+}
+
 /* In age mode the existing market toggles become the y-axis labels. */
 .cpv-clock-canvas {
     position: absolute;
@@ -251,6 +275,13 @@
     white-space: nowrap;
     color: transparent;
     user-select: none;
+}
+
+.cpv-toggles--age-axis .cpv-market-icon {
+    position: absolute;
+    right: var(--cpv-age-market-icon-right, 0);
+    width: 16px;
+    height: 16px;
 }
 
 .cpv-hidden-markets {

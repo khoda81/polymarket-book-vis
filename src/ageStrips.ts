@@ -18,6 +18,8 @@ const AGE_LABEL_MAX_GUTTER_PX = 180;
 const AGE_LABEL_HORIZONTAL_INSET_PX = 8;
 const AGE_TIME_META_WIDTH_PX = 52;
 const AGE_LABEL_GAP_PX = 6;
+const AGE_MARKET_ICON_SIZE_PX = 16;
+const AGE_MARKET_ICON_GAP_PX = 5;
 const VOLUME_LEFT_PADDING_PX = 60;
 export const AGE_ROW_BAND_PX = 28;
 
@@ -48,6 +50,7 @@ interface HoverRow {
 interface AnnotationRow {
   readonly tokenId: string;
   readonly label: string;
+  readonly hasIcon: boolean;
 }
 
 interface HoverGeometry {
@@ -351,6 +354,7 @@ export class AgeStripView {
     this.clockRows = activeControls.map((label, index) => ({
       tokenId: label.dataset.tokenId ?? `missing-row-${index}`,
       label: label.dataset.marketLabel ?? "(untitled)",
+      hasIcon: label.querySelector(".cpv-market-icon") !== null,
     }));
     if (this.viewportVisible) this.renderClockLayer();
 
@@ -674,8 +678,13 @@ export class AgeStripView {
 
       ctx.font = "11px sans-serif";
       ctx.globalAlpha = 1;
+      const rowMaxLabelWidth = Math.max(
+        0,
+        maxLabelWidth -
+          (row.hasIcon ? AGE_MARKET_ICON_SIZE_PX + AGE_MARKET_ICON_GAP_PX : 0),
+      );
       ctx.fillText(
-        ellipsizeCanvasText(ctx, row.label, maxLabelWidth),
+        ellipsizeCanvasText(ctx, row.label, rowMaxLabelWidth),
         labelX,
         rowCenterY,
       );
@@ -764,9 +773,13 @@ function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
   for (const label of labels) {
     const cached = Number(label.dataset.ageLabelWidth);
     if (!Number.isFinite(cached)) continue;
+    const iconExtra =
+      label.querySelector(".cpv-market-icon") !== null
+        ? AGE_MARKET_ICON_SIZE_PX + AGE_MARKET_ICON_GAP_PX
+        : 0;
     widest = Math.max(
       widest,
-      cached + AGE_TIME_META_WIDTH_PX + AGE_LABEL_GAP_PX,
+      cached + AGE_TIME_META_WIDTH_PX + AGE_LABEL_GAP_PX + iconExtra,
     );
   }
 
@@ -903,6 +916,35 @@ function positionRowControls(
     const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
     const top = `${geometry.centerCss}px`;
     if (label.style.top !== top) label.style.top = top;
+
+    const icon = label.querySelector<HTMLImageElement>(".cpv-market-icon");
+    if (icon) {
+      const maxTextWidth = Math.max(
+        0,
+        frame.viewport.l -
+          AGE_LABEL_HORIZONTAL_INSET_PX * 2 -
+          AGE_TIME_META_WIDTH_PX -
+          AGE_LABEL_GAP_PX -
+          AGE_MARKET_ICON_SIZE_PX -
+          AGE_MARKET_ICON_GAP_PX,
+      );
+      const measuredTextWidth = Number(label.dataset.ageLabelWidth ?? 0);
+      const renderedTextWidth = Math.min(
+        Number.isFinite(measuredTextWidth) ? measuredTextWidth : 0,
+        maxTextWidth,
+      );
+      label.style.setProperty(
+        "--cpv-age-market-icon-right",
+        `${
+          AGE_TIME_META_WIDTH_PX +
+          AGE_LABEL_GAP_PX +
+          renderedTextWidth +
+          AGE_MARKET_ICON_GAP_PX
+        }px`,
+      );
+    } else {
+      label.style.removeProperty("--cpv-age-market-icon-right");
+    }
   }
 }
 

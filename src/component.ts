@@ -91,6 +91,15 @@ function descriptionPreview(description: string): string {
   );
 }
 
+function artworkUrl(...candidates: readonly unknown[]): string | null {
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const value = candidate.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
 export class PolymarketCPV {
   readonly polyMarketClient: PublicClient;
 
@@ -106,6 +115,7 @@ export class PolymarketCPV {
   private raf: number | null = null;
   private pointer: { sx: number; sy: number } | null = null;
   private titles: Record<MarketId, string> = {};
+  private marketIcons: Record<MarketId, string> = {};
   private tokenNames: Record<TokenId, string> = {};
   private oppositeTokenNames: Record<TokenId, string> = {};
   private event: Event | undefined;
@@ -167,23 +177,32 @@ export class PolymarketCPV {
 
       <div class="cpv-header">
         <div class="cpv-heading">
-          <div class="cpv-title-line">
-            <h5 class="cpv-title" data-ref="title">Loading…</h5>
-            <a
-              class="cpv-event-link"
-              data-ref="eventLink"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open event on Polymarket"
-              title="Open on Polymarket"
-            >↗</a>
+          <img
+            class="cpv-event-icon"
+            data-ref="eventIcon"
+            alt=""
+            aria-hidden="true"
+            hidden
+          />
+          <div class="cpv-heading-copy">
+            <div class="cpv-title-line">
+              <h5 class="cpv-title" data-ref="title">Loading…</h5>
+              <a
+                class="cpv-event-link"
+                data-ref="eventLink"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Open event on Polymarket"
+                title="Open on Polymarket"
+              >↗</a>
+            </div>
+            <button
+              type="button"
+              class="cpv-event-slug"
+              data-ref="eventSlug"
+              title="Copy event slug"
+            ></button>
           </div>
-          <button
-            type="button"
-            class="cpv-event-slug"
-            data-ref="eventSlug"
-            title="Copy event slug"
-          ></button>
         </div>
         <div class="cpv-dot cpv-dot--conn" data-ref="dot"></div>
         <span class="cpv-stxt" data-ref="stxt">connecting…</span>
@@ -217,6 +236,11 @@ export class PolymarketCPV {
       void navigator.clipboard?.writeText(slug).catch(() => undefined);
     });
 
+    const eventIcon = this.refs.eventIcon as HTMLImageElement;
+    eventIcon.addEventListener("error", () => {
+      eventIcon.hidden = true;
+    });
+
     this.plotter = new OrderBookPlotter(this.refs.canvas as HTMLCanvasElement);
     this.plotter.onZoom = (delta) => {
       if (this.viewMode !== "volume") return;
@@ -237,6 +261,7 @@ export class PolymarketCPV {
     this.setDot("connecting");
     this.books = {};
     this.titles = {};
+    this.marketIcons = {};
     this.tokenNames = {};
     this.oppositeTokenNames = {};
     this.negRiskPalette = null;
@@ -276,6 +301,16 @@ export class PolymarketCPV {
     const rawEvent = await response.json();
     if (!this.ownsLoad(generation)) return;
 
+    const eventIconUrl = artworkUrl(rawEvent.icon, rawEvent.image);
+    const eventIcon = this.refs.eventIcon as HTMLImageElement;
+    if (eventIconUrl) {
+      eventIcon.src = eventIconUrl;
+      eventIcon.hidden = false;
+    } else {
+      eventIcon.removeAttribute("src");
+      eventIcon.hidden = true;
+    }
+
     const description =
       typeof rawEvent.description === "string"
         ? rawEvent.description.trim()
@@ -294,6 +329,9 @@ export class PolymarketCPV {
     for (const rawMarket of rawMarkets as any[]) {
       if (rawMarket.groupItemTitle)
         this.titles[rawMarket.id] = rawMarket.groupItemTitle;
+
+      const marketIconUrl = artworkUrl(rawMarket.icon, rawMarket.image);
+      if (marketIconUrl) this.marketIcons[rawMarket.id] = marketIconUrl;
 
       const outcomes = parseStringArray(rawMarket.outcomes);
       const tokenIds = parseStringArray(rawMarket.clobTokenIds);
@@ -441,7 +479,29 @@ export class PolymarketCPV {
       dot.style.cssText =
         `display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}`;
 
-      label.append(checkbox, dot, this.titles[market.id] ?? market.question);
+      label.append(checkbox, dot);
+
+      const marketIconUrl = this.marketIcons[market.id];
+      if (marketIconUrl) {
+        const icon = document.createElement("img");
+        icon.className = "cpv-market-icon";
+        icon.src = marketIconUrl;
+        icon.alt = "";
+        icon.setAttribute("aria-hidden", "true");
+        icon.loading = "lazy";
+        icon.decoding = "async";
+        icon.addEventListener(
+          "error",
+          () => {
+            icon.remove();
+            this.reqDraw();
+          },
+          { once: true },
+        );
+        label.appendChild(icon);
+      }
+
+      label.append(this.titles[market.id] ?? market.question);
       container.appendChild(label);
     }
   }
