@@ -51,6 +51,20 @@ const DARK_THEME: ChartTheme = {
   text: "#aaaaaa",
 };
 
+function parseStringArray(value: unknown): string[] {
+  if (Array.isArray(value))
+    return value.filter((item): item is string => typeof item === "string");
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export class PolymarketCPV {
   readonly polyMarketClient: PublicClient;
 
@@ -66,6 +80,7 @@ export class PolymarketCPV {
   private raf: number | null = null;
   private pointer: { sx: number; sy: number } | null = null;
   private titles: Record<MarketId, string> = {};
+  private tokenNames: Record<TokenId, string> = {};
   private event: Event | undefined;
   private books: Record<TokenId, TokenBook<string>> = {};
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
@@ -89,6 +104,7 @@ export class PolymarketCPV {
       activeTokens: this.activeTokens,
       getBook: (tokenId) => this.books[tokenId as TokenId],
       getTitle: (marketId) => this.titles[marketId as MarketId],
+      getTokenName: (tokenId) => this.tokenNames[tokenId as TokenId],
       getTheme: () => this.theme,
       getViewMode: () => this.viewMode,
       requestDraw: () => this.reqDraw(),
@@ -189,6 +205,7 @@ export class PolymarketCPV {
 
     this.books = {};
     this.titles = {};
+    this.tokenNames = {};
     this.activeTokens.clear();
     this.ageView.reset();
 
@@ -212,6 +229,14 @@ export class PolymarketCPV {
     for (const rawMarket of rawMarkets as any[]) {
       if (rawMarket.groupItemTitle)
         this.titles[rawMarket.id] = rawMarket.groupItemTitle;
+
+      const outcomes = parseStringArray(rawMarket.outcomes);
+      const tokenIds = parseStringArray(rawMarket.clobTokenIds);
+      for (let i = 0; i < Math.min(outcomes.length, tokenIds.length); i++) {
+        const tokenId = tokenIds[i];
+        const outcome = outcomes[i];
+        if (tokenId && outcome) this.tokenNames[tokenId as TokenId] = outcome;
+      }
     }
 
     event = { ...event, markets: orderMarkets(event, rawMarkets) };
