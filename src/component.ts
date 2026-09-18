@@ -14,7 +14,6 @@ import {
   OrderBookPlotter,
   StackDirection,
 } from "@/lib/renderer";
-import type { PressureObservationRange } from "@/lib/staleSignedVolume";
 import "@/styles/component.css";
 import { AgeStripView } from "./ageStrips";
 import {
@@ -585,9 +584,9 @@ export class PolymarketCPV {
 
           const tokenId = stream.payload.tokenId as TokenId;
           this.books[tokenId] = { usdToYes, yesToUsd };
-          this.ageView.onBookUpdate(tokenId, performance.now());
+          this.ageView.onBookUpdate(tokenId);
         } else if (stream.type === "price_change") {
-          const observedByToken = new Map<TokenId, PressureObservationRange[]>();
+          const touchedTokens = new Set<TokenId>();
           for (const change of stream.payload.priceChanges) {
             const tokenId = change.tokenId as TokenId;
             const book = this.books[tokenId];
@@ -603,19 +602,11 @@ export class PolymarketCPV {
                 take: size * price,
               });
             }
-
-            const ranges = observedByToken.get(tokenId) ?? [];
-            ranges.push(
-              change.side === OrderSide.BUY
-                ? { lo: 0, hi: price }
-                : { lo: price, hi: 1 },
-            );
-            observedByToken.set(tokenId, ranges);
+            touchedTokens.add(tokenId);
           }
 
-          const nowMs = performance.now();
-          for (const [tokenId, observedRanges] of observedByToken)
-            this.ageView.onBookUpdate(tokenId, nowMs, observedRanges);
+          for (const tokenId of touchedTokens)
+            this.ageView.onBookUpdate(tokenId);
         } else if (stream.type === "market_resolved") {
           for (const tokenId of stream.payload.assetIds ?? [])
             this.activeTokens.delete(tokenId as TokenId);
