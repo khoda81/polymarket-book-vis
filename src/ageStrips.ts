@@ -79,6 +79,7 @@ export interface AgeStripHost {
   readonly activeTokens: Set<string>;
   readonly getBook: (tokenId: string) => TokenBook<string> | undefined;
   readonly getTitle: (marketId: string) => string | undefined;
+  readonly getTokenName: (tokenId: string) => string | undefined;
   readonly getTheme: () => ChartTheme;
   readonly getViewMode: () => "volume" | "age";
   readonly requestDraw: () => void;
@@ -454,10 +455,20 @@ export class AgeStripView {
     }
 
     const hover = bookHoverAtPrice(book, (sx - vp.l) / vp.width);
-    renderAgeTooltip(this.overlay, row.label, hover);
+    if (hover.side === "spread") {
+      this.hideTooltip();
+      return;
+    }
+
+    renderAgeTooltip(
+      this.overlay,
+      row.label,
+      this.host.getTokenName(row.tokenId) ?? "(unknown)",
+      hover,
+    );
 
     const tooltipWidth = 232;
-    const tooltipHeight = hover.effectivePrice === null ? 100 : 122;
+    const tooltipHeight = 122;
     let left = sx + 12;
     let top = sy + 12;
     if (left + tooltipWidth > geometry.canvasWidth)
@@ -625,6 +636,7 @@ function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
 function renderAgeTooltip(
   overlay: HTMLDivElement,
   label: string,
+  tokenName: string,
   hover: BookHoverSnapshot,
 ): void {
   overlay.replaceChildren();
@@ -633,16 +645,13 @@ function renderAgeTooltip(
   title.className = "cpv-ov-label";
   title.textContent = label;
   overlay.appendChild(title);
+  overlay.appendChild(tooltipRow("Token", tokenName));
   overlay.appendChild(tooltipRow("Price", formatProbability(hover.price)));
-  overlay.appendChild(
-    tooltipRow(
-      "Side",
-      hover.side === "bid" ? "bid" : hover.side === "ask" ? "ask" : "spread",
-    ),
-  );
   overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
   if (hover.effectivePrice !== null)
-    overlay.appendChild(tooltipRow("VWAP", formatProbability(hover.effectivePrice)));
+    overlay.appendChild(
+      tooltipRow("Effective", formatProbability(hover.effectivePrice)),
+    );
 }
 
 function tooltipRow(name: string, value: string): HTMLDivElement {
