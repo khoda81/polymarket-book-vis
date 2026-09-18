@@ -44,6 +44,8 @@ interface StateResponse {
   connected: boolean;
   /** Earliest instant for which all requested tokens have recorder coverage. */
   recordingSinceMs: number | null;
+  /** Recorder coverage start for each requested token. */
+  recordingSinceMsByToken: Record<string, number>;
   states: Record<string, TransportState>;
 }
 
@@ -103,10 +105,18 @@ class AgeRecorder {
         ? Math.max(...coverageStarts)
         : null;
 
+    const recordingSinceMsByToken = Object.fromEntries(
+      requested.flatMap((tokenId) => {
+        const since = this.recordingSince.get(tokenId);
+        return since === undefined ? [] : [[tokenId, since] as const];
+      }),
+    );
+
     return {
       serverNowMs: nowMs,
       connected: this.subscription !== null,
       recordingSinceMs,
+      recordingSinceMsByToken,
       states,
     };
   }
