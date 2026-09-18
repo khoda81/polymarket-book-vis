@@ -100,13 +100,16 @@ test("single-market wrapper metadata survives DOM recreation", () => {
       {
         id: "m1",
         question: title,
+        conditionId: null,
         state: {
           active: true,
+          closed: false,
           acceptingOrders: true,
         },
+        resolution: { umaResolutionStatus: null },
         outcomes: {
-          yes: { tokenId: "yes-1" },
-          no: { tokenId: "no-1" },
+          yes: { label: "Yes", tokenId: "yes-1", price: "0.5" },
+          no: { label: "No", tokenId: "no-1", price: "0.5" },
         },
       },
     ],
