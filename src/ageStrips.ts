@@ -56,7 +56,6 @@ interface MarketRuntimeState {
 
 interface HoverRow {
   readonly tokenId: string;
-  readonly label: string;
 }
 
 interface HoverGeometry {
@@ -289,10 +288,6 @@ export class AgeStripView {
       viewport: { l: vp.l, t: vp.t, width: vp.width, height: vp.height },
       rows: activeControls.map((label, index) => ({
         tokenId: label.dataset.tokenId ?? `missing-row-${index}`,
-        label:
-          label.querySelector<HTMLElement>(".cpv-market-label-text")?.textContent ??
-          label.textContent ??
-          "(untitled)",
       })),
       canvasWidth: vp.l + vp.width + this.host.plotter.padding.r,
       canvasHeight: vp.t + vp.height + this.host.plotter.padding.b,
@@ -462,13 +457,12 @@ export class AgeStripView {
 
     renderAgeTooltip(
       this.overlay,
-      row.label,
       this.host.getTokenName(row.tokenId) ?? "(unknown)",
       hover,
     );
 
-    const tooltipWidth = 232;
-    const tooltipHeight = 122;
+    const tooltipWidth = 180;
+    const tooltipHeight = 82;
     let left = sx + 12;
     let top = sy + 12;
     if (left + tooltipWidth > geometry.canvasWidth)
@@ -635,7 +629,6 @@ function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
 
 function renderAgeTooltip(
   overlay: HTMLDivElement,
-  label: string,
   tokenName: string,
   hover: BookHoverSnapshot,
 ): void {
@@ -643,10 +636,12 @@ function renderAgeTooltip(
 
   const title = document.createElement("div");
   title.className = "cpv-ov-label";
-  title.textContent = label;
+  title.textContent = `${tokenName}@${formatProbability(hover.price)}`;
+  title.style.color = signedVolumeColor(
+    hover.side === "bid" ? 1 : -1,
+    DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+  );
   overlay.appendChild(title);
-  overlay.appendChild(tooltipRow("Token", tokenName));
-  overlay.appendChild(tooltipRow("Price", formatProbability(hover.price)));
   overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
   if (hover.effectivePrice !== null)
     overlay.appendChild(
