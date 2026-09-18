@@ -22,7 +22,8 @@ describe("signedVolumeSegments", () => {
       { lo: 0.6, hi: 1, volume: -10, sweepCost: 6 },
     ]);
   });
-})  test("keeps a many-level empty spread exactly zero", () => {
+
+  test("keeps a many-level empty spread exactly zero", () => {
     const book = emptyTokenBook();
     for (let i = 0; i < 40; i++) {
       const price = 0.4 - i * 0.001;
