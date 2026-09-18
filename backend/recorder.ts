@@ -78,6 +78,10 @@ class AgeRecorder {
       clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
     }
+    if (this.persistenceBlocked)
+      throw new Error(
+        "Recorder persistence is blocked because corrupt state could not be preserved",
+      );
     if (this.persistDirty) this.enqueuePersist();
     await this.persistChain;
 
@@ -297,7 +301,7 @@ class AgeRecorder {
   }
 
   private enqueuePersist(): void {
-    if (!this.persistDirty) return;
+    if (!this.persistDirty || this.persistenceBlocked) return;
     this.persistDirty = false;
 
     const write = this.persistChain
