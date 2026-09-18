@@ -1,4 +1,5 @@
 import type { ConnectionStatus } from "@/lib/chartState";
+import type { MarketResolutionUpdate } from "@/lib/marketLifecycle";
 import {
   HalfBook,
   type TokenBook,
@@ -27,7 +28,7 @@ type FeedState =
 export interface LiveBookFeedCallbacks {
   readonly onConnectionStatus: (status: ConnectionStatus) => void;
   readonly onBookUpdated: (tokenId: TokenId) => void;
-  readonly onMarketResolved: (tokenIds: readonly TokenId[]) => void;
+  readonly onMarketResolved: (resolution: MarketResolutionUpdate) => void;
 }
 
 export class LiveBookFeed {
@@ -80,7 +81,11 @@ export class LiveBookFeed {
     while (this.state.kind === "connecting") {
       try {
         const stream = await this.client.subscribe([
-          { topic: "market", tokenIds: [...tokenIds] },
+          {
+            topic: "market",
+            tokenIds: [...tokenIds],
+            customFeatureEnabled: true,
+          },
         ]);
         if (this.state.kind === "connecting") return stream;
         await stream.close().catch(() => undefined);
@@ -147,11 +152,14 @@ export class LiveBookFeed {
         }
 
         if (event.type === "market_resolved") {
-          this.callbacks.onMarketResolved(
-            (event.payload.assetIds ?? []).map(
-              (tokenId) => tokenId as TokenId,
-            ),
-          );
+          this.callbacks.onMarketResolved({
+            conditionId: String(event.payload.conditionId),
+            assetIds: (event.payload.assetIds ?? []).map(String),
+            winningTokenId: event.payload.winningAssetId
+              ? String(event.payload.winningAssetId)
+              : null,
+            winningOutcome: event.payload.winningOutcome ?? null,
+          });
         }
       }
     } catch (error) {

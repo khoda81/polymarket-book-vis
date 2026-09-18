@@ -7,14 +7,10 @@ import {
 } from "./marketVisibility";
 
 test("market visibility encodes why a row is hidden", () => {
-  expect(initialMarketVisibility(true, false)).toEqual({
+  expect(initialMarketVisibility(false)).toEqual({
     kind: "visible",
   });
-  expect(initialMarketVisibility(false, false)).toEqual({
-    kind: "hidden",
-    reason: "not-accepting-orders",
-  });
-  expect(initialMarketVisibility(false, true)).toEqual({
+  expect(initialMarketVisibility(true)).toEqual({
     kind: "hidden",
     reason: "user",
   });
@@ -47,7 +43,7 @@ test("visibility partition reacts to a replaced visibility map", () => {
   const second = partitionMarketVisibility(
     markets,
     new Map([
-      ["a", { kind: "hidden", reason: "resolved" }],
+      ["a", { kind: "hidden", reason: "empty-book" }],
       ["c", { kind: "hidden", reason: "user" }],
     ]),
   );

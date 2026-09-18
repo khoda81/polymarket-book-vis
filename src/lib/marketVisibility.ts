@@ -1,12 +1,10 @@
 export type HiddenMarketReason =
   | "user"
-  | "not-accepting-orders"
-  | "empty-book"
-  | "resolved";
+  | "empty-book";
 
 export type AutoHiddenReason = Extract<
   HiddenMarketReason,
-  "empty-book" | "resolved"
+  "empty-book"
 >;
 
 export type MarketVisibility =
@@ -20,13 +18,11 @@ const STORAGE_KEY =
   "polymarket-book-vis.age-strip-hidden-markets.v1";
 
 export function initialMarketVisibility(
-  acceptingOrders: boolean,
   userHidden: boolean,
 ): MarketVisibility {
-  if (userHidden) return { kind: "hidden", reason: "user" };
-  if (!acceptingOrders)
-    return { kind: "hidden", reason: "not-accepting-orders" };
-  return { kind: "visible" };
+  return userHidden
+    ? { kind: "hidden", reason: "user" }
+    : { kind: "visible" };
 }
 
 export function isMarketVisible(
@@ -93,19 +89,14 @@ export function partitionMarketVisibility<T extends MarketIdentified>(
 }
 
 
-export interface VisibilityInitializableMarket extends MarketIdentified {
-  readonly acceptingOrders: boolean;
-}
-
 export function loadMarketVisibility(
-  markets: readonly VisibilityInitializableMarket[],
+  markets: readonly MarketIdentified[],
 ): Map<string, MarketVisibility> {
   const userHidden = loadUserHiddenMarketIds();
   return new Map(
     markets.map((market) => [
       market.marketId,
       initialMarketVisibility(
-        market.acceptingOrders,
         userHidden.has(market.marketId),
       ),
     ]),
