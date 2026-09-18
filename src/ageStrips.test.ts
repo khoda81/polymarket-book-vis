@@ -122,6 +122,7 @@ test("markets not accepting orders start unchecked but retain their controls", (
 
   // Exercise market configuration without constructing the browser renderer.
   const view = Object.assign(Object.create(AgeStripView.prototype), {
+    markets: new Map(),
     host: {
       activeTokens,
       toggles: { querySelectorAll: () => controls },
