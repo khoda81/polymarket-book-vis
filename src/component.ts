@@ -1,4 +1,6 @@
 import { fetchRecorderCoverage } from "@/lib/ageRecorderClient";
+import type { ConnectionStatus, ViewMode } from "@/lib/chartState";
+import type { EventBundle } from "@/lib/eventBundle";
 import { marketColor, marketHue } from "@/lib/math";
 import {
   buildNegRiskPalette,
@@ -14,7 +16,6 @@ import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
-import { orderMarkets } from "@/lib/marketOrder";
 import {
   BookOrder,
   HalfBook,
@@ -28,20 +29,15 @@ import {
   OrderBookPlotter,
   StackDirection,
 } from "@/lib/renderer";
-import "@/styles/component.css";
 import { AgeStripView } from "./ageStrips";
 import {
   Event,
   OrderSide,
   TokenId,
   TransportError,
-  MarketId,
   PublicClient,
 } from "@polymarket/client";
 import { MarketEvent, SubscriptionHandle } from "@polymarket/client/actions";
-
-type ConnectionStatus = "disconnected" | "connecting" | "live";
-type ViewMode = "volume" | "age";
 
 interface BookBoxView {
   readonly direction: StackDirection;
@@ -64,86 +60,19 @@ const DARK_THEME: ChartTheme = {
   text: "#aaaaaa",
 };
 
-function parseStringArray(value: unknown): string[] {
-  if (Array.isArray(value))
-    return value.filter((item): item is string => typeof item === "string");
-  if (typeof value !== "string") return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function descriptionPreview(description: string): string {
-  return (
-    description
-      .split(/\n+/)
-      .map((line) => line.trim())
-      .find(Boolean) ?? ""
-  );
-}
-
-const GENERIC_DESCRIPTION_LABELS = new Set([
-  "description",
-  "market rules",
-  "resolution rules",
-  "rule",
-  "rules",
-]);
-
-function isUsefulDescription(description: string): boolean {
-  if (!description.trim()) return false;
-  const normalized = normalizeDescription(description).replace(/[.:]+$/, "");
-  return !GENERIC_DESCRIPTION_LABELS.has(normalized);
-}
-
-function sameDescription(a: string, b: string): boolean {
-  if (!a.trim() || !b.trim()) return false;
-  return normalizeDescription(a) === normalizeDescription(b);
-}
-
-function normalizeDescription(value: string): string {
-  return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function artworkUrl(...candidates: readonly unknown[]): string | null {
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") continue;
-    const value = candidate.trim();
-    if (value) return value;
-  }
-  return null;
-}
-
-function sameArtworkUrl(a: string, b: string | null): boolean {
-  if (!b) return false;
-  if (a === b) return true;
-  return normalizeArtworkUrl(a) === normalizeArtworkUrl(b);
-}
-
-function normalizeArtworkUrl(value: string): string {
-  try {
-    const url = new URL(value, "https://polymarket.com");
-    // CDN transforms often differ only by query params while still pointing to
-    // the exact same source asset.
-    return `${url.origin}${url.pathname}`;
-  } catch {
-    return value.split(/[?#]/, 1)[0] ?? value;
-  }
+export interface PolymarketCPVOptions {
+  readonly onConnectionStatus?: (status: ConnectionStatus) => void;
 }
 
 export class PolymarketCPV {
   readonly polyMarketClient: PublicClient;
 
   private readonly container: HTMLElement;
+  private readonly onConnectionStatus: (status: ConnectionStatus) => void;
   private readonly refs: Record<string, HTMLElement> = {};
   private readonly themeQuery: MediaQueryList;
   private readonly resizeObserver: ResizeObserver;
@@ -154,11 +83,10 @@ export class PolymarketCPV {
   private ageView!: AgeStripView;
   private raf: number | null = null;
   private pointer: { sx: number; sy: number } | null = null;
-  private titles: Record<MarketId, string> = {};
-  private marketIcons: Record<MarketId, string> = {};
-  private marketDescriptions: Record<MarketId, string> = {};
-  private tokenNames: Record<TokenId, string> = {};
-  private oppositeTokenNames: Record<TokenId, string> = {};
+  private titles: ReadonlyMap<string, string> = new Map();
+  private marketIcons: ReadonlyMap<string, string> = new Map();
+  private tokenNames: ReadonlyMap<string, string> = new Map();
+  private oppositeTokenNames: ReadonlyMap<string, string> = new Map();
   private event: Event | undefined;
   private negRiskPalette: NegRiskPalette | null = null;
   private thresholdPalette: ThresholdPalette | null = null;
@@ -170,9 +98,15 @@ export class PolymarketCPV {
   private loadGeneration = 0;
   private destroyed = false;
 
-  constructor(container: HTMLElement, polyMarketClient: PublicClient) {
+  constructor(
+    container: HTMLElement,
+    polyMarketClient: PublicClient,
+    options: PolymarketCPVOptions = {},
+  ) {
     this.polyMarketClient = polyMarketClient;
     this.container = container;
+    this.onConnectionStatus =
+      options.onConnectionStatus ?? (() => undefined);
 
     this.themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
     this.theme = this.themeQuery.matches ? DARK_THEME : LIGHT_THEME;
@@ -185,10 +119,10 @@ export class PolymarketCPV {
       plotter: this.plotter,
       activeTokens: this.activeTokens,
       getBook: (tokenId) => this.books[tokenId as TokenId],
-      getTitle: (marketId) => this.titles[marketId as MarketId],
-      getTokenName: (tokenId) => this.tokenNames[tokenId as TokenId],
+      getTitle: (marketId) => this.titles.get(String(marketId)),
+      getTokenName: (tokenId) => this.tokenNames.get(String(tokenId)),
       getOppositeTokenName: (tokenId) =>
-        this.oppositeTokenNames[tokenId as TokenId],
+        this.oppositeTokenNames.get(String(tokenId)),
       getPressureColorScale: (tokenId) =>
         this.pressureColorScale(tokenId as TokenId),
       getTheme: () => this.theme,
@@ -212,60 +146,7 @@ export class PolymarketCPV {
   };
 
   private buildDOM() {
-    this.container.classList.add("cpv-wrap");
     this.container.innerHTML = `
-      <h2 class="cpv-sr-only">Polymarket market-state visualization</h2>
-
-      <div class="cpv-header">
-        <div class="cpv-heading">
-          <img
-            class="cpv-event-icon"
-            data-ref="eventIcon"
-            alt=""
-            aria-hidden="true"
-            hidden
-          />
-          <div class="cpv-heading-copy">
-            <div class="cpv-title-line">
-              <h5 class="cpv-title" data-ref="title">Loading…</h5>
-              <a
-                class="cpv-event-link"
-                data-ref="eventLink"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Open event on Polymarket"
-                title="Open on Polymarket"
-              >↗</a>
-            </div>
-            <button
-              type="button"
-              class="cpv-event-slug"
-              data-ref="eventSlug"
-              title="Copy event slug"
-            ></button>
-          </div>
-        </div>
-        <div class="cpv-status">
-          <div class="cpv-dot cpv-dot--conn" data-ref="dot"></div>
-          <span class="cpv-stxt" data-ref="stxt">connecting…</span>
-        </div>
-      </div>
-
-      <details class="cpv-event-description" data-ref="descriptionPanel" hidden>
-        <summary>
-          <span class="cpv-event-description-preview" data-ref="descriptionPreview">
-            Description
-          </span>
-          <span class="cpv-event-description-label">Description</span>
-        </summary>
-        <div class="cpv-event-description-body" data-ref="description"></div>
-      </details>
-
-      <details class="cpv-market-rules" data-ref="marketRulesPanel" hidden>
-        <summary data-ref="marketRulesSummary">Market rules</summary>
-        <div class="cpv-market-rules-list" data-ref="marketRulesList"></div>
-      </details>
-
       <div class="cpv-canvas-wrap" data-ref="canvasWrap">
         <canvas data-ref="canvas"></canvas>
       </div>
@@ -276,17 +157,6 @@ export class PolymarketCPV {
     this.container.querySelectorAll("[data-ref]").forEach((element) => {
       const ref = (element as HTMLElement).dataset.ref!;
       this.refs[ref] = element as HTMLElement;
-    });
-
-    this.refs.eventSlug.addEventListener("click", () => {
-      const slug = this.refs.eventSlug.textContent?.trim();
-      if (!slug) return;
-      void navigator.clipboard?.writeText(slug).catch(() => undefined);
-    });
-
-    const eventIcon = this.refs.eventIcon as HTMLImageElement;
-    eventIcon.addEventListener("error", () => {
-      eventIcon.hidden = true;
     });
 
     this.plotter = new OrderBookPlotter(this.refs.canvas as HTMLCanvasElement);
@@ -301,125 +171,25 @@ export class PolymarketCPV {
     };
   }
 
-  async load(event: Event): Promise<void> {
+  async load(bundle: EventBundle): Promise<void> {
     const generation = ++this.loadGeneration;
     await this.closeWS();
     if (!this.ownsLoad(generation)) return;
 
-    this.setDot("connecting");
+    this.setConnectionStatus("connecting");
     this.books = {};
-    this.titles = {};
-    this.marketIcons = {};
-    this.marketDescriptions = {};
-    this.tokenNames = {};
-    this.oppositeTokenNames = {};
+    this.titles = bundle.marketTitles;
+    this.marketIcons = bundle.marketIcons;
+    this.tokenNames = bundle.tokenNames;
+    this.oppositeTokenNames = bundle.oppositeTokenNames;
     this.negRiskPalette = null;
     this.thresholdPalette = null;
     this.semanticPressureScales.clear();
     this.activeTokens.clear();
     this.ageView.reset();
 
-    this.refs.title.textContent = event.title ?? "(untitled)";
-
-    const eventSlug = event.slug?.trim() || null;
-    const eventLink = this.refs.eventLink as HTMLAnchorElement;
-    const slugElement = this.refs.eventSlug as HTMLButtonElement;
-    if (eventSlug) {
-      eventLink.href = `https://polymarket.com/event/${encodeURIComponent(eventSlug)}`;
-      eventLink.hidden = false;
-      slugElement.textContent = eventSlug;
-      slugElement.hidden = false;
-    } else {
-      eventLink.removeAttribute("href");
-      eventLink.hidden = true;
-      slugElement.textContent = "";
-      slugElement.hidden = true;
-    }
-
-    // groupItemTitle/Threshold are not exposed by the SDK yet, so use its
-    // internal Gamma fetcher for the display metadata we need.
-    const request = await (this.polyMarketClient as any).gamma.get(
-      `/events/${event.id}`,
-    );
-    if (!this.ownsLoad(generation)) return;
-
-    const response = request.value;
-    if (!response.ok)
-      throw new Error(`Gamma API returned status ${response.status}`);
-
-    const rawEvent = await response.json();
-    if (!this.ownsLoad(generation)) return;
-
-    const eventIconUrl = artworkUrl(rawEvent.icon, rawEvent.image);
-    const eventIcon = this.refs.eventIcon as HTMLImageElement;
-    if (eventIconUrl) {
-      eventIcon.src = eventIconUrl;
-      eventIcon.hidden = false;
-    } else {
-      eventIcon.removeAttribute("src");
-      eventIcon.hidden = true;
-    }
-
-    const rawDescription =
-      typeof rawEvent.description === "string"
-        ? rawEvent.description.trim()
-        : "";
-    const description = isUsefulDescription(rawDescription)
-      ? rawDescription
-      : "";
-    const subtitle =
-      typeof rawEvent.subtitle === "string" ? rawEvent.subtitle.trim() : "";
-    const descriptionPanel = this.refs.descriptionPanel as HTMLDetailsElement;
-    this.refs.description.textContent = description;
-    this.refs.descriptionPreview.textContent =
-      subtitle || descriptionPreview(description) || "Description";
-    descriptionPanel.hidden = description.length === 0;
-    if (!description) descriptionPanel.open = false;
-
-    const rawMarkets: unknown[] = rawEvent.markets ?? [];
-
-    for (const rawMarket of rawMarkets as any[]) {
-      if (rawMarket.groupItemTitle)
-        this.titles[rawMarket.id] = rawMarket.groupItemTitle;
-
-      const marketIconUrl = artworkUrl(rawMarket.icon, rawMarket.image);
-      // Gamma commonly repeats the event artwork on every child market. That
-      // adds no information and turns the right axis into a wall of duplicate
-      // icons, so only keep genuinely market-specific artwork.
-      if (
-        marketIconUrl &&
-        !sameArtworkUrl(marketIconUrl, eventIconUrl)
-      )
-        this.marketIcons[rawMarket.id] = marketIconUrl;
-
-      const marketDescription =
-        typeof rawMarket.description === "string"
-          ? rawMarket.description.trim()
-          : "";
-      if (
-        isUsefulDescription(marketDescription) &&
-        !sameDescription(marketDescription, rawDescription)
-      )
-        this.marketDescriptions[rawMarket.id] = marketDescription;
-
-      const outcomes = parseStringArray(rawMarket.outcomes);
-      const tokenIds = parseStringArray(rawMarket.clobTokenIds);
-      for (let i = 0; i < Math.min(outcomes.length, tokenIds.length); i++) {
-        const tokenId = tokenIds[i];
-        const outcome = outcomes[i];
-        if (!tokenId || !outcome) continue;
-
-        this.tokenNames[tokenId as TokenId] = outcome;
-        if (outcomes.length === 2 && tokenIds.length === 2) {
-          const opposite = outcomes[1 - i];
-          if (opposite)
-            this.oppositeTokenNames[tokenId as TokenId] = opposite;
-        }
-      }
-    }
-
-    event = { ...event, markets: orderMarkets(event, rawMarkets) };
-    this.renderMarketRules(event);
+    const event = bundle.event;
+    const rawMarkets = bundle.rawMarkets;
 
     // Threshold metadata is more specific than the event-level neg-risk flag:
     // some neg-risk groups are nested cumulative partitions, not categorical
@@ -498,7 +268,7 @@ export class PolymarketCPV {
 
     this.bookEventStream = events;
     this.event = event;
-    this.setDot("live");
+    this.setConnectionStatus("live");
     void this.readEvents(events, generation);
     this.reqDraw();
   }
@@ -520,7 +290,6 @@ export class PolymarketCPV {
     this.resizeObserver.disconnect();
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
     this.container.innerHTML = "";
-    this.container.classList.remove("cpv-wrap");
   }
 
   private buildToggles(event: Event) {
@@ -552,7 +321,7 @@ export class PolymarketCPV {
 
       label.append(checkbox, dot);
 
-      const marketIconUrl = this.marketIcons[market.id];
+      const marketIconUrl = this.marketIcons.get(String(market.id));
       if (marketIconUrl) {
         const icon = document.createElement("img");
         icon.className = "cpv-market-icon";
@@ -572,57 +341,8 @@ export class PolymarketCPV {
         label.appendChild(icon);
       }
 
-      label.append(this.titles[market.id] ?? market.question);
+      label.append(this.titles.get(String(market.id)) ?? market.question);
       container.appendChild(label);
-    }
-  }
-
-  private renderMarketRules(event: Event): void {
-    const panel = this.refs.marketRulesPanel as HTMLDetailsElement;
-    const list = this.refs.marketRulesList;
-    list.replaceChildren();
-
-    const rows = event.markets
-      .map((market) => {
-        const description = this.marketDescriptions[market.id];
-        if (!description) return null;
-        return {
-          title: this.titles[market.id] ?? market.question ?? "(untitled)",
-          description,
-        };
-      })
-      .filter(
-        (
-          row,
-        ): row is {
-          title: string;
-          description: string;
-        } => row !== null,
-      );
-
-    panel.hidden = rows.length === 0;
-    if (rows.length === 0) {
-      panel.open = false;
-      this.refs.marketRulesSummary.textContent = "Market rules";
-      return;
-    }
-
-    this.refs.marketRulesSummary.textContent =
-      rows.length === 1 ? "Market rules" : `Market rules · ${rows.length}`;
-
-    for (const row of rows) {
-      const details = document.createElement("details");
-      details.className = "cpv-market-rule";
-
-      const summary = document.createElement("summary");
-      summary.textContent = row.title;
-
-      const body = document.createElement("div");
-      body.className = "cpv-market-rule-body";
-      body.textContent = row.description;
-
-      details.append(summary, body);
-      list.appendChild(details);
     }
   }
 
@@ -634,18 +354,8 @@ export class PolymarketCPV {
     );
   }
 
-  private setDot(status: ConnectionStatus) {
-    const { dot, stxt } = this.refs;
-    if (status === "live") {
-      dot.className = "cpv-dot cpv-dot--live";
-      stxt.textContent = "live";
-    } else if (status === "connecting") {
-      dot.className = "cpv-dot cpv-dot--conn";
-      stxt.textContent = "connecting...";
-    } else {
-      dot.className = "cpv-dot cpv-dot--err";
-      stxt.textContent = "disconnected";
-    }
+  private setConnectionStatus(status: ConnectionStatus): void {
+    this.onConnectionStatus(status);
   }
 
   private ownsLoad(generation: number): boolean {
@@ -863,7 +573,7 @@ export class PolymarketCPV {
     } finally {
       if (this.ownsLoad(generation) && this.bookEventStream === events) {
         this.bookEventStream = null;
-        this.setDot("disconnected");
+        this.setConnectionStatus("disconnected");
       }
     }
   }
