@@ -17,9 +17,8 @@ const AGE_LABEL_MIN_GUTTER_PX = 16;
 const AGE_LABEL_MAX_GUTTER_PX = 300;
 const AGE_LABEL_HORIZONTAL_INSET_PX = 8;
 const AGE_TIME_META_WIDTH_PX = 52;
-const AGE_LABEL_GAP_PX = 6;
 const AGE_MARKET_ICON_SIZE_PX = 16;
-const AGE_MARKET_ICON_GAP_PX = 5;
+const AGE_MARKET_ICON_GAP_PX = 8;
 const AGE_TIME_GUTTER_PX =
   AGE_TIME_META_WIDTH_PX + AGE_LABEL_HORIZONTAL_INSET_PX * 2 + 1;
 const VOLUME_LEFT_PADDING_PX = 60;
@@ -512,7 +511,11 @@ export class AgeStripView {
       return;
     }
 
-    const hover = bookHoverAtPrice(book, (sx - vp.l) / vp.width);
+    // Age view is intentionally mirrored so the opposite token is on the
+    // left and the primary token is on the right. Convert display-x back to
+    // the canonical primary-token price before querying the book.
+    const displayPrice = (sx - vp.l) / vp.width;
+    const hover = bookHoverAtPrice(book, 1 - displayPrice);
     if (hover.side === "spread") {
       this.hideTooltip();
       return;
@@ -813,7 +816,10 @@ function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
 
   return Math.ceil(
     clamp(
-      widest + AGE_LABEL_HORIZONTAL_INSET_PX * 2 + 1,
+      widest +
+      iconExtra +
+      AGE_LABEL_HORIZONTAL_INSET_PX * 2 +
+      1,
       AGE_LABEL_MIN_GUTTER_PX,
       AGE_LABEL_MAX_GUTTER_PX,
     ),
@@ -988,13 +994,14 @@ function drawAgeAxes(
     const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
     const scale = colorScaleForToken(tokenId);
 
-    ctx.strokeStyle = signedVolumeColor(1, scale);
+    // Mirrored token orientation: opposite on the left, primary on the right.
+    ctx.strokeStyle = signedVolumeColor(-1, scale);
     ctx.beginPath();
     ctx.moveTo(vp.l, geometry.topCss);
     ctx.lineTo(vp.l, geometry.topCss + geometry.heightCss);
     ctx.stroke();
 
-    ctx.strokeStyle = signedVolumeColor(-1, scale);
+    ctx.strokeStyle = signedVolumeColor(1, scale);
     ctx.beginPath();
     ctx.moveTo(vp.l + vp.width, geometry.topCss);
     ctx.lineTo(vp.l + vp.width, geometry.topCss + geometry.heightCss);
@@ -1033,12 +1040,17 @@ function drawLivePressureStrip(
   for (const segment of signedVolumeSegments(book)) {
     if (segment.volume === 0 || Number.isNaN(segment.volume)) continue;
 
+    // signedVolumeSegments is expressed in canonical primary-token price.
+    // Mirror it for the age view so opposite liquidity is left and primary
+    // liquidity is right, matching the row identity placement.
+    const displayLo = 1 - clamp(segment.hi, 0, 1);
+    const displayHi = 1 - clamp(segment.lo, 0, 1);
     const x0 = snapToDevicePixel(
-      vp.l + clamp(segment.lo, 0, 1) * vp.width,
+      vp.l + displayLo * vp.width,
       dpr,
     );
     const x1 = snapToDevicePixel(
-      vp.l + clamp(segment.hi, 0, 1) * vp.width,
+      vp.l + displayHi * vp.width,
       dpr,
     );
     if (!(x1 > x0)) continue;
