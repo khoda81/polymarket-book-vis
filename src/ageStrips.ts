@@ -120,6 +120,7 @@ export class AgeStripView {
   private readonly host: AgeStripHost;
   private readonly hiddenTray: HTMLDivElement;
   private readonly overlay: HTMLDivElement;
+  private readonly intersectionObserver: IntersectionObserver;
   private readonly markets = new Map<string, MarketRuntimeState>();
   private readonly toggleHomeParent: HTMLElement | null;
   private readonly toggleHomeNextSibling: ChildNode | null;
@@ -130,6 +131,7 @@ export class AgeStripView {
   private timeLabelRaf: number | undefined;
   private timeLabelsDirty = true;
   private tooltipSignature = "";
+  private viewportVisible = true;
 
   constructor(host: AgeStripHost) {
     this.host = host;
@@ -147,7 +149,30 @@ export class AgeStripView {
     this.overlay = document.createElement("div");
     this.overlay.className = "cpv-overlay";
     this.overlay.setAttribute("role", "tooltip");
-    host.canvasWrap.insertAdjacentElement("afterend", this.overlay);
+    document.body.appendChild(this.overlay);
+
+    this.intersectionObserver = new IntersectionObserver(
+      ([entry]) => {
+        const visible = entry?.isIntersecting ?? false;
+        if (visible === this.viewportVisible) return;
+        this.viewportVisible = visible;
+
+        if (!visible) {
+          this.cancelTimeLabelRefresh();
+          this.hideTooltip();
+          return;
+        }
+
+        // One catch-up frame reconstructs canvas geometry and visible clocks;
+        // websocket state continued updating while this view was dormant.
+        this.timeLabelsDirty = true;
+        this.host.requestDraw();
+      },
+      // Start work just before the card enters the viewport so scrolling never
+      // exposes a stale/blank canvas.
+      { root: null, rootMargin: "160px 0px" },
+    );
+    this.intersectionObserver.observe(host.canvasWrap);
 
     redrawCallbacks.add(host.requestDraw);
 
@@ -317,6 +342,8 @@ export class AgeStripView {
   }
 
   draw(): void {
+    if (!this.viewportVisible) return;
+
     const controls = this.collectControls();
     this.syncControlPlacement(controls);
     const activeControls = controls.filter((label) => this.isActive(label));
@@ -408,6 +435,7 @@ export class AgeStripView {
 
   destroy(): void {
     this.cancelTimeLabelRefresh();
+    this.intersectionObserver.disconnect();
     redrawCallbacks.delete(this.host.requestDraw);
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.host.canvas.removeEventListener("pointermove", this.handlePointerMove);
@@ -434,7 +462,7 @@ export class AgeStripView {
 
   private renderHoverTooltip(pointer: HoverPointer): void {
     const { sx, sy } = pointer;
-    if (this.host.getViewMode() !== "age") {
+    if (!this.viewportVisible || this.host.getViewMode() !== "age") {
       this.hideTooltip();
       return;
     }
@@ -672,7 +700,7 @@ export class AgeStripView {
     if (delayMs <= 34) {
       this.timeLabelRaf = requestAnimationFrame(() => {
         this.timeLabelRaf = undefined;
-        if (this.host.getViewMode() !== "age") return;
+        if (!this.viewportVisible || this.host.getViewMode() !== "age") return;
         this.refreshVisibleTimeLabels(
           this.collectControls().filter((label) => this.isActive(label)),
         );
@@ -682,7 +710,7 @@ export class AgeStripView {
 
     this.timeLabelTimer = window.setTimeout(() => {
       this.timeLabelTimer = undefined;
-      if (this.host.getViewMode() !== "age") return;
+      if (!this.viewportVisible || this.host.getViewMode() !== "age") return;
       this.refreshVisibleTimeLabels(
         this.collectControls().filter((label) => this.isActive(label)),
       );
