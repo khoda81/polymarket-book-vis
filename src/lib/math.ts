@@ -134,12 +134,24 @@ function formatQuantizedRelativeTime(
   return hours ? `${days}d ${hours}h` : `${days}d`;
 }
 
+export const MARKET_COLOR_LUMINANCE = 0.72;
+export const MARKET_COLOR_CHROMA = 0.16;
+const GOLDEN_ANGLE = 137.50776405003785;
+
+export function idToHue(idx: number, offset: number = 56.234): number {
+  return ((idx * GOLDEN_ANGLE + offset) % 360 + 360) % 360;
+}
+
 export function idToColor(idx: number, offset: number = 56.234): string {
-  const GOLDEN_ANGLE = 137.50776405003785;
-  const L = 0.72;
-  const C = 0.16;
-  const hue = (idx * GOLDEN_ANGLE + offset) % 360;
-  return `oklch(${L} ${C} ${hue})`;
+  return `oklch(${MARKET_COLOR_LUMINANCE} ${MARKET_COLOR_CHROMA} ${idToHue(idx, offset)})`;
+}
+
+/**
+ * Stable hue used by the ordinary per-market color identity.
+ */
+export function marketHue(eventId: string, marketIndex: number): number {
+  const offset = parseInt(eventId) || 0;
+  return idToHue(marketIndex, offset);
 }
 
 /**
@@ -150,8 +162,7 @@ export function idToColor(idx: number, offset: number = 56.234): string {
  * do not all start from the same color.
  */
 export function marketColor(eventId: string, marketIndex: number): string {
-  const offset = parseInt(eventId) || 0;
-  return idToColor(marketIndex, offset);
+  return `oklch(${MARKET_COLOR_LUMINANCE} ${MARKET_COLOR_CHROMA} ${marketHue(eventId, marketIndex)})`;
 }
 
 /** Format a volume number for display. */
