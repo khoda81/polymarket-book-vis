@@ -157,6 +157,41 @@
     white-space: pre-wrap;
 }
 
+.cpv-market-rules {
+    margin: -0.25rem 0 0.75rem;
+    color: var(--color-text-secondary, #666);
+    font-size: 11px;
+}
+
+.cpv-market-rules > summary,
+.cpv-market-rule > summary {
+    width: fit-content;
+    cursor: pointer;
+    user-select: none;
+}
+
+.cpv-market-rules-list {
+    max-width: 90ch;
+    margin-top: 6px;
+    padding-left: 10px;
+    border-left: 2px solid var(--color-border-secondary, #ccc);
+}
+
+.cpv-market-rule + .cpv-market-rule {
+    margin-top: 4px;
+}
+
+.cpv-market-rule > summary {
+    color: var(--color-text-primary, #222);
+}
+
+.cpv-market-rule-body {
+    margin: 5px 0 9px;
+    padding-left: 10px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
 .cpv-dot {
     width: 8px;
     height: 8px;

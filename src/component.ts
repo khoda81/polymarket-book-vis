@@ -91,6 +91,29 @@ function descriptionPreview(description: string): string {
   );
 }
 
+const GENERIC_DESCRIPTION_LABELS = new Set([
+  "description",
+  "market rules",
+  "resolution rules",
+  "rule",
+  "rules",
+]);
+
+function isUsefulDescription(description: string): boolean {
+  if (!description.trim()) return false;
+  const normalized = normalizeDescription(description).replace(/[.:]+$/, "");
+  return !GENERIC_DESCRIPTION_LABELS.has(normalized);
+}
+
+function sameDescription(a: string, b: string): boolean {
+  if (!a.trim() || !b.trim()) return false;
+  return normalizeDescription(a) === normalizeDescription(b);
+}
+
+function normalizeDescription(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function artworkUrl(...candidates: readonly unknown[]): string | null {
   for (const candidate of candidates) {
     if (typeof candidate !== "string") continue;
@@ -133,6 +156,7 @@ export class PolymarketCPV {
   private pointer: { sx: number; sy: number } | null = null;
   private titles: Record<MarketId, string> = {};
   private marketIcons: Record<MarketId, string> = {};
+  private marketDescriptions: Record<MarketId, string> = {};
   private tokenNames: Record<TokenId, string> = {};
   private oppositeTokenNames: Record<TokenId, string> = {};
   private event: Event | undefined;
@@ -235,6 +259,11 @@ export class PolymarketCPV {
         <div class="cpv-event-description-body" data-ref="description"></div>
       </details>
 
+      <details class="cpv-market-rules" data-ref="marketRulesPanel" hidden>
+        <summary data-ref="marketRulesSummary">Market rules</summary>
+        <div class="cpv-market-rules-list" data-ref="marketRulesList"></div>
+      </details>
+
       <div class="cpv-canvas-wrap" data-ref="canvasWrap">
         <canvas data-ref="canvas"></canvas>
       </div>
@@ -279,6 +308,7 @@ export class PolymarketCPV {
     this.books = {};
     this.titles = {};
     this.marketIcons = {};
+    this.marketDescriptions = {};
     this.tokenNames = {};
     this.oppositeTokenNames = {};
     this.negRiskPalette = null;
@@ -328,10 +358,13 @@ export class PolymarketCPV {
       eventIcon.hidden = true;
     }
 
-    const description =
+    const rawDescription =
       typeof rawEvent.description === "string"
         ? rawEvent.description.trim()
         : "";
+    const description = isUsefulDescription(rawDescription)
+      ? rawDescription
+      : "";
     const subtitle =
       typeof rawEvent.subtitle === "string" ? rawEvent.subtitle.trim() : "";
     const descriptionPanel = this.refs.descriptionPanel as HTMLDetailsElement;
@@ -357,6 +390,16 @@ export class PolymarketCPV {
       )
         this.marketIcons[rawMarket.id] = marketIconUrl;
 
+      const marketDescription =
+        typeof rawMarket.description === "string"
+          ? rawMarket.description.trim()
+          : "";
+      if (
+        isUsefulDescription(marketDescription) &&
+        !sameDescription(marketDescription, rawDescription)
+      )
+        this.marketDescriptions[rawMarket.id] = marketDescription;
+
       const outcomes = parseStringArray(rawMarket.outcomes);
       const tokenIds = parseStringArray(rawMarket.clobTokenIds);
       for (let i = 0; i < Math.min(outcomes.length, tokenIds.length); i++) {
@@ -374,6 +417,8 @@ export class PolymarketCPV {
     }
 
     event = { ...event, markets: orderMarkets(event, rawMarkets) };
+    this.renderMarketRules(event);
+
     // Threshold metadata is more specific than the event-level neg-risk flag:
     // some neg-risk groups are nested cumulative partitions, not categorical
     // one-hot outcomes. Detect those first, then fall back to categorical.
@@ -527,6 +572,55 @@ export class PolymarketCPV {
 
       label.append(this.titles[market.id] ?? market.question);
       container.appendChild(label);
+    }
+  }
+
+  private renderMarketRules(event: Event): void {
+    const panel = this.refs.marketRulesPanel as HTMLDetailsElement;
+    const list = this.refs.marketRulesList;
+    list.replaceChildren();
+
+    const rows = event.markets
+      .map((market) => {
+        const description = this.marketDescriptions[market.id];
+        if (!description) return null;
+        return {
+          title: this.titles[market.id] ?? market.question ?? "(untitled)",
+          description,
+        };
+      })
+      .filter(
+        (
+          row,
+        ): row is {
+          title: string;
+          description: string;
+        } => row !== null,
+      );
+
+    panel.hidden = rows.length === 0;
+    if (rows.length === 0) {
+      panel.open = false;
+      this.refs.marketRulesSummary.textContent = "Market rules";
+      return;
+    }
+
+    this.refs.marketRulesSummary.textContent =
+      rows.length === 1 ? "Market rules" : `Market rules · ${rows.length}`;
+
+    for (const row of rows) {
+      const details = document.createElement("details");
+      details.className = "cpv-market-rule";
+
+      const summary = document.createElement("summary");
+      summary.textContent = row.title;
+
+      const body = document.createElement("div");
+      body.className = "cpv-market-rule-body";
+      body.textContent = row.description;
+
+      details.append(summary, body);
+      list.appendChild(details);
     }
   }
 
