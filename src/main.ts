@@ -50,16 +50,17 @@ function persistStringSet(key: string, values: ReadonlySet<string>): void {
 }
 
 function placeCard(card: HTMLElement, pinned: boolean): void {
+  // Remove before classifying so the card itself cannot be mistaken for the
+  // first member of its destination partition.
+  card.remove();
   card.classList.toggle("card--pinned", pinned);
 
   if (pinned) {
-    // New/just-pinned cards go to the very front of the pinned region.
     grid.prepend(card);
     return;
   }
 
-  // Unpinned cards belong immediately after the pinned prefix. This prevents
-  // later discovery results from ever pushing pinned cards down the dashboard.
+  // Unpinned cards start immediately after the pinned prefix.
   const firstUnpinned = Array.from(grid.children).find(
     (child) => !child.classList.contains("card--pinned"),
   );
@@ -123,6 +124,9 @@ async function createCard(event: Event) {
   cards.set(event.id, { card, chart });
 
   closeButton.addEventListener("click", () => {
+    if (eventSlug !== null && pinnedEventSlugs.delete(eventSlug))
+      persistStringSet(PINNED_EVENT_SLUGS_STORAGE_KEY, pinnedEventSlugs);
+
     chart.destroy();
     cards.delete(event.id);
     card.remove();
