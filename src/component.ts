@@ -266,7 +266,7 @@ export class PolymarketCPV {
     // best-effort, so the chart still works normally when the backend is down.
     this.ageView.hydrate(await fetchRecordedAgeState(tokenIds));
 
-    for (;;) {
+    for (; ;) {
       try {
         this.bookEventStream = await this.polyMarketClient.subscribe([
           { topic: "market", tokenIds },

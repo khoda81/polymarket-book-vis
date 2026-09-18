@@ -468,12 +468,14 @@ export class AgeStripView {
 
     const tooltipWidth = 180;
     const tooltipHeight = 82;
+    const rowCenterY =
+      vp.t + ((rowIndex + 0.5) / geometry.rows.length) * vp.height;
     let left = sx + 12;
-    let top = sy + 12;
+    let top = rowCenterY + 12;
     if (left + tooltipWidth > geometry.canvasWidth)
       left = Math.max(4, sx - tooltipWidth - 12);
     if (top + tooltipHeight > geometry.canvasHeight)
-      top = Math.max(4, sy - tooltipHeight - 12);
+      top = Math.max(4, rowCenterY - tooltipHeight - 12);
 
     this.overlay.style.left = `${left}px`;
     this.overlay.style.top = `${top}px`;
