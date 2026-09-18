@@ -58,11 +58,27 @@ class AgeRecorder {
   private subscription: SubscriptionHandle<MarketEvent> | null = null;
   private subscriptionGeneration = 0;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
+  private persistDirty = false;
+  private persistChain: Promise<void> = Promise.resolve();
   private restartChain = Promise.resolve();
 
   async start(): Promise<void> {
     await this.restoreFromDisk();
     void this.restartSubscription();
+  }
+
+  async stop(): Promise<void> {
+    this.subscriptionGeneration++;
+    const subscription = this.subscription;
+    this.subscription = null;
+    if (subscription) await subscription.close().catch(() => undefined);
+
+    if (this.persistTimer !== undefined) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = undefined;
+    }
+    if (this.persistDirty) this.enqueuePersist();
+    await this.persistChain;
   }
 
   watch(tokenIds: Iterable<string>): boolean {
@@ -250,16 +266,33 @@ class AgeRecorder {
   }
 
   private schedulePersist(): void {
-    if (this.persistTimer !== undefined) clearTimeout(this.persistTimer);
+    this.persistDirty = true;
+    // Bounded checkpoint latency: once armed, later updates do not postpone
+    // this write. Updates arriving while a write is in flight arm the next
+    // checkpoint independently.
+    if (this.persistTimer !== undefined) return;
     this.persistTimer = setTimeout(() => {
       this.persistTimer = undefined;
-      void this.persist().catch((error) =>
-        console.error("Could not persist recorder state", error),
-      );
+      this.enqueuePersist();
     }, PERSIST_DEBOUNCE_MS);
   }
 
-  private async persist(): Promise<void> {
+  private enqueuePersist(): void {
+    if (!this.persistDirty) return;
+    this.persistDirty = false;
+
+    const write = this.persistChain
+      .catch(() => undefined)
+      .then(() => this.persistSnapshot());
+    this.persistChain = write.catch((error) => {
+      // Keep the serialization chain usable after a failed checkpoint. Mark
+      // the state dirty again so a later update or shutdown retries it.
+      this.persistDirty = true;
+      console.error("Could not persist recorder state", error);
+    });
+  }
+
+  private async persistSnapshot(): Promise<void> {
     const states: Record<string, StaleSignedVolumeSnapshot> = {};
     for (const [tokenId, memory] of this.memories)
       states[tokenId] = memory.snapshot();
@@ -414,7 +447,7 @@ function applyPriceChange(
 const recorder = new AgeRecorder();
 await recorder.start();
 
-Bun.serve({
+const server = Bun.serve({
   port: PORT,
   async fetch(request) {
     const url = new URL(request.url);
@@ -445,6 +478,23 @@ Bun.serve({
 
 console.log(`Age recorder listening on http://127.0.0.1:${PORT}`);
 console.log(`Persistent state: ${STATE_PATH}`);
+
+let shuttingDown = false;
+const shutdown = async (signal: NodeJS.Signals) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}; flushing recorder state…`);
+  try {
+    server.stop(false);
+    await recorder.stop();
+    process.exit(0);
+  } catch (error) {
+    console.error("Recorder shutdown flush failed", error);
+    process.exit(1);
+  }
+};
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 function parseTokenIds(params: URLSearchParams): string[] {
   return params
