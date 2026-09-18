@@ -238,3 +238,11 @@ body {
         --color-text-secondary: #aaa;
     }
 }
+
+.card--pinned {
+    border-color: color-mix(
+        in oklab,
+        var(--color-border-secondary, #ddd) 78%,
+        #d7a900 22%
+    );
+}
