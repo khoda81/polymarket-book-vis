@@ -35,6 +35,8 @@
 .cpv-heading-copy {
     flex: 1;
     min-width: 0;
+    height: 28px;
+    overflow: hidden;
 }
 
 .cpv-event-icon {
@@ -50,7 +52,8 @@
     align-items: center;
     gap: 6px;
     min-width: 0;
-    height: 28px;
+    height: 16px;
+    line-height: 16px;
 }
 
 .cpv-title {
@@ -79,7 +82,8 @@
 .cpv-event-slug {
     display: block;
     max-width: min(100%, 520px);
-    margin-top: 3px;
+    height: 12px;
+    margin-top: 0;
     padding: 0;
     overflow: hidden;
     border: 0;
@@ -88,7 +92,7 @@
     cursor: copy;
     font: inherit;
     font-size: 10px;
-    line-height: 1.2;
+    line-height: 12px;
     text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
