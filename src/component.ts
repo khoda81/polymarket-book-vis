@@ -82,6 +82,15 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function descriptionPreview(description: string): string {
+  return (
+    description
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? ""
+  );
+}
+
 export class PolymarketCPV {
   readonly polyMarketClient: PublicClient;
 
@@ -181,7 +190,11 @@ export class PolymarketCPV {
       </div>
 
       <details class="cpv-event-description" data-ref="descriptionPanel" hidden>
-        <summary>Description</summary>
+        <summary>
+          <span class="cpv-event-description-preview" data-ref="descriptionPreview">
+            Description
+          </span>
+        </summary>
         <div class="cpv-event-description-body" data-ref="description"></div>
       </details>
 
@@ -266,8 +279,12 @@ export class PolymarketCPV {
       typeof rawEvent.description === "string"
         ? rawEvent.description.trim()
         : "";
+    const subtitle =
+      typeof rawEvent.subtitle === "string" ? rawEvent.subtitle.trim() : "";
     const descriptionPanel = this.refs.descriptionPanel as HTMLDetailsElement;
     this.refs.description.textContent = description;
+    this.refs.descriptionPreview.textContent =
+      subtitle || descriptionPreview(description) || "Description";
     descriptionPanel.hidden = description.length === 0;
     if (!description) descriptionPanel.open = false;
 

@@ -89,9 +89,35 @@
 }
 
 .cpv-event-description > summary {
-    width: fit-content;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    max-width: 100%;
     cursor: pointer;
     user-select: none;
+    list-style: none;
+}
+
+.cpv-event-description > summary::-webkit-details-marker {
+    display: none;
+}
+
+.cpv-event-description > summary::before {
+    content: "▸";
+    flex: 0 0 auto;
+    opacity: 0.8;
+}
+
+.cpv-event-description[open] > summary::before {
+    content: "▾";
+}
+
+.cpv-event-description-preview {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .cpv-event-description-body {
