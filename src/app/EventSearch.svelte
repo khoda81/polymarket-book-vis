@@ -159,9 +159,11 @@
       id="event-search"
       name="query"
       type="text"
+      role="combobox"
       placeholder="Search events or paste an exact slug…"
       autocomplete="off"
       aria-autocomplete="list"
+      aria-haspopup="listbox"
       aria-controls="event-search-results"
       aria-expanded={open}
       bind:value={query}

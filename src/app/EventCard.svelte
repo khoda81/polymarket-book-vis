@@ -1,9 +1,23 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import ChartHost from "./ChartHost.svelte";
+  import EventDescription from "./EventDescription.svelte";
+  import EventHeader from "./EventHeader.svelte";
+  import MarketRules from "./MarketRules.svelte";
+  import type {
+    ConnectionStatus,
+    ViewMode,
+  } from "../lib/chartState";
+  import {
+    loadEventBundle,
+    type EventBundle,
+  } from "../lib/eventBundle";
   import type {
     ChartLifecycle,
     PinState,
-    ViewMode,
+  } from "./model";
+  import {
+    eventSlug,
   } from "./model";
   import {
     createPublicClient,
@@ -11,6 +25,11 @@
   } from "@polymarket/client";
 
   type PublicClient = ReturnType<typeof createPublicClient>;
+
+  type BundleState =
+    | { readonly kind: "loading" }
+    | { readonly kind: "ready"; readonly bundle: EventBundle }
+    | { readonly kind: "failed"; readonly message: string };
 
   export let event: Event;
   export let client: PublicClient;
@@ -22,6 +41,16 @@
 
   let viewMode: ViewMode = "age";
   let lifecycle: ChartLifecycle = { kind: "loading" };
+  let bundleState: BundleState = { kind: "loading" };
+  let connection: ConnectionStatus = "connecting";
+
+  $: slug = eventSlug(event);
+  $: pinned = pin.kind === "pinned";
+  $: pinnable = pin.kind !== "unavailable";
+  $: presentation =
+    bundleState.kind === "ready"
+      ? bundleState.bundle.presentation
+      : null;
 
   function setLifecycle(next: ChartLifecycle): void {
     lifecycle = next;
@@ -29,8 +58,28 @@
     if (next.kind === "failed") onfailure(next.message);
   }
 
-  $: pinned = pin.kind === "pinned";
-  $: pinnable = pin.kind !== "unavailable";
+  onMount(() => {
+    let alive = true;
+
+    void loadEventBundle(client, event).then(
+      (bundle) => {
+        if (!alive) return;
+        bundleState = { kind: "ready", bundle };
+      },
+      (error: unknown) => {
+        if (!alive) return;
+        const message =
+          error instanceof Error ? error.message : String(error);
+        bundleState = { kind: "failed", message };
+        lifecycle = { kind: "failed", message };
+        onfailure(message);
+      },
+    );
+
+    return () => {
+      alive = false;
+    };
+  });
 </script>
 
 <article
@@ -100,10 +149,30 @@
     </button>
   </div>
 
-  <ChartHost
-    {event}
-    {client}
-    {viewMode}
-    onstate={setLifecycle}
-  />
+  <div class="cpv-wrap">
+    <EventHeader
+      {event}
+      {slug}
+      iconUrl={presentation?.iconUrl ?? null}
+      {connection}
+    />
+
+    {#if presentation?.description}
+      <EventDescription description={presentation.description} />
+    {/if}
+
+    {#if presentation && presentation.marketRules.length > 0}
+      <MarketRules rules={presentation.marketRules} />
+    {/if}
+
+    {#if bundleState.kind === "ready"}
+      <ChartHost
+        bundle={bundleState.bundle}
+        {client}
+        {viewMode}
+        onstate={setLifecycle}
+        onconnection={(status) => (connection = status)}
+      />
+    {/if}
+  </div>
 </article>

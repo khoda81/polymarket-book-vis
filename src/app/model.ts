@@ -3,8 +3,6 @@ import type { Event } from "@polymarket/client";
 declare const eventSlugBrand: unique symbol;
 export type EventSlug = string & { readonly [eventSlugBrand]: true };
 
-export type ViewMode = "age" | "volume";
-
 export type ChartLifecycle =
   | { readonly kind: "loading" }
   | { readonly kind: "ready" }
