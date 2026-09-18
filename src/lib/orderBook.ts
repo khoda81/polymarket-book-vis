@@ -105,7 +105,8 @@ export class HalfBook<OrderKey> {
    * @returns `true` if the order key existed. Otherwise, `false`.
    */
   setLevel(key: OrderKey, order: BookOrder): boolean {
-    if (order.price <= 0) return false;
+    if (Number.isNaN(order.price) || order.price <= 0) return false;
+    if (Number.isNaN(order.take)) return false;
     if (order.take <= 0) return this.removeOrder(key);
 
     const existing = this.index.get(key);
@@ -125,7 +126,8 @@ export class HalfBook<OrderKey> {
     const insertIdx = this.findInsertIndex(order.price);
 
     this.orders.splice(insertIdx, 0, key);
-    this.index.set(key, order);
+    // Own the stored value so caller-side mutation cannot invalidate ordering.
+    this.index.set(key, { price: order.price, take: order.take });
 
     return !!existing;
   }
@@ -134,6 +136,7 @@ export class HalfBook<OrderKey> {
    * Update the take amount of an existing order. `take <= 0` removes the order.
    */
   updateTake(key: OrderKey, take: number): boolean {
+    if (Number.isNaN(take)) return false;
     if (take <= 0) return this.removeOrder(key);
 
     const existing = this.index.get(key);
@@ -160,7 +163,8 @@ export class HalfBook<OrderKey> {
    * get a well-defined `give = price * take = 0`.
    */
   getOrder(key: OrderKey): BookOrder {
-    return this.index.get(key) ?? { price: 0, take: 1 };
+    const order = this.index.get(key);
+    return order ? { ...order } : { price: 0, take: 1 };
   }
 
   get size(): number {
@@ -210,7 +214,7 @@ export class HalfBook<OrderKey> {
 
   *asOrders() {
     for (let i = this.orders.length - 1; i >= 0; i--)
-      yield this.index.get(this.orders[i])!;
+      yield { ...this.index.get(this.orders[i])! };
   }
 
   /** Yield all slots best-to-worst (descending price), including keys. */
@@ -277,9 +281,22 @@ export class HalfBook<OrderKey> {
    */
   static fromSorted<K>(slots: Iterable<Slot<K>>): HalfBook<K> {
     const book = new HalfBook<K>();
+    let previousPrice = Number.NEGATIVE_INFINITY;
     for (const { key, price, take } of slots) {
+      if (
+        Number.isNaN(price) ||
+        Number.isNaN(take) ||
+        price <= 0 ||
+        take <= 0
+      )
+        throw new RangeError("HalfBook slots require positive non-NaN values");
+      if (price < previousPrice)
+        throw new RangeError("HalfBook.fromSorted requires ascending prices");
+      if (book.index.has(key))
+        throw new RangeError("HalfBook.fromSorted requires unique keys");
       book.orders.push(key);
       book.index.set(key, { price, take });
+      previousPrice = price;
     }
     return book;
   }
