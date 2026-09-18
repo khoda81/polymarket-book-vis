@@ -1,4 +1,10 @@
 import { marketColor, marketHue } from "./math";
+import {
+  indexRawMarketsById,
+  resolutionOrder,
+  resolutionTimestamp,
+  sameDisplayTitle,
+} from "./marketMetadata";
 import { buildNegRiskPalette } from "./negRiskColors";
 import {
   buildThresholdPalette,
@@ -19,11 +25,14 @@ export interface ChartMarketControl {
   readonly iconUrl: string | null;
   readonly dotColor: string;
   readonly acceptingOrders: boolean;
+  readonly order: number;
+  readonly resolutionMs: number | null;
+  readonly ageLabel: string;
+  readonly suppressAgeIdentity: boolean;
 }
 
 export interface ChartDefinition {
   readonly event: Event;
-  readonly rawMarkets: readonly unknown[];
   readonly controls: readonly ChartMarketControl[];
   readonly pressureScales: ReadonlyMap<string, SignedVolumeColorScale>;
   readonly tokenNames: ReadonlyMap<string, string>;
@@ -33,6 +42,8 @@ export interface ChartDefinition {
 export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
   const { event, rawMarkets } = bundle;
   const pressureScales = buildPressureScales(event, rawMarkets);
+  const rawById = indexRawMarketsById(rawMarkets);
+  const orderByToken = resolutionOrder(event, rawMarkets);
 
   const controls = event.markets.flatMap((market, index) => {
     if (!market.state.active) return [];
@@ -45,23 +56,34 @@ export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
     const dotColor = scale
       ? signedVolumeColor(1, scale)
       : marketColor(event.id, index);
+    const title =
+      bundle.marketTitles.get(marketId) ??
+      market.question ??
+      "(untitled)";
+    const suppressAgeIdentity =
+      event.markets.length === 1 &&
+      sameDisplayTitle(title, event.title);
+    const timestamp = resolutionTimestamp(
+      rawById.get(marketId),
+      market,
+    );
 
     return [{
       marketId,
       tokenId,
-      title:
-        bundle.marketTitles.get(marketId) ??
-        market.question ??
-        "(untitled)",
+      title,
       iconUrl: bundle.marketIcons.get(marketId) ?? null,
       dotColor,
       acceptingOrders: market.state.acceptingOrders === true,
+      order: orderByToken.get(String(tokenId)) ?? index,
+      resolutionMs: Number.isFinite(timestamp) ? timestamp : null,
+      ageLabel: suppressAgeIdentity ? "" : title,
+      suppressAgeIdentity,
     }];
   });
 
   return {
     event,
-    rawMarkets,
     controls,
     pressureScales,
     tokenNames: bundle.tokenNames,
