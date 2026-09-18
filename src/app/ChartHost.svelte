@@ -38,6 +38,8 @@
   const definition = buildChartDefinition(bundle);
   const userHiddenMarketIds = loadUserHiddenMarketIds();
 
+  const VISIBLE_MARKET: MarketVisibility = { kind: "visible" };
+
   let visibilityByMarketId = new Map<string, MarketVisibility>(
     definition.controls.map((control) => [
       control.marketId,
@@ -62,17 +64,6 @@
   $: hiddenControls = controlPartition.hidden;
   $: toggledControls =
     viewMode === "age" ? visibleControls : definition.controls;
-
-  function visibility(control: ChartMarketControl): MarketVisibility {
-    return (
-      visibilityByMarketId.get(control.marketId) ??
-      { kind: "visible" }
-    );
-  }
-
-  function isVisible(control: ChartMarketControl): boolean {
-    return isMarketVisible(visibility(control));
-  }
 
   function setVisibility(
     marketId: string,
@@ -170,7 +161,10 @@
     {#each toggledControls as control (control.marketId)}
       <MarketControl
         {control}
-        checked={isVisible(control)}
+        checked={isMarketVisible(
+          visibilityByMarketId.get(control.marketId) ??
+            VISIBLE_MARKET
+        )}
         onchange={(checked) => userSetVisible(control, checked)}
       />
     {/each}
