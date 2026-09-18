@@ -6,10 +6,12 @@
 - [x] Exact spread semantics and direct live-book hover queries.
 - [x] Recorder durability and async ownership cleanup.
 - [x] Adaptive visible market clocks:
-  - recorder age redraws only when its rendered text can change;
+  - recorder age updates only when its rendered text can change;
+  - clock deadlines update DOM directly and never redraw the pressure canvas;
   - sub-frame deadlines coalesce to the next animation frame;
   - hidden markets do not schedule clock work;
   - known market resolution times render as per-market countdowns.
+- [x] Floating tooltip portal outside the clipped canvas wrapper.
 
 ## Next
 
