@@ -39,10 +39,17 @@ interface StoredAgeStripTuning {
   volumeSoftLimit?: number;
 }
 
+interface MarketTimeElements {
+  readonly container: HTMLElement;
+  readonly age: HTMLElement;
+  readonly resolution: HTMLElement;
+}
+
 interface MarketRuntimeState {
   visibilityInitialized: boolean;
   recordingSinceMs: number | null;
   resolutionMs: number | null;
+  timeElements?: MarketTimeElements;
 }
 
 interface HoverRow {
@@ -113,6 +120,8 @@ export class AgeStripView {
   private hoverPointer: { sx: number; sy: number } | null = null;
   private timeLabelTimer: number | undefined;
   private timeLabelRaf: number | undefined;
+  private timeLabelsDirty = true;
+  private tooltipSignature = "";
 
   constructor(host: AgeStripHost) {
     this.host = host;
@@ -148,6 +157,8 @@ export class AgeStripView {
     this.hiddenTray.replaceChildren();
     this.hoverGeometry = null;
     this.hoverPointer = null;
+    this.timeLabelsDirty = true;
+    this.tooltipSignature = "";
     this.hideTooltip();
     this.layoutMode = null;
   }
@@ -168,6 +179,7 @@ export class AgeStripView {
       state.recordingSinceMs =
         Number.isFinite(since) && since >= 0 ? since : null;
     }
+    this.timeLabelsDirty = true;
   }
 
   configureMarkets(event: Event, rawMarkets: readonly unknown[]): void {
@@ -236,6 +248,13 @@ export class AgeStripView {
 
       times.append(recordingAge, resolutionCountdown);
       label.appendChild(times);
+      state.timeElements = {
+        container: times,
+        age: recordingAge,
+        resolution: resolutionCountdown,
+      };
+      recordingAge.title = "Recorder history";
+      resolutionCountdown.title = "Time until scheduled resolution";
       label.title = text;
 
       const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -254,8 +273,10 @@ export class AgeStripView {
           userHiddenMarketIds.delete(market.id);
         else userHiddenMarketIds.add(market.id);
         persistStringSet(HIDDEN_MARKETS_STORAGE_KEY, userHiddenMarketIds);
+        this.timeLabelsDirty = true;
       });
     }
+    this.timeLabelsDirty = true;
   }
 
   onBookUpdate(tokenId: string): void {
@@ -284,6 +305,7 @@ export class AgeStripView {
     if (!checkbox) return;
     checkbox.checked = false;
     this.host.activeTokens.delete(tokenId);
+    this.timeLabelsDirty = true;
   }
 
   draw(): void {
@@ -292,7 +314,7 @@ export class AgeStripView {
     const activeControls = controls.filter((label) => this.isActive(label));
     const rowCount = Math.max(1, activeControls.length);
 
-    this.refreshVisibleTimeLabels(activeControls);
+    if (this.timeLabelsDirty) this.refreshVisibleTimeLabels(activeControls);
     this.installAgeLayout(rowCount, activeControls);
 
     const frame = this.host.plotter.beginFrame(this.host.getTheme(), {
@@ -337,6 +359,7 @@ export class AgeStripView {
     this.cancelTimeLabelRefresh();
     this.hoverGeometry = null;
     this.hoverPointer = null;
+    this.timeLabelsDirty = true;
     this.hideTooltip();
     if (this.layoutMode === "volume") return;
 
@@ -442,24 +465,37 @@ export class AgeStripView {
       hover.side === "bid"
         ? this.host.getTokenName(row.tokenId)
         : this.host.getOppositeTokenName(row.tokenId);
-    renderAgeTooltip(this.overlay, tokenName ?? "(unknown)", hover);
+    const resolvedName = tokenName ?? "(unknown)";
+    const signature = tooltipSignature(resolvedName, hover);
+    if (signature !== this.tooltipSignature) {
+      renderAgeTooltip(this.overlay, resolvedName, hover);
+      this.tooltipSignature = signature;
+    }
 
-    // Measure the actual tooltip instead of assuming its content fits a fixed
-    // 180×82 box. This read only occurs while the pointer is active.
+    // Never synchronously measure the tooltip. Pick the side of the anchor from
+    // the pointer/row's half of the canvas, which guarantees the panel grows
+    // inward in the overwhelmingly common case and avoids forced layout.
     this.overlay.style.display = "block";
-    const tooltipWidth = this.overlay.offsetWidth;
-    const tooltipHeight = this.overlay.offsetHeight;
     const rowCenterY =
       vp.t + ((rowIndex + 0.5) / geometry.rows.length) * vp.height;
-    let left = sx + 12;
-    let top = rowCenterY + 12;
-    if (left + tooltipWidth > geometry.canvasWidth)
-      left = Math.max(4, sx - tooltipWidth - 12);
-    if (top + tooltipHeight > geometry.canvasHeight)
-      top = Math.max(4, rowCenterY - tooltipHeight - 12);
 
-    this.overlay.style.left = `${left}px`;
-    this.overlay.style.top = `${top}px`;
+    if (sx > geometry.canvasWidth / 2) {
+      this.overlay.style.left = "";
+      this.overlay.style.right =
+        `${Math.max(4, geometry.canvasWidth - sx + 12)}px`;
+    } else {
+      this.overlay.style.right = "";
+      this.overlay.style.left = `${sx + 12}px`;
+    }
+
+    if (rowCenterY > geometry.canvasHeight / 2) {
+      this.overlay.style.top = "";
+      this.overlay.style.bottom =
+        `${Math.max(4, geometry.canvasHeight - rowCenterY + 12)}px`;
+    } else {
+      this.overlay.style.bottom = "";
+      this.overlay.style.top = `${rowCenterY + 12}px`;
+    }
   }
 
   private readonly hideTooltip = () => {
@@ -565,61 +601,57 @@ export class AgeStripView {
     labels: readonly HTMLLabelElement[],
   ): void {
     this.cancelTimeLabelRefresh();
+    this.timeLabelsDirty = false;
 
     const nowMs = Date.now();
     let nextChangeMs = Infinity;
 
     for (const label of labels) {
       const tokenId = label.dataset.tokenId;
-      const times = label.querySelector<HTMLElement>(".cpv-market-times");
-      const age = label.querySelector<HTMLElement>(".cpv-recording-age");
-      const resolution = label.querySelector<HTMLElement>(
-        ".cpv-resolution-countdown",
-      );
-      if (!tokenId || !times || !age || !resolution) continue;
+      if (!tokenId) continue;
 
       const state = this.markets.get(tokenId);
+      const elements = state?.timeElements;
+      if (!state || !elements) continue;
+
       let hasVisibleTime = false;
 
-      const since = state?.recordingSinceMs ?? null;
+      const since = state.recordingSinceMs;
       if (since !== null && Number.isFinite(since)) {
         const display = relativeTimeDisplay(
           Math.max(0, nowMs - since) / 1000,
           "elapsed",
         );
-        age.hidden = false;
-        age.textContent = display.text;
-        age.title = `${display.text} recorder history`;
+        setTextIfChanged(elements.age, display.text);
+        setHiddenIfChanged(elements.age, false);
         hasVisibleTime = true;
         if (display.nextChangeMs !== null)
           nextChangeMs = Math.min(nextChangeMs, display.nextChangeMs);
       } else {
-        age.hidden = true;
-        age.textContent = "";
+        setHiddenIfChanged(elements.age, true);
+        setTextIfChanged(elements.age, "");
       }
 
-      const resolutionMs = state?.resolutionMs ?? null;
+      const resolutionMs = state.resolutionMs;
       if (resolutionMs !== null && Number.isFinite(resolutionMs)) {
         const display = relativeTimeDisplay(
           Math.max(0, resolutionMs - nowMs) / 1000,
           "remaining",
         );
-        resolution.hidden = false;
-        resolution.textContent =
-          display.text === "due" ? "due" : `T−${display.text}`;
-        resolution.title =
-          display.text === "due"
-            ? "Scheduled resolution time reached"
-            : `Resolves in ${display.text}`;
+        setTextIfChanged(
+          elements.resolution,
+          display.text === "due" ? "due" : `T−${display.text}`,
+        );
+        setHiddenIfChanged(elements.resolution, false);
         hasVisibleTime = true;
         if (display.nextChangeMs !== null)
           nextChangeMs = Math.min(nextChangeMs, display.nextChangeMs);
       } else {
-        resolution.hidden = true;
-        resolution.textContent = "";
+        setHiddenIfChanged(elements.resolution, true);
+        setTextIfChanged(elements.resolution, "");
       }
 
-      times.hidden = !hasVisibleTime;
+      setHiddenIfChanged(elements.container, !hasVisibleTime);
     }
 
     if (Number.isFinite(nextChangeMs))
@@ -632,14 +664,20 @@ export class AgeStripView {
     if (delayMs <= 34) {
       this.timeLabelRaf = requestAnimationFrame(() => {
         this.timeLabelRaf = undefined;
-        if (this.host.getViewMode() === "age") this.host.requestDraw();
+        if (this.host.getViewMode() !== "age") return;
+        this.refreshVisibleTimeLabels(
+          this.collectControls().filter((label) => this.isActive(label)),
+        );
       });
       return;
     }
 
     this.timeLabelTimer = window.setTimeout(() => {
       this.timeLabelTimer = undefined;
-      if (this.host.getViewMode() === "age") this.host.requestDraw();
+      if (this.host.getViewMode() !== "age") return;
+      this.refreshVisibleTimeLabels(
+        this.collectControls().filter((label) => this.isActive(label)),
+      );
     }, Math.max(1, Math.ceil(delayMs) + 1));
   }
 
@@ -712,6 +750,35 @@ function measureIntrinsicTextWidth(text: HTMLElement): number {
   return width;
 }
 
+function setTextIfChanged(element: HTMLElement, text: string): void {
+  if (element.textContent !== text) element.textContent = text;
+}
+
+function setHiddenIfChanged(element: HTMLElement, hidden: boolean): void {
+  if (element.hidden !== hidden) element.hidden = hidden;
+}
+
+function tooltipSignature(
+  tokenName: string,
+  hover: BookHoverSnapshot,
+): string {
+  const isBid = hover.side === "bid";
+  const tokenPrice = isBid ? hover.price : 1 - hover.price;
+  const effectivePrice =
+    hover.effectivePrice === null
+      ? ""
+      : formatProbability(
+          isBid ? hover.effectivePrice : 1 - hover.effectivePrice,
+        );
+  return [
+    tokenName,
+    hover.side,
+    formatProbability(tokenPrice),
+    formatShares(hover.shares),
+    effectivePrice,
+  ].join("|");
+}
+
 function renderAgeTooltip(
   overlay: HTMLDivElement,
   tokenName: string,
@@ -780,21 +847,32 @@ function positionRowControls(
   }
 }
 
-/** Draw only the vertical probability rails and 0/1 labels in age mode. */
+/** Draw the probability rails as the limiting colors of each token side. */
 function drawAgeAxes(frame: any): void {
   const { ctx, viewport: vp, theme } = frame;
 
-  ctx.strokeStyle = theme.axis;
   ctx.lineWidth = 1;
+
+  ctx.strokeStyle = signedVolumeColor(
+    1,
+    DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+  );
   ctx.beginPath();
   ctx.moveTo(vp.l, vp.t);
   ctx.lineTo(vp.l, vp.t + vp.height);
+  ctx.stroke();
+
+  ctx.strokeStyle = signedVolumeColor(
+    -1,
+    DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+  );
+  ctx.beginPath();
   ctx.moveTo(vp.l + vp.width, vp.t);
   ctx.lineTo(vp.l + vp.width, vp.t + vp.height);
   ctx.stroke();
 
   ctx.fillStyle = theme.text;
-  ctx.font = "11px sans-serif";
+  if (ctx.font !== "11px sans-serif") ctx.font = "11px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.fillText("0", vp.l, vp.t + vp.height + 8);
