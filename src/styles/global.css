@@ -64,6 +64,10 @@ body {
     box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
 }
 
+.dashboard-search-results--open {
+    display: block;
+}
+
 .dashboard-search-result {
     display: block;
     width: 100%;

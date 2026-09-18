@@ -6,44 +6,7 @@
         <title>Polymarket market-state dashboard</title>
     </head>
     <body>
-        <header class="dashboard-toolbar">
-            <form class="dashboard-add-form" id="add-event-form">
-                <label for="event-search">Add event</label>
-                <div class="dashboard-search">
-                    <input
-                        id="event-search"
-                        name="query"
-                        type="text"
-                        placeholder="Search events or paste an exact slug…"
-                        autocomplete="off"
-                        aria-autocomplete="list"
-                        aria-controls="event-search-results"
-                        aria-expanded="false"
-                    />
-                    <div
-                        class="dashboard-search-results"
-                        id="event-search-results"
-                        role="listbox"
-                    ></div>
-                </div>
-                <span class="dashboard-add-status" id="add-event-status" aria-live="polite"></span>
-            </form>
-
-            <div class="dashboard-meta">
-                <section class="volume-legend" aria-label="Global signed-share pressure scale">
-                    <div class="volume-legend-header">
-                        <span>Share pressure</span>
-                        <span class="volume-legend-scale" id="volume-legend-scale"></span>
-                    </div>
-                    <div class="volume-legend-bar" id="volume-legend-bar" aria-hidden="true">
-                        <span class="volume-legend-wedge volume-legend-wedge--negative"></span>
-                        <span class="volume-legend-wedge volume-legend-wedge--positive"></span>
-                    </div>
-                    <div class="volume-legend-ticks" id="volume-legend-ticks"></div>
-                </section>
-            </div>
-        </header>
-        <div class="grid" id="grid"></div>
+        <div id="app"></div>
         <script type="module" src="/src/main.ts"></script>
     </body>
 </html>
