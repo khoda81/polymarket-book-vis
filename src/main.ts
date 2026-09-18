@@ -49,6 +49,24 @@ function persistStringSet(key: string, values: ReadonlySet<string>): void {
   localStorage.setItem(key, JSON.stringify([...values]));
 }
 
+function placeCard(card: HTMLElement, pinned: boolean): void {
+  card.classList.toggle("card--pinned", pinned);
+
+  if (pinned) {
+    // New/just-pinned cards go to the very front of the pinned region.
+    grid.prepend(card);
+    return;
+  }
+
+  // Unpinned cards belong immediately after the pinned prefix. This prevents
+  // later discovery results from ever pushing pinned cards down the dashboard.
+  const firstUnpinned = Array.from(grid.children).find(
+    (child) => !child.classList.contains("card--pinned"),
+  );
+  if (firstUnpinned) grid.insertBefore(card, firstUnpinned);
+  else grid.appendChild(card);
+}
+
 
 async function createCard(event: Event) {
   const existing = cards.get(event.id);
@@ -59,9 +77,8 @@ async function createCard(event: Event) {
 
   const card = document.createElement("article");
   card.classList.add("card");
-  const chartHost = document.createElement("div");
   const eventSlug = event.slug ?? null;
-
+  const chartHost = document.createElement("div");
   const pinButton = document.createElement("button");
   pinButton.type = "button";
   pinButton.className = "card-pin";
@@ -86,6 +103,7 @@ async function createCard(event: Event) {
       ? "Pinned — click to stop restoring this event on reload"
       : "Pin this event so it returns after reload";
     pinButton.textContent = pinned ? "★" : "☆";
+    card.classList.toggle("card--pinned", pinned);
   };
   renderPin();
 
@@ -94,11 +112,13 @@ async function createCard(event: Event) {
     if (pinnedEventSlugs.has(eventSlug)) pinnedEventSlugs.delete(eventSlug);
     else pinnedEventSlugs.add(eventSlug);
     persistStringSet(PINNED_EVENT_SLUGS_STORAGE_KEY, pinnedEventSlugs);
+    const pinned = pinnedEventSlugs.has(eventSlug);
     renderPin();
+    placeCard(card, pinned);
   });
 
   card.append(pinButton, closeButton, chartHost);
-  grid.prepend(card);
+  placeCard(card, eventSlug !== null && pinnedEventSlugs.has(eventSlug));
   const chart = new PolymarketCPV(chartHost, client);
   cards.set(event.id, { card, chart });
 
