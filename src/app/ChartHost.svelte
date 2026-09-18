@@ -18,6 +18,7 @@
     initialMarketVisibility,
     isMarketVisible,
     loadUserHiddenMarketIds,
+    partitionMarketVisibility,
     persistUserHiddenMarketIds,
     type MarketVisibility,
   } from "../lib/marketVisibility";
@@ -53,12 +54,12 @@
   let hiddenTray: HTMLDivElement;
   let chart: ChartController | null = null;
 
-  $: visibleControls = definition.controls.filter((control) =>
-    isVisible(control),
+  $: controlPartition = partitionMarketVisibility(
+    definition.controls,
+    visibilityByMarketId,
   );
-  $: hiddenControls = definition.controls.filter(
-    (control) => !isVisible(control),
-  );
+  $: visibleControls = controlPartition.visible;
+  $: hiddenControls = controlPartition.hidden;
   $: toggledControls =
     viewMode === "age" ? visibleControls : definition.controls;
 
@@ -108,9 +109,10 @@
 
   function initialHiddenMarketIds(): Set<string> {
     return new Set(
-      definition.controls
-        .filter((control) => !isVisible(control))
-        .map((control) => control.marketId),
+      partitionMarketVisibility(
+        definition.controls,
+        visibilityByMarketId,
+      ).hidden.map((control) => control.marketId),
     );
   }
 

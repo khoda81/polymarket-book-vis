@@ -59,3 +59,30 @@ export function persistUserHiddenMarketIds(
     // Preferences are best effort.
   }
 }
+
+
+export interface MarketIdentified {
+  readonly marketId: string;
+}
+
+export interface MarketVisibilityPartition<T extends MarketIdentified> {
+  readonly visible: readonly T[];
+  readonly hidden: readonly T[];
+}
+
+export function partitionMarketVisibility<T extends MarketIdentified>(
+  markets: readonly T[],
+  visibilityByMarketId: ReadonlyMap<string, MarketVisibility>,
+): MarketVisibilityPartition<T> {
+  const visible: T[] = [];
+  const hidden: T[] = [];
+
+  for (const market of markets) {
+    const visibility =
+      visibilityByMarketId.get(market.marketId) ??
+      { kind: "visible" as const };
+    (isMarketVisible(visibility) ? visible : hidden).push(market);
+  }
+
+  return { visible, hidden };
+}
