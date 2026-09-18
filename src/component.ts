@@ -341,7 +341,11 @@ export class PolymarketCPV {
         label.appendChild(icon);
       }
 
-      label.append(this.titles.get(String(market.id)) ?? market.question);
+      label.append(
+        this.titles.get(String(market.id)) ??
+          market.question ??
+          "(untitled)",
+      );
       container.appendChild(label);
     }
   }
