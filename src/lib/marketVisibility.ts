@@ -86,3 +86,60 @@ export function partitionMarketVisibility<T extends MarketIdentified>(
 
   return { visible, hidden };
 }
+
+
+export interface VisibilityInitializableMarket extends MarketIdentified {
+  readonly acceptingOrders: boolean;
+}
+
+export function loadMarketVisibility(
+  markets: readonly VisibilityInitializableMarket[],
+): Map<string, MarketVisibility> {
+  const userHidden = loadUserHiddenMarketIds();
+  return new Map(
+    markets.map((market) => [
+      market.marketId,
+      initialMarketVisibility(
+        market.acceptingOrders,
+        userHidden.has(market.marketId),
+      ),
+    ]),
+  );
+}
+
+export function setMarketVisibility(
+  current: ReadonlyMap<string, MarketVisibility>,
+  marketId: string,
+  next: MarketVisibility,
+): Map<string, MarketVisibility> {
+  const updated = new Map(current);
+  updated.set(marketId, next);
+  return updated;
+}
+
+export function setUserMarketVisible(
+  current: ReadonlyMap<string, MarketVisibility>,
+  marketId: string,
+  visible: boolean,
+): Map<string, MarketVisibility> {
+  return setMarketVisibility(
+    current,
+    marketId,
+    visible
+      ? { kind: "visible" }
+      : { kind: "hidden", reason: "user" },
+  );
+}
+
+export function persistUserVisibility(
+  visibilityByMarketId: ReadonlyMap<string, MarketVisibility>,
+): void {
+  const userHidden = new Set<string>();
+  for (const [marketId, visibility] of visibilityByMarketId)
+    if (
+      visibility.kind === "hidden" &&
+      visibility.reason === "user"
+    )
+      userHidden.add(marketId);
+  persistUserHiddenMarketIds(userHidden);
+}

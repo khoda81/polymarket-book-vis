@@ -15,11 +15,12 @@
   } from "../lib/chartState";
   import type { EventBundle } from "../lib/eventBundle";
   import {
-    initialMarketVisibility,
     isMarketVisible,
-    loadUserHiddenMarketIds,
+    loadMarketVisibility,
     partitionMarketVisibility,
-    persistUserHiddenMarketIds,
+    persistUserVisibility,
+    setMarketVisibility,
+    setUserMarketVisible,
     type MarketVisibility,
   } from "../lib/marketVisibility";
   import MarketControl from "./MarketControl.svelte";
@@ -36,18 +37,10 @@
     () => undefined;
 
   const definition = buildChartDefinition(bundle);
-  const userHiddenMarketIds = loadUserHiddenMarketIds();
-
   const VISIBLE_MARKET: MarketVisibility = { kind: "visible" };
 
-  let visibilityByMarketId = new Map<string, MarketVisibility>(
-    definition.controls.map((control) => [
-      control.marketId,
-      initialMarketVisibility(
-        control.acceptingOrders,
-        userHiddenMarketIds.has(control.marketId),
-      ),
-    ]),
+  let visibilityByMarketId = loadMarketVisibility(
+    definition.controls,
   );
 
   let canvas: HTMLCanvasElement;
@@ -64,29 +57,16 @@
   $: toggledControls =
     viewMode === "age" ? visibleControls : definition.controls;
 
-  function setVisibility(
-    marketId: string,
-    next: MarketVisibility,
-  ): void {
-    visibilityByMarketId = new Map(visibilityByMarketId);
-    visibilityByMarketId.set(marketId, next);
-  }
-
   function userSetVisible(
     control: ChartMarketControl,
     visible: boolean,
   ): void {
-    setVisibility(
+    visibilityByMarketId = setUserMarketVisible(
+      visibilityByMarketId,
       control.marketId,
-      visible
-        ? { kind: "visible" }
-        : { kind: "hidden", reason: "user" },
+      visible,
     );
-
-    if (visible) userHiddenMarketIds.delete(control.marketId);
-    else userHiddenMarketIds.add(control.marketId);
-    persistUserHiddenMarketIds(userHiddenMarketIds);
-
+    persistUserVisibility(visibilityByMarketId);
     chart?.setMarketVisible(control.marketId, visible);
   }
 
@@ -94,7 +74,11 @@
     marketId: string,
     reason: AutoHiddenReason,
   ): void {
-    setVisibility(marketId, { kind: "hidden", reason });
+    visibilityByMarketId = setMarketVisibility(
+      visibilityByMarketId,
+      marketId,
+      { kind: "hidden", reason },
+    );
   }
 
   function initialHiddenMarketIds(): Set<string> {
