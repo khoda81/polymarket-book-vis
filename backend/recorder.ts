@@ -80,6 +80,14 @@ class AgeRecorder {
     }
     if (this.persistDirty) this.enqueuePersist();
     await this.persistChain;
+
+    // The normal checkpoint chain logs failures and stays recoverable. Shutdown
+    // is different: make one final direct retry and propagate failure so the
+    // process cannot report a clean exit after losing the last checkpoint.
+    if (this.persistDirty) {
+      this.persistDirty = false;
+      await this.persistSnapshot();
+    }
   }
 
   watch(tokenIds: Iterable<string>): boolean {
