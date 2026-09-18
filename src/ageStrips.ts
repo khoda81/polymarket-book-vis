@@ -68,6 +68,14 @@ interface HoverGeometry {
   readonly canvasHeight: number;
 }
 
+interface HoverPointer {
+  readonly sx: number;
+  readonly sy: number;
+  /** Viewport-space origin of the canvas, derived from the pointer event. */
+  readonly canvasLeft: number;
+  readonly canvasTop: number;
+}
+
 export interface AgeStripHost {
   readonly canvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
@@ -117,7 +125,7 @@ export class AgeStripView {
   private readonly toggleHomeNextSibling: ChildNode | null;
   private layoutMode: "age" | "volume" | null = null;
   private hoverGeometry: HoverGeometry | null = null;
-  private hoverPointer: { sx: number; sy: number } | null = null;
+  private hoverPointer: HoverPointer | null = null;
   private timeLabelTimer: number | undefined;
   private timeLabelRaf: number | undefined;
   private timeLabelsDirty = true;
@@ -133,13 +141,13 @@ export class AgeStripView {
     this.hiddenTray.hidden = true;
     host.canvasWrap.insertAdjacentElement("afterend", this.hiddenTray);
 
-    const existingOverlay = host.canvasWrap.querySelector<HTMLDivElement>(".cpv-overlay");
-    if (existingOverlay) this.overlay = existingOverlay;
-    else {
-      this.overlay = document.createElement("div");
-      this.overlay.className = "cpv-overlay";
-      host.canvasWrap.appendChild(this.overlay);
-    }
+    // The tooltip is a portal sibling, not a canvas child. Keeping it outside
+    // the clipped canvas wrapper makes overflow impossible while preserving the
+    // component's inherited theme variables.
+    this.overlay = document.createElement("div");
+    this.overlay.className = "cpv-overlay";
+    this.overlay.setAttribute("role", "tooltip");
+    host.canvasWrap.insertAdjacentElement("afterend", this.overlay);
 
     redrawCallbacks.add(host.requestDraw);
 
@@ -351,8 +359,7 @@ export class AgeStripView {
     }
 
     drawAgeAxes(frame);
-    if (this.hoverPointer)
-      this.renderHoverTooltip(this.hoverPointer.sx, this.hoverPointer.sy);
+    if (this.hoverPointer) this.renderHoverTooltip(this.hoverPointer);
   }
 
   prepareVolumeView(): void {
@@ -406,12 +413,18 @@ export class AgeStripView {
     this.host.canvas.removeEventListener("pointermove", this.handlePointerMove);
     this.host.canvas.removeEventListener("pointerleave", this.handlePointerLeave);
     this.hideTooltip();
+    this.overlay.remove();
     this.hiddenTray.remove();
   }
 
   private readonly handlePointerMove = (event: PointerEvent) => {
-    this.hoverPointer = { sx: event.offsetX, sy: event.offsetY };
-    this.renderHoverTooltip(event.offsetX, event.offsetY);
+    this.hoverPointer = {
+      sx: event.offsetX,
+      sy: event.offsetY,
+      canvasLeft: event.clientX - event.offsetX,
+      canvasTop: event.clientY - event.offsetY,
+    };
+    this.renderHoverTooltip(this.hoverPointer);
   };
 
   private readonly handlePointerLeave = () => {
@@ -419,7 +432,8 @@ export class AgeStripView {
     this.hideTooltip();
   };
 
-  private renderHoverTooltip(sx: number, sy: number): void {
+  private renderHoverTooltip(pointer: HoverPointer): void {
+    const { sx, sy } = pointer;
     if (this.host.getViewMode() !== "age") {
       this.hideTooltip();
       return;
@@ -472,30 +486,24 @@ export class AgeStripView {
       this.tooltipSignature = signature;
     }
 
-    // Never synchronously measure the tooltip. Pick the side of the anchor from
-    // the pointer/row's half of the canvas, which guarantees the panel grows
-    // inward in the overwhelmingly common case and avoids forced layout.
-    this.overlay.style.display = "block";
+    // Anchor the portal at mouse-x / row-center-y in viewport space. Both
+    // canvas origin coordinates come from the pointer event itself, so this
+    // remains free of getBoundingClientRect()/offsetWidth layout reads.
+    const anchorX = pointer.canvasLeft + sx;
     const rowCenterY =
-      vp.t + ((rowIndex + 0.5) / geometry.rows.length) * vp.height;
+      pointer.canvasTop +
+      vp.t +
+      ((rowIndex + 0.5) / geometry.rows.length) * vp.height;
 
-    if (sx > geometry.canvasWidth / 2) {
-      this.overlay.style.left = "";
-      this.overlay.style.right =
-        `${Math.max(4, geometry.canvasWidth - sx + 12)}px`;
-    } else {
-      this.overlay.style.right = "";
-      this.overlay.style.left = `${sx + 12}px`;
-    }
-
-    if (rowCenterY > geometry.canvasHeight / 2) {
-      this.overlay.style.top = "";
-      this.overlay.style.bottom =
-        `${Math.max(4, geometry.canvasHeight - rowCenterY + 12)}px`;
-    } else {
-      this.overlay.style.bottom = "";
-      this.overlay.style.top = `${rowCenterY + 12}px`;
-    }
+    this.overlay.style.display = "block";
+    this.overlay.style.left = `${anchorX}px`;
+    this.overlay.style.top = `${rowCenterY}px`;
+    this.overlay.style.transform =
+      `${anchorX > window.innerWidth / 2
+        ? "translateX(calc(-100% - 12px))"
+        : "translateX(12px)"} ${rowCenterY > window.innerHeight / 2
+        ? "translateY(calc(-100% - 12px))"
+        : "translateY(12px)"}`;
   }
 
   private readonly hideTooltip = () => {
