@@ -19,9 +19,9 @@ const TICK_EXPONENT_RADIUS = 12;
 
 const grid = document.getElementById("grid")!;
 const addEventForm = document.getElementById("add-event-form") as HTMLFormElement;
-const eventSlugInput = document.getElementById("event-slug") as HTMLInputElement;
+const eventSearchInput = document.getElementById("event-search") as HTMLInputElement;
+const eventSearchResults = document.getElementById("event-search-results")!;
 const addEventStatus = document.getElementById("add-event-status")!;
-const addEventButton = addEventForm.querySelector("button")!;
 const volumeLegendBar = document.getElementById("volume-legend-bar")!;
 const volumeLegendTicks = document.getElementById("volume-legend-ticks")!;
 const volumeLegendScale = document.getElementById("volume-legend-scale")!;
@@ -31,6 +31,11 @@ const PINNED_EVENT_SLUGS_STORAGE_KEY =
   "polymarket-book-vis:pinned-event-slugs:v1";
 const DEFAULT_EVENT_SLUGS = ["israel-closes-its-airspace-by"] as const;
 const pinnedEventSlugs = loadStringSet(PINNED_EVENT_SLUGS_STORAGE_KEY);
+
+let eventSearchTimeout: number | undefined;
+let eventSearchGeneration = 0;
+let eventSearchMatches: Event[] = [];
+let highlightedSearchIndex = 0;
 
 function loadStringSet(key: string): Set<string> {
   try {
@@ -80,6 +85,20 @@ async function createCard(event: Event) {
   card.classList.add("card");
   const eventSlug = event.slug ?? null;
   const chartHost = document.createElement("div");
+
+  const actions = document.createElement("div");
+  actions.className = "card-actions";
+
+  const viewSelect = document.createElement("select");
+  viewSelect.className = "card-view";
+  viewSelect.setAttribute("aria-label", "Visualization mode");
+  for (const mode of ["age", "volume"] as const) {
+    const option = document.createElement("option");
+    option.value = mode;
+    option.textContent = mode;
+    viewSelect.appendChild(option);
+  }
+
   const pinButton = document.createElement("button");
   pinButton.type = "button";
   pinButton.className = "card-pin";
@@ -118,9 +137,14 @@ async function createCard(event: Event) {
     placeCard(card, pinned);
   });
 
-  card.append(pinButton, closeButton, chartHost);
+  actions.append(viewSelect, pinButton, closeButton);
+  card.append(actions, chartHost);
   placeCard(card, eventSlug !== null && pinnedEventSlugs.has(eventSlug));
+
   const chart = new PolymarketCPV(chartHost, client);
+  viewSelect.addEventListener("change", () =>
+    chart.setViewMode(viewSelect.value as "age" | "volume"),
+  );
   cards.set(event.id, { card, chart });
 
   closeButton.addEventListener("click", () => {
@@ -149,32 +173,210 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function addEventBySlug(slug: string, announce = true) {
-  const normalized = slug.trim();
-  if (!normalized) return;
+async function addEvent(event: Event, announce = true): Promise<boolean> {
+  if (announce)
+    addEventStatus.textContent = `Loading ${event.title ?? event.slug ?? "event"}…`;
 
-  if (announce) addEventStatus.textContent = `Loading ${normalized}…`;
-  const event = await client.fetchEvent({ slug: normalized });
   const added = await createCard(event);
-
   if (announce) {
     addEventStatus.textContent = added
-      ? `Added ${event.title ?? normalized}.`
-      : `${event.title ?? normalized} is already on the dashboard.`;
-    if (added) eventSlugInput.value = "";
+      ? `Added ${event.title ?? event.slug ?? "event"}.`
+      : `${event.title ?? event.slug ?? "event"} is already on the dashboard.`;
+    if (added) {
+      eventSearchInput.value = "";
+      hideEventSearchResults();
+    }
+  }
+  return added;
+}
+
+async function addEventBySlug(slug: string, announce = true): Promise<boolean> {
+  const normalized = slug.trim();
+  if (!normalized) return false;
+  if (announce) addEventStatus.textContent = `Loading ${normalized}…`;
+
+  const event = await client.fetchEvent({ slug: normalized });
+  return addEvent(event, announce);
+}
+
+function hideEventSearchResults(): void {
+  eventSearchResults.style.display = "none";
+  eventSearchInput.setAttribute("aria-expanded", "false");
+}
+
+function showEventSearchResults(): void {
+  eventSearchResults.style.display = "block";
+  eventSearchInput.setAttribute("aria-expanded", "true");
+}
+
+function eventVolume(event: Event): number {
+  const raw = event.metrics.volume;
+  const value = raw ? Number.parseFloat(raw) : 0;
+  return Number.isFinite(value) ? value : 0;
+}
+
+function renderEventSearchResults(): void {
+  eventSearchResults.replaceChildren();
+
+  for (const [index, event] of eventSearchMatches.entries()) {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "dashboard-search-result";
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", String(index === highlightedSearchIndex));
+
+    const title = document.createElement("span");
+    title.className = "dashboard-search-result-title";
+    title.textContent = event.title ?? "(untitled)";
+
+    const meta = document.createElement("span");
+    meta.className = "dashboard-search-result-meta";
+
+    const slug = document.createElement("span");
+    slug.className = "dashboard-search-result-slug";
+    slug.textContent = event.slug ?? event.id;
+
+    const volume = document.createElement("span");
+    volume.className = "dashboard-search-result-volume";
+    volume.textContent = `$${fmtVol(eventVolume(event))}`;
+
+    meta.append(slug, volume);
+    option.append(title, meta);
+
+    option.addEventListener("pointerenter", () => {
+      if (highlightedSearchIndex === index) return;
+      highlightedSearchIndex = index;
+      renderEventSearchResults();
+    });
+    option.addEventListener("click", () => {
+      void chooseEventSearchResult(index);
+    });
+
+    eventSearchResults.appendChild(option);
+  }
+
+  if (eventSearchMatches.length) showEventSearchResults();
+  else hideEventSearchResults();
+}
+
+async function chooseEventSearchResult(index: number): Promise<void> {
+  const event = eventSearchMatches[index];
+  if (!event) return;
+
+  eventSearchGeneration++;
+  clearTimeout(eventSearchTimeout);
+  hideEventSearchResults();
+
+  try {
+    await addEvent(event);
+  } catch (error) {
+    addEventStatus.textContent = `Could not add event: ${errorMessage(error)}`;
   }
 }
 
-addEventForm.addEventListener("submit", async (submitEvent) => {
-  submitEvent.preventDefault();
-  addEventButton.disabled = true;
+async function runEventSearch(query: string, generation: number): Promise<void> {
   try {
-    await addEventBySlug(eventSlugInput.value);
+    const search = client.search({ q: query, pageSize: 12 });
+    const page = await search.firstPage();
+    if (generation !== eventSearchGeneration) return;
+
+    eventSearchMatches = page.items.events;
+    highlightedSearchIndex = 0;
+    renderEventSearchResults();
   } catch (error) {
-    addEventStatus.textContent = `Could not add event: ${errorMessage(error)}`;
-  } finally {
-    addEventButton.disabled = false;
+    if (generation !== eventSearchGeneration) return;
+    eventSearchMatches = [];
+    hideEventSearchResults();
+    addEventStatus.textContent = `Search failed: ${errorMessage(error)}`;
   }
+}
+
+function scheduleEventSearch(): void {
+  clearTimeout(eventSearchTimeout);
+  const query = eventSearchInput.value.trim();
+  const generation = ++eventSearchGeneration;
+
+  if (!query) {
+    eventSearchMatches = [];
+    hideEventSearchResults();
+    return;
+  }
+
+  eventSearchTimeout = window.setTimeout(() => {
+    void runEventSearch(query, generation);
+  }, 200);
+}
+
+function looksLikeExactSlug(query: string): boolean {
+  return /^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(query);
+}
+
+async function submitEventSearch(): Promise<void> {
+  const query = eventSearchInput.value.trim();
+  if (!query) return;
+
+  const exactMatch = eventSearchMatches.find((event) => event.slug === query);
+  if (exactMatch) {
+    await addEvent(exactMatch);
+    return;
+  }
+
+  if (looksLikeExactSlug(query)) {
+    try {
+      await addEventBySlug(query);
+      return;
+    } catch {
+      // A slug-looking free-text query may still be a useful search query.
+      // Fall through to the highlighted search result when available.
+    }
+  }
+
+  const highlighted = eventSearchMatches[highlightedSearchIndex];
+  if (highlighted) {
+    await addEvent(highlighted);
+    return;
+  }
+
+  await addEventBySlug(query);
+}
+
+eventSearchInput.addEventListener("input", scheduleEventSearch);
+eventSearchInput.addEventListener("focus", () => {
+  if (eventSearchMatches.length) showEventSearchResults();
+});
+eventSearchInput.addEventListener("keydown", (event) => {
+  if (!eventSearchMatches.length) {
+    if (event.key === "Escape") hideEventSearchResults();
+    return;
+  }
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    highlightedSearchIndex =
+      (highlightedSearchIndex + 1) % eventSearchMatches.length;
+    renderEventSearchResults();
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    highlightedSearchIndex =
+      (highlightedSearchIndex - 1 + eventSearchMatches.length) %
+      eventSearchMatches.length;
+    renderEventSearchResults();
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    hideEventSearchResults();
+  }
+});
+
+addEventForm.addEventListener("submit", (submitEvent) => {
+  submitEvent.preventDefault();
+  void submitEventSearch().catch((error) => {
+    addEventStatus.textContent = `Could not add event: ${errorMessage(error)}`;
+  });
+});
+
+document.addEventListener("pointerdown", (event) => {
+  if (!(event.target as HTMLElement).closest(".dashboard-search"))
+    hideEventSearchResults();
 });
 
 /**
