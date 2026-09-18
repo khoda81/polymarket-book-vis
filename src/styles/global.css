@@ -30,13 +30,12 @@ body {
     font-weight: 600;
 }
 
-.dashboard-add-row {
-    display: flex;
-    gap: 8px;
+.dashboard-search {
+    position: relative;
 }
 
-.dashboard-add-row input {
-    flex: 1;
+.dashboard-search > input {
+    width: 100%;
     min-width: 0;
     padding: 8px 10px;
     color: inherit;
@@ -45,24 +44,76 @@ body {
     border-radius: 7px;
 }
 
-.dashboard-add-row button,
-.card-pin,
-.card-close {
-    color: inherit;
-    background: var(--color-background-secondary, #f2f2f2);
+.dashboard-search > input:focus {
+    outline: none;
+    border-color: #1d9e75;
+}
+
+.dashboard-search-results {
+    position: absolute;
+    top: calc(100% + 5px);
+    left: 0;
+    right: 0;
+    display: none;
+    max-height: min(420px, 60vh);
+    overflow-y: auto;
+    z-index: 1000;
+    background: var(--color-background-primary, #fff);
     border: 1px solid var(--color-border-secondary, #ccc);
-    border-radius: 7px;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.dashboard-search-result {
+    display: block;
+    width: 100%;
+    padding: 9px 11px;
+    text-align: left;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid color-mix(in oklab, currentColor 8%, transparent);
     cursor: pointer;
 }
 
-.dashboard-add-row button {
-    padding: 8px 12px;
+.dashboard-search-result:last-child {
+    border-bottom: 0;
+}
+
+.dashboard-search-result:hover,
+.dashboard-search-result[aria-selected="true"] {
+    background: var(--color-background-hover, #eee);
+}
+
+.dashboard-search-result-title {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.dashboard-search-result-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 3px;
+    color: var(--color-text-secondary, #666);
+    font-size: 11px;
+}
+
+.dashboard-search-result-slug {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.dashboard-add-row button:disabled {
-    cursor: wait;
-    opacity: 0.6;
+.dashboard-search-result-volume {
+    flex: 0 0 auto;
+    color: #1d9e75;
+    font-variant-numeric: tabular-nums;
 }
 
 .dashboard-add-status {
@@ -166,26 +217,45 @@ body {
     width: 100%;
 }
 
-.card-pin,
-.card-close {
+.card-actions {
     position: absolute;
     top: 10px;
+    right: 10px;
     z-index: 20;
-    width: 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.card-view,
+.card-pin,
+.card-close {
     height: 28px;
+    color: inherit;
+    background: var(--color-background-secondary, #f2f2f2);
+    border: 1px solid var(--color-border-secondary, #ccc);
+    border-radius: 7px;
+}
+
+.card-view {
+    padding: 0 7px;
+    font: inherit;
+    font-size: 12px;
+}
+
+.card-pin,
+.card-close {
+    width: 28px;
+    cursor: pointer;
     font-size: 18px;
     line-height: 1;
 }
 
-.card-pin {
-    right: 44px;
-}
-
 .card-close {
-    right: 10px;
     font-size: 20px;
 }
 
+.card-view:hover,
 .card-pin:hover,
 .card-close:hover {
     background: var(--color-background-hover, #e5e5e5);
@@ -198,7 +268,7 @@ body {
 }
 
 .card .cpv-header {
-    padding-right: 68px;
+    padding-right: 150px;
 }
 
 .card-pin[aria-pressed="true"] {
