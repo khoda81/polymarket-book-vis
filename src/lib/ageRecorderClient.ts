@@ -25,6 +25,14 @@ export interface RecordedAgeState {
   segments: readonly StaleSignedVolumeSegment[];
 }
 
+export interface RecordedAgeHydration {
+  readonly states: Record<string, RecordedAgeState>;
+  readonly connected: boolean;
+  readonly serverNowMs: number;
+  /** Start of recorder coverage shared by every requested token. */
+  readonly recordingSinceMs: number | null;
+}
+
 /**
  * Fetch persisted pressure-memory state and register the tokens with the
  * recorder. Failure is intentionally non-fatal: the UI can always fall back
@@ -32,8 +40,14 @@ export interface RecordedAgeState {
  */
 export async function fetchRecordedAgeState(
   tokenIds: readonly string[],
-): Promise<Record<string, RecordedAgeState>> {
-  if (tokenIds.length === 0) return {};
+): Promise<RecordedAgeHydration> {
+  if (tokenIds.length === 0)
+    return {
+      states: {},
+      connected: false,
+      serverNowMs: Date.now(),
+      recordingSinceMs: null,
+    };
 
   const params = new URLSearchParams();
   for (const tokenId of tokenIds) params.append("tokenId", tokenId);
@@ -43,7 +57,7 @@ export async function fetchRecordedAgeState(
     if (!response.ok) throw new Error(`recorder returned ${response.status}`);
     const body = (await response.json()) as RecorderStateResponse;
 
-    return Object.fromEntries(
+    const states = Object.fromEntries(
       Object.entries(body.states ?? {}).map(([tokenId, state]) => [
         tokenId,
         {
@@ -58,8 +72,24 @@ export async function fetchRecordedAgeState(
         } satisfies RecordedAgeState,
       ]),
     );
+
+    return {
+      states,
+      connected: body.connected,
+      serverNowMs: body.serverNowMs,
+      recordingSinceMs:
+        typeof body.recordingSinceMs === "number" &&
+        Number.isFinite(body.recordingSinceMs)
+          ? body.recordingSinceMs
+          : null,
+    };
   } catch (error) {
     console.warn("Age recorder unavailable; starting age state locally", error);
-    return {};
+    return {
+      states: {},
+      connected: false,
+      serverNowMs: Date.now(),
+      recordingSinceMs: null,
+    };
   }
 }
