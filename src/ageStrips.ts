@@ -562,7 +562,7 @@ export class AgeStripView {
     event.stopImmediatePropagation();
 
     const factor = Math.exp(normalizedWheelDelta(event) * 0.002);
-    tuning.volumePerCssPixel *= factor;
+    tuning.volumePerCssPixel = Math.max(1e-3, tuning.volumePerCssPixel * factor);
 
     schedulePersistTuning();
     notifyTuningListeners();

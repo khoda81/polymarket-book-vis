@@ -47,7 +47,12 @@ export interface RelativeTimeDisplay {
  * Remaining timers ceil so a countdown never claims less time than remains.
  * The display resolution gets coarser with age:
  *
- *   <1s: 1ms, <1m: 100ms, <1h: 1s, <1d: 1m, otherwise: 1h.
+ *   <1s: 1ms, <1m: 100ms, <1h: 1s, <1d: 1m,
+ *   <30d: 1h, otherwise: 1d.
+ *
+ * Month labels are intentionally approximate 30-day buckets: this helper only
+ * receives an interval, not calendar endpoints, so a calendar month is not
+ * well-defined here.
  */
 export function relativeTimeDisplay(
   seconds: number,
@@ -68,7 +73,9 @@ export function relativeTimeDisplay(
           ? { unitSeconds: 1, rangeCeiling: 3600 }
           : clamped < 86_400
             ? { unitSeconds: 60, rangeCeiling: 86_400 }
-            : { unitSeconds: 3600, rangeCeiling: Infinity };
+            : clamped < 30 * 86_400
+              ? { unitSeconds: 3600, rangeCeiling: 30 * 86_400 }
+              : { unitSeconds: 86_400, rangeCeiling: Infinity };
 
   const scaled = clamped / unitSeconds;
   const ticks =
@@ -128,10 +135,17 @@ function formatQuantizedRelativeTime(
     return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
   }
 
-  const totalHours = Math.floor(wholeSeconds / 3600);
-  const days = Math.floor(totalHours / 24);
-  const hours = totalHours % 24;
-  return hours ? `${days}d ${hours}h` : `${days}d`;
+  if (unitSeconds === 3600) {
+    const totalHours = Math.floor(wholeSeconds / 3600);
+    const days = Math.floor(totalHours / 24);
+    const hours = totalHours % 24;
+    return hours ? `${days}d ${hours}h` : `${days}d`;
+  }
+
+  const totalDays = Math.floor(wholeSeconds / 86_400);
+  const months = Math.floor(totalDays / 30);
+  const days = totalDays % 30;
+  return days ? `${months}mo ${days}d` : `${months}mo`;
 }
 
 export const MARKET_COLOR_LUMINANCE = 0.72;
@@ -163,6 +177,57 @@ export function marketHue(eventId: string, marketIndex: number): number {
  */
 export function marketColor(eventId: string, marketIndex: number): string {
   return `oklch(${MARKET_COLOR_LUMINANCE} ${MARKET_COLOR_CHROMA} ${marketHue(eventId, marketIndex)})`;
+}
+
+const SI_PREFIX_BY_EXPONENT = new Map<number, string>([
+  [-30, "q"],
+  [-27, "r"],
+  [-24, "y"],
+  [-21, "z"],
+  [-18, "a"],
+  [-15, "f"],
+  [-12, "p"],
+  [-9, "n"],
+  [-6, "µ"],
+  [-3, "m"],
+  [3, "k"],
+  [6, "M"],
+  [9, "G"],
+  [12, "T"],
+  [15, "P"],
+  [18, "E"],
+  [21, "Z"],
+  [24, "Y"],
+  [27, "R"],
+  [30, "Q"],
+]);
+
+/**
+ * Compact SI formatting for scale labels.
+ *
+ * Keep the especially-readable decimal range [1e-3, 1e3) unprefixed so zooming
+ * naturally walks 0.1 → 0.01 → 0.001 before switching to µ/n/p/... .
+ */
+export function fmtSI(n: number): string {
+  if (!Number.isFinite(n)) return String(n);
+  if (Object.is(n, -0) || n === 0) return "0";
+
+  const sign = n < 0 ? "-" : "";
+  const magnitude = Math.abs(n);
+
+  if (magnitude >= 1e-3 && magnitude < 1e3)
+    return sign + formatThreeSignificantDigits(magnitude);
+
+  const exponent = Math.floor(Math.log10(magnitude) / 3) * 3;
+  const prefix = SI_PREFIX_BY_EXPONENT.get(exponent);
+  if (!prefix) return sign + magnitude.toExponential(2);
+
+  const scaled = magnitude / 10 ** exponent;
+  return sign + formatThreeSignificantDigits(scaled) + prefix;
+}
+
+function formatThreeSignificantDigits(value: number): string {
+  return Number(value.toPrecision(3)).toString();
 }
 
 /** Format a volume number for display. */

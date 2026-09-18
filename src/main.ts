@@ -6,7 +6,7 @@ import {
   type AgeStripTuning,
 } from "./ageStrips";
 import { PolymarketCPV } from "./component";
-import { fmtVol } from "./lib/math";
+import { fmtSI, fmtVol } from "./lib/math";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
@@ -37,7 +37,7 @@ const cards = new Map<
 >();
 const PINNED_EVENT_SLUGS_STORAGE_KEY =
   "polymarket-book-vis:pinned-event-slugs:v1";
-const DEFAULT_EVENT_SLUGS = ["israel-closes-its-airspace-by"] as const;
+const DEFAULT_EVENT_SLUGS = [] as const;
 const pinnedEventSlugs = loadStringSet(PINNED_EVENT_SLUGS_STORAGE_KEY);
 
 let eventSearchTimeout: number | undefined;
@@ -463,7 +463,7 @@ function renderVolumeLegend(tuning: Readonly<AgeStripTuning>): void {
     signedVolumeColor(1, scale),
   );
   volumeLegendScale.textContent =
-    `reserve ${fmtVol(reserveShares)} shares · Q=C → 50% row`;
+    `reserve ${fmtSI(reserveShares)} shares · Q=C → 50% row`;
 
   const values = shareLegendTickValues(
     reserveShares,
@@ -545,9 +545,8 @@ function shareLegendTickValues(
 }
 
 function formatShareTick(value: number): string {
-  if (value === 0) return "0";
-  const magnitude = fmtVol(Math.abs(value)).replace(/\.0([KMB]?)$/, "$1");
-  return `${value > 0 ? "+" : "−"}${magnitude}`;
+  if (Object.is(value, -0) || value === 0) return "0";
+  return `${value > 0 ? "+" : "−"}${fmtSI(Math.abs(value))}`;
 }
 
 const renderGlobalLegend = () => renderVolumeLegend(getAgeStripTuning());
@@ -563,24 +562,3 @@ for (const slug of startupSlugs)
   void addEventBySlug(slug, false).catch((error) =>
     console.error(`Could not load ${slug}:`, error),
   );
-
-const extraEvents = client.listEvents({
-  // featured: true,
-  volumeMin: 10000,
-  titleSearch: "iran",
-});
-
-// TODO: Sort by amount of update in terms of entropy computed from transaction history of consecutive transaction prices.
-// TODO: For each two transactions with (p0, t0) -> (p1, t1), compute the kl divergence between p0 and p1 and divide by the delta t:
-// TODO: kl(p0, p1) / (t1 - t0)
-// And we need to do this for all consecutive transactions given the market's transaction history since a given timestamp till now.
-for await (const eventPage of extraEvents) {
-  for (const event of eventPage.items) {
-    if (startupSlugs.includes(event.slug ?? "")) continue;
-    // Event cards are independent. Do not make a slow Gamma/subscription load
-    // gate unrelated cards; startup discovery should fan out immediately.
-    void createCard(event).catch((error) =>
-      console.error(`Could not load ${event.slug ?? event.id}:`, error),
-    );
-  }
-}

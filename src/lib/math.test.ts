@@ -3,6 +3,7 @@ import {
   MARKET_COLOR_CHROMA,
   MARKET_COLOR_LUMINANCE,
   fmtRelativeTime,
+  fmtSI,
   marketColor,
   marketHue,
   relativeTimeDisplay,
@@ -13,6 +14,7 @@ test("fmtRelativeTime formats clock-like durations", () => {
   expect(fmtRelativeTime(100)).toBe("1m 40s");
   expect(fmtRelativeTime(1100)).toBe("18m 20s");
   expect(fmtRelativeTime(7200)).toBe("2h");
+  expect(fmtRelativeTime(104 * 86_400 + 13 * 3600)).toBe("3mo 14d");
 });
 
 
@@ -39,6 +41,18 @@ test("relativeTimeDisplay exposes semantic redraw deadlines", () => {
   });
 });
 
+
+test("fmtSI keeps useful decimals before switching to SI prefixes", () => {
+  expect(fmtSI(0.1)).toBe("0.1");
+  expect(fmtSI(0.01)).toBe("0.01");
+  expect(fmtSI(0.001)).toBe("0.001");
+  expect(fmtSI(0.0005)).toBe("500µ");
+  expect(fmtSI(0.000001)).toBe("1µ");
+  expect(fmtSI(1e-9)).toBe("1n");
+  expect(fmtSI(1_000)).toBe("1k");
+  expect(fmtSI(1_000_000)).toBe("1M");
+  expect(fmtSI(-0)).toBe("0");
+});
 
 test("marketColor and marketHue share the same deterministic phase", () => {
   const hue = marketHue("12345", 0);
