@@ -154,7 +154,14 @@ class AgeRecorder {
     // Increment immediately so any currently retrying connection attempt can
     // observe that it is stale before the queued restart gets its turn.
     const generation = ++this.subscriptionGeneration;
-    this.restartChain = this.restartChain.then(() => this.connect(generation));
+    this.restartChain = this.restartChain
+      .catch(() => undefined)
+      .then(() => this.connect(generation))
+      .catch((error) => {
+        // A fatal connect error must not permanently poison future restart
+        // requests. Log it and leave the queue resolved for the next change.
+        console.error("Recorder subscription restart failed", error);
+      });
     return this.restartChain;
   }
 
