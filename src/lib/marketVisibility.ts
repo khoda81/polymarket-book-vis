@@ -1,7 +1,8 @@
 export type HiddenMarketReason =
   | "user"
   | "not-accepting-orders"
-  | "empty-book";
+  | "empty-book"
+  | "resolved";
 
 export type MarketVisibility =
   | { readonly kind: "visible" }

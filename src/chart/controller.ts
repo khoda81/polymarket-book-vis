@@ -62,10 +62,17 @@ export interface ChartSurfaceElements {
   readonly canvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
   readonly toggles: HTMLElement;
+  readonly hiddenTray: HTMLDivElement;
 }
+
+export type AutoHiddenReason = "empty-book" | "resolved";
 
 export interface ChartControllerOptions {
   readonly onConnectionStatus?: (status: ConnectionStatus) => void;
+  readonly onMarketAutoHidden?: (
+    marketId: string,
+    reason: AutoHiddenReason,
+  ) => void;
 }
 
 export class ChartController {
@@ -73,6 +80,10 @@ export class ChartController {
 
   private readonly surface: ChartSurfaceElements;
   private readonly onConnectionStatus: (status: ConnectionStatus) => void;
+  private readonly onMarketAutoHidden: (
+    marketId: string,
+    reason: AutoHiddenReason,
+  ) => void;
   private readonly themeQuery: MediaQueryList;
   private readonly resizeObserver: ResizeObserver;
   private readonly activeTokens = new Set<TokenId>();
@@ -100,6 +111,8 @@ export class ChartController {
     this.surface = surface;
     this.onConnectionStatus =
       options.onConnectionStatus ?? (() => undefined);
+    this.onMarketAutoHidden =
+      options.onMarketAutoHidden ?? (() => undefined);
 
     this.themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
     this.theme = this.themeQuery.matches ? DARK_THEME : LIGHT_THEME;
@@ -119,6 +132,7 @@ export class ChartController {
       canvas: surface.canvas,
       canvasWrap: surface.canvasWrap,
       toggles: surface.toggles,
+      hiddenTray: surface.hiddenTray,
       plotter: this.plotter,
       activeTokens: this.activeTokens,
       getBook: (tokenId) => this.books[tokenId as TokenId],
@@ -134,6 +148,8 @@ export class ChartController {
         this.pressureColorScale(tokenId as TokenId),
       getTheme: () => this.theme,
       getViewMode: () => this.viewMode,
+      hideToken: (tokenId) =>
+        this.autoHideToken(tokenId as TokenId, "empty-book"),
       requestDraw: () => this.reqDraw(),
     });
 
@@ -152,7 +168,10 @@ export class ChartController {
     this.reqDraw();
   };
 
-  async load(definition: ChartDefinition): Promise<void> {
+  async load(
+    definition: ChartDefinition,
+    hiddenMarketIds: ReadonlySet<string>,
+  ): Promise<void> {
     const generation = ++this.loadGeneration;
     await this.closeWS();
     if (!this.ownsLoad(generation)) return;
@@ -166,7 +185,9 @@ export class ChartController {
     const { event, rawMarkets } = definition;
     const tokenIds = definition.controls.map((control) => control.tokenId);
 
-    tokenIds.forEach((tokenId) => this.activeTokens.add(tokenId));
+    for (const control of definition.controls)
+      if (!hiddenMarketIds.has(control.marketId))
+        this.activeTokens.add(control.tokenId);
     this.ageView.configureMarkets(event, rawMarkets);
 
     // Recorder registration/metadata is optional and must never gate the live
@@ -197,6 +218,17 @@ export class ChartController {
     this.reqDraw();
   }
 
+  setMarketVisible(marketId: string, visible: boolean): void {
+    const control = this.definition?.controls.find(
+      (candidate) => candidate.marketId === marketId,
+    );
+    if (!control) return;
+
+    if (visible) this.activeTokens.add(control.tokenId);
+    else this.activeTokens.delete(control.tokenId);
+    this.reqDraw();
+  }
+
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -217,6 +249,18 @@ export class ChartController {
 
   private setConnectionStatus(status: ConnectionStatus): void {
     this.onConnectionStatus(status);
+  }
+
+  private autoHideToken(
+    tokenId: TokenId,
+    reason: AutoHiddenReason,
+  ): void {
+    if (!this.activeTokens.delete(tokenId)) return;
+    const control = this.definition?.controls.find(
+      (candidate) => candidate.tokenId === tokenId,
+    );
+    if (control) this.onMarketAutoHidden(control.marketId, reason);
+    this.reqDraw();
   }
 
   private ownsLoad(generation: number): boolean {
@@ -420,7 +464,7 @@ export class ChartController {
             this.ageView.onBookUpdate(tokenId);
         } else if (stream.type === "market_resolved") {
           for (const tokenId of stream.payload.assetIds ?? [])
-            this.activeTokens.delete(tokenId as TokenId);
+            this.autoHideToken(tokenId as TokenId, "resolved");
         } else {
           continue;
         }

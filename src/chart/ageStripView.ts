@@ -26,8 +26,6 @@ const AGE_TIME_GUTTER_PX =
   AGE_TIME_META_WIDTH_PX + AGE_LABEL_HORIZONTAL_INSET_PX * 2 + 1;
 const VOLUME_LEFT_PADDING_PX = 60;
 const VOLUME_RIGHT_PADDING_PX = 16;
-const HIDDEN_MARKETS_STORAGE_KEY = "polymarket-book-vis.age-strip-hidden-markets.v1";
-
 interface MarketRuntimeState {
   visibilityInitialized: boolean;
   recordingSinceMs: number | null;
@@ -66,6 +64,7 @@ export interface AgeStripHost {
   readonly canvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
   readonly toggles: HTMLElement;
+  readonly hiddenTray: HTMLDivElement;
   readonly plotter: OrderBookPlotter;
   readonly activeTokens: Set<string>;
   readonly getBook: (tokenId: string) => TokenBook<string> | undefined;
@@ -75,10 +74,9 @@ export interface AgeStripHost {
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
   readonly getTheme: () => ChartTheme;
   readonly getViewMode: () => "volume" | "age";
+  readonly hideToken: (tokenId: string) => void;
   readonly requestDraw: () => void;
 }
-
-const userHiddenMarketIds = loadStringSet(HIDDEN_MARKETS_STORAGE_KEY);
 
 /**
  * Age-mode projection of the live order books.
@@ -112,10 +110,7 @@ export class AgeStripView {
     this.toggleHomeParent = host.toggles.parentElement;
     this.toggleHomeNextSibling = host.toggles.nextSibling;
 
-    this.hiddenTray = document.createElement("div");
-    this.hiddenTray.className = "cpv-hidden-markets";
-    this.hiddenTray.hidden = true;
-    host.canvasWrap.insertAdjacentElement("afterend", this.hiddenTray);
+    this.hiddenTray = host.hiddenTray;
 
     this.clockCanvas = document.createElement("canvas");
     this.clockCanvas.className = "cpv-clock-canvas";
@@ -166,7 +161,6 @@ export class AgeStripView {
   reset(): void {
     this.cancelTimeLabelRefresh();
     this.markets.clear();
-    this.hiddenTray.replaceChildren();
     this.hoverGeometry = null;
     this.clockGeometry = null;
     this.clockRows = [];
@@ -197,28 +191,29 @@ export class AgeStripView {
   }
 
   configureMarkets(event: Event, rawMarkets: readonly unknown[]): void {
-    const activeMarkets = event.markets.filter((market) => {
-      const tokenId = market.outcomes.yes.tokenId;
-      return tokenId !== null && this.host.activeTokens.has(tokenId);
-    });
-    const labels = Array.from(
-      this.host.toggles.querySelectorAll<HTMLLabelElement>("label"),
+    const labels = this.collectControls();
+    const marketById = new Map(
+      event.markets.map((market) => [String(market.id), market]),
     );
     const rawById = new Map<string, unknown>();
     for (const rawMarket of rawMarkets) {
       const record = asRecord(rawMarket);
-      if (typeof record?.id === "string") rawById.set(record.id, rawMarket);
+      if (record?.id !== undefined)
+        rawById.set(String(record.id), rawMarket);
     }
     const orderByToken = resolutionOrder(event, rawMarkets);
 
     for (const [index, label] of labels.entries()) {
-      const market = activeMarkets[index];
-      const tokenId = market?.outcomes.yes.tokenId;
-      if (!market || !tokenId) continue;
+      const marketId = label.dataset.marketId;
+      const tokenId = label.dataset.tokenId;
+      if (!marketId || !tokenId) continue;
 
-      label.dataset.tokenId = tokenId;
-      label.dataset.marketId = market.id;
-      label.dataset.marketOrder = String(orderByToken.get(tokenId) ?? index);
+      const market = marketById.get(marketId);
+      if (!market) continue;
+
+      label.dataset.marketOrder = String(
+        orderByToken.get(tokenId) ?? index,
+      );
 
       const state = this.markets.get(tokenId) ?? {
         visibilityInitialized: false,
@@ -226,54 +221,31 @@ export class AgeStripView {
         resolutionMs: null,
       };
       const resolutionMs = resolutionTimestamp(
-        rawById.get(market.id),
+        rawById.get(marketId),
         market,
       );
-      state.resolutionMs = Number.isFinite(resolutionMs) ? resolutionMs : null;
+      state.resolutionMs = Number.isFinite(resolutionMs)
+        ? resolutionMs
+        : null;
       this.markets.set(tokenId, state);
 
       const text =
-        this.host.getTitle(market.id) ??
+        this.host.getTitle(marketId) ??
         market.question ??
         "(untitled)";
       const redundantSingleMarketIdentity =
-        event.markets.length === 1 && sameDisplayTitle(text, event.title);
+        event.markets.length === 1 &&
+        sameDisplayTitle(text, event.title);
       const ageText = redundantSingleMarketIdentity ? "" : text;
 
-      const textSpan =
-        label.querySelector<HTMLSpanElement>(".cpv-market-label-text");
-      if (textSpan && textSpan.textContent !== text)
-        textSpan.textContent = text;
-
       label.dataset.marketLabel = ageText;
-      label.dataset.ageLabelWidth = String(measureAgeLabelTextWidth(ageText));
+      label.dataset.ageLabelWidth = String(
+        measureAgeLabelTextWidth(ageText),
+      );
       label.dataset.ageSuppressMarketIdentity = String(
         redundantSingleMarketIdentity,
       );
       label.title = text;
-
-      const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
-      if (!checkbox) continue;
-
-      if (
-        market.state.acceptingOrders !== true ||
-        userHiddenMarketIds.has(market.id)
-      ) {
-        checkbox.checked = false;
-        this.host.activeTokens.delete(tokenId);
-      }
-
-      checkbox.addEventListener("change", () => {
-        if (checkbox.checked) {
-          this.host.activeTokens.add(tokenId);
-          userHiddenMarketIds.delete(market.id);
-        } else {
-          this.host.activeTokens.delete(tokenId);
-          userHiddenMarketIds.add(market.id);
-        }
-        persistStringSet(HIDDEN_MARKETS_STORAGE_KEY, userHiddenMarketIds);
-        this.host.requestDraw();
-      });
     }
   }
 
@@ -295,20 +267,13 @@ export class AgeStripView {
     state.visibilityInitialized = true;
     if (hasRealOrders(book)) return;
 
-    const label = this.findControl(tokenId);
-    const marketId = label?.dataset.marketId;
-    if (!label || !marketId || userHiddenMarketIds.has(marketId)) return;
-
-    const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
-    if (!checkbox) return;
-    checkbox.checked = false;
-    this.host.activeTokens.delete(tokenId);
+    if (this.host.activeTokens.has(tokenId))
+      this.host.hideToken(tokenId);
   }
 
   draw(): void {
     this.clockCanvas.style.display = "block";
     const controls = this.collectControls();
-    this.syncControlPlacement(controls);
     const activeControls = controls.filter((label) => this.isActive(label));
     const rowCount = Math.max(1, activeControls.length);
 
@@ -372,12 +337,8 @@ export class AgeStripView {
     this.hideTooltip();
     if (this.layoutMode === "volume") return;
 
-    const controls = this.collectControls();
-    for (const label of controls) {
+    for (const label of this.collectControls())
       if (label.style.top !== "") label.style.top = "";
-      this.host.toggles.appendChild(label);
-    }
-    if (!this.hiddenTray.hidden) this.hiddenTray.hidden = true;
 
     let resize = false;
     if (this.host.plotter.padding.l !== VOLUME_LEFT_PADDING_PX) {
@@ -422,7 +383,6 @@ export class AgeStripView {
     this.hideTooltip();
     this.overlay.remove();
     this.clockCanvas.remove();
-    this.hiddenTray.remove();
   }
 
   private readonly handlePointerMove = (event: PointerEvent) => {
@@ -593,30 +553,6 @@ export class AgeStripView {
   private isActive(label: HTMLLabelElement): boolean {
     const tokenId = label.dataset.tokenId;
     return !!tokenId && this.host.activeTokens.has(tokenId);
-  }
-
-  private syncControlPlacement(labels: readonly HTMLLabelElement[]): void {
-    let hiddenCount = 0;
-    for (const label of labels) {
-      const active = this.isActive(label);
-      const parent = active ? this.host.toggles : this.hiddenTray;
-      if (label.parentElement !== parent) parent.appendChild(label);
-
-      if (!active) {
-        if (label.style.top !== "") label.style.top = "";
-        hiddenCount++;
-      }
-    }
-
-    const shouldHideTray = hiddenCount === 0;
-    if (this.hiddenTray.hidden !== shouldHideTray)
-      this.hiddenTray.hidden = shouldHideTray;
-  }
-
-  private findControl(tokenId: string): HTMLLabelElement | undefined {
-    return this.collectControls().find(
-      (label) => label.dataset.tokenId === tokenId,
-    );
   }
 
   private renderClockLayer(): void {
@@ -1087,27 +1023,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object"
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-function loadStringSet(key: string): Set<string> {
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? new Set(parsed.filter((value): value is string => typeof value === "string"))
-      : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-function persistStringSet(key: string, values: ReadonlySet<string>): void {
-  try {
-    window.localStorage.setItem(key, JSON.stringify([...values]));
-  } catch {
-    // Preferences are best effort.
-  }
 }
 
 function normalizedWheelDelta(event: WheelEvent): number {

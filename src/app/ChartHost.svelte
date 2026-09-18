@@ -2,17 +2,26 @@
   import { onMount } from "svelte";
   import {
     ChartController,
+    type AutoHiddenReason,
     type ChartSurfaceElements,
   } from "../chart/controller";
   import {
     buildChartDefinition,
-    type ChartDefinition,
+    type ChartMarketControl,
   } from "../lib/chartDefinition";
   import type {
     ConnectionStatus,
     ViewMode,
   } from "../lib/chartState";
   import type { EventBundle } from "../lib/eventBundle";
+  import {
+    initialMarketVisibility,
+    isMarketVisible,
+    loadUserHiddenMarketIds,
+    persistUserHiddenMarketIds,
+    type MarketVisibility,
+  } from "../lib/marketVisibility";
+  import MarketControl from "./MarketControl.svelte";
   import { createPublicClient } from "@polymarket/client";
 
   type PublicClient = ReturnType<typeof createPublicClient>;
@@ -25,16 +34,84 @@
   export let onconnection: (status: ConnectionStatus) => void =
     () => undefined;
 
+  const definition = buildChartDefinition(bundle);
+  const userHiddenMarketIds = loadUserHiddenMarketIds();
+
+  let visibilityByMarketId = new Map<string, MarketVisibility>(
+    definition.controls.map((control) => [
+      control.marketId,
+      initialMarketVisibility(
+        control.acceptingOrders,
+        userHiddenMarketIds.has(control.marketId),
+      ),
+    ]),
+  );
+
   let canvas: HTMLCanvasElement;
   let canvasWrap: HTMLDivElement;
   let toggles: HTMLDivElement;
+  let hiddenTray: HTMLDivElement;
   let chart: ChartController | null = null;
 
-  $: definition = buildChartDefinition(bundle);
+  $: visibleControls = definition.controls.filter((control) =>
+    isVisible(control),
+  );
+  $: hiddenControls = definition.controls.filter(
+    (control) => !isVisible(control),
+  );
+  $: toggledControls =
+    viewMode === "age" ? visibleControls : definition.controls;
 
-  function hideBrokenIcon(event: Event): void {
-    const target = event.currentTarget;
-    if (target instanceof HTMLImageElement) target.remove();
+  function visibility(control: ChartMarketControl): MarketVisibility {
+    return (
+      visibilityByMarketId.get(control.marketId) ??
+      { kind: "visible" }
+    );
+  }
+
+  function isVisible(control: ChartMarketControl): boolean {
+    return isMarketVisible(visibility(control));
+  }
+
+  function setVisibility(
+    marketId: string,
+    next: MarketVisibility,
+  ): void {
+    visibilityByMarketId = new Map(visibilityByMarketId);
+    visibilityByMarketId.set(marketId, next);
+  }
+
+  function userSetVisible(
+    control: ChartMarketControl,
+    visible: boolean,
+  ): void {
+    setVisibility(
+      control.marketId,
+      visible
+        ? { kind: "visible" }
+        : { kind: "hidden", reason: "user" },
+    );
+
+    if (visible) userHiddenMarketIds.delete(control.marketId);
+    else userHiddenMarketIds.add(control.marketId);
+    persistUserHiddenMarketIds(userHiddenMarketIds);
+
+    chart?.setMarketVisible(control.marketId, visible);
+  }
+
+  function autoHide(
+    marketId: string,
+    reason: AutoHiddenReason,
+  ): void {
+    setVisibility(marketId, { kind: "hidden", reason });
+  }
+
+  function initialHiddenMarketIds(): Set<string> {
+    return new Set(
+      definition.controls
+        .filter((control) => !isVisible(control))
+        .map((control) => control.marketId),
+    );
   }
 
   onMount(() => {
@@ -43,16 +120,20 @@
       canvas,
       canvasWrap,
       toggles,
+      hiddenTray,
     };
     const next = new ChartController(surface, client, {
       onConnectionStatus: (status) => {
         if (alive) onconnection(status);
       },
+      onMarketAutoHidden: (marketId, reason) => {
+        if (alive) autoHide(marketId, reason);
+      },
     });
     chart = next;
     next.setViewMode(viewMode);
 
-    void next.load(definition).then(
+    void next.load(definition, initialHiddenMarketIds()).then(
       () => {
         if (alive) onready();
       },
@@ -79,30 +160,27 @@
 </div>
 
 <div class="cpv-toggles" bind:this={toggles}>
-  {#each definition.controls as control (control.marketId)}
-    <label
-      data-token-id={control.tokenId}
-      data-market-id={control.marketId}
-      title={control.title}
-    >
-      <input type="checkbox" checked />
-      <span
-        class="cpv-market-dot"
-        style:background={control.dotColor}
-        aria-hidden="true"
-      ></span>
-      {#if control.iconUrl}
-        <img
-          class="cpv-market-icon"
-          src={control.iconUrl}
-          alt=""
-          aria-hidden="true"
-          loading="lazy"
-          decoding="async"
-          onerror={hideBrokenIcon}
-        />
-      {/if}
-      <span class="cpv-market-label-text">{control.title}</span>
-    </label>
+  {#each toggledControls as control (control.marketId)}
+    <MarketControl
+      {control}
+      checked={isVisible(control)}
+      onchange={(checked) => userSetVisible(control, checked)}
+    />
   {/each}
+</div>
+
+<div
+  class="cpv-hidden-markets"
+  hidden={viewMode !== "age" || hiddenControls.length === 0}
+  bind:this={hiddenTray}
+>
+  {#if viewMode === "age"}
+    {#each hiddenControls as control (control.marketId)}
+      <MarketControl
+        {control}
+        checked={false}
+        onchange={(checked) => userSetVisible(control, checked)}
+      />
+    {/each}
+  {/if}
 </div>
