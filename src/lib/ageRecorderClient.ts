@@ -14,7 +14,7 @@ const RECORDER_FETCH_TIMEOUT_MS = 1_500;
  *
  * This request is optional and bounded; live market startup never waits for it.
  */
-export async function fetchRecordedAgeState(
+export async function fetchRecorderCoverage(
   tokenIds: readonly string[],
 ): Promise<RecorderCoverage> {
   if (tokenIds.length === 0) return { recordingSinceMsByToken: {} };
