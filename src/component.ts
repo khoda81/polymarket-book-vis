@@ -1,5 +1,5 @@
 import { fetchRecorderCoverage } from "@/lib/ageRecorderClient";
-import { fmtVol, marketColor } from "@/lib/math";
+import { marketColor } from "@/lib/math";
 import { orderMarkets } from "@/lib/marketOrder";
 import {
   BookOrder,
@@ -90,9 +90,7 @@ export class PolymarketCPV {
   private bookEventStream: SubscriptionHandle<MarketEvent> | null = null;
   private volScale = 4.5;
   private viewMode: ViewMode = "age";
-  private searchTimeout: number | undefined;
   private loadGeneration = 0;
-  private searchGeneration = 0;
   private destroyed = false;
 
   constructor(container: HTMLElement, polyMarketClient: PublicClient) {
@@ -118,7 +116,6 @@ export class PolymarketCPV {
       getViewMode: () => this.viewMode,
       requestDraw: () => this.reqDraw(),
     });
-    this.bindEvents();
 
     this.resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -146,26 +143,6 @@ export class PolymarketCPV {
         <span class="cpv-stxt" data-ref="stxt">connecting…</span>
       </div>
 
-      <div class="cpv-top-controls">
-        <div class="cpv-search-container">
-          <input
-            type="text"
-            class="cpv-search-input"
-            data-ref="searchInput"
-            placeholder="Search events…"
-            autocomplete="off"
-          />
-          <div class="cpv-dropdown" data-ref="dropdown"></div>
-        </div>
-        <label class="cpv-view-control">
-          View
-          <select data-ref="viewMode" aria-label="Visualization mode">
-            <option value="age">age</option>
-            <option value="volume">volume</option>
-          </select>
-        </label>
-      </div>
-
       <div class="cpv-canvas-wrap" data-ref="canvasWrap">
         <canvas data-ref="canvas"></canvas>
       </div>
@@ -177,8 +154,6 @@ export class PolymarketCPV {
       const ref = (element as HTMLElement).dataset.ref!;
       this.refs[ref] = element as HTMLElement;
     });
-    this.refs.dropdown.setAttribute("role", "listbox");
-
     this.plotter = new OrderBookPlotter(this.refs.canvas as HTMLCanvasElement);
     this.plotter.onZoom = (delta) => {
       if (this.viewMode !== "volume") return;
@@ -190,22 +165,6 @@ export class PolymarketCPV {
       if (this.viewMode === "volume") this.reqDraw();
     };
   }
-
-  private bindEvents() {
-    const { searchInput, viewMode } = this.refs;
-
-    searchInput.addEventListener("input", () => this.onSearchInput());
-    viewMode.addEventListener("change", () => {
-      this.viewMode = (viewMode as HTMLSelectElement).value as ViewMode;
-      this.reqDraw();
-    });
-    document.addEventListener("click", this.handleDocumentClick);
-  }
-
-  private handleDocumentClick = (event: MouseEvent) => {
-    if (!(event.target as HTMLElement).closest(".cpv-search-container"))
-      this.refs.dropdown.style.display = "none";
-  };
 
   async load(event: Event): Promise<void> {
     const generation = ++this.loadGeneration;
@@ -221,9 +180,6 @@ export class PolymarketCPV {
     this.ageView.reset();
 
     this.refs.title.textContent = event.title ?? "(untitled)";
-    (this.refs.searchInput as HTMLInputElement).value =
-      event.slug ?? "(untitled)";
-    this.refs.dropdown.style.display = "none";
 
     // groupItemTitle/Threshold are not exposed by the SDK yet, so use its
     // internal Gamma fetcher for the display metadata we need.
@@ -293,19 +249,22 @@ export class PolymarketCPV {
     this.reqDraw();
   }
 
+  setViewMode(mode: ViewMode): void {
+    if (mode === this.viewMode) return;
+    this.viewMode = mode;
+    this.reqDraw();
+  }
+
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
     this.loadGeneration++;
-    this.searchGeneration++;
     void this.closeWS();
-    clearTimeout(this.searchTimeout);
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.ageView.destroy();
     this.plotter.destroy();
     this.resizeObserver.disconnect();
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
-    document.removeEventListener("click", this.handleDocumentClick);
     this.container.innerHTML = "";
     this.container.classList.remove("cpv-wrap");
   }
@@ -382,69 +341,6 @@ export class PolymarketCPV {
       }
     }
     return null;
-  }
-
-  private onSearchInput() {
-    clearTimeout(this.searchTimeout);
-    const generation = ++this.searchGeneration;
-    const query = (this.refs.searchInput as HTMLInputElement).value.trim();
-    if (!query) {
-      this.refs.dropdown.style.display = "none";
-      return;
-    }
-
-    this.searchTimeout = window.setTimeout(() => {
-      void this.runSearch(query, generation);
-    }, 250);
-  }
-
-  private async runSearch(query: string, generation: number): Promise<void> {
-    try {
-      const suggestions = this.polyMarketClient.search({
-        q: query,
-        pageSize: 20,
-      });
-      const page = await suggestions.firstPage();
-      if (this.destroyed || generation !== this.searchGeneration) return;
-
-      if (!page.totalCount) {
-        this.refs.dropdown.style.display = "none";
-        return;
-      }
-
-      const dropdown = this.refs.dropdown;
-      dropdown.replaceChildren();
-      for (const event of page.items.events) {
-        const option = document.createElement("div");
-        option.className = "cpv-dropdown-item";
-        option.setAttribute("role", "option");
-        option.tabIndex = 0;
-
-        const volume = event.metrics.volume
-          ? parseFloat(event.metrics.volume)
-          : 0;
-        option.append(document.createTextNode(event.title ?? "(no title)"));
-        const volumeTag = document.createElement("span");
-        volumeTag.className = "cpv-vol-tag";
-        volumeTag.textContent = `$${fmtVol(volume)}`;
-        option.appendChild(volumeTag);
-        option.addEventListener("click", () => {
-          this.searchGeneration++;
-          dropdown.style.display = "none";
-          void this.load(event).catch((error) => {
-            if (this.destroyed) return;
-            console.error("Could not load selected event", error);
-            this.setDot("disconnected");
-          });
-        });
-        dropdown.appendChild(option);
-      }
-      dropdown.style.display = "block";
-    } catch (error) {
-      if (this.destroyed || generation !== this.searchGeneration) return;
-      console.error("Market search failed", error);
-      this.refs.dropdown.style.display = "none";
-    }
   }
 
   private reqDraw() {
