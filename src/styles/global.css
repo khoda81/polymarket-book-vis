@@ -78,40 +78,6 @@ body {
     min-width: 0;
 }
 
-.recorder-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    flex: 0 0 auto;
-    color: var(--color-text-secondary, #666);
-    font-size: 12px;
-    white-space: nowrap;
-}
-
-.recorder-status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #999;
-    box-shadow: 0 0 0 2px color-mix(in oklab, currentColor 10%, transparent);
-}
-
-.recorder-status[data-state="live"] .recorder-status-dot {
-    background: #38b886;
-}
-
-.recorder-status[data-state="idle"] .recorder-status-dot {
-    background: #6f9db8;
-}
-
-.recorder-status[data-state="connecting"] .recorder-status-dot {
-    background: #d7a43b;
-}
-
-.recorder-status[data-state="offline"] .recorder-status-dot {
-    background: #888;
-}
-
 .volume-legend {
     width: min(430px, 100%);
     min-width: 260px;
