@@ -131,7 +131,11 @@ test("markets not accepting orders start unchecked but retain their controls", (
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   Object.defineProperty(globalThis, "document", {
     configurable: true,
-    value: { createElement: () => ({}) },
+    value: {
+      createElement: () => ({
+        append() {},
+      }),
+    },
   });
   try {
     view.configureMarkets({ markets } as unknown as Event, []);
