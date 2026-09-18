@@ -21,6 +21,8 @@ export interface SignedVolumeColorScale {
   readonly chroma: number;
   readonly positiveHue: number;
   readonly negativeHue: number;
+  readonly positiveLuminance?: number;
+  readonly negativeLuminance?: number;
   readonly positiveChroma?: number;
   readonly negativeChroma?: number;
 }
@@ -111,8 +113,11 @@ export function signedVolumeColor(
   if (volume === 0 || Number.isNaN(volume)) return "transparent";
   const negative = volume < 0;
   const hue = negative ? scale.negativeHue : scale.positiveHue;
+  const luminance = negative
+    ? (scale.negativeLuminance ?? scale.luminance)
+    : (scale.positiveLuminance ?? scale.luminance);
   const chroma = negative
     ? (scale.negativeChroma ?? scale.chroma)
     : (scale.positiveChroma ?? scale.chroma);
-  return `oklch(${scale.luminance} ${chroma} ${hue})`;
+  return `oklch(${luminance} ${chroma} ${hue})`;
 }
