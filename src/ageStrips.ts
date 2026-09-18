@@ -1,4 +1,3 @@
-import type { RecordedAgeState } from "@/lib/ageRecorderClient";
 import { fmtRelativeTime } from "@/lib/math";
 import { bookHoverAtPrice, type BookHoverSnapshot } from "@/lib/bookHover";
 import {
@@ -27,8 +26,6 @@ const AGE_LABEL_GAP_PX = 6;
 const VOLUME_LEFT_PADDING_PX = 60;
 export const AGE_ROW_BAND_PX = 36;
 
-const MIN_AGE_SCALE_SECONDS = 0.05;
-const MAX_AGE_SCALE_SECONDS = 7 * 24 * 60 * 60;
 const MIN_VOLUME_PER_CSS_PIXEL = 1;
 const MAX_VOLUME_PER_CSS_PIXEL = 1e9;
 
@@ -37,20 +34,17 @@ const HIDDEN_MARKETS_STORAGE_KEY =
   "polymarket-book-vis.age-strip-hidden-markets.v1";
 
 export interface AgeStripTuning {
-  ageScaleSeconds: number;
-  /** Fully opaque CSS-pixel-equivalent represented by this many YES. */
+  /** Share scale parameter, expressed as shares per CSS pixel of row height. */
   volumePerCssPixel: number;
 }
 
 interface StoredAgeStripTuning {
-  ageScaleSeconds?: number;
   volumePerCssPixel?: number;
   /** Legacy v1 name; migrated in place to volumePerCssPixel. */
   volumeSoftLimit?: number;
 }
 
 interface MarketRuntimeState {
-  readonly field: StaleSignedVolume;
   visibilityInitialized: boolean;
   recordingSinceMs: number | null;
 }
@@ -118,9 +112,6 @@ export class AgeStripView {
   private readonly markets = new Map<string, MarketRuntimeState>();
   private readonly toggleHomeParent: HTMLElement | null;
   private readonly toggleHomeNextSibling: ChildNode | null;
-  private readonly dirtyTokens = new Set<string>();
-
-  private diffusionTimer: number | undefined;
   private layoutMode: "age" | "volume" | null = null;
   private hoverGeometry: HoverGeometry | null = null;
   private lastRecordingAgeLabelUpdateMs = 0;
@@ -154,40 +145,11 @@ export class AgeStripView {
   }
 
   reset(): void {
-    this.cancelDiffusionTimer();
-    this.dirtyTokens.clear();
     this.markets.clear();
     this.hiddenTray.replaceChildren();
     this.hoverGeometry = null;
     this.hideTooltip();
     this.layoutMode = null;
-  }
-
-  /** Seed sample-and-hold fields recorded by the always-on backend. */
-  hydrate(
-    states: Readonly<Record<string, RecordedAgeState>>,
-    recordingSinceMsByToken: Readonly<Record<string, number>> = {},
-  ): void {
-    this.dirtyTokens.clear();
-    const nowMs = performance.now();
-
-    for (const tokenId of new Set([
-      ...Object.keys(states),
-      ...Object.keys(recordingSinceMsByToken),
-    ])) {
-      const field = new StaleSignedVolume();
-      const recorded = states[tokenId];
-      if (recorded) field.restoreSegments(recorded.segments, nowMs);
-      const since = recordingSinceMsByToken[tokenId];
-      this.markets.set(tokenId, {
-        field,
-        visibilityInitialized: false,
-        recordingSinceMs:
-          typeof since === "number" && Number.isFinite(since) ? since : null,
-      });
-    }
-
-    this.refreshRecordingAgeLabels(true);
   }
 
   setRecordingCoverage(
@@ -197,7 +159,6 @@ export class AgeStripView {
       let state = this.markets.get(tokenId);
       if (!state) {
         state = {
-          field: new StaleSignedVolume(),
           visibilityInitialized: false,
           recordingSinceMs: null,
         };
@@ -270,29 +231,18 @@ export class AgeStripView {
     }
   }
 
-  onBookUpdate(
-    tokenId: string,
-    nowMs: number,
-    observedRanges?: readonly PressureObservationRange[],
-  ): void {
+  onBookUpdate(tokenId: string): void {
     const book = this.host.getBook(tokenId);
     if (!book) return;
 
     let state = this.markets.get(tokenId);
     if (!state) {
       state = {
-        field: new StaleSignedVolume(),
         visibilityInitialized: false,
         recordingSinceMs: null,
       };
       this.markets.set(tokenId, state);
     }
-
-    // Live-pressure benchmark: historical sample-and-hold maintenance is
-    // intentionally disabled so the profile reflects the current-book path.
-    void nowMs;
-    void observedRanges;
-    this.dirtyTokens.add(tokenId);
 
     if (state.visibilityInitialized) return;
     state.visibilityInitialized = true;
@@ -353,7 +303,6 @@ export class AgeStripView {
     }
 
     drawAgeAxes(frame);
-    this.dirtyTokens.clear();
   }
 
   prepareVolumeView(): void {
@@ -483,25 +432,17 @@ export class AgeStripView {
   };
 
   private readonly handleWheel = (event: WheelEvent) => {
-    if (this.host.getViewMode() !== "age") return;
+    if (this.host.getViewMode() !== "age" || !event.ctrlKey) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
 
     const factor = Math.exp(normalizedWheelDelta(event) * 0.002);
-    if (event.ctrlKey) {
-      tuning.volumePerCssPixel = clamp(
-        tuning.volumePerCssPixel * factor,
-        MIN_VOLUME_PER_CSS_PIXEL,
-        MAX_VOLUME_PER_CSS_PIXEL,
-      );
-    } else {
-      tuning.ageScaleSeconds = clamp(
-        tuning.ageScaleSeconds / factor,
-        MIN_AGE_SCALE_SECONDS,
-        MAX_AGE_SCALE_SECONDS,
-      );
-    }
+    tuning.volumePerCssPixel = clamp(
+      tuning.volumePerCssPixel * factor,
+      MIN_VOLUME_PER_CSS_PIXEL,
+      MAX_VOLUME_PER_CSS_PIXEL,
+    );
 
     schedulePersistTuning();
     notifyTuningListeners();
@@ -609,19 +550,7 @@ export class AgeStripView {
     }
   }
 
-  private scheduleDiffusionTimer(delayMs: number): void {
-    if (this.host.getViewMode() !== "age") return;
-    this.diffusionTimer = window.setTimeout(() => {
-      this.diffusionTimer = undefined;
-      if (this.host.getViewMode() === "age") this.host.requestDraw();
-    }, Math.max(1, Math.ceil(delayMs)));
-  }
 
-  private cancelDiffusionTimer(): void {
-    if (this.diffusionTimer === undefined) return;
-    clearTimeout(this.diffusionTimer);
-    this.diffusionTimer = undefined;
-  }
 }
 
 function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
@@ -842,12 +771,6 @@ function rowRasterGeometry(
   };
 }
 
-function gpuDiffusionDelayMs(timeScaleSeconds: number): number {
-  // Resin is a slow visual memory; batching more elapsed diffusion into each
-  // GPU step dramatically reduces canvas copies without changing the equation.
-  return clamp(timeScaleSeconds * 60, 50, 500);
-}
-
 function hasRealOrders(book: TokenBook<string>): boolean {
   // yesToUsd always includes the synthetic mint level.
   return book.usdToYes.size > 0 || book.yesToUsd.size > 1;
@@ -932,7 +855,6 @@ function notifyTuningListeners(): void {
 
 function loadTuning(): AgeStripTuning {
   const fallback: AgeStripTuning = {
-    ageScaleSeconds: 5,
     volumePerCssPixel: DEFAULT_VOLUME_PER_CSS_PIXEL,
   };
 
@@ -945,14 +867,6 @@ function loadTuning(): AgeStripTuning {
         ? parsed.volumePerCssPixel
         : parsed.volumeSoftLimit;
     return {
-      ageScaleSeconds:
-        typeof parsed.ageScaleSeconds === "number"
-          ? clamp(
-            parsed.ageScaleSeconds,
-            MIN_AGE_SCALE_SECONDS,
-            MAX_AGE_SCALE_SECONDS,
-          )
-          : fallback.ageScaleSeconds,
       volumePerCssPixel:
         typeof storedVolumeScale === "number"
           ? clamp(
