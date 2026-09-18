@@ -79,6 +79,18 @@ export function positionRowControls(
   }
 }
 
+export interface AgeStripGeometry {
+  readonly viewport: {
+    readonly l: number;
+    readonly t: number;
+    readonly width: number;
+    readonly height: number;
+  };
+  readonly rows: readonly { readonly tokenId: string }[];
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+}
+
 export interface RowRasterGeometry {
   readonly deviceHeight: number;
   readonly topCss: number;
