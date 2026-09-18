@@ -336,7 +336,7 @@
 /* ── Hover overlay panel ─────────────────────────────────────────────────── */
 
 .cpv-overlay {
-    position: absolute;
+    position: fixed;
     pointer-events: none;
     background: var(--color-background-primary, #fff);
     border: 0.5px solid var(--color-border-secondary, #ccc);
@@ -345,9 +345,11 @@
     font-size: 12px;
     line-height: 1.6;
     display: none;
-    z-index: 10;
+    z-index: 10000;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
     min-width: 170px;
+    max-width: min(260px, calc(100vw - 16px));
+    max-height: calc(100vh - 16px);
 }
 
 .cpv-ov-label {
