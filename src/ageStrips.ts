@@ -51,8 +51,6 @@ interface HoverRow {
 
 interface AnnotationRow {
   readonly tokenId: string;
-  readonly label: string;
-  readonly hasIcon: boolean;
 }
 
 interface HoverGeometry {
@@ -363,10 +361,6 @@ export class AgeStripView {
     this.clockGeometry = this.hoverGeometry;
     this.clockRows = activeControls.map((label, index) => ({
       tokenId: label.dataset.tokenId ?? `missing-row-${index}`,
-      label: label.dataset.marketLabel ?? "(untitled)",
-      hasIcon:
-        label.dataset.ageSuppressMarketIdentity !== "true" &&
-        label.querySelector(".cpv-market-icon") !== null,
     }));
     if (this.viewportVisible) this.renderClockLayer();
 
@@ -687,36 +681,12 @@ export class AgeStripView {
     const { viewport: vp } = geometry;
     const rowCount = this.clockRows.length;
     const timeX = Math.max(4, vp.l - AGE_LABEL_HORIZONTAL_INSET_PX);
-    const hasAnyIcon = this.clockRows.some((row) => row.hasIcon);
-    const iconSlotWidth = hasAnyIcon
-      ? AGE_MARKET_ICON_SIZE_PX + AGE_MARKET_ICON_GAP_PX
-      : 0;
-    // Reading order is now: times | NO↔YES plot | icon | title.
-    // The identity column is left-aligned so rows scan naturally.
-    const labelX =
-      vp.l +
-      vp.width +
-      AGE_LABEL_HORIZONTAL_INSET_PX +
-      iconSlotWidth;
-    const maxLabelWidth = Math.max(
-      0,
-      geometry.canvasWidth - AGE_LABEL_HORIZONTAL_INSET_PX - labelX,
-    );
     let nextChangeMs = Infinity;
 
     for (const [rowIndex, row] of this.clockRows.entries()) {
       const state = this.markets.get(row.tokenId);
       const rowCenterY =
         vp.t + ((rowIndex + 0.5) / rowCount) * vp.height;
-
-      ctx.font = "11px sans-serif";
-      ctx.textAlign = "left";
-      ctx.globalAlpha = 1;
-      ctx.fillText(
-        ellipsizeCanvasText(ctx, row.label, maxLabelWidth),
-        labelX,
-        rowCenterY,
-      );
 
       if (!state) continue;
 
@@ -959,19 +929,6 @@ function positionRowControls(
     const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
     const top = `${geometry.centerCss}px`;
     if (label.style.top !== top) label.style.top = top;
-
-    const icon =
-      label.dataset.ageSuppressMarketIdentity === "true"
-        ? null
-        : label.querySelector<HTMLImageElement>(".cpv-market-icon");
-    if (icon) {
-      label.style.setProperty(
-        "--cpv-age-market-icon-left",
-        `${AGE_LABEL_HORIZONTAL_INSET_PX}px`,
-      );
-    } else {
-      label.style.removeProperty("--cpv-age-market-icon-left");
-    }
   }
 }
 

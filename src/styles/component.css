@@ -239,7 +239,7 @@
     transform: translateY(-50%);
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     overflow: hidden;
     white-space: nowrap;
     pointer-events: auto;
@@ -273,21 +273,26 @@
     flex: 1;
     min-width: 0;
     overflow: hidden;
+    color: inherit;
+    text-overflow: ellipsis;
     white-space: nowrap;
-    color: transparent;
     user-select: none;
 }
 
 .cpv-toggles--age-axis .cpv-market-icon {
-    position: absolute;
-    left: var(--cpv-age-market-icon-left, 8px);
+    position: static;
     width: 16px;
     height: 16px;
+    flex: 0 0 16px;
+    align-self: center;
 }
 
 .cpv-toggles--age-axis
     label[data-age-suppress-market-identity="true"]
-    .cpv-market-icon {
+    .cpv-market-icon,
+.cpv-toggles--age-axis
+    label[data-age-suppress-market-identity="true"]
+    .cpv-market-label-text {
     display: none;
 }
 
