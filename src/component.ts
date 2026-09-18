@@ -138,10 +138,33 @@ export class PolymarketCPV {
       <h2 class="cpv-sr-only">Polymarket market-state visualization</h2>
 
       <div class="cpv-header">
-        <h5 class="cpv-title" data-ref="title">Loading…</h5>
+        <div class="cpv-heading">
+          <div class="cpv-title-line">
+            <h5 class="cpv-title" data-ref="title">Loading…</h5>
+            <a
+              class="cpv-event-link"
+              data-ref="eventLink"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open event on Polymarket"
+              title="Open on Polymarket"
+            >↗</a>
+          </div>
+          <button
+            type="button"
+            class="cpv-event-slug"
+            data-ref="eventSlug"
+            title="Copy event slug"
+          ></button>
+        </div>
         <div class="cpv-dot cpv-dot--conn" data-ref="dot"></div>
         <span class="cpv-stxt" data-ref="stxt">connecting…</span>
       </div>
+
+      <details class="cpv-event-description" data-ref="descriptionPanel" hidden>
+        <summary>Description</summary>
+        <div class="cpv-event-description-body" data-ref="description"></div>
+      </details>
 
       <div class="cpv-canvas-wrap" data-ref="canvasWrap">
         <canvas data-ref="canvas"></canvas>
@@ -154,6 +177,13 @@ export class PolymarketCPV {
       const ref = (element as HTMLElement).dataset.ref!;
       this.refs[ref] = element as HTMLElement;
     });
+
+    this.refs.eventSlug.addEventListener("click", () => {
+      const slug = this.refs.eventSlug.textContent?.trim();
+      if (!slug) return;
+      void navigator.clipboard?.writeText(slug).catch(() => undefined);
+    });
+
     this.plotter = new OrderBookPlotter(this.refs.canvas as HTMLCanvasElement);
     this.plotter.onZoom = (delta) => {
       if (this.viewMode !== "volume") return;
@@ -181,6 +211,21 @@ export class PolymarketCPV {
 
     this.refs.title.textContent = event.title ?? "(untitled)";
 
+    const eventSlug = event.slug?.trim() || null;
+    const eventLink = this.refs.eventLink as HTMLAnchorElement;
+    const slugElement = this.refs.eventSlug as HTMLButtonElement;
+    if (eventSlug) {
+      eventLink.href = `https://polymarket.com/event/${encodeURIComponent(eventSlug)}`;
+      eventLink.hidden = false;
+      slugElement.textContent = eventSlug;
+      slugElement.hidden = false;
+    } else {
+      eventLink.removeAttribute("href");
+      eventLink.hidden = true;
+      slugElement.textContent = "";
+      slugElement.hidden = true;
+    }
+
     // groupItemTitle/Threshold are not exposed by the SDK yet, so use its
     // internal Gamma fetcher for the display metadata we need.
     const request = await (this.polyMarketClient as any).gamma.get(
@@ -194,6 +239,16 @@ export class PolymarketCPV {
 
     const rawEvent = await response.json();
     if (!this.ownsLoad(generation)) return;
+
+    const description =
+      typeof rawEvent.description === "string"
+        ? rawEvent.description.trim()
+        : "";
+    const descriptionPanel = this.refs.descriptionPanel as HTMLDetailsElement;
+    this.refs.description.textContent = description;
+    descriptionPanel.hidden = description.length === 0;
+    if (!description) descriptionPanel.open = false;
+
     const rawMarkets: unknown[] = rawEvent.markets ?? [];
 
     for (const rawMarket of rawMarkets as any[]) {
