@@ -38,7 +38,6 @@ export interface ChartSurfaceElements {
   readonly canvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
   readonly toggles: HTMLElement;
-  readonly hiddenTray: HTMLDivElement;
 }
 
 export type AutoHiddenReason = "empty-book" | "resolved";
@@ -103,7 +102,6 @@ export class ChartController {
       canvas: surface.canvas,
       canvasWrap: surface.canvasWrap,
       toggles: surface.toggles,
-      hiddenTray: surface.hiddenTray,
       plotter: this.plotter,
       activeTokens: this.activeTokens,
       getBook: (tokenId) => this.feed.getBook(tokenId),

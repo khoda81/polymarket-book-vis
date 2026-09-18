@@ -53,7 +53,6 @@
   let canvas: HTMLCanvasElement;
   let canvasWrap: HTMLDivElement;
   let toggles: HTMLDivElement;
-  let hiddenTray: HTMLDivElement;
   let chart: ChartController | null = null;
 
   $: controlPartition = partitionMarketVisibility(
@@ -113,7 +112,6 @@
       canvas,
       canvasWrap,
       toggles,
-      hiddenTray,
     };
     const next = new ChartController(surface, client, definition, {
       onConnectionStatus: (status) => {
@@ -174,7 +172,6 @@
 <div
   class="cpv-hidden-markets"
   hidden={viewMode !== "age" || hiddenControls.length === 0}
-  bind:this={hiddenTray}
 >
   {#if viewMode === "age"}
     {#each hiddenControls as control (control.marketId)}

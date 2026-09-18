@@ -35,7 +35,6 @@ export interface AgeStripHost {
   readonly canvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
   readonly toggles: HTMLElement;
-  readonly hiddenTray: HTMLDivElement;
   readonly plotter: OrderBookPlotter;
   readonly activeTokens: Set<string>;
   readonly getBook: (tokenId: string) => TokenBook<string> | undefined;
@@ -57,7 +56,6 @@ export interface AgeStripHost {
  */
 export class AgeStripView {
   private readonly host: AgeStripHost;
-  private readonly hiddenTray: HTMLDivElement;
   private readonly clock: AgeStripClock;
   private readonly tooltip: AgeStripTooltip;
   private readonly unsubscribeTuning: () => void;
@@ -66,8 +64,6 @@ export class AgeStripView {
 
   constructor(host: AgeStripHost) {
     this.host = host;
-    this.hiddenTray = host.hiddenTray;
-
     this.clock = new AgeStripClock({
       canvasWrap: host.canvasWrap,
       getViewMode: host.getViewMode,
@@ -298,16 +294,14 @@ export class AgeStripView {
   }
 
   private collectControls(): HTMLLabelElement[] {
-    return [
-      ...this.host.toggles.querySelectorAll<HTMLLabelElement>(
+    return Array.from(
+      this.host.toggles.querySelectorAll<HTMLLabelElement>(
         "label[data-token-id]",
       ),
-      ...this.hiddenTray.querySelectorAll<HTMLLabelElement>(
-        "label[data-token-id]",
-      ),
-    ].sort(
+    ).sort(
       (a, b) =>
-        Number(a.dataset.marketOrder ?? 0) - Number(b.dataset.marketOrder ?? 0),
+        Number(a.dataset.marketOrder ?? 0) -
+        Number(b.dataset.marketOrder ?? 0),
     );
   }
 
