@@ -12,12 +12,9 @@
     loadEventBundle,
     type EventBundle,
   } from "../lib/eventBundle";
-  import type {
-    ChartLifecycle,
-    PinState,
-  } from "./model";
   import {
     eventSlug,
+    type PinState,
   } from "./model";
   import {
     createPublicClient,
@@ -26,9 +23,18 @@
 
   type PublicClient = ReturnType<typeof createPublicClient>;
 
-  type BundleState =
-    | { readonly kind: "loading" }
-    | { readonly kind: "ready"; readonly bundle: EventBundle }
+  type RuntimeState =
+    | { readonly kind: "metadata-loading" }
+    | {
+        readonly kind: "chart-loading";
+        readonly bundle: EventBundle;
+        readonly connection: ConnectionStatus;
+      }
+    | {
+        readonly kind: "ready";
+        readonly bundle: EventBundle;
+        readonly connection: ConnectionStatus;
+      }
     | { readonly kind: "failed"; readonly message: string };
 
   export let event: Event;
@@ -40,39 +46,57 @@
   export let onfailure: (message: string) => void;
 
   let viewMode: ViewMode = "age";
-  let lifecycle: ChartLifecycle = { kind: "loading" };
-  let bundleState: BundleState = { kind: "loading" };
-  let connection: ConnectionStatus = "connecting";
+  let runtime: RuntimeState = { kind: "metadata-loading" };
 
   $: slug = eventSlug(event);
   $: pinned = pin.kind === "pinned";
   $: pinnable = pin.kind !== "unavailable";
-  $: presentation =
-    bundleState.kind === "ready"
-      ? bundleState.bundle.presentation
+  $: bundle =
+    runtime.kind === "chart-loading" || runtime.kind === "ready"
+      ? runtime.bundle
       : null;
+  $: presentation = bundle?.presentation ?? null;
+  $: connection =
+    runtime.kind === "chart-loading" || runtime.kind === "ready"
+      ? runtime.connection
+      : "connecting";
 
-  function setLifecycle(next: ChartLifecycle): void {
-    lifecycle = next;
-    if (next.kind === "ready") onready();
-    if (next.kind === "failed") onfailure(next.message);
+  function chartConnectionChanged(status: ConnectionStatus): void {
+    if (runtime.kind === "chart-loading" || runtime.kind === "ready")
+      runtime = { ...runtime, connection: status };
+  }
+
+  function chartReady(): void {
+    if (runtime.kind !== "chart-loading") return;
+    runtime = {
+      kind: "ready",
+      bundle: runtime.bundle,
+      connection: runtime.connection,
+    };
+    onready();
+  }
+
+  function fail(message: string): void {
+    if (runtime.kind === "failed") return;
+    runtime = { kind: "failed", message };
+    onfailure(message);
   }
 
   onMount(() => {
     let alive = true;
 
     void loadEventBundle(client, event).then(
-      (bundle) => {
+      (loaded) => {
         if (!alive) return;
-        bundleState = { kind: "ready", bundle };
+        runtime = {
+          kind: "chart-loading",
+          bundle: loaded,
+          connection: "connecting",
+        };
       },
       (error: unknown) => {
         if (!alive) return;
-        const message =
-          error instanceof Error ? error.message : String(error);
-        bundleState = { kind: "failed", message };
-        lifecycle = { kind: "failed", message };
-        onfailure(message);
+        fail(error instanceof Error ? error.message : String(error));
       },
     );
 
@@ -132,7 +156,7 @@
     <button
       type="button"
       class="card-close"
-      disabled={lifecycle.kind === "loading"}
+      disabled={runtime.kind !== "ready"}
       aria-label={`Remove ${event.title ?? "event"}`}
       title="Remove event from dashboard"
       onclick={onremove}
@@ -165,13 +189,14 @@
       <MarketRules rules={presentation.marketRules} />
     {/if}
 
-    {#if bundleState.kind === "ready"}
+    {#if bundle}
       <ChartHost
-        bundle={bundleState.bundle}
+        {bundle}
         {client}
         {viewMode}
-        onstate={setLifecycle}
-        onconnection={(status) => (connection = status)}
+        onready={chartReady}
+        onfailure={fail}
+        onconnection={chartConnectionChanged}
       />
     {/if}
   </div>

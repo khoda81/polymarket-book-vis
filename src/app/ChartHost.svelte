@@ -6,7 +6,6 @@
     ViewMode,
   } from "../lib/chartState";
   import type { EventBundle } from "../lib/eventBundle";
-  import type { ChartLifecycle } from "./model";
   import { createPublicClient } from "@polymarket/client";
 
   type PublicClient = ReturnType<typeof createPublicClient>;
@@ -14,7 +13,8 @@
   export let bundle: EventBundle;
   export let client: PublicClient;
   export let viewMode: ViewMode;
-  export let onstate: (state: ChartLifecycle) => void = () => undefined;
+  export let onready: () => void = () => undefined;
+  export let onfailure: (message: string) => void = () => undefined;
   export let onconnection: (status: ConnectionStatus) => void =
     () => undefined;
 
@@ -33,14 +33,13 @@
 
     void next.load(bundle).then(
       () => {
-        if (alive) onstate({ kind: "ready" });
+        if (alive) onready();
       },
       (error: unknown) => {
         if (alive)
-          onstate({
-            kind: "failed",
-            message: error instanceof Error ? error.message : String(error),
-          });
+          onfailure(
+            error instanceof Error ? error.message : String(error),
+          );
       },
     );
 

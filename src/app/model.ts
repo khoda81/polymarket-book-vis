@@ -3,11 +3,6 @@ import type { Event } from "@polymarket/client";
 declare const eventSlugBrand: unique symbol;
 export type EventSlug = string & { readonly [eventSlugBrand]: true };
 
-export type ChartLifecycle =
-  | { readonly kind: "loading" }
-  | { readonly kind: "ready" }
-  | { readonly kind: "failed"; readonly message: string };
-
 export type PinState =
   | { readonly kind: "unavailable" }
   | { readonly kind: "unpinned"; readonly slug: EventSlug }
