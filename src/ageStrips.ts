@@ -91,7 +91,6 @@ const redrawCallbacks = new Set<() => void>();
 const tuningListeners = new Set<(tuning: Readonly<AgeStripTuning>) => void>();
 let tuningPersistTimer: number | undefined;
 let globalRedrawRaf: number | undefined;
-let ageLabelMeasureCtx: CanvasRenderingContext2D | null | undefined;
 
 export function getAgeStripTuning(): Readonly<AgeStripTuning> {
   return { ...tuning };
@@ -607,22 +606,15 @@ export class AgeStripView {
 function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
   if (labels.length === 0) return AGE_LABEL_MIN_GUTTER_PX;
 
-  if (ageLabelMeasureCtx === undefined) {
-    const canvas = document.createElement("canvas");
-    ageLabelMeasureCtx = canvas.getContext("2d");
-  }
-
+  // Read the intrinsic width from the real DOM label. scrollWidth keeps the
+  // full text width even when the span is currently ellipsized by the gutter,
+  // so the label behaves like flex content with a max width instead of relying
+  // on separately-reproduced canvas font metrics.
   let widest = 0;
-  if (ageLabelMeasureCtx) ageLabelMeasureCtx.font = "11px sans-serif";
   for (const label of labels) {
-    const text =
-      label.querySelector<HTMLElement>(".cpv-market-label-text")?.textContent ??
-      label.textContent ??
-      "";
-    const width = ageLabelMeasureCtx
-      ? ageLabelMeasureCtx.measureText(text).width
-      : text.length * 6;
-    widest = Math.max(widest, width);
+    const text = label.querySelector<HTMLElement>(".cpv-market-label-text");
+    if (!text) continue;
+    widest = Math.max(widest, text.scrollWidth);
   }
 
   return Math.round(
