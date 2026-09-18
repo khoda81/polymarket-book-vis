@@ -219,13 +219,13 @@ body {
 
 .card-actions {
     position: absolute;
-    /* Match .cpv-wrap's 1rem top padding so the controls share the header baseline. */
     top: 16px;
     right: 10px;
     z-index: 20;
     display: flex;
     align-items: center;
     gap: 6px;
+    height: 28px;
 }
 
 .card-view,
@@ -246,14 +246,24 @@ body {
 
 .card-pin,
 .card-close {
+    display: grid;
+    place-items: center;
     width: 28px;
+    padding: 0;
     cursor: pointer;
-    font-size: 18px;
     line-height: 1;
 }
 
-.card-close {
-    font-size: 20px;
+.card-pin svg,
+.card-close svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+}
+
+.card-close svg {
+    width: 17px;
+    height: 17px;
 }
 
 .card-view:hover,

@@ -94,7 +94,9 @@ function renderPinButton(
   button.title = pinned
     ? "Pinned — click to stop restoring this event on reload"
     : "Pin this event so it returns after reload";
-  button.textContent = pinned ? "★" : "☆";
+  button.innerHTML = pinned
+    ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m12 2.6 2.86 5.8 6.4.93-4.63 4.51 1.09 6.38L12 17.2l-5.72 3.02 1.09-6.38-4.63-4.51 6.4-.93L12 2.6Z"/></svg>`
+    : `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="m12 2.6 2.86 5.8 6.4.93-4.63 4.51 1.09 6.38L12 17.2l-5.72 3.02 1.09-6.38-4.63-4.51 6.4-.93L12 2.6Z"/></svg>`;
   card.classList.toggle("card--pinned", pinned);
 }
 
@@ -181,7 +183,8 @@ async function createCard(event: Event) {
   closeButton.className = "card-close";
   closeButton.setAttribute("aria-label", `Remove ${event.title ?? "event"}`);
   closeButton.title = "Remove event from dashboard";
-  closeButton.textContent = "×";
+  closeButton.innerHTML =
+    `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>`;
   closeButton.disabled = true;
 
   renderPinButton(pinButton, card, eventSlug);

@@ -245,8 +245,10 @@ export class PolymarketCPV {
             ></button>
           </div>
         </div>
-        <div class="cpv-dot cpv-dot--conn" data-ref="dot"></div>
-        <span class="cpv-stxt" data-ref="stxt">connecting…</span>
+        <div class="cpv-status">
+          <div class="cpv-dot cpv-dot--conn" data-ref="dot"></div>
+          <span class="cpv-stxt" data-ref="stxt">connecting…</span>
+        </div>
       </div>
 
       <details class="cpv-event-description" data-ref="descriptionPanel" hidden>
