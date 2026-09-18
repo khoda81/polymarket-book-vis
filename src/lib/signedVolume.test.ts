@@ -22,6 +22,25 @@ describe("signedVolumeSegments", () => {
       { lo: 0.6, hi: 1, volume: -10, sweepCost: 6 },
     ]);
   });
+})  test("keeps a many-level empty spread exactly zero", () => {
+    const book = emptyTokenBook();
+    for (let i = 0; i < 40; i++) {
+      const price = 0.4 - i * 0.001;
+      const take = 0.1 + i * 0.037;
+      book.usdToYes.setLevel(`bid-${i}`, { price, take });
+    }
+    book.yesToUsd.setLevel("ask", { price: 1 / 0.6, take: 6 });
+
+    const spread = signedVolumeSegments(book).find(
+      (segment) => segment.lo === 0.4 && segment.hi === 0.6,
+    );
+    expect(spread).toEqual({
+      lo: 0.4,
+      hi: 0.6,
+      volume: 0,
+      sweepCost: 0,
+    });
+  });
 });
 
 describe("signedVolumeColor", () => {
