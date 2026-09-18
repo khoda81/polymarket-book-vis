@@ -1,5 +1,4 @@
 import type { TokenBook } from "./orderBook";
-import { signedVolumeSegments } from "./signedVolume";
 
 export type BookHoverSide = "bid" | "ask" | "spread";
 
@@ -8,47 +7,69 @@ export interface BookHoverSnapshot {
   readonly price: number;
   /** Side of the live book reached by sweeping to this price. */
   readonly side: BookHoverSide;
-  /** Cumulative executable YES shares represented by the pressure field. */
+  /** Cumulative executable YES shares at or through this limit price. */
   readonly shares: number;
   /** Volume-weighted average YES execution price, null inside the spread. */
   readonly effectivePrice: number | null;
 }
 
 /**
- * Read the live cumulative book at one probability coordinate.
+ * Query executable liquidity directly from the two half-books.
  *
- * On the bid side, signedVolumeSegments stores the capital required to buy the
- * equivalent NO position, so the YES VWAP is `1 - noCost / shares`. On asks,
- * sweepCost is already the cumulative YES purchase cost.
+ * A point query has inclusive limit semantics: bids at exactly p are
+ * executable when selling YES at p, and asks at exactly p are executable when
+ * buying YES at p. This is intentionally independent of the half-open interval
+ * convention used by the pressure renderer.
  */
 export function bookHoverAtPrice(
   book: TokenBook<unknown>,
   price: number,
 ): BookHoverSnapshot {
   const p = clamp01(price);
-  const segments = signedVolumeSegments(book);
-  const segment = segments.find(
-    (candidate, index) =>
-      p >= candidate.lo &&
-      (p < candidate.hi || (index === segments.length - 1 && p <= candidate.hi)),
-  );
 
-  if (!segment || Math.abs(segment.volume) <= 1e-12) {
-    return { price: p, side: "spread", shares: 0, effectivePrice: null };
+  let bidShares = 0;
+  let bidCost = 0;
+  for (const order of book.usdToYes.asOrders()) {
+    if (
+      !Number.isFinite(order.price) ||
+      !Number.isFinite(order.take) ||
+      order.take <= 0
+    )
+      continue;
+    if (order.price < p) break;
+    bidShares += order.take;
+    bidCost += order.price * order.take;
   }
+  if (bidShares > 0)
+    return {
+      price: p,
+      side: "bid",
+      shares: bidShares,
+      effectivePrice: clamp01(bidCost / bidShares),
+    };
 
-  const shares = Math.abs(segment.volume);
-  const effectivePrice =
-    segment.volume > 0
-      ? 1 - segment.sweepCost / shares
-      : segment.sweepCost / shares;
+  let askShares = 0;
+  let askCost = 0;
+  for (const order of book.yesToUsd.asSellOrders()) {
+    if (
+      !Number.isFinite(order.price) ||
+      !Number.isFinite(order.take) ||
+      order.take <= 0
+    )
+      continue;
+    if (order.price > p) break;
+    askShares += order.take;
+    askCost += order.price * order.take;
+  }
+  if (askShares > 0)
+    return {
+      price: p,
+      side: "ask",
+      shares: askShares,
+      effectivePrice: clamp01(askCost / askShares),
+    };
 
-  return {
-    price: p,
-    side: segment.volume > 0 ? "bid" : "ask",
-    shares,
-    effectivePrice: clamp01(effectivePrice),
-  };
+  return { price: p, side: "spread", shares: 0, effectivePrice: null };
 }
 
 function clamp01(value: number): number {
