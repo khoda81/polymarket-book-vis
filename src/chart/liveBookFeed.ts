@@ -55,7 +55,7 @@ export class LiveBookFeed {
     const stream = await this.subscribeWithRetry(tokenIds);
     if (!stream) return;
 
-    if (this.state.kind === "destroyed") {
+    if (this.state.kind !== "connecting") {
       await stream.close().catch(() => undefined);
       return;
     }
