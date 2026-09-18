@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { PolymarketCPV } from "../component";
+  import { ChartController } from "../chart/controller";
   import type {
     ConnectionStatus,
     ViewMode,
@@ -19,11 +19,11 @@
     () => undefined;
 
   let host: HTMLDivElement;
-  let chart: PolymarketCPV | null = null;
+  let chart: ChartController | null = null;
 
   onMount(() => {
     let alive = true;
-    const next = new PolymarketCPV(host, client, {
+    const next = new ChartController(host, client, {
       onConnectionStatus: (status) => {
         if (alive) onconnection(status);
       },
