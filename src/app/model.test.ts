@@ -22,7 +22,7 @@ test("event slugs are non-empty by construction", () => {
   expect(toEventSlug("")).toBeNull();
   expect(toEventSlug("   ")).toBeNull();
   expect(toEventSlug(null)).toBeNull();
-  expect(toEventSlug("  abc-def  ")).toBe("abc-def");
+  expect(String(toEventSlug("  abc-def  "))).toBe("abc-def");
 });
 
 test("pin state cannot represent a pinned event without a slug", () => {
@@ -49,7 +49,7 @@ test("stored pin order is unique and preserves first occurrence", () => {
       "alpha-event",
       " beta-event ",
       null,
-    ]),
+    ]).map(String),
   ).toEqual(["alpha-event", "beta-event"]);
 });
 
@@ -68,6 +68,6 @@ test("dashboard ordering follows pin order, then insertion order", () => {
   ] as EventSlug[];
 
   expect(
-    orderEntries(entries, pinned).map((entry) => entry.event.id),
+    orderEntries(entries, pinned).map((entry) => String(entry.event.id)),
   ).toEqual(["c", "a", "b"]);
 });
