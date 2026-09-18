@@ -1,4 +1,4 @@
-import { fmtRelativeTime } from "@/lib/math";
+import { relativeTimeDisplay } from "@/lib/math";
 import { bookHoverAtPrice, type BookHoverSnapshot } from "@/lib/bookHover";
 import {
   DEFAULT_VOLUME_PER_CSS_PIXEL,
@@ -11,17 +11,12 @@ import {
   signedVolumeColor,
   signedVolumeSegments,
 } from "@/lib/signedVolume";
-import {
-  StaleSignedVolume,
-  type PressureObservationRange,
-  type StaleSignedVolumeSegment,
-} from "@/lib/staleSignedVolume";
 import type { Event } from "@polymarket/client";
 
 const AGE_LABEL_MIN_GUTTER_PX = 44;
 const AGE_LABEL_MAX_GUTTER_PX = 180;
 const AGE_LABEL_HORIZONTAL_INSET_PX = 8;
-const AGE_RECORDING_AGE_WIDTH_PX = 44;
+const AGE_TIME_META_WIDTH_PX = 52;
 const AGE_LABEL_GAP_PX = 6;
 const VOLUME_LEFT_PADDING_PX = 60;
 export const AGE_ROW_BAND_PX = 36;
@@ -47,6 +42,7 @@ interface StoredAgeStripTuning {
 interface MarketRuntimeState {
   visibilityInitialized: boolean;
   recordingSinceMs: number | null;
+  resolutionMs: number | null;
 }
 
 interface HoverRow {
@@ -115,7 +111,8 @@ export class AgeStripView {
   private layoutMode: "age" | "volume" | null = null;
   private hoverGeometry: HoverGeometry | null = null;
   private hoverPointer: { sx: number; sy: number } | null = null;
-  private lastRecordingAgeLabelUpdateMs = 0;
+  private timeLabelTimer: number | undefined;
+  private timeLabelRaf: number | undefined;
 
   constructor(host: AgeStripHost) {
     this.host = host;
@@ -146,6 +143,7 @@ export class AgeStripView {
   }
 
   reset(): void {
+    this.cancelTimeLabelRefresh();
     this.markets.clear();
     this.hiddenTray.replaceChildren();
     this.hoverGeometry = null;
@@ -163,13 +161,13 @@ export class AgeStripView {
         state = {
           visibilityInitialized: false,
           recordingSinceMs: null,
+          resolutionMs: null,
         };
         this.markets.set(tokenId, state);
       }
       state.recordingSinceMs =
         Number.isFinite(since) && since >= 0 ? since : null;
     }
-    this.refreshRecordingAgeLabels(true);
   }
 
   configureMarkets(event: Event, rawMarkets: readonly unknown[]): void {
@@ -180,6 +178,11 @@ export class AgeStripView {
     const labels = Array.from(
       this.host.toggles.querySelectorAll<HTMLLabelElement>("label"),
     );
+    const rawById = new Map<string, unknown>();
+    for (const rawMarket of rawMarkets) {
+      const record = asRecord(rawMarket);
+      if (typeof record?.id === "string") rawById.set(record.id, rawMarket);
+    }
     const orderByToken = resolutionOrder(event, rawMarkets);
 
     for (const [index, label] of labels.entries()) {
@@ -190,6 +193,18 @@ export class AgeStripView {
       label.dataset.tokenId = tokenId;
       label.dataset.marketId = market.id;
       label.dataset.marketOrder = String(orderByToken.get(tokenId) ?? index);
+
+      const state = this.markets.get(tokenId) ?? {
+        visibilityInitialized: false,
+        recordingSinceMs: null,
+        resolutionMs: null,
+      };
+      const resolutionMs = resolutionTimestamp(
+        rawById.get(market.id),
+        market,
+      );
+      state.resolutionMs = Number.isFinite(resolutionMs) ? resolutionMs : null;
+      this.markets.set(tokenId, state);
 
       const dot = label.querySelector<HTMLSpanElement>("span");
       dot?.classList.add("cpv-market-dot");
@@ -207,10 +222,20 @@ export class AgeStripView {
       label.appendChild(textSpan);
       label.dataset.ageLabelWidth = String(measureIntrinsicTextWidth(textSpan));
 
+      const times = document.createElement("span");
+      times.className = "cpv-market-times";
+      times.hidden = true;
+
       const recordingAge = document.createElement("span");
       recordingAge.className = "cpv-recording-age";
       recordingAge.hidden = true;
-      label.appendChild(recordingAge);
+
+      const resolutionCountdown = document.createElement("span");
+      resolutionCountdown.className = "cpv-resolution-countdown";
+      resolutionCountdown.hidden = true;
+
+      times.append(recordingAge, resolutionCountdown);
+      label.appendChild(times);
       label.title = text;
 
       const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -242,6 +267,7 @@ export class AgeStripView {
       state = {
         visibilityInitialized: false,
         recordingSinceMs: null,
+        resolutionMs: null,
       };
       this.markets.set(tokenId, state);
     }
@@ -261,13 +287,12 @@ export class AgeStripView {
   }
 
   draw(): void {
-    this.refreshRecordingAgeLabels();
-
     const controls = this.collectControls();
     this.syncControlPlacement(controls);
     const activeControls = controls.filter((label) => this.isActive(label));
     const rowCount = Math.max(1, activeControls.length);
 
+    this.refreshVisibleTimeLabels(activeControls);
     this.installAgeLayout(rowCount, activeControls);
 
     const frame = this.host.plotter.beginFrame(this.host.getTheme(), {
@@ -309,7 +334,9 @@ export class AgeStripView {
   }
 
   prepareVolumeView(): void {
+    this.cancelTimeLabelRefresh();
     this.hoverGeometry = null;
+    this.hoverPointer = null;
     this.hideTooltip();
     if (this.layoutMode === "volume") return;
 
@@ -350,6 +377,7 @@ export class AgeStripView {
   }
 
   destroy(): void {
+    this.cancelTimeLabelRefresh();
     redrawCallbacks.delete(this.host.requestDraw);
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.host.canvas.removeEventListener("pointermove", this.handlePointerMove);
@@ -533,27 +561,96 @@ export class AgeStripView {
     );
   }
 
-  private refreshRecordingAgeLabels(force = false): void {
+  private refreshVisibleTimeLabels(
+    labels: readonly HTMLLabelElement[],
+  ): void {
+    this.cancelTimeLabelRefresh();
+
     const nowMs = Date.now();
-    if (!force && nowMs - this.lastRecordingAgeLabelUpdateMs < 30_000) return;
-    this.lastRecordingAgeLabelUpdateMs = nowMs;
+    let nextChangeMs = Infinity;
 
-    for (const label of this.collectControls()) {
-      const age = label.querySelector<HTMLElement>(".cpv-recording-age");
+    for (const label of labels) {
       const tokenId = label.dataset.tokenId;
-      if (!age || !tokenId) continue;
+      const times = label.querySelector<HTMLElement>(".cpv-market-times");
+      const age = label.querySelector<HTMLElement>(".cpv-recording-age");
+      const resolution = label.querySelector<HTMLElement>(
+        ".cpv-resolution-countdown",
+      );
+      if (!tokenId || !times || !age || !resolution) continue;
 
-      const since = this.markets.get(tokenId)?.recordingSinceMs ?? null;
-      if (since === null || !Number.isFinite(since)) {
+      const state = this.markets.get(tokenId);
+      let hasVisibleTime = false;
+
+      const since = state?.recordingSinceMs ?? null;
+      if (since !== null && Number.isFinite(since)) {
+        const display = relativeTimeDisplay(
+          Math.max(0, nowMs - since) / 1000,
+          "elapsed",
+        );
+        age.hidden = false;
+        age.textContent = display.text;
+        age.title = `${display.text} recorder history`;
+        hasVisibleTime = true;
+        if (display.nextChangeMs !== null)
+          nextChangeMs = Math.min(nextChangeMs, display.nextChangeMs);
+      } else {
         age.hidden = true;
         age.textContent = "";
-        continue;
       }
 
-      const duration = fmtRelativeTime((nowMs - since) / 1000);
-      age.hidden = false;
-      age.textContent = duration;
-      age.title = `${duration} recorder history`;
+      const resolutionMs = state?.resolutionMs ?? null;
+      if (resolutionMs !== null && Number.isFinite(resolutionMs)) {
+        const display = relativeTimeDisplay(
+          Math.max(0, resolutionMs - nowMs) / 1000,
+          "remaining",
+        );
+        resolution.hidden = false;
+        resolution.textContent =
+          display.text === "due" ? "due" : `T−${display.text}`;
+        resolution.title =
+          display.text === "due"
+            ? "Scheduled resolution time reached"
+            : `Resolves in ${display.text}`;
+        hasVisibleTime = true;
+        if (display.nextChangeMs !== null)
+          nextChangeMs = Math.min(nextChangeMs, display.nextChangeMs);
+      } else {
+        resolution.hidden = true;
+        resolution.textContent = "";
+      }
+
+      times.hidden = !hasVisibleTime;
+    }
+
+    if (Number.isFinite(nextChangeMs))
+      this.scheduleTimeLabelRefresh(nextChangeMs);
+  }
+
+  private scheduleTimeLabelRefresh(delayMs: number): void {
+    // Millisecond labels are visually meaningful, but a 1ms timeout is not.
+    // Coalesce very near deadlines into the next paint.
+    if (delayMs <= 34) {
+      this.timeLabelRaf = requestAnimationFrame(() => {
+        this.timeLabelRaf = undefined;
+        if (this.host.getViewMode() === "age") this.host.requestDraw();
+      });
+      return;
+    }
+
+    this.timeLabelTimer = window.setTimeout(() => {
+      this.timeLabelTimer = undefined;
+      if (this.host.getViewMode() === "age") this.host.requestDraw();
+    }, Math.max(1, Math.ceil(delayMs) + 1));
+  }
+
+  private cancelTimeLabelRefresh(): void {
+    if (this.timeLabelTimer !== undefined) {
+      clearTimeout(this.timeLabelTimer);
+      this.timeLabelTimer = undefined;
+    }
+    if (this.timeLabelRaf !== undefined) {
+      cancelAnimationFrame(this.timeLabelRaf);
+      this.timeLabelRaf = undefined;
     }
   }
 
@@ -567,10 +664,10 @@ function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
   for (const label of labels) {
     const cached = Number(label.dataset.ageLabelWidth);
     if (!Number.isFinite(cached)) continue;
-    const age = label.querySelector<HTMLElement>(".cpv-recording-age");
-    const ageWidth =
-      age && !age.hidden ? AGE_RECORDING_AGE_WIDTH_PX + AGE_LABEL_GAP_PX : 0;
-    widest = Math.max(widest, cached + ageWidth);
+    const times = label.querySelector<HTMLElement>(".cpv-market-times");
+    const timeWidth =
+      times && !times.hidden ? AGE_TIME_META_WIDTH_PX + AGE_LABEL_GAP_PX : 0;
+    widest = Math.max(widest, cached + timeWidth);
   }
 
   return Math.ceil(
