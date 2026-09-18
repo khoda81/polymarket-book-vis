@@ -14,6 +14,7 @@ import {
   VOLUME_RIGHT_PADDING_PX,
   ageLabelGutterWidth,
   hasRealOrders,
+  indexRawMarketsById,
   measureAgeLabelTextWidth,
   normalizedWheelDelta,
   positionRowControls,
@@ -134,12 +135,7 @@ export class AgeStripView {
     const marketById = new Map(
       event.markets.map((market) => [String(market.id), market]),
     );
-    const rawById = new Map<string, unknown>();
-    for (const rawMarket of rawMarkets) {
-      const record = asRecord(rawMarket);
-      if (record?.id !== undefined)
-        rawById.set(String(record.id), rawMarket);
-    }
+    const rawById = indexRawMarketsById(rawMarkets);
     const orderByToken = resolutionOrder(event, rawMarkets);
 
     for (const [index, label] of labels.entries()) {
@@ -211,7 +207,6 @@ export class AgeStripView {
   }
 
   draw(): void {
-    this.clockCanvas.style.display = "block";
     const controls = this.collectControls();
     const activeControls = controls.filter((label) => this.isActive(label));
     const rowCount = Math.max(1, activeControls.length);

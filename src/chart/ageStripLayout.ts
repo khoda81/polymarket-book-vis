@@ -121,6 +121,18 @@ export function hasRealOrders(book: TokenBook<string>): boolean {
   return book.usdToYes.size > 0 || book.yesToUsd.size > 1;
 }
 
+export function indexRawMarketsById(
+  rawMarkets: readonly unknown[],
+): Map<string, unknown> {
+  const indexed = new Map<string, unknown>();
+  for (const rawMarket of rawMarkets) {
+    const record = asRecord(rawMarket);
+    if (record?.id !== undefined)
+      indexed.set(String(record.id), rawMarket);
+  }
+  return indexed;
+}
+
 export function resolutionOrder(
   event: Event,
   rawMarkets: readonly unknown[],
