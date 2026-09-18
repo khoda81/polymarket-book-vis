@@ -4,7 +4,6 @@ import {
   pressureInkProfile,
   pressureInkThicknessCss,
 } from "./pressureInk";
-import { displacedPressureSegments } from "./resinHistory";
 import {
   signedVolumeSegments,
   type SignedVolumeColorScale,
@@ -89,18 +88,11 @@ interface GlResources {
 }
 
 /**
- * Shared, disposable GPU renderer for the age view.
+ * Shared GPU renderer for the live-pressure benchmark.
  *
- * The live order book is always rendered as a sharp foreground. Time exists in
- * a separate resin texture: whenever live pressure changes, the displaced old
- * silhouette is deposited into history, then history diffuses vertically on
- * the GPU. Presentation suppresses history in every x-column where the live
- * book has pressure, so stale information can never deform the authoritative
- * current outline.
- *
- * CPU sample-and-hold history is consulted only when a GPU state must be
- * reconstructed (first render, resize, row-layout change, context restore).
- * Ordinary diffusion therefore performs no Gaussian/erf work on the CPU.
+ * This branch intentionally renders only the authoritative current order book.
+ * The resin resources remain allocated so the presentation path stays otherwise
+ * comparable, but history is never seeded, deposited, diffused, or rescaled.
  */
 class SharedWebGLPressureRenderer {
   private readonly states = new Map<object, PressureState>();
@@ -151,28 +143,23 @@ class SharedWebGLPressureRenderer {
         state = previous;
         state.requestRedraw = input.requestRedraw;
 
-        this.advanceHistory(resources, state, input);
-        const displaced = this.captureLiveChanges(state, input);
+        // Live-pressure benchmark path: update only the authoritative current
+        // book. No historical seed, displacement capture, diffusion, or
+        // scale-reprojection work is performed.
+        this.captureLiveChanges(state, input);
 
         if (state.volumePerCssPixel !== input.volumePerCssPixel) {
-          const oldScale = state.volumePerCssPixel;
-          const newScale = input.volumePerCssPixel;
-          if (state.historyActive)
-            this.rescaleHistory(resources, state, oldScale, newScale);
-          state.volumePerCssPixel = newScale;
+          state.volumePerCssPixel = input.volumePerCssPixel;
           this.rebuildCurrentAll(gl, state, input);
         } else {
           this.rebuildDirtyCurrentRows(gl, state, input);
         }
-
-        if (displaced.length > 0)
-          this.depositHistory(resources, state, input, displaced);
       }
 
       this.present(resources, state, input.colorScale);
       return canvas;
     } catch (error) {
-      console.warn("WebGL resin pressure renderer disabled for this session:", error);
+      console.warn("WebGL live pressure renderer disabled for this session:", error);
       this.permanentlyDisabled = true;
       this.resources = undefined;
       this.requestAllRedraws();
@@ -180,8 +167,8 @@ class SharedWebGLPressureRenderer {
     }
   }
 
-  hasHistory(key: object): boolean {
-    return this.states.get(key)?.historyActive ?? false;
+  hasHistory(_key: object): boolean {
+    return false;
   }
 
   release(key: object): void {
@@ -286,7 +273,7 @@ class SharedWebGLPressureRenderer {
       this.resources = resources;
       return resources;
     } catch (error) {
-      console.warn("WebGL2 resin renderer unavailable; using Canvas2D:", error);
+      console.warn("WebGL2 live pressure renderer unavailable; using Canvas2D:", error);
       this.permanentlyDisabled = true;
       return undefined;
     }
@@ -326,21 +313,14 @@ class SharedWebGLPressureRenderer {
     for (const row of input.rows)
       state.currentByToken.set(row.tokenId, this.readCurrent(row.tokenId, input));
 
-    const seed = buildHistorySeedPixels(
-      input.rows,
-      state.currentByToken,
-      state.width,
-      state.height,
-      input.dpr,
-      input.ageScaleSeconds,
-      input.volumePerCssPixel,
-    );
-    uploadWholeTexture(gl, state.historyTextures[0], state.width, state.height, seed.pixels);
+    // Keep the history textures empty so the existing presentation shader can
+    // be reused while measuring the live-pressure baseline.
+    clearTexture(gl, state.historyTextures[0], state.width, state.height);
     clearTexture(gl, state.historyTextures[1], state.width, state.height);
     clearTexture(gl, state.depositTexture, state.width, state.height);
 
     state.historyFront = 0;
-    state.historyActive = seed.active;
+    state.historyActive = false;
     state.lastDiffuseMs = input.nowMs;
     state.volumePerCssPixel = input.volumePerCssPixel;
     state.rowCount = input.rows.length;
@@ -359,21 +339,15 @@ class SharedWebGLPressureRenderer {
   private captureLiveChanges(
     state: PressureState,
     input: WebGLPressureRenderInput,
-  ): readonly { rowIndex: number; segments: readonly SignedVolumeSegment[] }[] {
-    if (input.dirtyTokens.size === 0) return [];
-
-    const displaced: { rowIndex: number; segments: readonly SignedVolumeSegment[] }[] = [];
-    for (const [rowIndex, row] of input.rows.entries()) {
+  ): void {
+    if (input.dirtyTokens.size === 0) return;
+    for (const row of input.rows) {
       if (!input.dirtyTokens.has(row.tokenId)) continue;
-      const next = this.readCurrent(row.tokenId, input);
-      const previous = state.currentByToken.get(row.tokenId);
-      if (previous) {
-        const segments = displacedPressureSegments(previous, next);
-        if (segments.length > 0) displaced.push({ rowIndex, segments });
-      }
-      state.currentByToken.set(row.tokenId, next);
+      state.currentByToken.set(
+        row.tokenId,
+        this.readCurrent(row.tokenId, input),
+      );
     }
-    return displaced;
   }
 
   private rebuildCurrentAll(
