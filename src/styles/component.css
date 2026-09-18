@@ -170,8 +170,9 @@
     flex: 1;
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
+    color: transparent;
+    user-select: none;
 }
 
 .cpv-hidden-markets {
