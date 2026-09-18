@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import type { Event } from "@polymarket/client";
-import { AgeStripView, type AgeStripHost } from "./chart/ageStripView";
+import {
+  AgeStripView,
+  type AgeStripHost,
+} from "./chart/ageStripView";
 import { getAgeStripTuning } from "./lib/ageStripTuning";
 
 test("only Ctrl+wheel changes share scale in age mode", () => {
@@ -50,14 +53,12 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
         removeEventListener() {},
       },
       canvasWrap: {
-        insertAdjacentElement() {},
-        querySelector() {
-          return null;
-        },
         appendChild() {},
       },
       toggles: { parentElement: null, nextSibling: null },
+      hiddenTray: {},
       getViewMode: () => "age",
+      hideToken() {},
       requestDraw() {},
     } as unknown as AgeStripHost);
 
@@ -106,53 +107,60 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
   }
 });
 
-test("markets not accepting orders start unchecked but retain their controls", () => {
-  const markets = [true, false, undefined, null].map((acceptingOrders, index) => ({
+test("market configuration annotates Svelte-owned controls without owning visibility", () => {
+  const markets = [0, 1].map((index) => ({
     id: String(index),
     question: `Market ${index}`,
-    state: { acceptingOrders },
+    state: { acceptingOrders: index === 0 },
     outcomes: { yes: { tokenId: String(index) } },
   }));
-  const activeTokens = new Set(markets.map((market) => market.outcomes.yes.tokenId));
-  const controls = markets.map(() => {
-    const checkbox = { checked: true, addEventListener() {} };
+  const activeTokens = new Set(["0"]);
+  const controls = markets.map((market) => {
+    const textSpan = { textContent: market.question };
     return {
-      checkbox,
-      dataset: {} as Record<string, string>,
-      childNodes: [],
+      dataset: {
+        tokenId: market.outcomes.yes.tokenId,
+        marketId: market.id,
+      } as Record<string, string>,
+      title: "",
       querySelector(selector: string) {
-        return selector.startsWith("input") ? checkbox : null;
+        return selector === ".cpv-market-label-text"
+          ? textSpan
+          : null;
       },
-      appendChild() {},
     };
   });
 
-  // Exercise market configuration without constructing the browser renderer.
   const view = Object.assign(Object.create(AgeStripView.prototype), {
     markets: new Map(),
+    hiddenTray: { querySelectorAll: () => [] },
     host: {
       activeTokens,
       toggles: { querySelectorAll: () => controls },
       getTitle: () => undefined,
     },
   }) as AgeStripView;
-  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+
+  const originalDocument = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "document",
+  );
   Object.defineProperty(globalThis, "document", {
     configurable: true,
     value: {
-      createElement: () => ({
-        append() {},
-      }),
+      createElement: () => ({}),
     },
   });
   try {
     view.configureMarkets({ markets } as unknown as Event, []);
     expect([...activeTokens]).toEqual(["0"]);
-    expect(controls.map((label) => label.checkbox.checked)).toEqual([
-      true, false, false, false,
+    expect(controls.map((label) => label.dataset.marketLabel)).toEqual([
+      "Market 0",
+      "Market 1",
     ]);
-    expect(controls.map((label) => label.dataset.tokenId)).toEqual([
-      "0", "1", "2", "3",
+    expect(controls.map((label) => label.title)).toEqual([
+      "Market 0",
+      "Market 1",
     ]);
   } finally {
     if (originalDocument)
@@ -168,35 +176,37 @@ test("single-market wrapper suppresses duplicate age-axis title", () => {
     state: { acceptingOrders: true },
     outcomes: { yes: { tokenId: "yes-1" } },
   };
-  const activeTokens = new Set(["yes-1"]);
-  const checkbox = { checked: true, addEventListener() {} };
   const control = {
-    dataset: {} as Record<string, string>,
-    childNodes: [],
+    dataset: {
+      tokenId: "yes-1",
+      marketId: "m1",
+    } as Record<string, string>,
+    title: "",
     querySelector(selector: string) {
-      return selector.startsWith("input") ? checkbox : null;
+      return selector === ".cpv-market-label-text"
+        ? { textContent: market.question }
+        : null;
     },
-    appendChild() {},
   };
 
   const view = Object.assign(Object.create(AgeStripView.prototype), {
     markets: new Map(),
+    hiddenTray: { querySelectorAll: () => [] },
     host: {
-      activeTokens,
+      activeTokens: new Set(["yes-1"]),
       toggles: { querySelectorAll: () => [control] },
       getTitle: () => undefined,
     },
   }) as AgeStripView;
 
-  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const originalDocument = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "document",
+  );
   Object.defineProperty(globalThis, "document", {
     configurable: true,
     value: {
-      createElement: () => ({
-        append() {},
-        className: "",
-        textContent: "",
-      }),
+      createElement: () => ({}),
     },
   });
 
