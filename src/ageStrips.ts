@@ -211,6 +211,7 @@ export class AgeStripView {
       textSpan.className = "cpv-market-label-text";
       textSpan.textContent = text;
       label.appendChild(textSpan);
+      label.dataset.ageLabelWidth = String(measureIntrinsicTextWidth(textSpan));
       label.title = text;
 
       const checkbox = label.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -606,24 +607,45 @@ export class AgeStripView {
 function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
   if (labels.length === 0) return AGE_LABEL_MIN_GUTTER_PX;
 
-  // Read the intrinsic width from the real DOM label. scrollWidth keeps the
-  // full text width even when the span is currently ellipsized by the gutter,
-  // so the label behaves like flex content with a max width instead of relying
-  // on separately-reproduced canvas font metrics.
   let widest = 0;
   for (const label of labels) {
-    const text = label.querySelector<HTMLElement>(".cpv-market-label-text");
-    if (!text) continue;
-    widest = Math.max(widest, text.scrollWidth);
+    const cached = Number(label.dataset.ageLabelWidth);
+    if (Number.isFinite(cached)) widest = Math.max(widest, cached);
   }
 
-  return Math.round(
+  return Math.ceil(
     clamp(
-      widest + AGE_LABEL_HORIZONTAL_INSET_PX * 2,
+      widest + AGE_LABEL_HORIZONTAL_INSET_PX * 2 + 1,
       AGE_LABEL_MIN_GUTTER_PX,
       AGE_LABEL_MAX_GUTTER_PX,
     ),
   );
+}
+
+function measureIntrinsicTextWidth(text: HTMLElement): number {
+  const previous = {
+    flex: text.style.flex,
+    width: text.style.width,
+    maxWidth: text.style.maxWidth,
+    overflow: text.style.overflow,
+    textOverflow: text.style.textOverflow,
+  };
+
+  // Measure the actual DOM font at max-content width, independent of whatever
+  // gutter happened to be installed from the previous frame/event.
+  text.style.flex = "none";
+  text.style.width = "max-content";
+  text.style.maxWidth = "none";
+  text.style.overflow = "visible";
+  text.style.textOverflow = "clip";
+  const width = text.getBoundingClientRect().width;
+
+  text.style.flex = previous.flex;
+  text.style.width = previous.width;
+  text.style.maxWidth = previous.maxWidth;
+  text.style.overflow = previous.overflow;
+  text.style.textOverflow = previous.textOverflow;
+  return width;
 }
 
 function renderAgeTooltip(
