@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { fmtRelativeTime, relativeTimeDisplay } from "./math";
+import {
+  MARKET_COLOR_CHROMA,
+  MARKET_COLOR_LUMINANCE,
+  fmtRelativeTime,
+  marketColor,
+  marketHue,
+  relativeTimeDisplay,
+} from "./math";
 
 test("fmtRelativeTime formats clock-like durations", () => {
   expect(fmtRelativeTime(0)).toBe("0s");
@@ -30,4 +37,15 @@ test("relativeTimeDisplay exposes semantic redraw deadlines", () => {
     text: "due",
     nextChangeMs: null,
   });
+});
+
+
+test("marketColor and marketHue share the same deterministic phase", () => {
+  const hue = marketHue("12345", 0);
+  expect(marketColor("12345", 0)).toBe(
+    `oklch(${MARKET_COLOR_LUMINANCE} ${MARKET_COLOR_CHROMA} ${hue})`,
+  );
+  expect(marketHue("12345", 0)).toBe(hue);
+  expect(hue).toBeGreaterThanOrEqual(0);
+  expect(hue).toBeLessThan(360);
 });
