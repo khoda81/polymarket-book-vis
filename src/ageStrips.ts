@@ -676,6 +676,13 @@ function ageLabelGutterWidth(labels: readonly HTMLLabelElement[]): number {
 }
 
 function measureIntrinsicTextWidth(text: HTMLElement): number {
+  if (
+    !text.style ||
+    typeof (text as HTMLElement & { getBoundingClientRect?: unknown })
+      .getBoundingClientRect !== "function"
+  )
+    return (text.textContent?.length ?? 0) * 6;
+
   const previous = {
     flex: text.style.flex,
     width: text.style.width,
