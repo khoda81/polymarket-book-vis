@@ -111,13 +111,14 @@ export class AgeStripPressureState {
     );
   }
 
-  resolve(tokenId: string, nowMs = Date.now()): void {
+  resolve(tokenId: string): void {
     const state = this.states.get(tokenId);
     if (!state) return;
-    state.memory.observe(
-      [{ lo: 0, hi: 1, volume: 0 }],
-      nowMs,
-    );
+
+    // Resolution has its own semantic rendering. Keeping the former live book
+    // as a fading ghost both obscures that result and makes resolved rows keep
+    // participating in the ghost animation loop.
+    state.memory.restore([]);
   }
 
   cells(tokenId: string): readonly PressureCell[] {
