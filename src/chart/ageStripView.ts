@@ -1,6 +1,7 @@
 import {
   AGE_ROW_BAND_PX,
   getAgeStripTuning,
+  ghostRefreshDelayMs,
   scaleAgeStripGhostHalfLife,
   scaleAgeStripVolumePerCssPixel,
   subscribeAgeStripTuning,
@@ -132,7 +133,6 @@ export class AgeStripView {
     >,
   ): void {
     const nowMs = Date.now();
-    const tuning = getAgeStripTuning();
     for (const [tokenId, cells] of Object.entries(cellsByToken)) {
       let state = this.markets.get(tokenId);
       if (!state) {
@@ -156,13 +156,6 @@ export class AgeStripView {
           nowMs,
         );
 
-      if (
-        state.pressureMemory.hasVisibleGhosts(
-          nowMs,
-          tuning.ghostHalfLifeMs,
-        )
-      )
-        this.scheduleGhostRefresh();
     }
   }
 
@@ -200,14 +193,6 @@ export class AgeStripView {
       signedVolumeSegments(book),
       nowMs,
     );
-    const tuning = getAgeStripTuning();
-    if (
-      state.pressureMemory.hasVisibleGhosts(
-        nowMs,
-        tuning.ghostHalfLifeMs,
-      )
-    )
-      this.scheduleGhostRefresh();
 
     if (state.visibilityInitialized) return;
     state.visibilityInitialized = true;
@@ -226,17 +211,17 @@ export class AgeStripView {
       [{ lo: 0, hi: 1, volume: 0 }],
       nowMs,
     );
-    const tuning = getAgeStripTuning();
-    if (
-      state.pressureMemory.hasVisibleGhosts(
-        nowMs,
-        tuning.ghostHalfLifeMs,
-      )
-    )
-      this.scheduleGhostRefresh();
   }
 
   draw(): void {
+    // A book-driven redraw already advances the ghosts. Reset the decay timer
+    // so a ghost-only frame happens only after the chart has gone quiet.
+    this.cancelGhostRefresh();
+
+    const tuning = getAgeStripTuning();
+    const nowMs = Date.now();
+    let hasVisibleGhosts = false;
+
     const controls = this.collectControls();
     const activeControls = controls.filter((label) => this.isActive(label));
     const rowCount = Math.max(1, activeControls.length);
@@ -276,8 +261,6 @@ export class AgeStripView {
       const state = this.markets.get(tokenId);
       if (!state) continue;
 
-      const tuning = getAgeStripTuning();
-      const nowMs = Date.now();
       const resolutionSide =
         label.dataset.ageResolutionSide;
       if (
@@ -302,13 +285,10 @@ export class AgeStripView {
         tuning.ghostHalfLifeMs,
         nowMs,
       );
-      if (
-        state.pressureMemory.hasVisibleGhosts(
-          nowMs,
-          tuning.ghostHalfLifeMs,
-        )
-      )
-        this.scheduleGhostRefresh();
+      hasVisibleGhosts ||= state.pressureMemory.hasVisibleGhosts(
+        nowMs,
+        tuning.ghostHalfLifeMs,
+      );
     }
 
     drawAgeAxes(
@@ -317,6 +297,11 @@ export class AgeStripView {
       activeControls,
       (tokenId) => this.host.getPressureColorScale(tokenId),
     );
+
+    if (hasVisibleGhosts)
+      this.scheduleGhostRefresh(
+        ghostRefreshDelayMs(tuning.ghostHalfLifeMs),
+      );
   }
 
   prepareVolumeView(): void {
@@ -379,7 +364,7 @@ export class AgeStripView {
     else scaleAgeStripVolumePerCssPixel(factor);
   };
 
-  private scheduleGhostRefresh(): void {
+  private scheduleGhostRefresh(delayMs: number): void {
     if (
       this.ghostRefreshTimer !== undefined ||
       this.host.getViewMode() !== "age"
@@ -389,7 +374,7 @@ export class AgeStripView {
     this.ghostRefreshTimer = window.setTimeout(() => {
       this.ghostRefreshTimer = undefined;
       this.host.requestDraw();
-    }, 33);
+    }, delayMs);
   }
 
   private cancelGhostRefresh(): void {

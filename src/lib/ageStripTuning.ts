@@ -3,6 +3,10 @@ import { DEFAULT_VOLUME_PER_CSS_PIXEL } from "./pressureInk";
 export const AGE_ROW_BAND_PX = 28;
 export const DEFAULT_GHOST_HALF_LIFE_MS = 5_000;
 
+const MIN_GHOST_REFRESH_MS = 33;
+const MAX_GHOST_REFRESH_MS = 1_000;
+const GHOST_ALPHA_STEP = 1 / 255;
+
 const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
 
 export interface AgeStripTuning {
@@ -48,6 +52,23 @@ export function scaleAgeStripVolumePerCssPixel(factor: number): void {
   tuning = { ...tuning, volumePerCssPixel: next };
   schedulePersist();
   for (const listener of listeners) listener(tuning);
+}
+
+/**
+ * Time until exponential decay changes by about one 8-bit alpha step.
+ * Long half-lives therefore redraw slowly instead of pointlessly at 30 FPS.
+ */
+export function ghostRefreshDelayMs(halfLifeMs: number): number {
+  if (!(halfLifeMs > 0) || !Number.isFinite(halfLifeMs))
+    return MAX_GHOST_REFRESH_MS;
+
+  const delay =
+    (-Math.log1p(-GHOST_ALPHA_STEP) / Math.LN2) *
+    halfLifeMs;
+  return Math.min(
+    MAX_GHOST_REFRESH_MS,
+    Math.max(MIN_GHOST_REFRESH_MS, delay),
+  );
 }
 
 export function scaleAgeStripGhostHalfLife(factor: number): void {
