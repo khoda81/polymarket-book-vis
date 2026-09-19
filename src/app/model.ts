@@ -1,4 +1,4 @@
-import type { Event } from "@polymarket/client";
+import type { Event, Series } from "@polymarket/client";
 
 declare const eventSlugBrand: unique symbol;
 export type EventSlug = string & { readonly [eventSlugBrand]: true };
@@ -9,9 +9,18 @@ export type PinState =
   | { readonly kind: "pinned"; readonly slug: EventSlug };
 
 export interface DashboardEntry {
+  readonly kind?: "event";
   readonly event: Event;
   readonly announceLifecycle: boolean;
 }
+
+export interface SeriesDashboardEntry {
+  readonly kind: "series";
+  readonly series: Series;
+  readonly announceLifecycle: boolean;
+}
+
+export type DashboardItem = DashboardEntry | SeriesDashboardEntry;
 
 export function toEventSlug(value: unknown): EventSlug | null {
   if (typeof value !== "string") return null;
@@ -25,6 +34,16 @@ export function eventSlug(event: Event): EventSlug | null {
 
 export function eventLabel(event: Event): string {
   return event.title?.trim() || event.slug?.trim() || "event";
+}
+
+export function seriesLabel(series: Series): string {
+  return series.title?.trim() || series.slug?.trim() || "series";
+}
+
+export function isSeriesEntry(
+  entry: DashboardItem,
+): entry is SeriesDashboardEntry {
+  return entry.kind === "series";
 }
 
 export function pinState(
@@ -46,6 +65,19 @@ export function normalizePinnedSlugs(values: readonly unknown[]): EventSlug[] {
     if (!slug || seen.has(slug)) continue;
     seen.add(slug);
     result.push(slug);
+  }
+  return result;
+}
+
+export function normalizePinnedSeriesIds(values: readonly unknown[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (typeof value !== "string" && typeof value !== "number") continue;
+    const id = String(value).trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
   }
   return result;
 }
