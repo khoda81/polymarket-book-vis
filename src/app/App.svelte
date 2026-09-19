@@ -4,6 +4,7 @@
   import EventSearch from "./EventSearch.svelte";
   import PressureLegend from "./PressureLegend.svelte";
   import SeriesCard from "./SeriesCard.svelte";
+  import { findSeriesBySlug } from "../lib/seriesTimeline";
   import {
     eventLabel,
     eventSlug,
@@ -12,6 +13,7 @@
     normalizePinnedSlugs,
     pinState,
     seriesLabel,
+    toEventSlug,
     type DashboardEntry,
     type DashboardItem,
     type EventSlug,
@@ -165,15 +167,25 @@
 
     const recurring = await recurringSeriesFor(event);
     if (recurring) {
-      const seriesId = String(recurring.id);
-      setSeriesPinned(seriesId, true, "start");
-      addSeries(recurring, true);
+      const occurrenceSlug = eventSlug(event);
+      if (occurrenceSlug && pinnedSlugs.includes(occurrenceSlug))
+        setPinned(occurrenceSlug, false);
+      addManualSeries(recurring);
       return;
     }
 
     const slug = eventSlug(event);
     if (slug) setPinned(slug, true, "start");
     addEvent(event, true);
+  }
+
+  function addManualSeries(series: Series): void {
+    status = `Loading ${seriesLabel(series)}…`;
+    const legacySlug = toEventSlug(series.slug);
+    if (legacySlug && pinnedSlugs.includes(legacySlug))
+      setPinned(legacySlug, false);
+    setSeriesPinned(String(series.id), true, "start");
+    addSeries(series, true);
   }
 
   async function recurringSeriesFor(
@@ -259,6 +271,18 @@
 
   async function loadPinned(slug: EventSlug): Promise<void> {
     try {
+      const series = await findSeriesBySlug(client, slug);
+      if (series?.recurrence?.trim()) {
+        setPinned(slug, false);
+        setSeriesPinned(String(series.id), true, "end");
+        addSeries(series, false);
+        return;
+      }
+    } catch (error) {
+      console.warn(`Could not inspect pinned slug ${slug} as a series:`, error);
+    }
+
+    try {
       const event = await client.fetchEvent({ slug });
       addEvent(event, false);
     } catch (error) {
@@ -322,6 +346,7 @@
     {client}
     {status}
     onchoose={(event) => void addManualEvent(event)}
+    onchooseseries={addManualSeries}
     onstatus={(message) => (status = message)}
   />
 
