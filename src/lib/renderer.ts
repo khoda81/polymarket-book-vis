@@ -254,19 +254,18 @@ export class OrderBookPlotter {
     this.resizeTo(this.canvas.clientWidth, this.canvas.clientHeight);
   }
 
-  /** Apply a CSS-space size already measured by ResizeObserver. */
+  /**
+   * Record a CSS-space size already measured by ResizeObserver.
+   *
+   * Deliberately do not resize the backing store here. Assigning canvas.width
+   * or canvas.height clears the bitmap immediately, and ResizeObserver runs
+   * outside our draw callback. Deferring the destructive resize to beginFrame
+   * keeps resize + clear + redraw in one task, so the browser never gets a
+   * chance to present an empty intermediate canvas.
+   */
   resizeTo(width: number, height: number) {
-    const dpr = window.devicePixelRatio || 1;
     this.cssWidth = width;
     this.cssHeight = height;
-
-    this.backingDpr = dpr;
-    const targetW = Math.floor(width * dpr);
-    const targetH = Math.floor(height * dpr);
-    if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
-      this.canvas.width = targetW;
-      this.canvas.height = targetH;
-    }
   }
 
   /**
@@ -276,12 +275,23 @@ export class OrderBookPlotter {
    */
   beginFrame(theme: ChartTheme, domain: Domain): Frame {
     const dpr = window.devicePixelRatio || 1;
-    if (dpr !== this.backingDpr)
-      this.resizeTo(this.cssWidth, this.cssHeight);
+    const targetW = Math.floor(this.cssWidth * dpr);
+    const targetH = Math.floor(this.cssHeight * dpr);
+    if (
+      this.canvas.width !== targetW ||
+      this.canvas.height !== targetH ||
+      dpr !== this.backingDpr
+    ) {
+      // Backing-store resize is destructive. Doing it here makes it atomic
+      // with the redraw from the browser's point of view.
+      this.canvas.width = targetW;
+      this.canvas.height = targetH;
+      this.backingDpr = dpr;
+    }
 
     // Undo the previous frame's ctx state (clip path, styles, lineDash, …).
-    // restore() is a no-op on the first frame when the state stack is empty.
-    // setTransform ignores save/restore, so it must come after restore.
+    // restore() is a no-op after a backing-store resize because that reset also
+    // resets the context state stack.
     this.ctx.restore();
     this.ctx.save();
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
