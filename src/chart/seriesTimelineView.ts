@@ -550,12 +550,6 @@ export class SeriesTimelineView {
       )
         continue;
 
-      ctx.strokeStyle = theme.grid;
-      ctx.beginPath();
-      ctx.moveTo(vp.l, geometry.topCss);
-      ctx.lineTo(vp.l + vp.width, geometry.topCss);
-      ctx.stroke();
-
       const scale = this.pressureScale(row.event, market);
       drawAgeRowRails(frame, geometry, scale);
 
