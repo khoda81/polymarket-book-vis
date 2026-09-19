@@ -16,6 +16,7 @@ import {
   type TimedSeriesEvent,
 } from "@/lib/seriesTimeline";
 import { getAgeStripTuning } from "@/lib/ageStripTuning";
+import type { TokenBook } from "@/lib/orderBook";
 import {
   initialMarketLifecycle,
   resolveMarketLifecycle,
@@ -63,6 +64,7 @@ const RIGHT_PADDING_PX = 110;
 const TOP_PADDING_PX = 8;
 const BOTTOM_PADDING_PX = 24;
 const TIMELINE_STATUS_GUTTER_PX = 46;
+const SUBSCRIPTION_BUFFER_ROWS = 6;
 const WINDOW_RELOAD_FRACTION = 0.45;
 
 export interface SeriesTimelineViewOptions {
@@ -88,6 +90,10 @@ export class SeriesTimelineView {
   private readonly resolutionByAsset = new Map<
     string,
     MarketResolutionUpdate
+  >();
+  private readonly bookCache = new Map<
+    string,
+    TokenBook<string>
   >();
 
   private theme: ChartTheme;
@@ -282,6 +288,16 @@ export class SeriesTimelineView {
         throw new Error("No timed binary events were found in this series window");
 
       this.events = compatible;
+      const keepBooks = new Set(
+        compatible.flatMap((event) =>
+          event.markets
+            .map((market) => market.outcomes.yes.tokenId)
+            .filter((tokenId): tokenId is TokenId => tokenId !== null),
+        ).map(String),
+      );
+      for (const tokenId of this.bookCache.keys())
+        if (!keepBooks.has(tokenId)) this.bookCache.delete(tokenId);
+
       this.cadenceMs = inferSeriesCadenceMs(
         compatible,
         this.series.recurrence,
@@ -334,19 +350,34 @@ export class SeriesTimelineView {
       yRange: { min: minMs, max: maxMs },
     });
 
-    const rows = this.events
+    const subscriptionPaddingMs =
+      SUBSCRIPTION_BUFFER_ROWS * this.cadenceMs;
+    const bufferedRows = this.events
       .map((event) => timedSeriesEvent(event, this.cadenceMs))
       .filter((row): row is TimedSeriesEvent => row !== null)
       .filter(
         (row) =>
-          row.centerMs >= minMs - this.cadenceMs &&
-          row.centerMs <= maxMs + this.cadenceMs,
+          row.centerMs >= minMs - subscriptionPaddingMs &&
+          row.centerMs <= maxMs + subscriptionPaddingMs,
       );
+    const visibleRows = bufferedRows.filter(
+      (row) =>
+        row.centerMs >= minMs - this.cadenceMs &&
+        row.centerMs <= maxMs + this.cadenceMs,
+    );
 
     const activeTokens: TokenId[] = [];
+    for (const row of bufferedRows) {
+      const market = primaryMarket(row.event);
+      const tokenId = market?.outcomes.yes.tokenId;
+      if (!market || !tokenId) continue;
+      if (this.marketLifecycle(market).kind === "live")
+        activeTokens.push(tokenId);
+    }
+
     const volumePerCssPixel = getAgeStripTuning().volumePerCssPixel;
 
-    for (const row of rows) {
+    for (const row of visibleRows) {
       const market = primaryMarket(row.event);
       const tokenId = market?.outcomes.yes.tokenId;
       if (!market || !tokenId) continue;
@@ -365,7 +396,9 @@ export class SeriesTimelineView {
           rowOffsetCss,
         );
       } else {
-        const book = this.feed?.getBook(String(tokenId));
+        const book =
+          this.bookCache.get(String(tokenId)) ??
+          this.feed?.getBook(String(tokenId));
         if (book)
           drawLivePressureStrip(
             frame,
@@ -375,17 +408,10 @@ export class SeriesTimelineView {
             volumePerCssPixel,
             rowOffsetCss,
           );
-
-        if (
-          lifecycle.kind === "live" &&
-          row.centerMs >= minMs - this.cadenceMs &&
-          row.centerMs <= maxMs + this.cadenceMs
-        )
-          activeTokens.push(tokenId);
       }
     }
 
-    this.drawTimeline(frame, rows, nowMs);
+    this.drawTimeline(frame, visibleRows, nowMs);
     this.refreshFeed(activeTokens);
     this.refreshWindowIfNeeded(centerMs, minMs, maxMs, nowMs);
   }
@@ -456,6 +482,12 @@ export class SeriesTimelineView {
         ctx.stroke();
 
         ctx.fillStyle = theme.text;
+        ctx.textAlign = "right";
+        ctx.fillText(
+          formatRelativeTimelineTime(row.startMs, nowMs),
+          timelineX - 6,
+          startY,
+        );
         ctx.textAlign = "left";
         ctx.fillText(
           formatTimelineTime(row.startMs, this.cadenceMs),
@@ -463,23 +495,6 @@ export class SeriesTimelineView {
           startY,
         );
       }
-
-      const lifecycle = this.marketLifecycle(market);
-      ctx.textAlign = "right";
-      ctx.fillStyle =
-        lifecycle.kind === "resolved"
-          ? signedVolumeColor(
-              String(lifecycle.winningTokenId) === String(tokenId)
-                ? 1
-                : -1,
-              this.scale,
-            )
-          : theme.text;
-      ctx.fillText(
-        rowStatus(row, lifecycle, nowMs),
-        timelineX - 6,
-        geometry.centerCss,
-      );
     }
 
     ctx.fillStyle = theme.text;
@@ -491,31 +506,14 @@ export class SeriesTimelineView {
     const nowY = frame.toScreenY(0, nowMs);
     if (nowY >= vp.t && nowY <= vp.t + vp.height) {
       ctx.save();
-      ctx.strokeStyle = this.theme.text;
-      ctx.globalAlpha = 0.72;
-      ctx.lineWidth = Math.max(1 / dpr, 1);
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath();
-      ctx.moveTo(vp.l, nowY);
-      ctx.lineTo(timelineX, nowY);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      ctx.globalAlpha = 1;
       ctx.fillStyle = this.theme.bg;
       ctx.beginPath();
       ctx.arc(timelineX, nowY, 4, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = this.theme.text;
+      ctx.fillStyle = this.theme.text;
       ctx.beginPath();
       ctx.arc(timelineX, nowY, 3, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.fillStyle = this.theme.text;
-      ctx.font = "600 9px sans-serif";
-      ctx.textAlign = "right";
-      ctx.textBaseline = "bottom";
-      ctx.fillText("NOW", timelineX - 6, nowY - 2);
+      ctx.fill();
       ctx.restore();
     }
   }
@@ -571,12 +569,14 @@ export class SeriesTimelineView {
         )
           this.onConnectionStatus(status);
       },
-      onBookUpdated: () => {
+      onBookUpdated: (tokenId, book) => {
         if (
-          !this.destroyed &&
-          generation === this.feedGeneration
+          this.destroyed ||
+          generation !== this.feedGeneration
         )
-          this.requestDraw();
+          return;
+        this.bookCache.set(String(tokenId), book);
+        this.requestDraw();
       },
       onMarketResolved: (resolution) => {
         if (
@@ -588,8 +588,10 @@ export class SeriesTimelineView {
           resolution.conditionId,
           resolution,
         );
-        for (const assetId of resolution.assetIds)
+        for (const assetId of resolution.assetIds) {
           this.resolutionByAsset.set(assetId, resolution);
+          this.bookCache.delete(assetId);
+        }
         this.requestDraw();
       },
     });
@@ -667,20 +669,6 @@ function primaryMarket(event: Event): Market | null {
   );
 }
 
-function rowStatus(
-  row: TimedSeriesEvent,
-  lifecycle: MarketLifecycle,
-  nowMs: number,
-): string {
-  if (lifecycle.kind === "resolved")
-    return lifecycle.winningOutcome || "resolved";
-  if (lifecycle.kind === "awaiting-resolution")
-    return "awaiting";
-  if (nowMs < row.startMs) return "future";
-  if (nowMs < row.endMs) return "LIVE";
-  return "ended";
-}
-
 function formatTimelineTime(
   timestampMs: number,
   cadenceMs: number,
@@ -696,6 +684,36 @@ function formatTimelineTime(
     minute: "2-digit",
     hour12: false,
   });
+}
+
+
+function formatRelativeTimelineTime(
+  timestampMs: number,
+  nowMs: number,
+): string {
+  const deltaMs = timestampMs - nowMs;
+  const sign = deltaMs < 0 ? "−" : "+";
+  const seconds = Math.abs(deltaMs) / 1_000;
+
+  if (seconds < 60)
+    return `${sign}${Math.max(1, Math.round(seconds))}s`;
+
+  const minutes = seconds / 60;
+  if (minutes < 60)
+    return `${sign}${Math.round(minutes)}m`;
+
+  const hours = minutes / 60;
+  if (hours < 48)
+    return `${sign}${formatCompactDuration(hours)}h`;
+
+  return `${sign}${formatCompactDuration(hours / 24)}d`;
+}
+
+function formatCompactDuration(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded)
+    ? String(rounded)
+    : rounded.toFixed(1);
 }
 
 
