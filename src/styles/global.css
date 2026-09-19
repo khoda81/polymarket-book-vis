@@ -186,6 +186,15 @@ body {
     clip-path: polygon(0 50%, 100% 0, 100% 100%);
 }
 
+.volume-legend-mark {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 1px;
+    background: var(--color-background-primary, #fff);
+    transform: translateX(-0.5px);
+}
+
 .volume-legend-ticks {
     position: relative;
     height: 16px;
@@ -258,9 +267,7 @@ body {
     transform: none;
 }
 
-.ghost-legend-ticks span:not(.ghost-legend-now):last-child {
-    transform: translateX(-100%);
-}
+
 
 .grid {
     display: grid-lanes;
