@@ -4,6 +4,7 @@
   import type { ConnectionStatus } from "../lib/chartState";
   import {
     createPublicClient,
+    type Event,
     type Series,
   } from "@polymarket/client";
 
@@ -14,6 +15,8 @@
   export let onready: () => void = () => undefined;
   export let onfailure: (message: string) => void = () => undefined;
   export let onconnection: (status: ConnectionStatus) => void =
+    () => undefined;
+  export let onanchorevent: (event: Event | null) => void =
     () => undefined;
 
   let canvas: HTMLCanvasElement;
@@ -55,6 +58,7 @@
           eventCount = count;
           message = "";
         },
+        onAnchorEventChanged: onanchorevent,
         onError: (error) => {
           message = error;
         },
