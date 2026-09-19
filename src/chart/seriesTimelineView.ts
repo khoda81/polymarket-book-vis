@@ -10,7 +10,6 @@ import {
   SERIES_ROW_HEIGHT_PX,
   SERIES_VISIBLE_ROWS,
   SERIES_WINDOW_ROWS,
-  eventStartMs,
   inferSeriesCadenceMs,
   loadSeriesEventsAround,
   timedSeriesEvent,
@@ -294,7 +293,9 @@ export class SeriesTimelineView {
       this.onError(
         error instanceof Error ? error.message : String(error),
       );
-      throw error;
+      // Initial load with no seed data is fatal. Background window refreshes
+      // keep the last usable cache instead of creating unhandled rejections.
+      if (this.events.length === 0) throw error;
     }
   }
 
