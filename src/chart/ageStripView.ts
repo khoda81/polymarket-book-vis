@@ -1,10 +1,13 @@
 import {
   AGE_ROW_BAND_PX,
   getAgeStripTuning,
+  scaleAgeStripGhostHalfLife,
   scaleAgeStripVolumePerCssPixel,
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
 import type { TokenBook } from "@/lib/orderBook";
+import { PressureMemory } from "@/lib/pressureMemory";
+import { signedVolumeSegments } from "@/lib/signedVolume";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import type { SignedVolumeColorScale } from "@/lib/signedVolume";
 import {
@@ -19,7 +22,7 @@ import {
 } from "./ageStripLayout";
 import {
   drawAgeAxes,
-  drawLivePressureStrip,
+  drawPressureMemoryStrip,
 } from "./ageStripRendering";
 import { AgeStripClock } from "./ageStripClock";
 import { AgeStripTooltip } from "./ageStripTooltip";
@@ -29,6 +32,7 @@ interface MarketRuntimeState {
   visibilityInitialized: boolean;
   recordingSinceMs: number | null;
   resolutionMs: number | null;
+  readonly pressureMemory: PressureMemory;
 }
 
 export interface AgeStripHost {
@@ -60,6 +64,7 @@ export class AgeStripView {
   private readonly tooltip: AgeStripTooltip;
   private readonly unsubscribeTuning: () => void;
   private readonly markets = new Map<string, MarketRuntimeState>();
+  private ghostRefreshTimer: number | undefined;
   private layoutMode: "age" | "volume" | null = null;
 
   constructor(host: AgeStripHost) {
@@ -91,6 +96,7 @@ export class AgeStripView {
 
   reset(): void {
     this.markets.clear();
+    this.cancelGhostRefresh();
     this.clock.reset();
     this.tooltip.clear();
     this.layoutMode = null;
@@ -106,6 +112,7 @@ export class AgeStripView {
           visibilityInitialized: false,
           recordingSinceMs: null,
           resolutionMs: null,
+          pressureMemory: new PressureMemory(),
         };
         this.markets.set(tokenId, state);
       }
@@ -124,6 +131,7 @@ export class AgeStripView {
         visibilityInitialized: false,
         recordingSinceMs: null,
         resolutionMs: control.resolutionMs,
+        pressureMemory: new PressureMemory(),
       });
     }
   }
@@ -141,6 +149,12 @@ export class AgeStripView {
       };
       this.markets.set(tokenId, state);
     }
+
+    state.pressureMemory.observe(
+      signedVolumeSegments(book),
+      Date.now(),
+    );
+    this.scheduleGhostRefresh();
 
     if (state.visibilityInitialized) return;
     state.visibilityInitialized = true;
@@ -187,17 +201,28 @@ export class AgeStripView {
     for (const [index, label] of activeControls.entries()) {
       const tokenId = label.dataset.tokenId;
       if (!tokenId) continue;
-      const book = this.host.getBook(tokenId);
-      if (!book) continue;
+      const state = this.markets.get(tokenId);
+      if (!state) continue;
+
+      const tuning = getAgeStripTuning();
+      const nowMs = Date.now();
+      state.pressureMemory.prune(
+        nowMs,
+        tuning.ghostHalfLifeMs,
+      );
 
       const y = rowCount - 1 - index;
-      drawLivePressureStrip(
+      drawPressureMemoryStrip(
         frame,
         y,
-        book,
+        state.pressureMemory.snapshot(),
         this.host.getPressureColorScale(tokenId),
-        getAgeStripTuning().volumePerCssPixel,
+        tuning.volumePerCssPixel,
+        tuning.ghostHalfLifeMs,
+        nowMs,
       );
+      if (state.pressureMemory.hasGhosts())
+        this.scheduleGhostRefresh();
     }
 
     drawAgeAxes(
@@ -240,6 +265,7 @@ export class AgeStripView {
 
   destroy(): void {
     this.unsubscribeTuning();
+    this.cancelGhostRefresh();
     this.host.canvas.removeEventListener(
       "wheel",
       this.handleWheel,
@@ -250,14 +276,41 @@ export class AgeStripView {
   }
 
   private readonly handleWheel = (event: WheelEvent) => {
-    if (this.host.getViewMode() !== "age" || !event.ctrlKey) return;
+    if (
+      this.host.getViewMode() !== "age" ||
+      (!event.ctrlKey && !event.shiftKey)
+    )
+      return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    const factor = Math.exp(normalizedWheelDelta(event) * 0.002);
-    scaleAgeStripVolumePerCssPixel(factor);
+    const factor = Math.exp(
+      normalizedWheelDelta(event) * 0.002,
+    );
+    if (event.shiftKey)
+      scaleAgeStripGhostHalfLife(factor);
+    else scaleAgeStripVolumePerCssPixel(factor);
   };
+
+  private scheduleGhostRefresh(): void {
+    if (
+      this.ghostRefreshTimer !== undefined ||
+      this.host.getViewMode() !== "age"
+    )
+      return;
+
+    this.ghostRefreshTimer = window.setTimeout(() => {
+      this.ghostRefreshTimer = undefined;
+      this.host.requestDraw();
+    }, 33);
+  }
+
+  private cancelGhostRefresh(): void {
+    if (this.ghostRefreshTimer === undefined) return;
+    clearTimeout(this.ghostRefreshTimer);
+    this.ghostRefreshTimer = undefined;
+  }
 
   private installAgeLayout(
     rowCount: number,

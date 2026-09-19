@@ -1,5 +1,10 @@
 import { pressureInkThicknessCss } from "@/lib/pressureInk";
 import type { TokenBook } from "@/lib/orderBook";
+import {
+  ghostAlpha,
+  type PressureBand,
+  type PressureCell,
+} from "@/lib/pressureMemory";
 import type { Frame } from "@/lib/renderer";
 import {
   signedVolumeColor,
@@ -137,4 +142,135 @@ function snapToDevicePixel(
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+
+export function drawPressureMemoryStrip(
+  frame: Frame,
+  y: number,
+  cells: readonly PressureCell[],
+  colorScale: SignedVolumeColorScale,
+  volumePerCssPixel: number,
+  ghostHalfLifeMs: number,
+  nowMs: number,
+): void {
+  const { ctx, viewport: vp } = frame;
+  const dpr = window.devicePixelRatio || 1;
+  const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+  const reserveShares =
+    volumePerCssPixel * geometry.heightCss;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(
+    vp.l,
+    geometry.topCss,
+    vp.width,
+    geometry.heightCss,
+  );
+  ctx.clip();
+
+  for (const cell of cells) {
+    const displayLo = 1 - clamp(cell.hi, 0, 1);
+    const displayHi = 1 - clamp(cell.lo, 0, 1);
+    const x0 = snapToDevicePixel(
+      vp.l + displayLo * vp.width,
+      dpr,
+    );
+    const x1 = snapToDevicePixel(
+      vp.l + displayHi * vp.width,
+      dpr,
+    );
+    if (!(x1 > x0)) continue;
+
+    for (const band of cell.bands)
+      if (band.state.kind === "ghost")
+        drawMemoryBand(
+          ctx,
+          geometry.centerCss,
+          x0,
+          x1,
+          band,
+          colorScale,
+          reserveShares,
+          geometry.heightCss,
+          ghostAlpha(
+            band.state.sinceMs,
+            nowMs,
+            ghostHalfLifeMs,
+          ),
+        );
+
+    for (const band of cell.bands)
+      if (band.state.kind === "live")
+        drawMemoryBand(
+          ctx,
+          geometry.centerCss,
+          x0,
+          x1,
+          band,
+          colorScale,
+          reserveShares,
+          geometry.heightCss,
+          1,
+        );
+  }
+
+  ctx.restore();
+}
+
+function drawMemoryBand(
+  ctx: CanvasRenderingContext2D,
+  centerY: number,
+  x0: number,
+  x1: number,
+  band: PressureBand,
+  colorScale: SignedVolumeColorScale,
+  reserveShares: number,
+  rowHeightCss: number,
+  alpha: number,
+): void {
+  if (!(alpha > 0)) return;
+
+  const inner = pressureInkThicknessCss(
+    band.loVolume,
+    reserveShares,
+    rowHeightCss,
+  );
+  const outer = pressureInkThicknessCss(
+    band.hiVolume,
+    reserveShares,
+    rowHeightCss,
+  );
+  if (!(outer > inner)) return;
+
+  const halfInner = inner / 2;
+  const halfOuter = outer / 2;
+  const shell = halfOuter - halfInner;
+
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = signedVolumeColor(band.side, colorScale);
+
+  if (halfInner === 0) {
+    ctx.fillRect(
+      x0,
+      centerY - halfOuter,
+      x1 - x0,
+      outer,
+    );
+    return;
+  }
+
+  ctx.fillRect(
+    x0,
+    centerY - halfOuter,
+    x1 - x0,
+    shell,
+  );
+  ctx.fillRect(
+    x0,
+    centerY + halfInner,
+    x1 - x0,
+    shell,
+  );
 }
