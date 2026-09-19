@@ -215,6 +215,17 @@ function drawMemoryBands(
   }
 }
 
+function snapToDevicePixel(
+  value: number,
+  dpr: number,
+): number {
+  return Math.round(value * dpr) / dpr;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 function cachedGhostAlpha(
   cache: Map<number, number>,
   sinceMs: number,
