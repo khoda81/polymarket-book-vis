@@ -33,11 +33,11 @@ test("relativeTimeDisplay exposes semantic redraw deadlines", () => {
 
   const minutes = relativeTimeDisplay(60 + 47, "elapsed");
   expect(minutes.text).toBe("1.7m");
-  expect(minutes.nextChangeMs).toBeCloseTo(5_000, 6);
+  expect(minutes.nextChangeMs).toBeCloseTo(1_000, 6);
 
   const remaining = relativeTimeDisplay(60 + 47.2, "remaining");
   expect(remaining.text).toBe("1.8m");
-  expect(remaining.nextChangeMs).toBeCloseTo(800, 6);
+  expect(remaining.nextChangeMs).toBeCloseTo(5_200, 6);
 
   expect(relativeTimeDisplay(0, "remaining")).toEqual({
     text: "due",
