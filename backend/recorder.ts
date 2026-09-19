@@ -7,8 +7,13 @@ import type {
 } from "@polymarket/client/actions";
 import { HalfBook, type TokenBook } from "../src/lib/orderBook";
 import {
+  PressureMemory,
+  parsePressureCells,
+  type PressureCell,
+} from "../src/lib/pressureMemory";
+import { signedVolumeSegments } from "../src/lib/signedVolume";
+import {
   StaleSignedVolume,
-  type PressureObservationRange,
   type StaleSignedVolumeSnapshot,
 } from "../src/lib/staleSignedVolume";
 
@@ -18,25 +23,32 @@ const STATE_PATH = resolve(
 );
 const PERSIST_DEBOUNCE_MS = 250;
 const MAX_CLOCK_SKEW_MS = 60_000;
+const MAX_GHOST_HALF_LIFE_MS = 24 * 60 * 60 * 1_000;
+const RECORDER_GHOST_MIN_ALPHA = 0.005;
 
-interface PersistedRecorderState {
+interface PersistedRecorderStateV2 {
+  version: 2;
+  savedAtMs: number;
+  watchedTokenIds: string[];
+  completedTokenIds: string[];
+  /** Earliest known recorder coverage start for each token. */
+  recordingSinceMs: Record<string, number>;
+  states: Record<string, readonly PressureCell[]>;
+}
+
+interface PersistedRecorderStateV1 {
   version: 1;
   watchedTokenIds: string[];
-  /** Earliest known recorder coverage start for each token. */
   recordingSinceMs?: Record<string, number>;
   states: Record<string, StaleSignedVolumeSnapshot>;
 }
 
-interface TransportSegment {
-  lo: number;
-  hi: number;
-  volume: number;
-  /** null is the explicit wire representation of age Infinity / unknown. */
-  ageMs: number | null;
-}
+type PersistedRecorderState =
+  | PersistedRecorderStateV2
+  | PersistedRecorderStateV1;
 
 interface TransportState {
-  segments: TransportSegment[];
+  cells: readonly PressureCell[];
 }
 
 interface StateResponse {
@@ -52,9 +64,10 @@ interface StateResponse {
 class AgeRecorder {
   private readonly client = createPublicClient();
   private readonly watched = new Set<string>();
+  private readonly completed = new Set<string>();
   private readonly recordingSince = new Map<string, number>();
   private readonly books = new Map<string, TokenBook<string>>();
-  private readonly memories = new Map<string, StaleSignedVolume>();
+  private readonly memories = new Map<string, PressureMemory>();
   private subscription: SubscriptionHandle<MarketEvent> | null = null;
   private subscriptionGeneration = 0;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -98,9 +111,15 @@ class AgeRecorder {
     let changed = false;
     const nowMs = Date.now();
     for (const tokenId of tokenIds) {
-      if (!tokenId || this.watched.has(tokenId)) continue;
+      if (
+        !tokenId ||
+        this.watched.has(tokenId) ||
+        this.completed.has(tokenId)
+      )
+        continue;
       this.watched.add(tokenId);
-      this.recordingSince.set(tokenId, nowMs);
+      if (!this.recordingSince.has(tokenId))
+        this.recordingSince.set(tokenId, nowMs);
       changed = true;
     }
     if (!changed) return false;
@@ -119,11 +138,13 @@ class AgeRecorder {
       for (const tokenId of requested) {
         const memory = this.memories.get(tokenId);
         if (!memory) continue;
+        memory.prune(
+          nowMs,
+          MAX_GHOST_HALF_LIFE_MS,
+          RECORDER_GHOST_MIN_ALPHA,
+        );
         states[tokenId] = {
-          segments: memory.segments(nowMs).map(({ ageMs, ...segment }) => ({
-            ...segment,
-            ageMs: ageMs === Infinity ? null : ageMs,
-          })),
+          cells: memory.snapshot(),
         };
       }
     }
@@ -156,6 +177,7 @@ class AgeRecorder {
     const starts = [...this.recordingSince.values()];
     return {
       watchedTokens: this.watched.size,
+      completedTokens: this.completed.size,
       hydratedTokens: this.memories.size,
       liveBooks: this.books.size,
       connected: this.subscription !== null,
@@ -194,7 +216,11 @@ class AgeRecorder {
     for (;;) {
       try {
         const subscription = await this.client.subscribe([
-          { topic: "market", tokenIds },
+          {
+            topic: "market",
+            tokenIds,
+            customFeatureEnabled: true,
+          },
         ]);
         if (generation !== this.subscriptionGeneration) {
           await subscription.close().catch(() => undefined);
@@ -226,33 +252,33 @@ class AgeRecorder {
           this.books.set(tokenId, book);
           this.updateMemory(tokenId, book);
         } else if (stream.type === "price_change") {
-          const observedByToken = new Map<string, PressureObservationRange[]>();
+          const touched = new Set<string>();
           for (const change of stream.payload.priceChanges) {
             const tokenId = String(change.tokenId);
             const book = this.books.get(tokenId);
             if (!book) continue;
 
             applyPriceChange(book, change);
-            const price = Number(change.price);
-            const ranges = observedByToken.get(tokenId) ?? [];
-            ranges.push(
-              change.side === OrderSide.BUY
-                ? { lo: 0, hi: price }
-                : { lo: price, hi: 1 },
-            );
-            observedByToken.set(tokenId, ranges);
+            touched.add(tokenId);
           }
 
-          for (const [tokenId, observedRanges] of observedByToken) {
+          for (const tokenId of touched) {
             const book = this.books.get(tokenId);
-            if (book) this.updateMemory(tokenId, book, observedRanges);
+            if (book) this.updateMemory(tokenId, book);
           }
         } else if (stream.type === "market_resolved") {
+          const nowMs = Date.now();
           let changed = false;
           for (const tokenIdValue of stream.payload.assetIds ?? []) {
             const tokenId = String(tokenIdValue);
+            const memory = this.memories.get(tokenId);
+            memory?.observe(
+              [{ lo: 0, hi: 1, volume: 0 }],
+              nowMs,
+            );
+
             changed = this.watched.delete(tokenId) || changed;
-            this.recordingSince.delete(tokenId);
+            this.completed.add(tokenId);
             this.books.delete(tokenId);
           }
           if (changed) {
@@ -278,11 +304,15 @@ class AgeRecorder {
   private updateMemory(
     tokenId: string,
     book: TokenBook<string>,
-    observedRanges?: readonly PressureObservationRange[],
   ): void {
     const nowMs = Date.now();
-    const memory = this.memories.get(tokenId) ?? new StaleSignedVolume();
-    memory.update(book, nowMs, observedRanges);
+    const memory = this.memories.get(tokenId) ?? new PressureMemory();
+    memory.observe(signedVolumeSegments(book), nowMs);
+    memory.prune(
+      nowMs,
+      MAX_GHOST_HALF_LIFE_MS,
+      RECORDER_GHOST_MIN_ALPHA,
+    );
     this.memories.set(tokenId, memory);
     this.schedulePersist();
   }
@@ -316,13 +346,22 @@ class AgeRecorder {
   }
 
   private async persistSnapshot(): Promise<void> {
-    const states: Record<string, StaleSignedVolumeSnapshot> = {};
-    for (const [tokenId, memory] of this.memories)
+    const savedAtMs = Date.now();
+    const states: Record<string, readonly PressureCell[]> = {};
+    for (const [tokenId, memory] of this.memories) {
+      memory.prune(
+        savedAtMs,
+        MAX_GHOST_HALF_LIFE_MS,
+        RECORDER_GHOST_MIN_ALPHA,
+      );
       states[tokenId] = memory.snapshot();
+    }
 
-    const payload: PersistedRecorderState = {
-      version: 1,
+    const payload: PersistedRecorderStateV2 = {
+      version: 2,
+      savedAtMs,
       watchedTokenIds: [...this.watched],
+      completedTokenIds: [...this.completed],
       recordingSinceMs: Object.fromEntries(this.recordingSince),
       states,
     };
@@ -346,46 +385,118 @@ class AgeRecorder {
 
     const migrationNowMs = Date.now();
     const restoredWatched = new Set<string>();
+    const restoredCompleted = new Set<string>();
     const restoredRecordingSince = new Map<string, number>();
-    const restoredMemories = new Map<string, StaleSignedVolume>();
-    let repairedCoverageMetadata = false;
+    const restoredMemories = new Map<string, PressureMemory>();
+    let migrated = parsed.version === 1;
 
     try {
-      for (const tokenId of parsed.watchedTokenIds) {
-        if (!tokenId) continue;
-        restoredWatched.add(tokenId);
+      for (const tokenId of parsed.watchedTokenIds)
+        if (tokenId) restoredWatched.add(tokenId);
 
-        const storedStart = validWallClockMs(
-          parsed.recordingSinceMs?.[tokenId],
-          migrationNowMs,
-        );
-        const inferredStart = earliestSnapshotObservationMs(
-          parsed.states[tokenId],
-          migrationNowMs,
-        );
-        const knownStarts = [storedStart, inferredStart].filter(
-          (value): value is number => value !== undefined,
-        );
-        const repairedStart = knownStarts.length
-          ? Math.min(...knownStarts)
-          : migrationNowMs;
+      if (parsed.version === 2) {
+        for (const tokenId of parsed.completedTokenIds) {
+          if (!tokenId) continue;
+          restoredCompleted.add(tokenId);
+          restoredWatched.delete(tokenId);
+        }
 
-        restoredRecordingSince.set(tokenId, repairedStart);
-        if (storedStart !== repairedStart) repairedCoverageMetadata = true;
-      }
+        for (const [tokenId, value] of Object.entries(
+          parsed.recordingSinceMs,
+        )) {
+          const since = validWallClockMs(value, migrationNowMs);
+          if (since !== undefined)
+            restoredRecordingSince.set(tokenId, since);
+        }
 
-      for (const [tokenId, snapshot] of Object.entries(parsed.states)) {
-        const memory = new StaleSignedVolume();
-        memory.restore(snapshot);
-        restoredMemories.set(tokenId, memory);
+        for (const [tokenId, rawCells] of Object.entries(parsed.states)) {
+          const cells = parsePressureCells(rawCells).map((cell) => ({
+            ...cell,
+            bands: cell.bands.map((band) => ({
+              ...band,
+              state:
+                band.state.kind === "live"
+                  ? {
+                      kind: "ghost" as const,
+                      sinceMs: Math.min(
+                        parsed.savedAtMs,
+                        migrationNowMs,
+                      ),
+                    }
+                  : band.state,
+            })),
+          }));
+          const memory = new PressureMemory();
+          memory.restore(cells);
+          restoredMemories.set(tokenId, memory);
+        }
+      } else {
+        for (const tokenId of parsed.watchedTokenIds) {
+          const storedStart = validWallClockMs(
+            parsed.recordingSinceMs?.[tokenId],
+            migrationNowMs,
+          );
+          const inferredStart = earliestSnapshotObservationMs(
+            parsed.states[tokenId],
+            migrationNowMs,
+          );
+          const knownStarts = [storedStart, inferredStart].filter(
+            (value): value is number => value !== undefined,
+          );
+          restoredRecordingSince.set(
+            tokenId,
+            knownStarts.length
+              ? Math.min(...knownStarts)
+              : migrationNowMs,
+          );
+        }
+
+        for (const [tokenId, snapshot] of Object.entries(parsed.states)) {
+          const legacy = new StaleSignedVolume();
+          legacy.restore(snapshot);
+          const memory = new PressureMemory();
+          memory.restore(
+            legacy.segments(migrationNowMs).map((segment) => ({
+              lo: segment.lo,
+              hi: segment.hi,
+              bands:
+                segment.volume === 0
+                  ? []
+                  : [
+                      {
+                        loVolume: 0,
+                        hiVolume: Math.abs(segment.volume),
+                        side: segment.volume < 0 ? (-1 as const) : (1 as const),
+                        state: {
+                          kind: "ghost" as const,
+                          sinceMs:
+                            segment.ageMs === Infinity
+                              ? migrationNowMs
+                              : migrationNowMs - segment.ageMs,
+                        },
+                      },
+                    ],
+            })),
+          );
+          restoredMemories.set(tokenId, memory);
+        }
       }
     } catch (error) {
       await this.quarantineUnreadableState(error);
       return;
     }
 
+    for (const tokenId of restoredWatched)
+      if (!restoredRecordingSince.has(tokenId))
+        restoredRecordingSince.set(tokenId, migrationNowMs);
+    for (const tokenId of restoredCompleted)
+      if (!restoredRecordingSince.has(tokenId))
+        restoredRecordingSince.set(tokenId, migrationNowMs);
+
     this.watched.clear();
     for (const tokenId of restoredWatched) this.watched.add(tokenId);
+    this.completed.clear();
+    for (const tokenId of restoredCompleted) this.completed.add(tokenId);
     this.recordingSince.clear();
     for (const [tokenId, since] of restoredRecordingSince)
       this.recordingSince.set(tokenId, since);
@@ -393,9 +504,7 @@ class AgeRecorder {
     for (const [tokenId, memory] of restoredMemories)
       this.memories.set(tokenId, memory);
 
-    // Older recorder versions did not persist coverage starts. Repair truthful
-    // metadata immediately after a fully successful restore.
-    if (repairedCoverageMetadata) this.schedulePersist();
+    if (migrated) this.schedulePersist();
   }
 
   private async quarantineUnreadableState(error: unknown): Promise<void> {
@@ -414,31 +523,73 @@ class AgeRecorder {
   }
 }
 
-function parsePersistedRecorderState(value: unknown): PersistedRecorderState {
-  if (!isRecord(value) || value.version !== 1)
-    throw new TypeError("Unsupported or malformed recorder state");
-  if (!Array.isArray(value.watchedTokenIds))
-    throw new TypeError("Recorder watchedTokenIds must be an array");
-  if (!isRecord(value.states))
-    throw new TypeError("Recorder states must be an object");
-  if (
-    value.recordingSinceMs !== undefined &&
-    !isRecord(value.recordingSinceMs)
-  )
-    throw new TypeError("Recorder recordingSinceMs must be an object");
+function parsePersistedRecorderState(
+  value: unknown,
+): PersistedRecorderState {
+  if (!isRecord(value))
+    throw new TypeError("Malformed recorder state");
 
-  const watchedTokenIds = value.watchedTokenIds.map((tokenId) => {
-    if (typeof tokenId !== "string")
-      throw new TypeError("Recorder token ids must be strings");
-    return tokenId;
+  if (value.version === 2) {
+    if (!Array.isArray(value.watchedTokenIds))
+      throw new TypeError("Recorder watchedTokenIds must be an array");
+    if (!Array.isArray(value.completedTokenIds))
+      throw new TypeError("Recorder completedTokenIds must be an array");
+    if (!isRecord(value.states))
+      throw new TypeError("Recorder states must be an object");
+    if (!isRecord(value.recordingSinceMs))
+      throw new TypeError("Recorder recordingSinceMs must be an object");
+    if (typeof value.savedAtMs !== "number" || !Number.isFinite(value.savedAtMs))
+      throw new TypeError("Recorder savedAtMs must be finite");
+
+    return {
+      version: 2,
+      savedAtMs: value.savedAtMs,
+      watchedTokenIds: stringArray(
+        value.watchedTokenIds,
+        "watched token ids",
+      ),
+      completedTokenIds: stringArray(
+        value.completedTokenIds,
+        "completed token ids",
+      ),
+      recordingSinceMs:
+        value.recordingSinceMs as Record<string, number>,
+      states: value.states as Record<string, readonly PressureCell[]>,
+    };
+  }
+
+  if (value.version === 1) {
+    if (!Array.isArray(value.watchedTokenIds))
+      throw new TypeError("Recorder watchedTokenIds must be an array");
+    if (!isRecord(value.states))
+      throw new TypeError("Recorder states must be an object");
+    if (
+      value.recordingSinceMs !== undefined &&
+      !isRecord(value.recordingSinceMs)
+    )
+      throw new TypeError("Recorder recordingSinceMs must be an object");
+
+    return {
+      version: 1,
+      watchedTokenIds: stringArray(
+        value.watchedTokenIds,
+        "watched token ids",
+      ),
+      recordingSinceMs:
+        value.recordingSinceMs as Record<string, number> | undefined,
+      states: value.states as Record<string, StaleSignedVolumeSnapshot>,
+    };
+  }
+
+  throw new TypeError("Unsupported recorder state version");
+}
+
+function stringArray(value: unknown[], label: string): string[] {
+  return value.map((item) => {
+    if (typeof item !== "string")
+      throw new TypeError(`Recorder ${label} must be strings`);
+    return item;
   });
-
-  return {
-    version: 1,
-    watchedTokenIds,
-    recordingSinceMs: value.recordingSinceMs as Record<string, number> | undefined,
-    states: value.states as Record<string, StaleSignedVolumeSnapshot>,
-  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
