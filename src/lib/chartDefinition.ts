@@ -141,7 +141,7 @@ function buildPressureScales(
     if (!tokenId) continue;
     scales.set(
       String(tokenId),
-      semanticYesNeutralNoScale(marketHue(event.id, index)),
+      defaultPressureScaleForMarket(event, index),
     );
   }
   return scales;
@@ -154,5 +154,19 @@ export function pressureScaleForToken(
   return (
     definition.pressureScales.get(String(tokenId)) ??
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE
+  );
+}
+
+
+/**
+ * Generic binary-market color rule shared by normal event cards and series
+ * occurrences when no threshold/negative-risk palette applies.
+ */
+export function defaultPressureScaleForMarket(
+  event: Event,
+  marketIndex: number,
+): SignedVolumeColorScale {
+  return semanticYesNeutralNoScale(
+    marketHue(String(event.id), marketIndex),
   );
 }
