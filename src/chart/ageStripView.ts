@@ -45,11 +45,10 @@ export interface AgeStripHost {
 }
 
 /**
- * Age-mode projection of the live order books.
- *
- * Performance benchmark path: render the authoritative live book directly into
- * the visible Canvas2D surface. There is no WebGL texture construction, upload,
- * offscreen presentation, canvas copy, or historical rendering in this branch.
+ * Age-mode projection of live books plus the shared compressed pressure
+ * history. Rendering stays on one visible Canvas2D surface; recorder hydration,
+ * live updates, ghost memory, resolution state, clocks, and tooltips all feed
+ * this same projection.
  */
 export class AgeStripView {
   private readonly host: AgeStripHost;
@@ -363,7 +362,4 @@ export class AgeStripView {
     const tokenId = label.dataset.tokenId;
     return !!tokenId && this.host.activeTokens.has(tokenId);
   }
-
-
-
 }
