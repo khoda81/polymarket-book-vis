@@ -351,6 +351,7 @@ export class SeriesTimelineView {
       if (!market || !tokenId) continue;
 
       const lifecycle = this.marketLifecycle(market);
+      const rowOffsetCss = seriesRowOffsetCss(frame, row.centerMs);
       if (lifecycle.kind === "resolved") {
         const primaryWon =
           String(lifecycle.winningTokenId) === String(tokenId);
@@ -360,6 +361,7 @@ export class SeriesTimelineView {
           primaryWon ? "primary" : "opposite",
           lifecycle.winningOutcome,
           this.scale,
+          rowOffsetCss,
         );
       } else {
         const book = this.feed?.getBook(String(tokenId));
@@ -370,6 +372,7 @@ export class SeriesTimelineView {
             book,
             this.scale,
             volumePerCssPixel,
+            rowOffsetCss,
           );
 
         if (
@@ -410,8 +413,9 @@ export class SeriesTimelineView {
       const tokenId = market?.outcomes.yes.tokenId;
       if (!market || !tokenId) continue;
 
-      const geometry = rowRasterGeometry(
-        frame.toScreenY(0, row.centerMs),
+      const geometry = seriesRowGeometry(
+        frame,
+        row.centerMs,
         dpr,
       );
       if (
@@ -690,4 +694,30 @@ function formatTimelineTime(
     minute: "2-digit",
     hour12: false,
   });
+}
+
+
+function seriesRowOffsetCss(
+  frame: Frame,
+  y: number,
+): number {
+  const dpr = window.devicePixelRatio || 1;
+  const desiredCenter = frame.toScreenY(0, y);
+  const snapped = rowRasterGeometry(desiredCenter, dpr);
+  return desiredCenter - snapped.centerCss;
+}
+
+function seriesRowGeometry(
+  frame: Frame,
+  y: number,
+  dpr: number,
+) {
+  const desiredCenter = frame.toScreenY(0, y);
+  const geometry = rowRasterGeometry(desiredCenter, dpr);
+  const offsetCss = desiredCenter - geometry.centerCss;
+  return {
+    ...geometry,
+    topCss: geometry.topCss + offsetCss,
+    centerCss: desiredCenter,
+  };
 }
