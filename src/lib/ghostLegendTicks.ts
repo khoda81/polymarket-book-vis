@@ -96,6 +96,36 @@ export function ghostLegendTicks(
   return [...byAge.values()].sort((a, b) => a.ageMs - b.ageMs);
 }
 
+export function selectGhostLegendLabels(
+  ticks: readonly GhostLegendTick[],
+  widthPx: number,
+  minDistancePx: number,
+  minOpacity = 0.55,
+): GhostLegendTick[] {
+  if (!(widthPx > 0) || !(minDistancePx > 0)) return [];
+
+  const selected: GhostLegendTick[] = [];
+  for (const tick of [...ticks]
+    .filter((candidate) => candidate.opacity >= minOpacity)
+    .sort(
+      (a, b) =>
+        b.opacity - a.opacity ||
+        b.ageMs - a.ageMs,
+    )) {
+    const x = tick.position * widthPx;
+    if (
+      selected.every(
+        (other) =>
+          Math.abs(x - other.position * widthPx) >=
+          minDistancePx,
+      )
+    )
+      selected.push(tick);
+  }
+
+  return selected.sort((a, b) => a.ageMs - b.ageMs);
+}
+
 export function ghostPositionForAge(
   ageMs: number,
   halfLifeMs: number,
@@ -178,7 +208,7 @@ function durationSteps(maxAgeMs: number): number[] {
   )
     for (const multiplier of [1, 2, 5]) {
       const step = multiplier * YEAR_MS * 10 ** exponent;
-      if (step >= 6 * MONTH_MS) addStep(values, step);
+      if (step >= YEAR_MS) addStep(values, step);
     }
 
   return [...values]

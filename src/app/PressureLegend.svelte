@@ -10,6 +10,7 @@
   import {
     formatDurationTick,
     ghostLegendTicks,
+    selectGhostLegendLabels,
   } from "../lib/ghostLegendTicks";
   import {
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
@@ -32,6 +33,11 @@
     tuning.ghostHalfLifeMs,
     width,
     { minDistancePx: MIN_TICK_DISTANCE_PX },
+  );
+  $: ghostLabels = selectGhostLegendLabels(
+    ghostTicks,
+    width,
+    MIN_TICK_DISTANCE_PX,
   );
   $: values = shareLegendTickValues(reserveShares, width);
   $: negativeColor = signedVolumeColor(
@@ -180,7 +186,7 @@
   </div>
   <div class="ghost-legend-ticks">
     <span class="ghost-legend-now">now</span>
-    {#each ghostTicks.filter((tick) => tick.opacity >= 0.55) as tick (tick.ageMs)}
+    {#each ghostLabels as tick (tick.ageMs)}
       <span
         style:left={`${tick.position * 100}%`}
         style:opacity={tick.opacity}
