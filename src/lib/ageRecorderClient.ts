@@ -6,8 +6,10 @@ import {
 
 interface RecorderStateResponse {
   serverNowMs?: number;
+  connected?: boolean;
   recordingSinceMsByToken?: Record<string, number>;
   states?: Record<string, { cells?: unknown }>;
+  pendingTokenIds?: string[];
 }
 
 export interface RecorderHydration {
@@ -20,21 +22,82 @@ export interface RecorderHydration {
 }
 
 const RECORDER_FETCH_TIMEOUT_MS = 1_500;
+const HYDRATION_RETRY_DELAYS_MS = [100, 200, 400, 800, 1_200] as const;
 
 /**
- * Register tokens with the recorder and opportunistically hydrate ghost state.
+ * Register tokens with the recorder and hydrate ghost state.
  *
- * This request is optional and bounded; live market startup never waits for it.
+ * Registration and the recorder's first websocket snapshot are inherently
+ * asynchronous. A successful HTTP response can therefore legitimately contain
+ * no state yet. Retry that pending window here while live market startup
+ * continues independently; callers intentionally do not await this before
+ * opening their own live feed.
  */
 export async function fetchRecorderHydration(
   tokenIds: readonly string[],
 ): Promise<RecorderHydration> {
-  if (tokenIds.length === 0)
-    return {
-      recordingSinceMsByToken: {},
-      pressureCellsByToken: {},
-    };
+  const requested = [...new Set(tokenIds.filter(Boolean))];
+  if (requested.length === 0)
+    return emptyHydration();
 
+  const recordingSinceMsByToken: Record<string, number> = {};
+  const pressureCellsByToken: Record<
+    string,
+    readonly PressureCell[]
+  > = {};
+
+  let remaining = requested;
+  let lastError: unknown = null;
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const body = await fetchRecorderState(remaining);
+      lastError = null;
+
+      mergeRecorderResponse(
+        body,
+        recordingSinceMsByToken,
+        pressureCellsByToken,
+      );
+
+      const explicitPending = new Set(
+        Array.isArray(body.pendingTokenIds)
+          ? body.pendingTokenIds.map(String)
+          : [],
+      );
+
+      remaining = remaining.filter((tokenId) => {
+        if (pressureCellsByToken[tokenId]) return false;
+        if (explicitPending.has(tokenId)) return true;
+
+        // Backward compatibility with an older recorder: a token with claimed
+        // coverage but no state is almost always in the registration→snapshot
+        // race, so give it the same bounded retry treatment.
+        return recordingSinceMsByToken[tokenId] !== undefined;
+      });
+
+      if (remaining.length === 0) break;
+    } catch (error) {
+      lastError = error;
+    }
+
+    const delayMs = HYDRATION_RETRY_DELAYS_MS[attempt];
+    if (delayMs === undefined) break;
+    await delay(delayMs);
+  }
+
+  if (lastError)
+    console.warn("Age recorder unavailable", lastError);
+
+  return {
+    recordingSinceMsByToken,
+    pressureCellsByToken,
+  };
+}
+
+async function fetchRecorderState(
+  tokenIds: readonly string[],
+): Promise<RecorderStateResponse> {
   const params = new URLSearchParams();
   for (const tokenId of tokenIds) params.append("tokenId", tokenId);
 
@@ -50,53 +113,54 @@ export async function fetchRecorderHydration(
     });
     if (!response.ok)
       throw new Error(`recorder returned ${response.status}`);
-
-    const body = (await response.json()) as RecorderStateResponse;
-    const perToken = Object.fromEntries(
-      Object.entries(body.recordingSinceMsByToken ?? {}).filter(
-        (entry): entry is [string, number] =>
-          typeof entry[1] === "number" && Number.isFinite(entry[1]),
-      ),
-    );
-
-    const sourceNowMs =
-      typeof body.serverNowMs === "number" &&
-      Number.isFinite(body.serverNowMs)
-        ? body.serverNowMs
-        : Date.now();
-    const targetNowMs = Date.now();
-
-    const pressureCellsByToken: Record<
-      string,
-      readonly PressureCell[]
-    > = {};
-    for (const [tokenId, state] of Object.entries(body.states ?? {})) {
-      try {
-        pressureCellsByToken[tokenId] = rebasePressureCells(
-          parsePressureCells(state.cells),
-          sourceNowMs,
-          targetNowMs,
-        );
-      } catch (error) {
-        console.warn(
-          `Ignoring malformed recorder pressure state for ${tokenId}`,
-          error,
-        );
-      }
-    }
-
-    return {
-      recordingSinceMsByToken: perToken,
-      pressureCellsByToken,
-    };
-  } catch (error) {
-    if (!(error instanceof DOMException && error.name === "AbortError"))
-      console.warn("Age recorder unavailable", error);
-    return {
-      recordingSinceMsByToken: {},
-      pressureCellsByToken: {},
-    };
+    return (await response.json()) as RecorderStateResponse;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function mergeRecorderResponse(
+  body: RecorderStateResponse,
+  recordingSinceMsByToken: Record<string, number>,
+  pressureCellsByToken: Record<string, readonly PressureCell[]>,
+): void {
+  for (const [tokenId, since] of Object.entries(
+    body.recordingSinceMsByToken ?? {},
+  )) {
+    if (typeof since === "number" && Number.isFinite(since))
+      recordingSinceMsByToken[tokenId] = since;
+  }
+
+  const sourceNowMs =
+    typeof body.serverNowMs === "number" &&
+    Number.isFinite(body.serverNowMs)
+      ? body.serverNowMs
+      : Date.now();
+  const targetNowMs = Date.now();
+
+  for (const [tokenId, state] of Object.entries(body.states ?? {})) {
+    try {
+      pressureCellsByToken[tokenId] = rebasePressureCells(
+        parsePressureCells(state.cells),
+        sourceNowMs,
+        targetNowMs,
+      );
+    } catch (error) {
+      console.warn(
+        `Ignoring malformed recorder pressure state for ${tokenId}`,
+        error,
+      );
+    }
+  }
+}
+
+function emptyHydration(): RecorderHydration {
+  return {
+    recordingSinceMsByToken: {},
+    pressureCellsByToken: {},
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
