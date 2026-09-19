@@ -4,7 +4,11 @@ import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
-import type { AgeStripGeometry } from "./ageStripLayout";
+import {
+  ageStripRowAtY,
+  ageStripRowCenterY,
+  type AgeStripGeometry,
+} from "./ageStripLayout";
 import type { ViewMode } from "@/lib/chartState";
 
 export interface AgeStripTooltipHost {
@@ -115,10 +119,7 @@ export class AgeStripTooltip {
       return;
     }
 
-    const rowIndex = Math.floor(
-      ((sy - vp.t) / vp.height) * geometry.rows.length,
-    );
-    const row = geometry.rows[rowIndex];
+    const row = ageStripRowAtY(geometry, sy);
     if (!row) {
       this.hide();
       return;
@@ -157,9 +158,7 @@ export class AgeStripTooltip {
 
     const anchorX = pointer.canvasLeft + sx;
     const rowCenterY =
-      pointer.canvasTop +
-      vp.t +
-      ((rowIndex + 0.5) / geometry.rows.length) * vp.height;
+      pointer.canvasTop + ageStripRowCenterY(geometry, row);
 
     this.overlay.style.display = "block";
     this.overlay.style.left = `${anchorX}px`;
