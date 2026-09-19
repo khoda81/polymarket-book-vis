@@ -37,6 +37,7 @@ interface StateResponse {
   /** Watched tokens that have not produced their first recorder snapshot yet. */
   pendingTokenIds: string[];
   debug?: {
+    subscriptionConnections: number;
     subscriptionBatches: number;
     tokens: Record<
       string,
@@ -54,6 +55,7 @@ interface StateResponse {
                 | "subscribed"
                 | "untracked";
               batchId?: number;
+              connectionId?: number;
             }
           | undefined;
       }
@@ -62,7 +64,6 @@ interface StateResponse {
 }
 
 class AgeRecorder {
-  private readonly client = createPublicClient();
   private readonly store = new RecorderStore(
     DATABASE_PATH,
     (...args) => debugLog(...args),
@@ -74,7 +75,7 @@ class AgeRecorder {
   private readonly memories = new Map<string, PressureMemory>();
   private readonly dirtyTokens = new Set<string>();
   private readonly subscriptions = new RecorderSubscriptionPool(
-    this.client,
+    () => createPublicClient(),
     (event) => this.consumeEvent(event),
     (...args) => debugLog(...args),
   );
@@ -197,6 +198,8 @@ class AgeRecorder {
       const subscription =
         this.subscriptions.debugStatus(requested);
       result.debug = {
+        subscriptionConnections:
+          this.subscriptions.activeConnectionCount,
         subscriptionBatches:
           this.subscriptions.activeBatchCount,
         tokens: Object.fromEntries(
@@ -241,6 +244,8 @@ class AgeRecorder {
       hydratedTokens: this.memories.size,
       liveBooks: this.books.size,
       connected: this.subscriptions.connected,
+      subscriptionConnections:
+        this.subscriptions.activeConnectionCount,
       subscriptionBatches:
         this.subscriptions.activeBatchCount,
       dirtyTokens: this.dirtyTokens.size,
