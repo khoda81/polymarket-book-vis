@@ -53,10 +53,11 @@ export function drawAgeRowRails(
   colorScale: SignedVolumeColorScale,
 ): void {
   const { ctx, viewport: vp } = frame;
+  const colors = pressureColors(colorScale);
 
   // Mirrored token orientation: opposite on the left, primary on the right.
   ctx.lineWidth = 1;
-  ctx.strokeStyle = signedVolumeColor(-1, colorScale);
+  ctx.strokeStyle = colors.negative;
   ctx.beginPath();
   ctx.moveTo(vp.l, geometry.topCss);
   ctx.lineTo(
@@ -65,7 +66,7 @@ export function drawAgeRowRails(
   );
   ctx.stroke();
 
-  ctx.strokeStyle = signedVolumeColor(1, colorScale);
+  ctx.strokeStyle = colors.positive;
   ctx.beginPath();
   ctx.moveTo(vp.l + vp.width, geometry.topCss);
   ctx.lineTo(
@@ -93,8 +94,9 @@ export function drawPressureMemoryStrip(
   );
   const reserveShares =
     volumePerCssPixel * geometry.heightCss;
-  const positiveColor = signedVolumeColor(1, colorScale);
-  const negativeColor = signedVolumeColor(-1, colorScale);
+  const colors = pressureColors(colorScale);
+  const positiveColor = colors.positive;
+  const negativeColor = colors.negative;
   const ghostAlphaBySince = new Map<number, number>();
 
   ctx.save();
@@ -215,6 +217,28 @@ function drawMemoryBands(
   }
 }
 
+interface PressureColors {
+  readonly positive: string;
+  readonly negative: string;
+}
+
+const PRESSURE_COLOR_CACHE =
+  new WeakMap<SignedVolumeColorScale, PressureColors>();
+
+function pressureColors(
+  scale: SignedVolumeColorScale,
+): PressureColors {
+  const cached = PRESSURE_COLOR_CACHE.get(scale);
+  if (cached) return cached;
+
+  const colors = {
+    positive: signedVolumeColor(1, scale),
+    negative: signedVolumeColor(-1, scale),
+  };
+  PRESSURE_COLOR_CACHE.set(scale, colors);
+  return colors;
+}
+
 function snapToDevicePixel(
   value: number,
   dpr: number,
@@ -254,10 +278,9 @@ export function drawResolvedMarketStrip(
     rowRasterGeometry(frame.toScreenY(0, y), dpr),
     rowOffsetCss,
   );
-  const color = signedVolumeColor(
-    side === "primary" ? 1 : -1,
-    colorScale,
-  );
+  const colors = pressureColors(colorScale);
+  const color =
+    side === "primary" ? colors.positive : colors.negative;
 
   ctx.save();
   ctx.beginPath();
