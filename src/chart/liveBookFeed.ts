@@ -37,6 +37,7 @@ export interface LiveBookFeedCallbacks {
 export class LiveBookFeed {
   private readonly books = new Map<string, TokenBook<string>>();
   private state: FeedState = { kind: "idle" };
+  private tokenIds: TokenId[] = [];
 
   constructor(
     private readonly client: PublicClient,
@@ -53,10 +54,25 @@ export class LiveBookFeed {
         `LiveBookFeed cannot start from ${this.state.kind}`,
       );
 
+    this.tokenIds = [...tokenIds];
     this.state = { kind: "connecting" };
     this.callbacks.onConnectionStatus("connecting");
+    await this.connect();
+  }
 
-    const stream = await this.subscribeWithRetry(tokenIds);
+  destroy(): void {
+    const previous = this.state;
+    if (previous.kind === "destroyed") return;
+    this.state = { kind: "destroyed" };
+    this.tokenIds = [];
+    this.books.clear();
+
+    if (previous.kind === "live")
+      void previous.stream.close().catch(() => undefined);
+  }
+
+  private async connect(): Promise<void> {
+    const stream = await this.subscribeWithRetry(this.tokenIds);
     if (!stream) return;
 
     if (this.state.kind !== "connecting") {
@@ -69,13 +85,16 @@ export class LiveBookFeed {
     void this.readEvents(stream);
   }
 
-  destroy(): void {
-    const previous = this.state;
-    if (previous.kind === "destroyed") return;
-    this.state = { kind: "destroyed" };
+  private reconnect(): void {
+    if (this.state.kind === "destroyed") return;
 
-    if (previous.kind === "live")
-      void previous.stream.close().catch(() => undefined);
+    // A disconnected snapshot is no longer authoritative. Keep historical
+    // pressure in AgeStripPressureState, but require fresh book snapshots for
+    // live tooltips/updates after reconnect.
+    this.books.clear();
+    this.state = { kind: "connecting" };
+    this.callbacks.onConnectionStatus("connecting");
+    void this.connect();
   }
 
   private async subscribeWithRetry(
@@ -185,6 +204,7 @@ export class LiveBookFeed {
       ) {
         this.state = { kind: "ended" };
         this.callbacks.onConnectionStatus("disconnected");
+        this.reconnect();
       }
     }
   }
