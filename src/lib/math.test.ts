@@ -9,12 +9,14 @@ import {
   relativeTimeDisplay,
 } from "./math";
 
-test("fmtRelativeTime formats clock-like durations", () => {
-  expect(fmtRelativeTime(0)).toBe("0s");
-  expect(fmtRelativeTime(100)).toBe("1m 40s");
-  expect(fmtRelativeTime(1100)).toBe("18m 20s");
-  expect(fmtRelativeTime(7200)).toBe("2h");
-  expect(fmtRelativeTime(104 * 86_400 + 13 * 3600)).toBe("3mo 14d");
+test("fmtRelativeTime uses one best-fit unit", () => {
+  expect(fmtRelativeTime(0)).toBe("0ms");
+  expect(fmtRelativeTime(0.61)).toBe("610ms");
+  expect(fmtRelativeTime(3.4)).toBe("3.4s");
+  expect(fmtRelativeTime(52)).toBe("52s");
+  expect(fmtRelativeTime(263)).toBe("4.38m");
+  expect(fmtRelativeTime(7_200)).toBe("2h");
+  expect(fmtRelativeTime(104 * 86_400)).toBe("3.47mo");
 });
 
 
@@ -23,16 +25,16 @@ test("relativeTimeDisplay exposes semantic redraw deadlines", () => {
   expect(milliseconds.text).toBe("23ms");
   expect(milliseconds.nextChangeMs).toBeCloseTo(1, 3);
 
-  const tenths = relativeTimeDisplay(13.5, "elapsed");
-  expect(tenths.text).toBe("13.5s");
-  expect(tenths.nextChangeMs).toBeCloseTo(100, 6);
+  const seconds = relativeTimeDisplay(13.5, "elapsed");
+  expect(seconds.text).toBe("13.5s");
+  expect(seconds.nextChangeMs).toBeCloseTo(10, 6);
 
-  const seconds = relativeTimeDisplay(60 + 47, "elapsed");
-  expect(seconds.text).toBe("1m 47s");
-  expect(seconds.nextChangeMs).toBeCloseTo(1000, 6);
+  const minutes = relativeTimeDisplay(60 + 47, "elapsed");
+  expect(minutes.text).toBe("1.78m");
+  expect(minutes.nextChangeMs).toBeCloseTo(400, 6);
 
   const remaining = relativeTimeDisplay(60 + 47.2, "remaining");
-  expect(remaining.text).toBe("1m 48s");
+  expect(remaining.text).toBe("1.79m");
   expect(remaining.nextChangeMs).toBeCloseTo(200, 6);
 
   expect(relativeTimeDisplay(0, "remaining")).toEqual({
