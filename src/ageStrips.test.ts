@@ -62,24 +62,28 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
     } as unknown as AgeStripHost);
 
     const initial = getAgeStripTuning().volumePerCssPixel;
+    const initialHalfLife = getAgeStripTuning().ghostHalfLifeMs;
 
     let prevented = false;
     wheel({
       deltaY: -100,
       deltaMode: 0,
       ctrlKey: false,
+      shiftKey: false,
       preventDefault() {
         prevented = true;
       },
       stopImmediatePropagation() {},
     } as WheelEvent);
     expect(getAgeStripTuning().volumePerCssPixel).toBe(initial);
+    expect(getAgeStripTuning().ghostHalfLifeMs).toBe(initialHalfLife);
     expect(prevented).toBe(false);
 
     wheel({
       deltaY: -100,
       deltaMode: 0,
       ctrlKey: true,
+      shiftKey: false,
       preventDefault() {
         prevented = true;
       },
@@ -92,6 +96,7 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
       deltaY: 100,
       deltaMode: 0,
       ctrlKey: true,
+      shiftKey: false,
       preventDefault() {},
       stopImmediatePropagation() {},
     } as WheelEvent);

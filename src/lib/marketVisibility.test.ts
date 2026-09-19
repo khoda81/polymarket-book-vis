@@ -7,12 +7,26 @@ import {
 } from "./marketVisibility";
 
 test("market visibility encodes why a row is hidden", () => {
-  expect(initialMarketVisibility(false)).toEqual({
+  expect(
+    initialMarketVisibility(false, { kind: "live" }),
+  ).toEqual({
     kind: "visible",
   });
-  expect(initialMarketVisibility(true)).toEqual({
+  expect(
+    initialMarketVisibility(true, { kind: "live" }),
+  ).toEqual({
     kind: "hidden",
     reason: "user",
+  });
+  expect(
+    initialMarketVisibility(false, {
+      kind: "resolved",
+      winningTokenId: "winner" as never,
+      winningOutcome: "Yes",
+    }),
+  ).toEqual({
+    kind: "hidden",
+    reason: "resolved-default",
   });
   expect(isMarketVisible({ kind: "visible" })).toBe(true);
   expect(

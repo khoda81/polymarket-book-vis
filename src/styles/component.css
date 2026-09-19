@@ -361,12 +361,8 @@
     flex: 0 0 16px;
 }
 
-.cpv-toggles--age-axis
-    label[data-age-suppress-market-identity="true"]
-    .cpv-market-icon,
-.cpv-toggles--age-axis
-    label[data-age-suppress-market-identity="true"]
-    .cpv-market-label-text {
+.cpv-toggles--age-axis label[data-age-suppress-market-identity="true"] .cpv-market-icon,
+.cpv-toggles--age-axis label[data-age-suppress-market-identity="true"] .cpv-market-label-text {
     display: none;
 }
 
@@ -397,14 +393,6 @@
 
 .cpv-hidden-markets label:hover {
     background: var(--color-background-secondary, #eee);
-}
-
-.cpv-hidden-markets label[data-age-resolution-side="primary"],
-.cpv-hidden-markets label[data-age-resolution-side="opposite"] {
-    border-color: var(
-        --cpv-resolution-color,
-        var(--color-border-tertiary, #ddd)
-    );
 }
 
 .cpv-hidden-markets .cpv-market-resolution-hidden {
