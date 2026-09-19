@@ -53,11 +53,13 @@ export function scaleAgeStripVolumePerCssPixel(factor: number): void {
 export function scaleAgeStripGhostHalfLife(factor: number): void {
   if (!(factor > 0) || !Number.isFinite(factor)) return;
 
-  const next = Math.min(
-    24 * 60 * 60 * 1_000,
-    Math.max(50, tuning.ghostHalfLifeMs * factor),
-  );
-  if (next === tuning.ghostHalfLifeMs) return;
+  const next = tuning.ghostHalfLifeMs * factor;
+  if (
+    next === tuning.ghostHalfLifeMs ||
+    !(next > 0) ||
+    !Number.isFinite(next)
+  )
+    return;
 
   tuning = { ...tuning, ghostHalfLifeMs: next };
   schedulePersist();
