@@ -1,13 +1,19 @@
 <script lang="ts">
   import type { ConnectionStatus } from "../lib/chartState";
-  import type { Series } from "@polymarket/client";
+  import type { Event, Series } from "@polymarket/client";
 
   export let series: Series;
+  export let event: Event | null = null;
   export let connection: ConnectionStatus;
 
   let iconFailed = false;
 
-  $: iconUrl = series.icon?.trim() || series.image?.trim() || null;
+  $: iconUrl =
+    event?.icon?.trim() ||
+    event?.image?.trim() ||
+    series.icon?.trim() ||
+    series.image?.trim() ||
+    null;
   $: if (iconUrl) iconFailed = false;
 
   function copySlug(): void {
