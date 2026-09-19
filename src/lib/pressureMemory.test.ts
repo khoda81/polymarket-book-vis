@@ -133,3 +133,61 @@ test("ghost decay uses half-life and pruning never removes live pressure", () =>
     },
   ]);
 });
+
+
+test("restore validates pressure memory and rebases ghost ages between clocks", () => {
+  const cells = [
+    {
+      lo: 0,
+      hi: 1,
+      bands: [
+        {
+          loVolume: 0,
+          hiVolume: 25,
+          side: 1 as const,
+          state: { kind: "ghost" as const, sinceMs: 8_000 },
+        },
+      ],
+    },
+  ];
+
+  const restored = new PressureMemory();
+  restored.restore(cells);
+  expect(restored.snapshot()).toEqual(cells);
+
+  const rebased = (await import("./pressureMemory")).rebasePressureCells(
+    cells,
+    10_000,
+    100_000,
+  );
+  expect(rebased[0]?.bands[0]?.state).toEqual({
+    kind: "ghost",
+    sinceMs: 98_000,
+  });
+});
+
+test("restore rejects overlapping volume bands", () => {
+  const memory = new PressureMemory();
+  expect(() =>
+    memory.restore([
+      {
+        lo: 0,
+        hi: 1,
+        bands: [
+          {
+            loVolume: 0,
+            hiVolume: 10,
+            side: 1,
+            state: { kind: "live" },
+          },
+          {
+            loVolume: 5,
+            hiVolume: 20,
+            side: -1,
+            state: { kind: "live" },
+          },
+        ],
+      },
+    ]),
+  ).toThrow();
+});
