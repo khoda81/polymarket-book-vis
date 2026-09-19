@@ -194,7 +194,10 @@ export class OrderBookPlotter {
   readonly ctx: CanvasRenderingContext2D;
   readonly padding = { l: 60, r: 16, t: 24, b: 24 };
 
-  public onZoom?: (delta: number, verticalAnchor: number) => void;
+  public onZoom?: (
+    delta: number,
+    verticalAnchor: number,
+  ) => boolean;
   public onPan?: (verticalDelta: number) => void;
   public onResetZoom?: () => void;
   public onPointer?: (p: { sx: number; sy: number } | null) => void;
@@ -305,7 +308,6 @@ export class OrderBookPlotter {
 
   private handleWheel = (e: WheelEvent) => {
     if (!this.onZoom) return;
-    e.preventDefault();
 
     let delta = e.deltaY * 0.002;
     if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) {
@@ -321,7 +323,8 @@ export class OrderBookPlotter {
       0,
       Math.min(1, (this.cssHeight - this.padding.b - y) / chartHeight),
     );
-    this.onZoom(delta, verticalAnchor);
+    if (!this.onZoom(delta, verticalAnchor)) return;
+    e.preventDefault();
   };
 
   private handlePointerDown = (e: PointerEvent) => {

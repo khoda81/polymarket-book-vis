@@ -30,10 +30,11 @@ export class VolumeBookView {
 
   constructor(private readonly host: VolumeBookViewHost) {}
 
-  zoom(delta: number): void {
-    if (!this.host.isActive()) return;
+  zoom(delta: number): boolean {
+    if (!this.host.isActive()) return false;
     this.scale += delta;
     this.host.requestDraw();
+    return true;
   }
 
   setPointer(pointer: { sx: number; sy: number } | null): void {
