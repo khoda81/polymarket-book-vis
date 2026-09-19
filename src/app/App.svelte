@@ -3,32 +3,44 @@
   import EventCard from "./EventCard.svelte";
   import EventSearch from "./EventSearch.svelte";
   import PressureLegend from "./PressureLegend.svelte";
+  import SeriesCard from "./SeriesCard.svelte";
   import {
-    errorMessage,
     eventLabel,
     eventSlug,
+    isSeriesEntry,
+    normalizePinnedSeriesIds,
     normalizePinnedSlugs,
-    orderEntries,
     pinState,
+    seriesLabel,
     type DashboardEntry,
+    type DashboardItem,
     type EventSlug,
     type PinState,
+    type SeriesDashboardEntry,
   } from "./model";
   import {
     createPublicClient,
     type Event,
+    type Series,
   } from "@polymarket/client";
 
   const PINNED_STORAGE_KEY =
     "polymarket-book-vis:pinned-event-slugs:v1";
+  const PINNED_SERIES_STORAGE_KEY =
+    "polymarket-book-vis:pinned-series-ids:v1";
 
   const client = createPublicClient();
 
-  let entries: DashboardEntry[] = [];
+  let entries: DashboardItem[] = [];
   let pinnedSlugs: EventSlug[] = loadPinnedSlugs();
+  let pinnedSeriesIds: string[] = loadPinnedSeriesIds();
   let status = "";
 
-  $: orderedEntries = orderEntries(entries, pinnedSlugs);
+  $: orderedEntries = orderDashboardItems(
+    entries,
+    pinnedSlugs,
+    pinnedSeriesIds,
+  );
 
   function loadPinnedSlugs(): EventSlug[] {
     try {
@@ -41,8 +53,28 @@
     }
   }
 
+  function loadPinnedSeriesIds(): string[] {
+    try {
+      const raw = localStorage.getItem(PINNED_SERIES_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? normalizePinnedSeriesIds(parsed)
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
   function persistPinnedSlugs(next: readonly EventSlug[]): void {
     localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(next));
+  }
+
+  function persistPinnedSeriesIds(next: readonly string[]): void {
+    localStorage.setItem(
+      PINNED_SERIES_STORAGE_KEY,
+      JSON.stringify(next),
+    );
   }
 
   function setPinned(
@@ -59,8 +91,27 @@
     persistPinnedSlugs(pinnedSlugs);
   }
 
+  function setSeriesPinned(
+    seriesId: string,
+    pinned: boolean,
+    placement: "start" | "end" = "end",
+  ): void {
+    const without = pinnedSeriesIds.filter(
+      (candidate) => candidate !== seriesId,
+    );
+    pinnedSeriesIds = pinned
+      ? placement === "start"
+        ? [seriesId, ...without]
+        : [...without, seriesId]
+      : without;
+    persistPinnedSeriesIds(pinnedSeriesIds);
+  }
+
   function addEvent(event: Event, announceLifecycle: boolean): boolean {
-    const existing = entries.find((entry) => entry.event.id === event.id);
+    const existing = entries.find(
+      (entry) =>
+        !isSeriesEntry(entry) && entry.event.id === event.id,
+    );
     if (existing) {
       status = `${eventLabel(event)} is already on the dashboard.`;
       void tick().then(() => {
@@ -73,15 +124,79 @@
       return false;
     }
 
-    entries = [...entries, { event, announceLifecycle }];
+    entries = [
+      ...entries,
+      { kind: "event", event, announceLifecycle },
+    ];
     return true;
   }
 
-  function addManualEvent(event: Event): void {
+  function addSeries(
+    series: Series,
+    announceLifecycle: boolean,
+  ): boolean {
+    const seriesId = String(series.id);
+    const existing = entries.find(
+      (entry) =>
+        isSeriesEntry(entry) &&
+        String(entry.series.id) === seriesId,
+    );
+    if (existing) {
+      status = `${seriesLabel(series)} is already on the dashboard.`;
+      void tick().then(() => {
+        document
+          .querySelector<HTMLElement>(
+            `[data-series-id="${CSS.escape(seriesId)}"]`,
+          )
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      return false;
+    }
+
+    entries = [
+      ...entries,
+      { kind: "series", series, announceLifecycle },
+    ];
+    return true;
+  }
+
+  async function addManualEvent(event: Event): Promise<void> {
+    status = `Loading ${eventLabel(event)}…`;
+
+    const recurring = await recurringSeriesFor(event);
+    if (recurring) {
+      const seriesId = String(recurring.id);
+      setSeriesPinned(seriesId, true, "start");
+      addSeries(recurring, true);
+      return;
+    }
+
     const slug = eventSlug(event);
     if (slug) setPinned(slug, true, "start");
-    status = `Loading ${eventLabel(event)}…`;
     addEvent(event, true);
+  }
+
+  async function recurringSeriesFor(
+    event: Event,
+  ): Promise<Series | null> {
+    // Series view currently means one recurring binary event per timeline row.
+    // Multi-market events retain the ordinary event-card representation.
+    if (event.markets.length !== 1) return null;
+
+    for (const reference of event.series) {
+      try {
+        const series = await client.fetchSeries({
+          id: String(reference.id),
+        });
+        if (series.recurrence?.trim()) return series;
+      } catch (error) {
+        console.warn(
+          `Could not inspect series ${String(reference.id)}:`,
+          error,
+        );
+      }
+    }
+    return null;
   }
 
   function togglePin(state: PinState): void {
@@ -93,19 +208,51 @@
     const slug = eventSlug(entry.event);
     if (slug && pinnedSlugs.includes(slug)) setPinned(slug, false);
     entries = entries.filter(
-      (candidate) => candidate.event.id !== entry.event.id,
+      (candidate) =>
+        isSeriesEntry(candidate) ||
+        candidate.event.id !== entry.event.id,
     );
     status = `Removed ${eventLabel(entry.event)}.`;
   }
 
-  function chartReady(entry: DashboardEntry): void {
-    if (entry.announceLifecycle)
-      status = `Added ${eventLabel(entry.event)}.`;
+  function removeSeries(entry: SeriesDashboardEntry): void {
+    const seriesId = String(entry.series.id);
+    if (pinnedSeriesIds.includes(seriesId))
+      setSeriesPinned(seriesId, false);
+    entries = entries.filter(
+      (candidate) =>
+        !isSeriesEntry(candidate) ||
+        String(candidate.series.id) !== seriesId,
+    );
+    status = `Removed ${seriesLabel(entry.series)}.`;
   }
 
-  function chartFailed(entry: DashboardEntry, message: string): void {
+  function itemReady(entry: DashboardItem): void {
+    if (!entry.announceLifecycle) return;
+    status = isSeriesEntry(entry)
+      ? `Added ${seriesLabel(entry.series)}.`
+      : `Added ${eventLabel(entry.event)}.`;
+  }
+
+  function itemFailed(
+    entry: DashboardItem,
+    message: string,
+  ): void {
+    if (isSeriesEntry(entry)) {
+      const seriesId = String(entry.series.id);
+      entries = entries.filter(
+        (candidate) =>
+          !isSeriesEntry(candidate) ||
+          String(candidate.series.id) !== seriesId,
+      );
+      status = `Could not add ${seriesLabel(entry.series)}: ${message}`;
+      return;
+    }
+
     entries = entries.filter(
-      (candidate) => candidate.event.id !== entry.event.id,
+      (candidate) =>
+        isSeriesEntry(candidate) ||
+        candidate.event.id !== entry.event.id,
     );
     status = `Could not add ${eventLabel(entry.event)}: ${message}`;
   }
@@ -119,35 +266,93 @@
     }
   }
 
+  async function loadPinnedSeries(seriesId: string): Promise<void> {
+    try {
+      const series = await client.fetchSeries({ id: seriesId });
+      addSeries(series, false);
+    } catch (error) {
+      console.error(`Could not load series ${seriesId}:`, error);
+    }
+  }
+
   onMount(() => {
+    for (const seriesId of pinnedSeriesIds)
+      void loadPinnedSeries(seriesId);
     for (const slug of pinnedSlugs) void loadPinned(slug);
   });
+
+  function orderDashboardItems(
+    items: readonly DashboardItem[],
+    eventPins: readonly EventSlug[],
+    seriesPins: readonly string[],
+  ): DashboardItem[] {
+    const pinRanks = new Map<string, number>();
+    let rank = 0;
+    for (const id of seriesPins)
+      pinRanks.set(`series:${id}`, rank++);
+    for (const slug of eventPins)
+      pinRanks.set(`event:${slug}`, rank++);
+
+    const insertion = new Map(
+      items.map((entry, index) => [itemKey(entry), index]),
+    );
+
+    return [...items].sort((a, b) => {
+      const aRank = pinRanks.get(itemKey(a));
+      const bRank = pinRanks.get(itemKey(b));
+      if (aRank !== undefined && bRank !== undefined) return aRank - bRank;
+      if (aRank !== undefined) return -1;
+      if (bRank !== undefined) return 1;
+      return (
+        (insertion.get(itemKey(a)) ?? 0) -
+        (insertion.get(itemKey(b)) ?? 0)
+      );
+    });
+  }
+
+  function itemKey(entry: DashboardItem): string {
+    if (isSeriesEntry(entry))
+      return `series:${String(entry.series.id)}`;
+    return `event:${eventSlug(entry.event) ?? entry.event.id}`;
+  }
 </script>
 
 <header class="dashboard-toolbar">
   <EventSearch
     {client}
     {status}
-    onchoose={addManualEvent}
+    onchoose={(event) => void addManualEvent(event)}
     onstatus={(message) => (status = message)}
   />
 
   <div class="dashboard-meta">
     <PressureLegend />
   </div>
-
 </header>
 
 <div class="grid">
-  {#each orderedEntries as entry (entry.event.id)}
-    <EventCard
-      event={entry.event}
-      {client}
-      pin={pinState(entry.event, pinnedSlugs)}
-      onpin={togglePin}
-      onremove={() => removeEvent(entry)}
-      onready={() => chartReady(entry)}
-      onfailure={(message) => chartFailed(entry, message)}
-    />
+  {#each orderedEntries as entry (itemKey(entry))}
+    {#if isSeriesEntry(entry)}
+      <SeriesCard
+        series={entry.series}
+        {client}
+        pinned={pinnedSeriesIds.includes(String(entry.series.id))}
+        onpin={(pinned) =>
+          setSeriesPinned(String(entry.series.id), pinned, "end")}
+        onremove={() => removeSeries(entry)}
+        onready={() => itemReady(entry)}
+        onfailure={(message) => itemFailed(entry, message)}
+      />
+    {:else}
+      <EventCard
+        event={entry.event}
+        {client}
+        pin={pinState(entry.event, pinnedSlugs)}
+        onpin={togglePin}
+        onremove={() => removeEvent(entry)}
+        onready={() => itemReady(entry)}
+        onfailure={(message) => itemFailed(entry, message)}
+      />
+    {/if}
   {/each}
 </div>
