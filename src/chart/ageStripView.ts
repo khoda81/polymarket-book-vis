@@ -180,7 +180,7 @@ export class AgeStripView {
         const resolution =
           side === "primary" || side === "opposite"
             ? {
-                side,
+                side: side as "primary" | "opposite",
                 outcome:
                   label.dataset.ageResolutionOutcome ?? "",
                 marketEndMs:
