@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   PressureMemory,
   ghostAlpha,
+  rebasePressureCells,
   type PressureCell,
 } from "./pressureMemory";
 
@@ -155,7 +156,7 @@ test("restore validates pressure memory and rebases ghost ages between clocks", 
   restored.restore(cells);
   expect(restored.snapshot()).toEqual(cells);
 
-  const rebased = (await import("./pressureMemory")).rebasePressureCells(
+  const rebased = rebasePressureCells(
     cells,
     10_000,
     100_000,
