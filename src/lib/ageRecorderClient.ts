@@ -22,8 +22,20 @@ export interface RecorderHydration {
   >;
 }
 
-const RECORDER_FETCH_TIMEOUT_MS = 1_500;
-const HYDRATION_RETRY_DELAYS_MS = [100, 200, 400, 800, 1_200] as const;
+const RECORDER_FETCH_TIMEOUT_MS = 5_000;
+const MAX_CONCURRENT_RECORDER_REQUESTS = 4;
+const HYDRATION_RETRY_DELAYS_MS = [
+  100,
+  250,
+  500,
+  1_000,
+  2_000,
+  4_000,
+  8_000,
+] as const;
+
+let activeRecorderRequests = 0;
+const recorderRequestWaiters: Array<() => void> = [];
 const RECORDER_DEBUG =
   new URLSearchParams(window.location.search).get("recorderDebug") === "1";
 
@@ -99,7 +111,7 @@ export async function fetchRecorderHydration(
       recorderDebug("hydrate-error", {
         attempt: attempt + 1,
         requested: remaining.map(shortToken),
-        error,
+        error: debugError(error),
       });
     }
 
@@ -135,22 +147,39 @@ async function fetchRecorderState(
   for (const tokenId of tokenIds) params.append("tokenId", tokenId);
   if (RECORDER_DEBUG) params.set("debug", "1");
 
-  const controller = new AbortController();
-  const timeout = window.setTimeout(
-    () => controller.abort(),
-    RECORDER_FETCH_TIMEOUT_MS,
-  );
+  return withRecorderRequestSlot(async () => {
+    const startedAt = performance.now();
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      RECORDER_FETCH_TIMEOUT_MS,
+    );
 
-  try {
-    const response = await fetch(`/api/recorder/state?${params}`, {
-      signal: controller.signal,
-    });
-    if (!response.ok)
-      throw new Error(`recorder returned ${response.status}`);
-    return (await response.json()) as RecorderStateResponse;
-  } finally {
-    clearTimeout(timeout);
-  }
+    try {
+      const response = await fetch(`/api/recorder/state?${params}`, {
+        signal: controller.signal,
+      });
+      if (!response.ok)
+        throw new Error(`recorder returned ${response.status}`);
+      const body =
+        (await response.json()) as RecorderStateResponse;
+      recorderDebug("state-http", {
+        requested: tokenIds.length,
+        ms: Math.round(performance.now() - startedAt),
+        status: response.status,
+      });
+      return body;
+    } catch (error) {
+      recorderDebug("state-http-error", {
+        requested: tokenIds.length,
+        ms: Math.round(performance.now() - startedAt),
+        error: debugError(error),
+      });
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
 }
 
 function mergeRecorderResponse(
@@ -193,6 +222,37 @@ function emptyHydration(): RecorderHydration {
     recordingSinceMsByToken: {},
     pressureCellsByToken: {},
   };
+}
+
+async function withRecorderRequestSlot<T>(
+  task: () => Promise<T>,
+): Promise<T> {
+  if (
+    activeRecorderRequests >=
+    MAX_CONCURRENT_RECORDER_REQUESTS
+  ) {
+    await new Promise<void>((resolve) => {
+      recorderRequestWaiters.push(resolve);
+    });
+  }
+
+  activeRecorderRequests++;
+  try {
+    return await task();
+  } finally {
+    activeRecorderRequests--;
+    recorderRequestWaiters.shift()?.();
+  }
+}
+
+function debugError(error: unknown): unknown {
+  if (error instanceof DOMException || error instanceof Error)
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  return error;
 }
 
 function recorderDebug(...args: unknown[]): void {
