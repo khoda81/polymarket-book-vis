@@ -6,11 +6,9 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { createPublicClient, OrderSide, TransportError } from "@polymarket/client";
-import type {
-  MarketEvent,
-  SubscriptionHandle,
-} from "@polymarket/client/actions";
+import { createPublicClient, OrderSide } from "@polymarket/client";
+import type { MarketEvent } from "@polymarket/client/actions";
+import { RecorderSubscriptionPool } from "./recorderSubscriptionPool";
 import { HalfBook, type TokenBook } from "../src/lib/orderBook";
 import {
   PressureMemory,
@@ -28,7 +26,6 @@ const STATE_PATH = resolve(
   process.env.RECORDER_STATE_PATH ?? ".data/age-recorder.json",
 );
 const PERSIST_DEBOUNCE_MS = 250;
-const SUBSCRIPTION_RESTART_DEBOUNCE_MS = 100;
 const MAX_CLOCK_SKEW_MS = 60_000;
 
 interface PersistedRecorderStateV2 {
@@ -75,33 +72,31 @@ class AgeRecorder {
   private readonly recordingSince = new Map<string, number>();
   private readonly books = new Map<string, TokenBook<string>>();
   private readonly memories = new Map<string, PressureMemory>();
-  private subscription: SubscriptionHandle<MarketEvent> | null = null;
-  private subscriptionGeneration = 0;
+  private readonly subscriptions = new RecorderSubscriptionPool(
+    this.client,
+    (event) => this.consumeEvent(event),
+  );
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
-  private restartTimer: ReturnType<typeof setTimeout> | undefined;
   private persistDirty = false;
   private persistenceBlocked = false;
   private persistChain: Promise<void> = Promise.resolve();
-  private restartChain = Promise.resolve();
 
   async start(): Promise<void> {
     await this.restoreFromDisk();
-    void this.restartSubscription();
+    this.subscriptions.add(this.watched);
   }
 
   async stop(): Promise<void> {
-    this.subscriptionGeneration++;
-    const subscription = this.subscription;
-    this.subscription = null;
-    if (subscription) await subscription.close().catch(() => undefined);
+    const startedAt = performance.now();
+
+    // Socket close handshakes are not part of persistence correctness and can
+    // stall indefinitely. Stop consuming immediately and let process exit
+    // reclaim the transports after the checkpoint is durable.
+    this.subscriptions.stop();
 
     if (this.persistTimer !== undefined) {
       clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
-    }
-    if (this.restartTimer !== undefined) {
-      clearTimeout(this.restartTimer);
-      this.restartTimer = undefined;
     }
     if (this.persistenceBlocked)
       throw new Error(
@@ -117,10 +112,14 @@ class AgeRecorder {
       this.persistDirty = false;
       await this.persistSnapshot();
     }
+
+    console.log(
+      `Recorder state flushed in ${Math.round(performance.now() - startedAt)}ms`,
+    );
   }
 
   watch(tokenIds: Iterable<string>): boolean {
-    let changed = false;
+    const added: string[] = [];
     for (const tokenId of tokenIds) {
       if (
         !tokenId ||
@@ -129,15 +128,12 @@ class AgeRecorder {
       )
         continue;
       this.watched.add(tokenId);
-      changed = true;
+      added.push(tokenId);
     }
-    if (!changed) return false;
+    if (added.length === 0) return false;
 
     this.schedulePersist();
-    // Registration/hydration must never block the UI on recorder connectivity.
-    // Batch bursts of registrations so a series window does not repeatedly
-    // tear down the websocket before the first snapshots can arrive.
-    this.scheduleSubscriptionRestart();
+    this.subscriptions.add(added);
     return true;
   }
 
@@ -172,7 +168,7 @@ class AgeRecorder {
 
     return {
       serverNowMs: nowMs,
-      connected: this.subscription !== null,
+      connected: this.subscriptions.connected,
       recordingSinceMs,
       recordingSinceMsByToken,
       states,
@@ -191,129 +187,69 @@ class AgeRecorder {
       completedTokens: this.completed.size,
       hydratedTokens: this.memories.size,
       liveBooks: this.books.size,
-      connected: this.subscription !== null,
+      connected: this.subscriptions.connected,
+      subscriptionBatches: this.subscriptions.activeBatchCount,
       oldestRecordingSinceMs: starts.length ? Math.min(...starts) : null,
       newestRecordingSinceMs: starts.length ? Math.max(...starts) : null,
       statePath: STATE_PATH,
     };
   }
 
-  private scheduleSubscriptionRestart(): void {
-    if (this.restartTimer !== undefined) return;
-    this.restartTimer = setTimeout(() => {
-      this.restartTimer = undefined;
-      void this.restartSubscription();
-    }, SUBSCRIPTION_RESTART_DEBOUNCE_MS);
-  }
+  private consumeEvent(stream: MarketEvent): void {
+    if (stream.type === "book") {
+      const tokenId = String(stream.payload.tokenId);
+      if (!this.watched.has(tokenId)) return;
 
-  private restartSubscription(): Promise<void> {
-    // Increment immediately so any currently retrying connection attempt can
-    // observe that it is stale before the queued restart gets its turn.
-    const generation = ++this.subscriptionGeneration;
-    this.restartChain = this.restartChain
-      .catch(() => undefined)
-      .then(() => this.connect(generation))
-      .catch((error) => {
-        // A fatal connect error must not permanently poison future restart
-        // requests. Log it and leave the queue resolved for the next change.
-        console.error("Recorder subscription restart failed", error);
-      });
-    return this.restartChain;
-  }
-
-  private async connect(generation: number): Promise<void> {
-    if (generation !== this.subscriptionGeneration) return;
-
-    const previous = this.subscription;
-    this.subscription = null;
-    if (previous) await previous.close().catch(() => undefined);
-    if (generation !== this.subscriptionGeneration) return;
-
-    const tokenIds = [...this.watched];
-    if (tokenIds.length === 0) return;
-
-    for (;;) {
-      try {
-        const subscription = await this.client.subscribe([
-          {
-            topic: "market",
-            tokenIds,
-            customFeatureEnabled: true,
-          },
-        ]);
-        if (generation !== this.subscriptionGeneration) {
-          await subscription.close().catch(() => undefined);
-          return;
-        }
-        this.subscription = subscription;
-        void this.consume(subscription, generation);
-        return;
-      } catch (error) {
-        if (!(error instanceof TransportError)) throw error;
-        console.error("Recorder websocket connection failed; retrying…", error);
-        await Bun.sleep(1_000);
-        if (generation !== this.subscriptionGeneration) return;
-      }
+      const book = bookFromSnapshot(stream.payload);
+      this.books.set(tokenId, book);
+      this.updateMemory(tokenId, book);
+      return;
     }
-  }
 
-  private async consume(
-    events: SubscriptionHandle<MarketEvent>,
-    generation: number,
-  ): Promise<void> {
-    try {
-      for await (const stream of events) {
-        if (generation !== this.subscriptionGeneration) return;
+    if (stream.type === "price_change") {
+      const touched = new Set<string>();
+      for (const change of stream.payload.priceChanges) {
+        const tokenId = String(change.tokenId);
+        if (!this.watched.has(tokenId)) continue;
 
-        if (stream.type === "book") {
-          const tokenId = String(stream.payload.tokenId);
-          const book = bookFromSnapshot(stream.payload);
-          this.books.set(tokenId, book);
-          this.updateMemory(tokenId, book);
-        } else if (stream.type === "price_change") {
-          const touched = new Set<string>();
-          for (const change of stream.payload.priceChanges) {
-            const tokenId = String(change.tokenId);
-            const book = this.books.get(tokenId);
-            if (!book) continue;
+        const book = this.books.get(tokenId);
+        if (!book) continue;
 
-            applyPriceChange(book, change);
-            touched.add(tokenId);
-          }
+        applyPriceChange(book, change);
+        touched.add(tokenId);
+      }
 
-          for (const tokenId of touched) {
-            const book = this.books.get(tokenId);
-            if (book) this.updateMemory(tokenId, book);
-          }
-        } else if (stream.type === "market_resolved") {
-          const nowMs = Date.now();
-          let changed = false;
-          for (const tokenIdValue of stream.payload.assetIds ?? []) {
-            const tokenId = String(tokenIdValue);
-            const memory = this.memories.get(tokenId);
-            memory?.observe(
-              [{ lo: 0, hi: 1, volume: 0 }],
-              nowMs,
-            );
+      for (const tokenId of touched) {
+        const book = this.books.get(tokenId);
+        if (book) this.updateMemory(tokenId, book);
+      }
+      return;
+    }
 
-            changed = this.watched.delete(tokenId) || changed;
-            this.completed.add(tokenId);
-            this.books.delete(tokenId);
-          }
-          if (changed) this.schedulePersist();
+    if (stream.type === "market_resolved") {
+      const nowMs = Date.now();
+      const resolvedTokenIds: string[] = [];
+      let changed = false;
+
+      for (const tokenIdValue of stream.payload.assetIds ?? []) {
+        const tokenId = String(tokenIdValue);
+        const memory = this.memories.get(tokenId);
+        memory?.observe(
+          [{ lo: 0, hi: 1, volume: 0 }],
+          nowMs,
+        );
+
+        if (this.watched.delete(tokenId)) {
+          resolvedTokenIds.push(tokenId);
+          changed = true;
         }
+        this.completed.add(tokenId);
+        this.books.delete(tokenId);
       }
-    } catch (error) {
-      if (generation === this.subscriptionGeneration)
-        console.error("Recorder websocket stream ended with error", error);
-    } finally {
-      if (
-        generation === this.subscriptionGeneration &&
-        this.subscription === events
-      ) {
-        this.subscription = null;
-        void this.restartSubscription();
-      }
+
+      if (resolvedTokenIds.length > 0)
+        this.subscriptions.remove(resolvedTokenIds);
+      if (changed) this.schedulePersist();
     }
   }
 
