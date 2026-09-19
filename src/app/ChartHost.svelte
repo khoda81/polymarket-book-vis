@@ -92,6 +92,19 @@
   ): void {
     lifecycleByMarketId = new Map(lifecycleByMarketId);
     lifecycleByMarketId.set(marketId, lifecycle);
+
+    if (lifecycle.kind !== "resolved") return;
+
+    const visibility =
+      visibilityByMarketId.get(marketId) ?? VISIBLE_MARKET;
+    if (visibility.kind !== "visible") return;
+
+    visibilityByMarketId = setMarketVisibility(
+      visibilityByMarketId,
+      marketId,
+      { kind: "hidden", reason: "resolved-default" },
+    );
+    chart?.setMarketVisible(marketId, false);
   }
 
   function autoHide(

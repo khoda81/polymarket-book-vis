@@ -1,6 +1,8 @@
+import type { MarketLifecycle } from "./marketLifecycle";
 export type HiddenMarketReason =
   | "user"
-  | "empty-book";
+  | "empty-book"
+  | "resolved-default";
 
 export type AutoHiddenReason = Extract<
   HiddenMarketReason,
@@ -19,10 +21,12 @@ const STORAGE_KEY =
 
 export function initialMarketVisibility(
   userHidden: boolean,
+  lifecycle: MarketLifecycle,
 ): MarketVisibility {
-  return userHidden
-    ? { kind: "hidden", reason: "user" }
-    : { kind: "visible" };
+  if (userHidden) return { kind: "hidden", reason: "user" };
+  if (lifecycle.kind === "resolved")
+    return { kind: "hidden", reason: "resolved-default" };
+  return { kind: "visible" };
 }
 
 export function isMarketVisible(
@@ -89,8 +93,13 @@ export function partitionMarketVisibility<T extends MarketIdentified>(
 }
 
 
+export interface VisibilityInitializableMarket
+  extends MarketIdentified {
+  readonly lifecycle: MarketLifecycle;
+}
+
 export function loadMarketVisibility(
-  markets: readonly MarketIdentified[],
+  markets: readonly VisibilityInitializableMarket[],
 ): Map<string, MarketVisibility> {
   const userHidden = loadUserHiddenMarketIds();
   return new Map(
@@ -98,6 +107,7 @@ export function loadMarketVisibility(
       market.marketId,
       initialMarketVisibility(
         userHidden.has(market.marketId),
+        market.lifecycle,
       ),
     ]),
   );
