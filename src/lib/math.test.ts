@@ -9,14 +9,16 @@ import {
   relativeTimeDisplay,
 } from "./math";
 
-test("fmtRelativeTime uses one best-fit unit", () => {
+test("fmtRelativeTime uses compact significant digits", () => {
   expect(fmtRelativeTime(0)).toBe("0ms");
-  expect(fmtRelativeTime(0.61)).toBe("610ms");
+  expect(fmtRelativeTime(0.053)).toBe("53ms");
+  expect(fmtRelativeTime(0.53)).toBe("0.53s");
   expect(fmtRelativeTime(3.4)).toBe("3.4s");
   expect(fmtRelativeTime(52)).toBe("52s");
-  expect(fmtRelativeTime(263)).toBe("4.38m");
+  expect(fmtRelativeTime(263)).toBe("4.3m");
+  expect(fmtRelativeTime(18.01 * 60)).toBe("18m");
   expect(fmtRelativeTime(7_200)).toBe("2h");
-  expect(fmtRelativeTime(104 * 86_400)).toBe("3.47mo");
+  expect(fmtRelativeTime(104 * 86_400)).toBe("3.4mo");
 });
 
 
@@ -26,16 +28,16 @@ test("relativeTimeDisplay exposes semantic redraw deadlines", () => {
   expect(milliseconds.nextChangeMs).toBeCloseTo(1, 3);
 
   const seconds = relativeTimeDisplay(13.5, "elapsed");
-  expect(seconds.text).toBe("13.5s");
-  expect(seconds.nextChangeMs).toBeCloseTo(10, 6);
+  expect(seconds.text).toBe("13s");
+  expect(seconds.nextChangeMs).toBeCloseTo(500, 6);
 
   const minutes = relativeTimeDisplay(60 + 47, "elapsed");
-  expect(minutes.text).toBe("1.78m");
-  expect(minutes.nextChangeMs).toBeCloseTo(400, 6);
+  expect(minutes.text).toBe("1.7m");
+  expect(minutes.nextChangeMs).toBeCloseTo(5_000, 6);
 
   const remaining = relativeTimeDisplay(60 + 47.2, "remaining");
-  expect(remaining.text).toBe("1.79m");
-  expect(remaining.nextChangeMs).toBeCloseTo(200, 6);
+  expect(remaining.text).toBe("1.8m");
+  expect(remaining.nextChangeMs).toBeCloseTo(800, 6);
 
   expect(relativeTimeDisplay(0, "remaining")).toEqual({
     text: "due",
