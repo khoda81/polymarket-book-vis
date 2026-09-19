@@ -20,12 +20,19 @@ interface PressureState extends AgeStripPressureTiming {
  * Both ordinary event cards and recurring-series rows use this store so live
  * book updates, recorder hydration, resolution clearing, and ghost history
  * have exactly the same semantics.
+ *
+ * Websocket deltas can arrive much faster than the display can paint them.
+ * Queueing the latest book per token lets a draw consume one coherent state
+ * per animation frame instead of rebuilding pressure memory for invisible
+ * intermediate websocket states.
  */
 export class AgeStripPressureState {
   private readonly states = new Map<string, PressureState>();
+  private readonly pendingBooks = new Map<string, TokenBook<string>>();
 
   reset(): void {
     this.states.clear();
+    this.pendingBooks.clear();
   }
 
   ensure(tokenId: string, resolutionMs: number | null = null): PressureState {
@@ -58,6 +65,7 @@ export class AgeStripPressureState {
     }[],
   ): void {
     this.states.clear();
+    this.pendingBooks.clear();
     for (const row of rows)
       this.ensure(row.tokenId, row.resolutionMs);
   }
@@ -65,6 +73,8 @@ export class AgeStripPressureState {
   retain(tokenIds: ReadonlySet<string>): void {
     for (const tokenId of this.states.keys())
       if (!tokenIds.has(tokenId)) this.states.delete(tokenId);
+    for (const tokenId of this.pendingBooks.keys())
+      if (!tokenIds.has(tokenId)) this.pendingBooks.delete(tokenId);
   }
 
   setRecordingCoverage(
@@ -89,31 +99,55 @@ export class AgeStripPressureState {
       const state = this.ensure(tokenId);
       state.memory.restore(cells);
 
-      // A websocket snapshot may have arrived before recorder hydration.
-      // Paint the current book last so live pressure wins over persisted ghosts.
-      const book = getBook(tokenId);
-      if (book)
+      // A websocket snapshot may have beaten recorder hydration. Repaint
+      // the newest local book last so current liquidity wins over persisted
+      // ghosts, then remove the redundant queued observation.
+      const book =
+        this.pendingBooks.get(tokenId) ??
+        getBook(tokenId);
+      if (book) {
         state.memory.observe(
           signedVolumeSegments(book),
           nowMs,
         );
+        this.pendingBooks.delete(tokenId);
+      }
     }
   }
 
-  observeBook(
+  queueBookUpdate(
     tokenId: string,
     book: TokenBook<string>,
-    nowMs = Date.now(),
   ): void {
-    this.ensure(tokenId).memory.observe(
-      signedVolumeSegments(book),
-      nowMs,
-    );
+    this.ensure(tokenId);
+    this.pendingBooks.set(tokenId, book);
+  }
+
+  flushBookUpdates(nowMs = Date.now()): void {
+    if (this.pendingBooks.size === 0) return;
+
+    for (const [tokenId, book] of this.pendingBooks) {
+      this.ensure(tokenId).memory.observe(
+        signedVolumeSegments(book),
+        nowMs,
+      );
+    }
+    this.pendingBooks.clear();
   }
 
   resolve(tokenId: string, nowMs = Date.now()): void {
     const state = this.states.get(tokenId);
     if (!state) return;
+
+    const pending = this.pendingBooks.get(tokenId);
+    if (pending) {
+      state.memory.observe(
+        signedVolumeSegments(pending),
+        nowMs,
+      );
+      this.pendingBooks.delete(tokenId);
+    }
+
     state.memory.observe(
       [{ lo: 0, hi: 1, volume: 0 }],
       nowMs,
