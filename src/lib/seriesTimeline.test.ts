@@ -57,6 +57,6 @@ test("timed rows use explicit event interval and merge stably by time", () => {
   const timed = timedSeriesEvent(b, 60_000);
   expect(timed?.centerMs).toBe(Date.parse("2026-09-19T10:02:30Z"));
 
-  expect(mergeSeriesEvents([a], [b, duplicateB]).map((row) => row.id))
+  expect(mergeSeriesEvents([a], [b, duplicateB]).map((row) => String(row.id)))
     .toEqual(["b", "a"]);
 });
