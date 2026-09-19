@@ -164,8 +164,10 @@ export class ChartController {
       );
     this.lifecycle = "started";
 
-    const { event } = this.definition;
-    const tokenIds = this.definition.controls.map(
+    const unresolvedControls = this.definition.controls.filter(
+      (control) => control.lifecycle.kind !== "resolved",
+    );
+    const tokenIds = unresolvedControls.map(
       (control) => control.tokenId,
     );
 
@@ -175,20 +177,24 @@ export class ChartController {
 
     this.ageView.configureMarkets(this.definition.controls);
 
-    // Recorder registration/metadata is optional and must never gate the live
-    // websocket.
-    void fetchRecorderHydration(tokenIds).then((hydration) => {
-      if (this.lifecycle === "destroyed") return;
-      this.ageView.setRecordingCoverage(
-        hydration.recordingSinceMsByToken,
-      );
-      this.ageView.hydratePressureMemory(
-        hydration.pressureCellsByToken,
-      );
-      this.reqDraw();
-    });
+    // Resolved rows have their own semantic rendering and tooltip; pulling
+    // their historical pressure into the browser only wastes memory/CPU.
+    if (tokenIds.length > 0) {
+      // Recorder registration/metadata is optional and must never gate the live
+      // websocket.
+      void fetchRecorderHydration(tokenIds).then((hydration) => {
+        if (this.lifecycle === "destroyed") return;
+        this.ageView.setRecordingCoverage(
+          hydration.recordingSinceMsByToken,
+        );
+        this.ageView.hydratePressureMemory(
+          hydration.pressureCellsByToken,
+        );
+        this.reqDraw();
+      });
 
-    await this.feed.start(tokenIds);
+      await this.feed.start(tokenIds);
+    }
     if (this.lifecycle === "started") this.reqDraw();
   }
 
