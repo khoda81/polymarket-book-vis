@@ -1,4 +1,4 @@
-import { fetchRecorderCoverage } from "@/lib/ageRecorderClient";
+import { fetchRecorderHydration } from "@/lib/ageRecorderClient";
 import type { ConnectionStatus, ViewMode } from "@/lib/chartState";
 import type { AutoHiddenReason } from "@/lib/marketVisibility";
 import {
@@ -190,10 +190,13 @@ export class ChartController {
 
     // Recorder registration/metadata is optional and must never gate the live
     // websocket.
-    void fetchRecorderCoverage(tokenIds).then((hydration) => {
+    void fetchRecorderHydration(tokenIds).then((hydration) => {
       if (this.lifecycle === "destroyed") return;
       this.ageView.setRecordingCoverage(
         hydration.recordingSinceMsByToken,
+      );
+      this.ageView.hydratePressureMemory(
+        hydration.pressureCellsByToken,
       );
       this.reqDraw();
     });

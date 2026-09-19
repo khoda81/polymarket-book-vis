@@ -6,7 +6,10 @@ import {
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
 import type { TokenBook } from "@/lib/orderBook";
-import { PressureMemory } from "@/lib/pressureMemory";
+import {
+  PressureMemory,
+  type PressureCell,
+} from "@/lib/pressureMemory";
 import { signedVolumeSegments } from "@/lib/signedVolume";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import type { SignedVolumeColorScale } from "@/lib/signedVolume";
@@ -120,6 +123,40 @@ export class AgeStripView {
         Number.isFinite(since) && since >= 0 ? since : null;
     }
     this.clock.refresh();
+  }
+
+  hydratePressureMemory(
+    cellsByToken: Readonly<
+      Record<string, readonly PressureCell[]>
+    >,
+  ): void {
+    const nowMs = Date.now();
+    for (const [tokenId, cells] of Object.entries(cellsByToken)) {
+      let state = this.markets.get(tokenId);
+      if (!state) {
+        state = {
+          visibilityInitialized: false,
+          recordingSinceMs: null,
+          resolutionMs: null,
+          pressureMemory: new PressureMemory(),
+        };
+        this.markets.set(tokenId, state);
+      }
+
+      state.pressureMemory.restore(cells);
+
+      // A live websocket snapshot may have beaten recorder hydration. Repaint
+      // it last so current liquidity always dominates persisted ghosts.
+      const book = this.host.getBook(tokenId);
+      if (book)
+        state.pressureMemory.observe(
+          signedVolumeSegments(book),
+          nowMs,
+        );
+
+      if (state.pressureMemory.hasGhosts())
+        this.scheduleGhostRefresh();
+    }
   }
 
   configureMarkets(
