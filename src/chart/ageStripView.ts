@@ -203,6 +203,17 @@ export class AgeStripView {
       this.host.hideToken(tokenId);
   }
 
+  resolveMarket(tokenId: string): void {
+    const state = this.markets.get(tokenId);
+    if (!state) return;
+
+    state.pressureMemory.observe(
+      [{ lo: 0, hi: 1, volume: 0 }],
+      Date.now(),
+    );
+    this.scheduleGhostRefresh();
+  }
+
   draw(): void {
     const controls = this.collectControls();
     const activeControls = controls.filter((label) => this.isActive(label));

@@ -152,9 +152,13 @@ export class LiveBookFeed {
         }
 
         if (event.type === "market_resolved") {
+          const assetIds = (event.payload.assetIds ?? []).map(String);
+          for (const tokenId of assetIds)
+            this.books.delete(tokenId);
+
           this.callbacks.onMarketResolved({
             conditionId: String(event.payload.conditionId),
-            assetIds: (event.payload.assetIds ?? []).map(String),
+            assetIds,
             winningTokenId: event.payload.winningAssetId
               ? String(event.payload.winningAssetId)
               : null,
