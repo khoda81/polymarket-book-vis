@@ -21,7 +21,11 @@
     signedVolumeColor,
   } from "../lib/signedVolume";
 
-  const MIN_TICK_DISTANCE_PX = 48;
+  const MIN_LABEL_DISTANCE_PX = 48;
+  // Tick families may be denser than labels; labels get their own collision pass.
+  // Using the label distance here made every non-zero family fade out on the
+  // compact legend at realistic reserve sizes.
+  const MIN_TICK_FAMILY_DISTANCE_PX = 32;
   let bar: HTMLDivElement;
   let width = 0;
   let tuning: Readonly<AgeStripTuning> = getAgeStripTuning();
@@ -33,22 +37,22 @@
   $: ghostTicks = ghostLegendTicks(
     tuning.ghostHalfLifeMs,
     width,
-    { minDistancePx: MIN_TICK_DISTANCE_PX },
+    { minDistancePx: MIN_LABEL_DISTANCE_PX },
   );
   $: ghostLabels = selectGhostLegendLabels(
     ghostTicks,
     width,
-    MIN_TICK_DISTANCE_PX,
+    MIN_LABEL_DISTANCE_PX,
   );
   $: shareTicks = shareLegendTicks(
     reserveShares,
     width,
-    { minDistancePx: MIN_TICK_DISTANCE_PX },
+    { minDistancePx: MIN_TICK_FAMILY_DISTANCE_PX },
   );
   $: shareLabels = selectShareLegendLabels(
     shareTicks,
     width,
-    MIN_TICK_DISTANCE_PX,
+    MIN_LABEL_DISTANCE_PX,
   );
   $: negativeColor = signedVolumeColor(
     -1,
@@ -85,7 +89,7 @@
   <div class="volume-legend-header">
     <span>Share pressure</span>
     <span class="volume-legend-scale">
-      reserve {fmtSI(reserveShares)} shares · Q=C → 50% row
+      Ctrl+wheel
     </span>
   </div>
   <div
@@ -118,7 +122,7 @@
 
   <div class="ghost-legend-header">
     <span>Ghost memory</span>
-    <span>half-life {ghostHalfLife} · Shift+wheel</span>
+    <span>Shift+wheel</span>
   </div>
   <div class="ghost-legend-bar" aria-hidden="true">
     {#each ghostTicks as tick (tick.ageMs)}

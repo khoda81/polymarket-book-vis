@@ -116,17 +116,20 @@ export function drawLivePressureStrip(
       reserveShares,
       geometry.heightCss,
     );
+
     if (!(thickness > 0)) continue;
 
     ctx.fillStyle = signedVolumeColor(
       segment.volume,
       colorScale,
     );
+
+    const boundedThickness = Math.max(0.5 / dpr, thickness);
     ctx.fillRect(
       x0,
-      geometry.centerCss - thickness / 2,
+      geometry.centerCss - boundedThickness / 2,
       x1 - x0,
-      thickness,
+      boundedThickness,
     );
   }
 

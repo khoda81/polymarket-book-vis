@@ -27,3 +27,15 @@ test("share ticks are symmetric, adaptive, and fade by family spacing", () => {
       (labels[index]!.position - labels[index - 1]!.position) * 720,
     ).toBeGreaterThanOrEqual(48);
 });
+
+
+test("realistic compact share legend keeps useful non-zero labels", () => {
+  const ticks = shareLegendTicks(11_600, 720, {
+    minDistancePx: 32,
+  });
+  const labels = selectShareLegendLabels(ticks, 720, 48);
+
+  expect(labels.some((tick) => tick.value < 0)).toBe(true);
+  expect(labels.some((tick) => tick.value > 0)).toBe(true);
+  expect(labels.some((tick) => tick.value === 0)).toBe(true);
+});
