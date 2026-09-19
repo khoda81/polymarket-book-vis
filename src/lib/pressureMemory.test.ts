@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   PressureMemory,
   ghostAlpha,
+  ghostVisibleSinceMs,
   rebasePressureCells,
   type PressureCell,
 } from "./pressureMemory";
@@ -19,6 +20,28 @@ function onlyCell(memory: PressureMemory): PressureCell {
   expect(cells).toHaveLength(1);
   return cells[0]!;
 }
+
+test("visible ghost cutoff matches exponential alpha threshold", () => {
+  const nowMs = 20_000;
+  const halfLifeMs = 5_000;
+  const threshold = 1 / 255;
+  const cutoff = ghostVisibleSinceMs(
+    nowMs,
+    halfLifeMs,
+    threshold,
+  );
+
+  expect(ghostAlpha(cutoff, nowMs, halfLifeMs)).toBeCloseTo(
+    threshold,
+    10,
+  );
+  expect(
+    ghostAlpha(cutoff + 1, nowMs, halfLifeMs),
+  ).toBeGreaterThan(threshold);
+  expect(
+    ghostAlpha(cutoff - 1, nowMs, halfLifeMs),
+  ).toBeLessThan(threshold);
+});
 
 test("shrinking live pressure leaves only the uncovered shell as a ghost", () => {
   const memory = new PressureMemory();
