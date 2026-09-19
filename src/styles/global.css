@@ -217,6 +217,7 @@ body {
 }
 
 .ghost-legend-bar {
+    position: relative;
     height: 7px;
     border-radius: 999px;
     background: currentColor;
@@ -226,6 +227,15 @@ body {
     mask-image: linear-gradient(to right, #000, transparent);
     box-shadow: inset 0 0 0 1px
         color-mix(in oklab, currentColor 12%, transparent);
+}
+
+.ghost-legend-mark {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 1px;
+    background: var(--color-background-primary, #fff);
+    transform: translateX(-0.5px);
 }
 
 .ghost-legend-ticks {
@@ -243,7 +253,12 @@ body {
     white-space: nowrap;
 }
 
-.ghost-legend-ticks span:last-child {
+.ghost-legend-ticks .ghost-legend-now {
+    left: 0;
+    transform: none;
+}
+
+.ghost-legend-ticks span:not(.ghost-legend-now):last-child {
     transform: translateX(-100%);
 }
 

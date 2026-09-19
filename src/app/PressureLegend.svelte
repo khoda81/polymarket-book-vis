@@ -6,7 +6,11 @@
     subscribeAgeStripTuning,
     type AgeStripTuning,
   } from "../lib/ageStripTuning";
-  import { fmtRelativeTime, fmtSI } from "../lib/math";
+  import { fmtSI } from "../lib/math";
+  import {
+    formatDurationTick,
+    ghostLegendTicks,
+  } from "../lib/ghostLegendTicks";
   import {
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     signedVolumeColor,
@@ -21,19 +25,14 @@
   let tuning: Readonly<AgeStripTuning> = getAgeStripTuning();
 
   $: reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
-  $: ghostHalfLife = fmtRelativeTime(
-    tuning.ghostHalfLifeMs / 1000,
+  $: ghostHalfLife = formatDurationTick(
+    tuning.ghostHalfLifeMs,
   );
-  $: ghostTicks = [0, 1, 2, 3, 4].map((halves) => ({
-    halves,
-    position: (1 - 2 ** -halves) * 100,
-    label:
-      halves === 0
-        ? "now"
-        : fmtRelativeTime(
-            (tuning.ghostHalfLifeMs * halves) / 1000,
-          ),
-  }));
+  $: ghostTicks = ghostLegendTicks(
+    tuning.ghostHalfLifeMs,
+    width,
+    { minDistancePx: MIN_TICK_DISTANCE_PX },
+  );
   $: values = shareLegendTickValues(reserveShares, width);
   $: negativeColor = signedVolumeColor(
     -1,
@@ -170,10 +169,22 @@
     <span>Ghost memory</span>
     <span>half-life {ghostHalfLife} · Shift+wheel</span>
   </div>
-  <div class="ghost-legend-bar" aria-hidden="true"></div>
+  <div class="ghost-legend-bar" aria-hidden="true">
+    {#each ghostTicks as tick (tick.ageMs)}
+      <span
+        class="ghost-legend-mark"
+        style:left={`${tick.position * 100}%`}
+        style:opacity={tick.opacity}
+      ></span>
+    {/each}
+  </div>
   <div class="ghost-legend-ticks">
-    {#each ghostTicks as tick (tick.halves)}
-      <span style:left={`${tick.position}%`}>
+    <span class="ghost-legend-now">now</span>
+    {#each ghostTicks.filter((tick) => tick.opacity >= 0.55) as tick (tick.ageMs)}
+      <span
+        style:left={`${tick.position * 100}%`}
+        style:opacity={tick.opacity}
+      >
         {tick.label}
       </span>
     {/each}
