@@ -75,7 +75,7 @@ const RIGHT_PADDING_PX = 108;
 const TOP_PADDING_PX = 0;
 const BOTTOM_PADDING_PX = 0;
 const TIMELINE_RELATIVE_GUTTER_PX = 42;
-const SUBSCRIPTION_BUFFER_ROWS = 6;
+const SUBSCRIPTION_BUFFER_ROWS = 2;
 const WINDOW_RELOAD_FRACTION = 0.45;
 
 export interface SeriesTimelineViewOptions {
@@ -120,7 +120,7 @@ export class SeriesTimelineView {
   private readonly hydratedTokens = new Set<string>();
 
   private theme: ChartTheme;
-  private events: Event[];
+  private rows: TimedSeriesEvent[];
   private cadenceMs: number;
   private userOffsetMs = 0;
   private following = true;
@@ -146,11 +146,14 @@ export class SeriesTimelineView {
     private readonly series: Series,
     options: SeriesTimelineViewOptions = {},
   ) {
-    this.events = [...(series.events ?? [])];
+    const seedEvents = [...(series.events ?? [])];
     this.cadenceMs = inferSeriesCadenceMs(
-      this.events,
+      seedEvents,
       series.recurrence,
     );
+    this.rows = seedEvents
+      .map((event) => timedSeriesEvent(event, this.cadenceMs))
+      .filter((row): row is TimedSeriesEvent => row !== null);
     this.onConnectionStatus =
       options.onConnectionStatus ?? (() => undefined);
     this.onFollowingChanged =
@@ -353,25 +356,27 @@ export class SeriesTimelineView {
           "No timed binary events were found in this series window",
         );
 
-      this.events = compatible;
       this.cadenceMs = inferSeriesCadenceMs(
         compatible,
         this.series.recurrence,
       );
+      this.rows = compatible
+        .map((event) => timedSeriesEvent(event, this.cadenceMs))
+        .filter((row): row is TimedSeriesEvent => row !== null);
 
       const keepTokens = new Set<string>();
       this.scaleByToken.clear();
       this.tokenNameByToken.clear();
       this.oppositeTokenNameByToken.clear();
-      for (const event of compatible) {
-        for (const [marketIndex, market] of event.markets.entries()) {
+      for (const row of this.rows) {
+        for (const [marketIndex, market] of row.event.markets.entries()) {
           const tokenId = market.outcomes.yes.tokenId;
           if (!tokenId) continue;
           const key = String(tokenId);
           keepTokens.add(key);
           this.scaleByToken.set(
             key,
-            defaultPressureScaleForMarket(event, marketIndex),
+            defaultPressureScaleForMarket(row.event, marketIndex),
           );
           this.tokenNameByToken.set(
             key,
@@ -382,8 +387,7 @@ export class SeriesTimelineView {
               key,
               market.outcomes.no.label,
             );
-          const row = timedSeriesEvent(event, this.cadenceMs);
-          this.pressure.ensure(key, row?.endMs ?? null);
+          this.pressure.ensure(key, row.endMs);
         }
       }
 
@@ -394,14 +398,10 @@ export class SeriesTimelineView {
         if (!keepTokens.has(tokenId)) this.hydratedTokens.delete(tokenId);
 
       this.loadedCenterMs = centerMs;
-      const starts = compatible
-        .map((event) => event.schedule.startTime ?? event.schedule.startDate)
-        .map((value) => (value ? Date.parse(String(value)) : NaN))
-        .filter(Number.isFinite);
       this.loadedMinStartMs =
-        starts.length > 0 ? Math.min(...starts) : null;
+        this.rows.length > 0 ? this.rows[0]!.startMs : null;
       this.loadedMaxStartMs =
-        starts.length > 0 ? Math.max(...starts) : null;
+        this.rows.length > 0 ? this.rows.at(-1)!.startMs : null;
       this.loadingCenterMs = null;
       this.lastEdgeRefreshMs = Date.now();
       this.onWindowChanged(compatible.length);
@@ -414,7 +414,7 @@ export class SeriesTimelineView {
       this.onError(
         error instanceof Error ? error.message : String(error),
       );
-      if (this.events.length === 0) throw error;
+      if (this.rows.length === 0) throw error;
     }
   }
 
@@ -434,6 +434,7 @@ export class SeriesTimelineView {
     }
 
     const nowMs = Date.now();
+    this.pressure.flushBookUpdates(nowMs);
     const centerMs = nowMs + this.userOffsetMs;
     const spanMs = SERIES_VISIBLE_ROWS * this.cadenceMs;
     const minMs = centerMs - spanMs / 2;
@@ -446,14 +447,11 @@ export class SeriesTimelineView {
 
     const subscriptionPaddingMs =
       SUBSCRIPTION_BUFFER_ROWS * this.cadenceMs;
-    const bufferedRows = this.events
-      .map((event) => timedSeriesEvent(event, this.cadenceMs))
-      .filter((row): row is TimedSeriesEvent => row !== null)
-      .filter(
-        (row) =>
-          row.centerMs >= minMs - subscriptionPaddingMs &&
-          row.centerMs <= maxMs + subscriptionPaddingMs,
-      );
+    const bufferedRows = this.rows.filter(
+      (row) =>
+        row.centerMs >= minMs - subscriptionPaddingMs &&
+        row.centerMs <= maxMs + subscriptionPaddingMs,
+    );
     const visibleRows = bufferedRows.filter(
       (row) =>
         row.centerMs >= minMs - this.cadenceMs &&
@@ -748,7 +746,7 @@ export class SeriesTimelineView {
           return;
         const key = String(tokenId);
         this.bookCache.set(key, book);
-        this.pressure.observeBook(key, book);
+        this.pressure.queueBookUpdate(key, book);
         this.requestDraw();
       },
       onMarketResolved: (resolution) => {
@@ -810,10 +808,7 @@ export class SeriesTimelineView {
   }
 
   private updateAnchorEvent(nowMs: number): void {
-    const rows = this.events
-      .map((event) => timedSeriesEvent(event, this.cadenceMs))
-      .filter((row): row is TimedSeriesEvent => row !== null);
-    if (rows.length === 0) {
+    if (this.rows.length === 0) {
       if (this.lastAnchorEventId !== null) {
         this.lastAnchorEventId = null;
         this.onAnchorEventChanged(null);
@@ -822,10 +817,10 @@ export class SeriesTimelineView {
     }
 
     const anchor =
-      rows.find(
+      this.rows.find(
         (row) => row.startMs <= nowMs && nowMs < row.endMs,
       ) ??
-      rows.reduce((best, row) =>
+      this.rows.reduce((best, row) =>
         Math.abs(row.centerMs - nowMs) <
         Math.abs(best.centerMs - nowMs)
           ? row
