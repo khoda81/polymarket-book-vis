@@ -249,33 +249,56 @@ function drawMemoryBand(
 
   const halfInner = inner / 2;
   const halfOuter = outer / 2;
-  const shell = halfOuter - halfInner;
+
+  // Touching translucent shells must land on the same device-pixel boundary.
+  // Fractional fillRect edges get coverage-blended independently, which makes
+  // adjacent ghosts look as if somebody stroked their shared edge darker.
+  const dpr = window.devicePixelRatio || 1;
+  const topOuter = snapToDevicePixel(
+    centerY - halfOuter,
+    dpr,
+  );
+  const topInner = snapToDevicePixel(
+    centerY - halfInner,
+    dpr,
+  );
+  const bottomInner = snapToDevicePixel(
+    centerY + halfInner,
+    dpr,
+  );
+  const bottomOuter = snapToDevicePixel(
+    centerY + halfOuter,
+    dpr,
+  );
 
   ctx.globalAlpha = alpha;
   ctx.fillStyle = signedVolumeColor(band.side, colorScale);
 
   if (halfInner === 0) {
-    ctx.fillRect(
-      x0,
-      centerY - halfOuter,
-      x1 - x0,
-      outer,
-    );
+    if (bottomOuter > topOuter)
+      ctx.fillRect(
+        x0,
+        topOuter,
+        x1 - x0,
+        bottomOuter - topOuter,
+      );
     return;
   }
 
-  ctx.fillRect(
-    x0,
-    centerY - halfOuter,
-    x1 - x0,
-    shell,
-  );
-  ctx.fillRect(
-    x0,
-    centerY + halfInner,
-    x1 - x0,
-    shell,
-  );
+  if (topInner > topOuter)
+    ctx.fillRect(
+      x0,
+      topOuter,
+      x1 - x0,
+      topInner - topOuter,
+    );
+  if (bottomOuter > bottomInner)
+    ctx.fillRect(
+      x0,
+      bottomInner,
+      x1 - x0,
+      bottomOuter - bottomInner,
+    );
 }
 
 
