@@ -10,6 +10,7 @@ interface RecorderStateResponse {
   recordingSinceMsByToken?: Record<string, number>;
   states?: Record<string, { cells?: unknown }>;
   pendingTokenIds?: string[];
+  debug?: unknown;
 }
 
 export interface RecorderHydration {
