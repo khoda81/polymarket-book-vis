@@ -177,6 +177,25 @@ function evolveBands(
     ? Math.abs(signedVolume)
     : Number.POSITIVE_INFINITY;
   const side: PressureSide = signedVolume < 0 ? -1 : 1;
+
+  // Most order-book deltas only affect a small part of probability space.
+  // Reuse cells whose live envelope did not change instead of rebuilding all
+  // of their bands on every websocket message.
+  const first = oldBands[0];
+  if (
+    magnitude === 0 &&
+    (!first || first.state.kind !== "live")
+  )
+    return oldBands;
+  if (
+    magnitude > 0 &&
+    first?.state.kind === "live" &&
+    first.loVolume === 0 &&
+    first.hiVolume === magnitude &&
+    first.side === side
+  )
+    return oldBands;
+
   const survivors: PressureBand[] = [];
 
   for (const band of oldBands) {
@@ -300,6 +319,7 @@ function bandsEqual(
   a: readonly PressureBand[],
   b: readonly PressureBand[],
 ): boolean {
+  if (a === b) return true;
   return (
     a.length === b.length &&
     a.every((band, index) => {
