@@ -404,7 +404,7 @@ export function parsePressureCells(value: unknown): PressureCell[] {
       } satisfies PressureBand;
     });
 
-    assertNonOverlappingBands(bands);
+    assertContiguousBands(bands);
     return { lo, hi, bands: mergeAdjacentBands(bands) };
   });
 
@@ -441,15 +441,27 @@ export function rebasePressureCells(
   }));
 }
 
-function assertNonOverlappingBands(
+function assertContiguousBands(
   bands: readonly PressureBand[],
 ): void {
+  if (bands.length === 0) return;
+
   const ordered = [...bands].sort(
     (a, b) => a.loVolume - b.loVolume,
   );
-  for (let i = 1; i < ordered.length; i++)
-    if (ordered[i - 1]!.hiVolume > ordered[i]!.loVolume)
-      throw new RangeError("pressure bands overlap");
+  if (ordered[0]!.loVolume !== 0)
+    throw new RangeError(
+      "pressure bands must start at zero volume",
+    );
+
+  for (let i = 1; i < ordered.length; i++) {
+    const previous = ordered[i - 1]!;
+    const current = ordered[i]!;
+    if (previous.hiVolume !== current.loVolume)
+      throw new RangeError(
+        "pressure bands must form a contiguous volume prefix",
+      );
+  }
 }
 
 function finiteNumber(value: unknown, label: string): number {

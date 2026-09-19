@@ -167,7 +167,7 @@ test("restore validates pressure memory and rebases ghost ages between clocks", 
   });
 });
 
-test("restore rejects overlapping volume bands", () => {
+test("restore rejects non-contiguous volume bands", () => {
   const memory = new PressureMemory();
   expect(() =>
     memory.restore([
@@ -202,4 +202,19 @@ test("changing half-life can revive retained ghosts without mutating history", (
   expect(memory.hasVisibleGhosts(11_000, 100)).toBe(false);
   expect(memory.hasVisibleGhosts(11_000, 100_000)).toBe(true);
   expect(memory.hasGhosts()).toBe(true);
+});
+
+
+test("generated pressure memory always forms a contiguous volume prefix", () => {
+  const memory = new PressureMemory();
+  observe(memory, 100, 1_000);
+  observe(memory, 60, 2_000);
+  observe(memory, -30, 3_000);
+
+  const bands = onlyCell(memory).bands;
+  expect(bands[0]?.loVolume).toBe(0);
+  for (let i = 1; i < bands.length; i++)
+    expect(bands[i]!.loVolume).toBe(
+      bands[i - 1]!.hiVolume,
+    );
 });

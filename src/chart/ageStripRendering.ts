@@ -186,121 +186,97 @@ export function drawPressureMemoryStrip(
     );
     if (!(x1 > x0)) continue;
 
-    for (const band of cell.bands)
-      if (band.state.kind === "ghost")
-        drawMemoryBand(
-          ctx,
-          geometry.centerCss,
-          x0,
-          x1,
-          band,
-          colorScale,
-          reserveShares,
-          geometry.heightCss,
-          ghostAlpha(
-            band.state.sinceMs,
-            nowMs,
-            ghostHalfLifeMs,
-          ),
-        );
-
-    for (const band of cell.bands)
-      if (band.state.kind === "live")
-        drawMemoryBand(
-          ctx,
-          geometry.centerCss,
-          x0,
-          x1,
-          band,
-          colorScale,
-          reserveShares,
-          geometry.heightCss,
-          1,
-        );
+    drawMemoryBands(
+      ctx,
+      geometry.centerCss,
+      x0,
+      x1,
+      cell.bands,
+      colorScale,
+      reserveShares,
+      geometry.heightCss,
+      ghostHalfLifeMs,
+      nowMs,
+    );
   }
 
   ctx.restore();
 }
 
-function drawMemoryBand(
+function drawMemoryBands(
   ctx: CanvasRenderingContext2D,
   centerY: number,
   x0: number,
   x1: number,
-  band: PressureBand,
+  bands: readonly PressureBand[],
   colorScale: SignedVolumeColorScale,
   reserveShares: number,
   rowHeightCss: number,
-  alpha: number,
+  ghostHalfLifeMs: number,
+  nowMs: number,
 ): void {
-  if (!(alpha > 1 / 255)) return;
+  // Paint outer history first, then progressively newer inner envelopes.
+  //
+  // This is deliberately *not* drawn as adjacent translucent shells. Canvas
+  // anti-aliases each fill independently, so two shell edges sharing the same
+  // fractional pixel can double-blend and look like a dark stroke. Nested
+  // rectangles have only one anti-aliased edge at each boundary.
+  //
+  // For equal colors the alpha correction below reproduces the exact requested
+  // opacity for every band. If the side changed, source-over naturally mixes
+  // the old/new colors at the boundary and gives us the desired "rainbow"
+  // history without dark seams.
+  let coveredAlpha = 0;
 
-  const inner = pressureInkThicknessCss(
-    band.loVolume,
-    reserveShares,
-    rowHeightCss,
-  );
-  const outer = pressureInkThicknessCss(
-    band.hiVolume,
-    reserveShares,
-    rowHeightCss,
-  );
-  if (!(outer > inner)) return;
+  for (let index = bands.length - 1; index >= 0; index--) {
+    const band = bands[index]!;
+    const targetAlpha =
+      band.state.kind === "live"
+        ? 1
+        : ghostAlpha(
+            band.state.sinceMs,
+            nowMs,
+            ghostHalfLifeMs,
+          );
+    if (!(targetAlpha > 1 / 255)) continue;
 
-  const halfInner = inner / 2;
-  const halfOuter = outer / 2;
+    // PressureMemory guarantees newer/inner bands are at least as opaque as
+    // older/outer bands. Solve source-over for the alpha needed to move from
+    // the already-painted outer alpha to this band's target alpha.
+    const sourceAlpha =
+      coveredAlpha >= 1
+        ? 0
+        : Math.max(
+            0,
+            Math.min(
+              1,
+              (targetAlpha - coveredAlpha) /
+                (1 - coveredAlpha),
+            ),
+          );
+    coveredAlpha = Math.max(coveredAlpha, targetAlpha);
+    if (!(sourceAlpha > 1 / 255)) continue;
 
-  // Touching translucent shells must land on the same device-pixel boundary.
-  // Fractional fillRect edges get coverage-blended independently, which makes
-  // adjacent ghosts look as if somebody stroked their shared edge darker.
-  const dpr = window.devicePixelRatio || 1;
-  const topOuter = snapToDevicePixel(
-    centerY - halfOuter,
-    dpr,
-  );
-  const topInner = snapToDevicePixel(
-    centerY - halfInner,
-    dpr,
-  );
-  const bottomInner = snapToDevicePixel(
-    centerY + halfInner,
-    dpr,
-  );
-  const bottomOuter = snapToDevicePixel(
-    centerY + halfOuter,
-    dpr,
-  );
+    const thickness = pressureInkThicknessCss(
+      band.hiVolume,
+      reserveShares,
+      rowHeightCss,
+    );
+    if (!(thickness > 0)) continue;
 
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = signedVolumeColor(band.side, colorScale);
-
-  if (halfInner === 0) {
-    if (bottomOuter > topOuter)
-      ctx.fillRect(
-        x0,
-        topOuter,
-        x1 - x0,
-        bottomOuter - topOuter,
-      );
-    return;
+    ctx.globalAlpha = sourceAlpha;
+    ctx.fillStyle = signedVolumeColor(
+      band.side,
+      colorScale,
+    );
+    ctx.fillRect(
+      x0,
+      centerY - thickness / 2,
+      x1 - x0,
+      thickness,
+    );
   }
-
-  if (topInner > topOuter)
-    ctx.fillRect(
-      x0,
-      topOuter,
-      x1 - x0,
-      topInner - topOuter,
-    );
-  if (bottomOuter > bottomInner)
-    ctx.fillRect(
-      x0,
-      bottomInner,
-      x1 - x0,
-      bottomOuter - bottomInner,
-    );
 }
-
 
 export function drawResolvedMarketStrip(
   frame: Frame,
