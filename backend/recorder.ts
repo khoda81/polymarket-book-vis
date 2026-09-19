@@ -19,7 +19,9 @@ const DATABASE_PATH = resolve(
   process.env.RECORDER_DB_PATH ??
     sqlitePathFor(LEGACY_STATE_PATH),
 );
-const PERSIST_DEBOUNCE_MS = 250;
+const PERSIST_DEBOUNCE_MS = Number(
+  process.env.RECORDER_PERSIST_MS ?? 1_000,
+);
 const RECORDER_DEBUG = process.env.RECORDER_DEBUG === "1";
 
 interface TransportState {
@@ -385,6 +387,7 @@ class AgeRecorder {
   private flushDirty(): void {
     if (this.dirtyTokens.size === 0) return;
 
+    const startedAt = performance.now();
     const tokenIds = [
       ...this.dirtyTokens,
     ];
@@ -417,6 +420,7 @@ class AgeRecorder {
     debugLog(
       "sqlite-flush",
       `tokens=${tokenIds.length}`,
+      `ms=${Math.round(performance.now() - startedAt)}`,
     );
   }
 
