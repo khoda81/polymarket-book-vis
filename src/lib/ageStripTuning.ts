@@ -4,7 +4,8 @@ export const AGE_ROW_BAND_PX = 28;
 export const DEFAULT_GHOST_HALF_LIFE_MS = 5_000;
 
 const MIN_GHOST_REFRESH_MS = 33;
-const MAX_GHOST_REFRESH_MS = 1_000;
+// Browsers clamp setTimeout to a signed 32-bit millisecond delay.
+const MAX_GHOST_REFRESH_MS = 2_147_483_647;
 const GHOST_ALPHA_STEP = 1 / 255;
 
 const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
@@ -56,7 +57,7 @@ export function scaleAgeStripVolumePerCssPixel(factor: number): void {
 
 /**
  * Time until exponential decay changes by about one 8-bit alpha step.
- * Long half-lives therefore redraw slowly instead of pointlessly at 30 FPS.
+ * Long half-lives therefore redraw only when the displayed alpha can change.
  */
 export function ghostRefreshDelayMs(halfLifeMs: number): number {
   if (!(halfLifeMs > 0) || !Number.isFinite(halfLifeMs))
