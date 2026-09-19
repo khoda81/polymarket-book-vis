@@ -369,9 +369,15 @@
 .cpv-hidden-markets {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 6px;
     margin-top: 8px;
+    padding-bottom: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
     font-size: 11px;
     color: var(--color-text-secondary, #666);
 }
@@ -383,6 +389,7 @@
 .cpv-hidden-markets label {
     display: inline-flex;
     align-items: center;
+    flex: 0 0 auto;
     gap: 5px;
     max-width: 180px;
     padding: 3px 7px;
