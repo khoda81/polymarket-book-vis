@@ -266,6 +266,7 @@ export class AgeStripView {
           frame,
           rowCount - 1 - index,
           resolutionSide,
+          label.dataset.ageResolutionOutcome ?? "",
           this.host.getPressureColorScale(tokenId),
         );
 

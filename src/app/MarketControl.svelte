@@ -22,9 +22,13 @@
           ? "opposite"
           : "";
   $: resolutionOutcome =
-    lifecycle.kind === "resolved"
-      ? lifecycle.winningOutcome
-      : "";
+    lifecycle.kind !== "resolved"
+      ? ""
+      : resolutionSide === "primary"
+        ? control.primaryOutcome || lifecycle.winningOutcome
+        : resolutionSide === "opposite"
+          ? control.oppositeOutcome || lifecycle.winningOutcome
+          : lifecycle.winningOutcome;
   $: resolutionColor =
     resolutionSide === "primary"
       ? control.primaryColor
@@ -40,6 +44,7 @@
   data-age-label={control.ageLabel}
   data-age-status={ageStatus}
   data-age-resolution-side={resolutionSide}
+  data-age-resolution-outcome={resolutionOutcome}
   data-age-suppress-market-identity={control.suppressAgeIdentity}
   title={control.title}
   style={resolutionColor

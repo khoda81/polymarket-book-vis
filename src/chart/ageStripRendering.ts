@@ -280,6 +280,7 @@ export function drawResolvedMarketStrip(
   frame: Frame,
   y: number,
   side: "primary" | "opposite",
+  outcome: string,
   colorScale: SignedVolumeColorScale,
 ): void {
   const { ctx, viewport: vp } = frame;
@@ -340,6 +341,19 @@ export function drawResolvedMarketStrip(
     geometry.topCss + geometry.heightCss - 0.5 / dpr,
   );
   ctx.stroke();
+
+  if (outcome) {
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = color;
+    ctx.font = "600 10px sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = side === "primary" ? "right" : "left";
+    ctx.fillText(
+      outcome,
+      side === "primary" ? vp.l + vp.width - 7 : vp.l + 7,
+      geometry.centerCss,
+    );
+  }
 
   ctx.restore();
 }
