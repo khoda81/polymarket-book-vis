@@ -606,10 +606,7 @@ export class SeriesTimelineView {
     const nextPx =
       (Math.floor(currentPx / stepCssPx) + 1) * stepCssPx;
     const nextMs = nextPx / pixelsPerMs;
-    const delayMs = Math.max(
-      16,
-      Math.min(60_000, nextMs - nowMs),
-    );
+    const delayMs = Math.max(16, nextMs - nowMs);
 
     this.clockTimer = window.setTimeout(() => {
       this.clockTimer = undefined;
