@@ -22,7 +22,21 @@ const DATABASE_PATH = resolve(
 const PERSIST_DEBOUNCE_MS = Number(
   process.env.RECORDER_PERSIST_MS ?? 1_000,
 );
+const PERSIST_BATCH_TOKENS = Number(
+  process.env.RECORDER_PERSIST_BATCH_TOKENS ?? 8,
+);
+const REST_SEED_BATCH_TOKENS = 20;
+const REST_SEED_RETRY_MS = 5_000;
 const RECORDER_DEBUG = process.env.RECORDER_DEBUG === "1";
+
+interface BufferedPriceChangeEvent {
+  readonly timestampMs: number;
+  readonly changes: readonly {
+    side: OrderSide;
+    price: string;
+    size: string;
+  }[];
+}
 
 interface TransportState {
   cells: readonly PressureCell[];
@@ -50,6 +64,8 @@ interface StateResponse {
         hasMemory: boolean;
         memoryCells: number;
         recordingSinceMs: number | null;
+        seedInFlight: boolean;
+        bufferedPriceChanges: number;
         subscription:
           | {
               state:
@@ -73,8 +89,15 @@ class AgeRecorder {
   private readonly watched = new Set<string>();
   private readonly completed = new Set<string>();
   private readonly recordingSince = new Map<string, number>();
+  private readonly snapshotClient = createPublicClient();
   private readonly books = new Map<string, TokenBook<string>>();
   private readonly memories = new Map<string, PressureMemory>();
+  private readonly pendingPriceChanges = new Map<
+    string,
+    BufferedPriceChangeEvent[]
+  >();
+  private readonly seedInFlight = new Set<string>();
+  private readonly seedRetryAfterMs = new Map<string, number>();
   private readonly dirtyTokens = new Set<string>();
   private readonly subscriptions = new RecorderSubscriptionPool(
     () => createPublicClient(),
@@ -84,6 +107,7 @@ class AgeRecorder {
   private persistTimer:
     | ReturnType<typeof setTimeout>
     | undefined;
+  private persistPromise: Promise<void> | null = null;
 
   async start(): Promise<void> {
     this.store.migrateLegacyJson(LEGACY_STATE_PATH);
@@ -100,7 +124,11 @@ class AgeRecorder {
       this.persistTimer = undefined;
     }
 
-    this.flushDirty();
+    if (this.persistPromise)
+      await this.persistPromise;
+    while (this.dirtyTokens.size > 0)
+      await this.flushDirtyPass();
+
     this.store.checkpoint();
     this.store.close();
 
@@ -135,6 +163,32 @@ class AgeRecorder {
       `batches=${this.subscriptions.activeBatchCount}`,
     );
     return true;
+  }
+
+  seedPending(tokenIds: Iterable<string>): void {
+    const nowMs = Date.now();
+    const candidates = [...new Set(tokenIds)].filter(
+      (tokenId) =>
+        this.watched.has(tokenId) &&
+        !this.completed.has(tokenId) &&
+        !this.memories.has(tokenId) &&
+        !this.seedInFlight.has(tokenId) &&
+        (this.seedRetryAfterMs.get(tokenId) ?? 0) <= nowMs,
+    );
+
+    for (
+      let offset = 0;
+      offset < candidates.length;
+      offset += REST_SEED_BATCH_TOKENS
+    ) {
+      const batch = candidates.slice(
+        offset,
+        offset + REST_SEED_BATCH_TOKENS,
+      );
+      for (const tokenId of batch)
+        this.seedInFlight.add(tokenId);
+      void this.seedFromRest(batch);
+    }
   }
 
   state(
@@ -224,6 +278,10 @@ class AgeRecorder {
                   this.recordingSince.get(
                     tokenId,
                   ) ?? null,
+                seedInFlight:
+                  this.seedInFlight.has(tokenId),
+                bufferedPriceChanges:
+                  this.pendingPriceChanges.get(tokenId)?.length ?? 0,
                 subscription:
                   subscription[tokenId],
               },
@@ -272,29 +330,55 @@ class AgeRecorder {
         stream.payload,
       );
       this.books.set(tokenId, book);
-      this.updateMemory(tokenId, book);
+      this.pendingPriceChanges.delete(tokenId);
+      this.updateMemory(
+        tokenId,
+        book,
+        eventTimestampMs(stream.payload.timestamp),
+      );
       return;
     }
 
     if (stream.type === "price_change") {
-      const touched = new Set<string>();
+      const timestampMs = eventTimestampMs(
+        stream.payload.timestamp,
+      );
+      const changesByToken = new Map<
+        string,
+        Array<{
+          side: OrderSide;
+          price: string;
+          size: string;
+        }>
+      >();
+
       for (const change of stream.payload.priceChanges) {
-        const tokenId = String(
-          change.tokenId,
-        );
+        const tokenId = String(change.tokenId);
         if (!this.watched.has(tokenId)) continue;
 
-        const book = this.books.get(tokenId);
-        if (!book) continue;
-
-        applyPriceChange(book, change);
-        touched.add(tokenId);
+        const changes =
+          changesByToken.get(tokenId) ?? [];
+        changes.push({
+          side: change.side,
+          price: change.price,
+          size: change.size,
+        });
+        changesByToken.set(tokenId, changes);
       }
 
-      for (const tokenId of touched) {
+      for (const [tokenId, changes] of changesByToken) {
         const book = this.books.get(tokenId);
-        if (book)
-          this.updateMemory(tokenId, book);
+        if (!book) {
+          const pending =
+            this.pendingPriceChanges.get(tokenId) ?? [];
+          pending.push({ timestampMs, changes });
+          this.pendingPriceChanges.set(tokenId, pending);
+          continue;
+        }
+
+        for (const change of changes)
+          applyPriceChange(book, change);
+        this.updateMemory(tokenId, book, timestampMs);
       }
       return;
     }
@@ -320,6 +404,8 @@ class AgeRecorder {
 
         this.completed.add(tokenId);
         this.books.delete(tokenId);
+        this.pendingPriceChanges.delete(tokenId);
+        this.seedRetryAfterMs.delete(tokenId);
         this.markDirty([tokenId]);
       }
 
@@ -330,24 +416,95 @@ class AgeRecorder {
     }
   }
 
+  private async seedFromRest(
+    tokenIds: readonly string[],
+  ): Promise<void> {
+    const startedAt = performance.now();
+
+    try {
+      const snapshots =
+        await this.snapshotClient.fetchOrderBooks(
+          tokenIds.map((assetId) => ({ assetId })),
+        );
+
+      for (const snapshot of snapshots) {
+        const tokenId = String(snapshot.assetId);
+        if (
+          !this.watched.has(tokenId) ||
+          this.completed.has(tokenId) ||
+          this.memories.has(tokenId)
+        )
+          continue;
+
+        const snapshotMs = eventTimestampMs(
+          snapshot.timestamp,
+        );
+        const book = bookFromSnapshot(snapshot);
+        this.books.set(tokenId, book);
+        this.updateMemory(tokenId, book, snapshotMs);
+
+        const buffered =
+          this.pendingPriceChanges.get(tokenId) ?? [];
+        for (const event of buffered) {
+          if (event.timestampMs <= snapshotMs) continue;
+          for (const change of event.changes)
+            applyPriceChange(book, change);
+          this.updateMemory(
+            tokenId,
+            book,
+            event.timestampMs,
+          );
+        }
+        this.pendingPriceChanges.delete(tokenId);
+
+        debugLog(
+          "rest-seed",
+          shortToken(tokenId),
+          `buffered=${buffered.length}`,
+          `cells=${
+            this.memories.get(tokenId)?.snapshot().length ?? 0
+          }`,
+        );
+      }
+    } catch (error) {
+      const retryAt = Date.now() + REST_SEED_RETRY_MS;
+      for (const tokenId of tokenIds)
+        if (!this.memories.has(tokenId))
+          this.seedRetryAfterMs.set(tokenId, retryAt);
+      debugLog(
+        "rest-seed-error",
+        tokenIds.map(shortToken),
+        error,
+      );
+    } finally {
+      for (const tokenId of tokenIds)
+        this.seedInFlight.delete(tokenId);
+      debugLog(
+        "rest-seed-batch",
+        `requested=${tokenIds.length}`,
+        `ms=${Math.round(performance.now() - startedAt)}`,
+      );
+    }
+  }
+
   private updateMemory(
     tokenId: string,
     book: TokenBook<string>,
+    observedAtMs = Date.now(),
   ): void {
-    const nowMs = Date.now();
     const memory =
       this.memories.get(tokenId) ??
       new PressureMemory();
     memory.observe(
       signedVolumeSegments(book),
-      nowMs,
+      observedAtMs,
     );
     this.memories.set(tokenId, memory);
 
     if (!this.recordingSince.has(tokenId)) {
       this.recordingSince.set(
         tokenId,
-        nowMs,
+        observedAtMs,
       );
       debugLog(
         "first-snapshot",
@@ -364,55 +521,82 @@ class AgeRecorder {
   ): void {
     for (const tokenId of tokenIds)
       this.dirtyTokens.add(tokenId);
+    this.schedulePersist();
+  }
 
+  private schedulePersist(
+    delayMs = PERSIST_DEBOUNCE_MS,
+  ): void {
     if (
       this.dirtyTokens.size === 0 ||
-      this.persistTimer !== undefined
+      this.persistTimer !== undefined ||
+      this.persistPromise !== null
     )
       return;
 
     this.persistTimer = setTimeout(() => {
       this.persistTimer = undefined;
-      try {
-        this.flushDirty();
-      } catch (error) {
-        console.error(
-          "Could not persist recorder state",
-          error,
-        );
-      }
-    }, PERSIST_DEBOUNCE_MS);
+      this.persistPromise = this.flushDirtyPass()
+        .catch((error) => {
+          console.error(
+            "Could not persist recorder state",
+            error,
+          );
+        })
+        .finally(() => {
+          this.persistPromise = null;
+          if (this.dirtyTokens.size > 0)
+            this.schedulePersist();
+        });
+    }, delayMs);
   }
 
-  private flushDirty(): void {
+  private async flushDirtyPass(): Promise<void> {
     if (this.dirtyTokens.size === 0) return;
 
     const startedAt = performance.now();
-    const tokenIds = [
-      ...this.dirtyTokens,
-    ];
-    this.dirtyTokens.clear();
-    const savedAtMs = Date.now();
+    const tokenIds = [...this.dirtyTokens];
+    for (const tokenId of tokenIds)
+      this.dirtyTokens.delete(tokenId);
 
+    let written = 0;
     try {
-      this.store.write(
-        tokenIds.map((tokenId) => ({
-          tokenId,
-          status: this.completed.has(tokenId)
-            ? ("completed" as const)
-            : ("watched" as const),
-          recordingSinceMs:
-            this.recordingSince.get(tokenId) ??
-            null,
-          cells:
-            this.memories
-              .get(tokenId)
-              ?.snapshot() ?? null,
-          savedAtMs,
-        })),
-      );
+      for (
+        let offset = 0;
+        offset < tokenIds.length;
+        offset += PERSIST_BATCH_TOKENS
+      ) {
+        const batch = tokenIds.slice(
+          offset,
+          offset + PERSIST_BATCH_TOKENS,
+        );
+        const savedAtMs = Date.now();
+
+        this.store.write(
+          batch.map((tokenId) => ({
+            tokenId,
+            status: this.completed.has(tokenId)
+              ? ("completed" as const)
+              : ("watched" as const),
+            recordingSinceMs:
+              this.recordingSince.get(tokenId) ?? null,
+            cells:
+              this.memories
+                .get(tokenId)
+                ?.snapshot() ?? null,
+            savedAtMs,
+          })),
+        );
+        written += batch.length;
+
+        // bun:sqlite is synchronous. Keep transactions deliberately small and
+        // yield between them so recorder HTTP/WebSocket traffic is never stuck
+        // behind a multi-second checkpoint.
+        if (offset + batch.length < tokenIds.length)
+          await Bun.sleep(0);
+      }
     } catch (error) {
-      for (const tokenId of tokenIds)
+      for (const tokenId of tokenIds.slice(written))
         this.dirtyTokens.add(tokenId);
       throw error;
     }
@@ -421,6 +605,7 @@ class AgeRecorder {
       "sqlite-flush",
       `tokens=${tokenIds.length}`,
       `ms=${Math.round(performance.now() - startedAt)}`,
+      `redirtied=${this.dirtyTokens.size}`,
     );
   }
 
@@ -433,7 +618,10 @@ class AgeRecorder {
       else
         this.watched.add(record.tokenId);
 
-      if (record.recordingSinceMs !== null)
+      if (
+        record.recordingSinceMs !== null &&
+        record.cells !== null
+      )
         this.recordingSince.set(
           record.tokenId,
           record.recordingSinceMs,
@@ -460,6 +648,20 @@ class AgeRecorder {
       )}`,
     );
   }
+}
+
+function eventTimestampMs(
+  value: unknown,
+  fallbackMs = Date.now(),
+): number {
+  const timestamp = Number(value);
+  if (
+    !Number.isFinite(timestamp) ||
+    timestamp < 0 ||
+    timestamp > fallbackMs + 60_000
+  )
+    return fallbackMs;
+  return timestamp;
 }
 
 function sqlitePathFor(
@@ -561,6 +763,7 @@ const server = Bun.serve({
         url.searchParams,
       );
       recorder.watch(tokenIds);
+      recorder.seedPending(tokenIds);
       const includeStates =
         url.searchParams.get(
           "metadataOnly",
