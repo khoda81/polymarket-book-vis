@@ -46,6 +46,29 @@ export class RecorderSubscriptionPool {
     return this.batches.size;
   }
 
+  debugStatus(
+    tokenIds: Iterable<string>,
+  ): Record<
+    string,
+    { state: "pending" | "subscribed" | "untracked"; batchId?: number }
+  > {
+    const batchByToken = new Map<string, number>();
+    for (const [batchId, batch] of this.batches)
+      for (const tokenId of batch.tokenIds)
+        batchByToken.set(tokenId, batchId);
+
+    return Object.fromEntries(
+      [...tokenIds].map((tokenId) => {
+        const batchId = batchByToken.get(tokenId);
+        if (batchId !== undefined)
+          return [tokenId, { state: "subscribed" as const, batchId }];
+        if (this.pending.has(tokenId))
+          return [tokenId, { state: "pending" as const }];
+        return [tokenId, { state: "untracked" as const }];
+      }),
+    );
+  }
+
   add(tokenIds: Iterable<string>): void {
     if (this.stopped) return;
 
