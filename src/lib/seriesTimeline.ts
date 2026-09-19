@@ -177,7 +177,7 @@ export async function loadSeriesEventsAround(
     order: "startDate",
     ascending: true,
     pageSize: 100,
-  } as const;
+  };
 
   const [openEvents, closedEvents] = await Promise.all([
     collectEvents(client.listEvents({ ...common, closed: false })),
