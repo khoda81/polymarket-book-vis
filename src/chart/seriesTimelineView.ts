@@ -1,4 +1,5 @@
 import { AgeStripClock } from "./ageStripClock";
+import { AgeStripTooltip } from "./ageStripTooltip";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
 import {
   AGE_TIME_GUTTER_PX,
@@ -7,6 +8,7 @@ import {
 } from "./ageStripLayout";
 import { AgeStripPressureState } from "./ageStripPressureState";
 import {
+  drawAgeRowRails,
   drawPressureMemoryStrip,
   drawResolvedMarketStrip,
 } from "./ageStripRendering";
@@ -31,7 +33,7 @@ import {
   type Frame,
 } from "@/lib/renderer";
 import {
-  signedVolumeColor,
+  DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
 import {
@@ -70,8 +72,8 @@ const DARK_THEME: ChartTheme = {
 
 const LEFT_PADDING_PX = AGE_TIME_GUTTER_PX;
 const RIGHT_PADDING_PX = 108;
-const TOP_PADDING_PX = 8;
-const BOTTOM_PADDING_PX = 10;
+const TOP_PADDING_PX = 0;
+const BOTTOM_PADDING_PX = 0;
 const TIMELINE_RELATIVE_GUTTER_PX = 42;
 const SUBSCRIPTION_BUFFER_ROWS = 6;
 const WINDOW_RELOAD_FRACTION = 0.45;
@@ -90,6 +92,7 @@ export class SeriesTimelineView {
   private readonly themeQuery: MediaQueryList;
   private readonly pressure = new AgeStripPressureState();
   private readonly ageClock: AgeStripClock;
+  private readonly tooltip: AgeStripTooltip;
   private readonly unsubscribeTuning: () => void;
   private readonly onConnectionStatus: (status: ConnectionStatus) => void;
   private readonly onFollowingChanged: (following: boolean) => void;
@@ -112,6 +115,8 @@ export class SeriesTimelineView {
     string,
     SignedVolumeColorScale
   >();
+  private readonly tokenNameByToken = new Map<string, string>();
+  private readonly oppositeTokenNameByToken = new Map<string, string>();
   private readonly hydratedTokens = new Set<string>();
 
   private theme: ChartTheme;
@@ -179,6 +184,20 @@ export class SeriesTimelineView {
       getTheme: () => this.theme,
       getTiming: (tokenId) => this.pressure.timing(tokenId),
     });
+    this.tooltip = new AgeStripTooltip({
+      canvas,
+      getViewMode: () => "age",
+      getBook: (tokenId) =>
+        this.bookCache.get(tokenId) ??
+        this.feed?.getBook(tokenId),
+      getTokenName: (tokenId) =>
+        this.tokenNameByToken.get(tokenId),
+      getOppositeTokenName: (tokenId) =>
+        this.oppositeTokenNameByToken.get(tokenId),
+      getPressureColorScale: (tokenId) =>
+        this.scaleByToken.get(tokenId) ??
+        DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+    });
 
     this.unsubscribeTuning = subscribeAgeStripTuning(() => {
       this.requestDraw();
@@ -236,6 +255,7 @@ export class SeriesTimelineView {
     this.feed = null;
     this.unsubscribeTuning();
     this.ageClock.destroy();
+    this.tooltip.destroy();
     if (this.clockTimer !== undefined)
       window.clearTimeout(this.clockTimer);
     if (this.ghostRefreshTimer !== undefined)
@@ -341,6 +361,8 @@ export class SeriesTimelineView {
 
       const keepTokens = new Set<string>();
       this.scaleByToken.clear();
+      this.tokenNameByToken.clear();
+      this.oppositeTokenNameByToken.clear();
       for (const event of compatible) {
         for (const [marketIndex, market] of event.markets.entries()) {
           const tokenId = market.outcomes.yes.tokenId;
@@ -351,6 +373,15 @@ export class SeriesTimelineView {
             key,
             defaultPressureScaleForMarket(event, marketIndex),
           );
+          this.tokenNameByToken.set(
+            key,
+            market.outcomes.yes.label,
+          );
+          if (market.outcomes.no.label)
+            this.oppositeTokenNameByToken.set(
+              key,
+              market.outcomes.no.label,
+            );
           const row = timedSeriesEvent(event, this.cadenceMs);
           this.pressure.ensure(key, row?.endMs ?? null);
         }
@@ -486,7 +517,7 @@ export class SeriesTimelineView {
     }
 
     this.drawTimeline(frame, visibleRows, nowMs);
-    this.updateAgeClock(frame, visibleRows);
+    this.updateAgeOverlays(frame, visibleRows);
     this.updateAnchorEvent(nowMs);
     this.refreshFeed(bufferedTokens);
     this.refreshWindowIfNeeded(centerMs, minMs, maxMs, nowMs);
@@ -510,8 +541,8 @@ export class SeriesTimelineView {
     ctx.lineWidth = 1;
     ctx.strokeStyle = theme.axis;
     ctx.beginPath();
-    ctx.moveTo(timelineX, vp.t);
-    ctx.lineTo(timelineX, vp.t + vp.height);
+    ctx.moveTo(timelineX, 0);
+    ctx.lineTo(timelineX, this.plotter.height);
     ctx.stroke();
 
     ctx.font = "10px sans-serif";
@@ -542,20 +573,7 @@ export class SeriesTimelineView {
       ctx.stroke();
 
       const scale = this.pressureScale(row.event, market);
-      ctx.strokeStyle = signedVolumeColor(-1, scale);
-      ctx.beginPath();
-      ctx.moveTo(vp.l, geometry.topCss);
-      ctx.lineTo(vp.l, geometry.topCss + geometry.heightCss);
-      ctx.stroke();
-
-      ctx.strokeStyle = signedVolumeColor(1, scale);
-      ctx.beginPath();
-      ctx.moveTo(vp.l + vp.width, geometry.topCss);
-      ctx.lineTo(
-        vp.l + vp.width,
-        geometry.topCss + geometry.heightCss,
-      );
-      ctx.stroke();
+      drawAgeRowRails(frame, geometry, scale);
 
       const startY = frame.toScreenY(0, row.startMs);
       if (startY >= vp.t - 1 && startY <= vp.t + vp.height + 1) {
@@ -618,11 +636,12 @@ export class SeriesTimelineView {
     }
   }
 
-  private updateAgeClock(
+  private updateAgeOverlays(
     frame: Frame,
     rows: readonly TimedSeriesEvent[],
   ): void {
     const vp = frame.viewport;
+    const dpr = window.devicePixelRatio || 1;
     const geometry: AgeStripGeometry = {
       viewport: {
         l: vp.l,
@@ -634,9 +653,17 @@ export class SeriesTimelineView {
         const market = primaryMarket(row.event);
         const tokenId = market?.outcomes.yes.tokenId;
         if (!tokenId) return [];
+
+        const raster = seriesRowGeometry(
+          frame,
+          row.centerMs,
+          dpr,
+        );
         return [{
           tokenId: String(tokenId),
-          centerY: frame.toScreenY(0, row.centerMs),
+          centerY: raster.centerCss,
+          topY: raster.topCss,
+          bottomY: raster.topCss + raster.heightCss,
         }];
       }),
       canvasWidth:
@@ -645,6 +672,7 @@ export class SeriesTimelineView {
         vp.t + vp.height + this.plotter.padding.b,
     };
     this.ageClock.setGeometry(geometry);
+    this.tooltip.setGeometry(geometry);
   }
 
   private pressureScale(
