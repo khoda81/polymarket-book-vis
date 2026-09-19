@@ -33,6 +33,8 @@ export interface ChartMarketControl {
   readonly title: string;
   readonly iconUrl: string | null;
   readonly dotColor: string;
+  readonly primaryColor: string;
+  readonly oppositeColor: string;
   readonly acceptingOrders: boolean;
   readonly order: number;
   readonly resolutionMs: number | null;
@@ -60,9 +62,13 @@ export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
 
     const marketId = String(market.id);
     const scale = pressureScales.get(String(tokenId));
-    const dotColor = scale
+    const primaryColor = scale
       ? signedVolumeColor(1, scale)
       : marketColor(event.id, index);
+    const oppositeColor = scale
+      ? signedVolumeColor(-1, scale)
+      : primaryColor;
+    const dotColor = primaryColor;
     const title =
       bundle.marketTitles.get(marketId) ??
       market.question ??
@@ -88,6 +94,8 @@ export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
       title,
       iconUrl: bundle.marketIcons.get(marketId) ?? null,
       dotColor,
+      primaryColor,
+      oppositeColor,
       acceptingOrders: market.state.acceptingOrders === true,
       order: orderByToken.get(String(tokenId)) ?? index,
       resolutionMs: Number.isFinite(timestamp) ? timestamp : null,

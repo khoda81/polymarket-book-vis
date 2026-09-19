@@ -25,6 +25,12 @@
     lifecycle.kind === "resolved"
       ? lifecycle.winningOutcome
       : "";
+  $: resolutionColor =
+    resolutionSide === "primary"
+      ? control.primaryColor
+      : resolutionSide === "opposite"
+        ? control.oppositeColor
+        : "";
 </script>
 
 <label
@@ -34,9 +40,11 @@
   data-age-label={control.ageLabel}
   data-age-status={ageStatus}
   data-age-resolution-side={resolutionSide}
-  data-age-resolution-outcome={resolutionOutcome}
   data-age-suppress-market-identity={control.suppressAgeIdentity}
   title={control.title}
+  style={resolutionColor
+    ? `--cpv-resolution-color: ${resolutionColor}`
+    : undefined}
 >
   <input
     type="checkbox"
@@ -61,7 +69,11 @@
     />
   {/if}
   <span class="cpv-market-label-text">{control.title}</span>
-  {#if lifecycle.kind === "awaiting-resolution"}
+  {#if lifecycle.kind === "resolved"}
+    <span class="cpv-market-resolution-hidden">
+      · {resolutionOutcome}
+    </span>
+  {:else if lifecycle.kind === "awaiting-resolution"}
     <span class="cpv-market-awaiting">pending</span>
   {/if}
 </label>

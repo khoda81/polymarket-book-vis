@@ -251,6 +251,10 @@
     min-width: 0;
 }
 
+.cpv-market-resolution-hidden {
+    display: none;
+}
+
 .cpv-market-awaiting {
     flex: 0 0 auto;
     font-size: 10px;
@@ -393,6 +397,22 @@
 
 .cpv-hidden-markets label:hover {
     background: var(--color-background-secondary, #eee);
+}
+
+.cpv-hidden-markets label[data-age-resolution-side="primary"],
+.cpv-hidden-markets label[data-age-resolution-side="opposite"] {
+    border-color: var(
+        --cpv-resolution-color,
+        var(--color-border-tertiary, #ddd)
+    );
+}
+
+.cpv-hidden-markets .cpv-market-resolution-hidden {
+    display: inline;
+    flex: 0 0 auto;
+    color: var(--cpv-resolution-color, currentColor);
+    font-weight: 600;
+    white-space: nowrap;
 }
 
 .cpv-hidden-markets .cpv-market-label-text {
