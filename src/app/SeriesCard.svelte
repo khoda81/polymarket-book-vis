@@ -4,6 +4,7 @@
   import type { ConnectionStatus } from "../lib/chartState";
   import {
     createPublicClient,
+    type Event,
     type Series,
   } from "@polymarket/client";
 
@@ -18,6 +19,7 @@
   export let onfailure: (message: string) => void;
 
   let connection: ConnectionStatus = "connecting";
+  let anchorEvent: Event | null = null;
   let ready = false;
 
   function timelineReady(): void {
@@ -84,7 +86,7 @@
   </div>
 
   <div class="cpv-wrap">
-    <SeriesHeader {series} {connection} />
+    <SeriesHeader {series} event={anchorEvent} {connection} />
 
     {#if series.description?.trim()}
       <p class="cpv-event-description series-description">
@@ -98,6 +100,7 @@
       onready={timelineReady}
       onfailure={onfailure}
       onconnection={(status) => (connection = status)}
+      onanchorevent={(event) => (anchorEvent = event)}
     />
   </div>
 </article>
