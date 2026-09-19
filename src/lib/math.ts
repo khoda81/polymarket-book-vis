@@ -45,65 +45,33 @@ interface RelativeTimeUnit {
   readonly seconds: number;
   readonly minSeconds: number;
   readonly maxSeconds: number;
-  /** Smallest displayed increment in this unit. */
-  readonly quantumSeconds: number;
 }
 
 const RELATIVE_TIME_UNITS: readonly RelativeTimeUnit[] = [
-  {
-    suffix: "ms",
-    seconds: 0.001,
-    minSeconds: 0,
-    maxSeconds: 1,
-    quantumSeconds: 0.001,
-  },
-  {
-    suffix: "s",
-    seconds: 1,
-    minSeconds: 1,
-    maxSeconds: 60,
-    quantumSeconds: 0.01,
-  },
-  {
-    suffix: "m",
-    seconds: 60,
-    minSeconds: 60,
-    maxSeconds: 3_600,
-    quantumSeconds: 0.6,
-  },
-  {
-    suffix: "h",
-    seconds: 3_600,
-    minSeconds: 3_600,
-    maxSeconds: 86_400,
-    quantumSeconds: 36,
-  },
-  {
-    suffix: "d",
-    seconds: 86_400,
-    minSeconds: 86_400,
-    maxSeconds: 30 * 86_400,
-    quantumSeconds: 864,
-  },
+  // Seconds are shorter than milliseconds once we can write at least 0.1s:
+  // 0.53s beats 530ms. Below that, 53ms beats 0.053s.
+  { suffix: "ms", seconds: 0.001, minSeconds: 0, maxSeconds: 0.1 },
+  { suffix: "s", seconds: 1, minSeconds: 0.1, maxSeconds: 60 },
+  { suffix: "m", seconds: 60, minSeconds: 60, maxSeconds: 3_600 },
+  { suffix: "h", seconds: 3_600, minSeconds: 3_600, maxSeconds: 86_400 },
+  { suffix: "d", seconds: 86_400, minSeconds: 86_400, maxSeconds: 30 * 86_400 },
   {
     suffix: "mo",
     seconds: 30 * 86_400,
     minSeconds: 30 * 86_400,
     maxSeconds: Infinity,
-    quantumSeconds: 25_920,
   },
 ];
 
 /**
- * Format a relative duration using one best-fit unit and at most two decimal
- * places:
+ * Compact relative duration: one best-fit unit and roughly two significant
+ * digits, with trailing zeroes removed.
  *
- *   610ms, 3.4s, 52s, 4.38m, 2.25h, ...
+ *   53ms, 0.53s, 3.4s, 52s, 4.3m, 18m, 2h, ...
  *
+ * This is intentionally optimized for horizontal space, not decimal precision.
  * Elapsed timers floor to the current display quantum so they never claim time
  * that has not happened yet. Remaining timers ceil for the inverse reason.
- * The returned redraw deadline is the next point where the rendered text (or
- * selected unit) can change.
  *
  * Month labels remain approximate 30-day buckets because this helper receives
  * only an interval, not calendar endpoints.
@@ -124,23 +92,30 @@ export function relativeTimeDisplay(
       (candidate) => clamped < candidate.maxSeconds,
     ) ?? RELATIVE_TIME_UNITS.at(-1)!;
 
-  const quantum = unit.quantumSeconds;
-  const scaled = clamped / quantum;
+  const rawValue = clamped / unit.seconds;
+  const decimals = compactSignificantDecimals(rawValue);
+  const quantumInUnit = 10 ** -decimals;
+  const quantumSeconds = quantumInUnit * unit.seconds;
+  const scaled = clamped / quantumSeconds;
   const ticks =
     direction === "elapsed"
       ? Math.floor(scaled + 1e-9)
       : Math.ceil(scaled - 1e-9);
-  const representedSeconds = Math.max(0, ticks * quantum);
+  const representedSeconds = Math.max(
+    0,
+    ticks * quantumSeconds,
+  );
 
   let nextChangeSeconds: number;
   if (direction === "elapsed") {
-    const nextQuantumBoundary = (ticks + 1) * quantum;
+    const nextQuantumBoundary =
+      (ticks + 1) * quantumSeconds;
     nextChangeSeconds =
       Math.min(nextQuantumBoundary, unit.maxSeconds) - clamped;
   } else {
     const previousQuantumBoundary = Math.max(
       0,
-      (ticks - 1) * quantum,
+      (ticks - 1) * quantumSeconds,
     );
     nextChangeSeconds =
       clamped -
@@ -148,12 +123,44 @@ export function relativeTimeDisplay(
   }
 
   return {
-    text: formatRelativeTimeInUnit(representedSeconds, unit),
+    text: formatCompactRelativeTime(
+      representedSeconds / unit.seconds,
+      decimals,
+      unit.suffix,
+    ),
     nextChangeMs:
       Number.isFinite(nextChangeSeconds) && nextChangeSeconds > 0
         ? nextChangeSeconds * 1000
         : 1,
   };
+}
+
+function compactSignificantDecimals(value: number): number {
+  if (!(value > 0)) return 0;
+
+  // Two significant digits:
+  //   0.53 -> 2 decimals
+  //   3.4  -> 1 decimal
+  //   18   -> 0 decimals
+  return Math.max(
+    0,
+    1 - Math.floor(Math.log10(value)),
+  );
+}
+
+function formatCompactRelativeTime(
+  value: number,
+  decimals: number,
+  suffix: RelativeTimeUnit["suffix"],
+): string {
+  const text =
+    decimals === 0
+      ? String(Math.round(value))
+      : value
+          .toFixed(decimals)
+          .replace(/0+$/, "")
+          .replace(/\.$/, "");
+  return `${text}${suffix}`;
 }
 
 /** Human-readable elapsed duration. */
