@@ -459,8 +459,10 @@ export class SeriesTimelineView {
       const tokenId = market?.outcomes.yes.tokenId;
       if (!market || !tokenId) continue;
 
-      hydratableTokens.push(String(tokenId));
-      if (this.marketLifecycle(market).kind === "live")
+      const lifecycle = this.marketLifecycle(market);
+      if (lifecycle.kind !== "resolved")
+        hydratableTokens.push(String(tokenId));
+      if (lifecycle.kind === "live")
         bufferedTokens.push(tokenId);
     }
     void this.hydrateTokens(hydratableTokens);
@@ -489,6 +491,7 @@ export class SeriesTimelineView {
           scale,
           rowOffsetCss,
         );
+        continue;
       }
 
       drawPressureMemoryStrip(
@@ -645,11 +648,25 @@ export class SeriesTimelineView {
           row.centerMs,
           dpr,
         );
+        const lifecycle = this.marketLifecycle(market);
+        const resolution =
+          lifecycle.kind === "resolved"
+            ? {
+                side:
+                  String(lifecycle.winningTokenId) === String(tokenId)
+                    ? ("primary" as const)
+                    : ("opposite" as const),
+                outcome: lifecycle.winningOutcome,
+                marketEndMs: row.endMs,
+              }
+            : undefined;
+
         return [{
           tokenId: String(tokenId),
           centerY: raster.centerCss,
           topY: raster.topCss,
           bottomY: raster.topCss + raster.heightCss,
+          resolution,
         }];
       }),
       canvasWidth:
