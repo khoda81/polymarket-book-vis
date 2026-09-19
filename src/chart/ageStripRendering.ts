@@ -36,31 +36,45 @@ export function drawAgeAxes(
       frame.toScreenY(0, y),
       dpr,
     );
-    const scale = colorScaleForToken(tokenId);
-
-    // Mirrored token orientation: opposite on the left, primary on the right.
-    ctx.strokeStyle = signedVolumeColor(-1, scale);
-    ctx.beginPath();
-    ctx.moveTo(vp.l, geometry.topCss);
-    ctx.lineTo(
-      vp.l,
-      geometry.topCss + geometry.heightCss,
+    drawAgeRowRails(
+      frame,
+      geometry,
+      colorScaleForToken(tokenId),
     );
-    ctx.stroke();
-
-    ctx.strokeStyle = signedVolumeColor(1, scale);
-    ctx.beginPath();
-    ctx.moveTo(vp.l + vp.width, geometry.topCss);
-    ctx.lineTo(
-      vp.l + vp.width,
-      geometry.topCss + geometry.heightCss,
-    );
-    ctx.stroke();
   }
 
   ctx.beginPath();
   ctx.rect(vp.l, vp.t, vp.width, vp.height);
   ctx.clip();
+}
+
+
+export function drawAgeRowRails(
+  frame: Frame,
+  geometry: RowRasterGeometry,
+  colorScale: SignedVolumeColorScale,
+): void {
+  const { ctx, viewport: vp } = frame;
+
+  // Mirrored token orientation: opposite on the left, primary on the right.
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = signedVolumeColor(-1, colorScale);
+  ctx.beginPath();
+  ctx.moveTo(vp.l, geometry.topCss);
+  ctx.lineTo(
+    vp.l,
+    geometry.topCss + geometry.heightCss,
+  );
+  ctx.stroke();
+
+  ctx.strokeStyle = signedVolumeColor(1, colorScale);
+  ctx.beginPath();
+  ctx.moveTo(vp.l + vp.width, geometry.topCss);
+  ctx.lineTo(
+    vp.l + vp.width,
+    geometry.topCss + geometry.heightCss,
+  );
+  ctx.stroke();
 }
 
 export function drawLivePressureStrip(
