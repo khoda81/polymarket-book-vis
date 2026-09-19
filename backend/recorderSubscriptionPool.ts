@@ -8,6 +8,8 @@ import type {
 } from "@polymarket/client/actions";
 
 const SUBSCRIBE_DEBOUNCE_MS = 100;
+const SUBSCRIBE_BATCH_GAP_MS = 40;
+const MAX_SUBSCRIBE_BATCH_TOKENS = 100;
 const RETRY_DELAY_MS = 1_000;
 
 interface SubscriptionBatch {
@@ -17,12 +19,17 @@ interface SubscriptionBatch {
 }
 
 /**
- * Incremental market-subscription pool.
+ * Incremental market-subscription registry.
  *
- * Adding tokens opens a new websocket batch instead of replacing healthy
- * existing subscriptions. This matters for the recorder: restarting the one
- * global socket creates a small observation gap precisely when new markets are
- * discovered.
+ * The Polymarket SDK already multiplexes every market subscription created by
+ * one PublicClient onto one physical CLOB websocket. These batches are logical
+ * handles on that shared socket. Keeping them separate lets us add/remove
+ * assets incrementally without rebuilding the connection.
+ *
+ * Large initial asset lists are deliberately chunked: sending ~1000 restored
+ * assets in one subscription frame can leave many tokens waiting a long time
+ * for their first snapshot, whereas small incremental subscribe frames hydrate
+ * promptly.
  */
 export class RecorderSubscriptionPool {
   private readonly batches = new Map<number, SubscriptionBatch>();
@@ -160,10 +167,13 @@ export class RecorderSubscriptionPool {
       return;
     }
 
-    const tokenIds = [...this.pending].filter(
-      (tokenId) => !this.subscribed.has(tokenId),
-    );
-    for (const tokenId of tokenIds) this.pending.delete(tokenId);
+    const tokenIds = [...this.pending]
+      .filter(
+        (tokenId) => !this.subscribed.has(tokenId),
+      )
+      .slice(0, MAX_SUBSCRIBE_BATCH_TOKENS);
+    for (const tokenId of tokenIds)
+      this.pending.delete(tokenId);
     if (tokenIds.length === 0) return;
 
     this.connecting = true;
@@ -185,12 +195,16 @@ export class RecorderSubscriptionPool {
         "subscription-open",
         `batch=${id}`,
         `tokens=${tokenIds.length}`,
+        `remaining=${this.pending.size}`,
         `active=${this.batches.size}`,
       );
       void this.consume(batch);
     } finally {
       this.connecting = false;
-      if (this.pending.size > 0) this.scheduleSubscribe();
+      if (this.pending.size > 0)
+        this.scheduleSubscribe(
+          SUBSCRIBE_BATCH_GAP_MS,
+        );
     }
   }
 
