@@ -192,3 +192,14 @@ test("restore rejects overlapping volume bands", () => {
     ]),
   ).toThrow();
 });
+
+
+test("changing half-life can revive retained ghosts without mutating history", () => {
+  const memory = new PressureMemory();
+  observe(memory, 100, 0);
+  observe(memory, 0, 1_000);
+
+  expect(memory.hasVisibleGhosts(11_000, 100)).toBe(false);
+  expect(memory.hasVisibleGhosts(11_000, 100_000)).toBe(true);
+  expect(memory.hasGhosts()).toBe(true);
+});

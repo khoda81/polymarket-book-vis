@@ -110,6 +110,24 @@ export class PressureMemory {
     );
   }
 
+  hasVisibleGhosts(
+    nowMs: number,
+    halfLifeMs: number,
+    minAlpha = 1 / 255,
+  ): boolean {
+    return this.cells.some((cell) =>
+      cell.bands.some(
+        (band) =>
+          band.state.kind === "ghost" &&
+          ghostAlpha(
+            band.state.sinceMs,
+            nowMs,
+            halfLifeMs,
+          ) > minAlpha,
+      ),
+    );
+  }
+
   prune(
     nowMs: number,
     halfLifeMs: number,

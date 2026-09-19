@@ -230,7 +230,7 @@ function drawMemoryBand(
   rowHeightCss: number,
   alpha: number,
 ): void {
-  if (!(alpha > 0)) return;
+  if (!(alpha > 1 / 255)) return;
 
   const inner = pressureInkThicknessCss(
     band.loVolume,

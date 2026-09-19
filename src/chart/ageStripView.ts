@@ -155,7 +155,12 @@ export class AgeStripView {
           nowMs,
         );
 
-      if (state.pressureMemory.hasGhosts())
+      if (
+        state.pressureMemory.hasVisibleGhosts(
+          nowMs,
+          tuning.ghostHalfLifeMs,
+        )
+      )
         this.scheduleGhostRefresh();
     }
   }
@@ -193,7 +198,14 @@ export class AgeStripView {
       signedVolumeSegments(book),
       Date.now(),
     );
-    this.scheduleGhostRefresh();
+    const tuning = getAgeStripTuning();
+    if (
+      state.pressureMemory.hasVisibleGhosts(
+        Date.now(),
+        tuning.ghostHalfLifeMs,
+      )
+    )
+      this.scheduleGhostRefresh();
 
     if (state.visibilityInitialized) return;
     state.visibilityInitialized = true;
@@ -211,7 +223,14 @@ export class AgeStripView {
       [{ lo: 0, hi: 1, volume: 0 }],
       Date.now(),
     );
-    this.scheduleGhostRefresh();
+    const tuning = getAgeStripTuning();
+    if (
+      state.pressureMemory.hasVisibleGhosts(
+        Date.now(),
+        tuning.ghostHalfLifeMs,
+      )
+    )
+      this.scheduleGhostRefresh();
   }
 
   draw(): void {
@@ -280,7 +299,13 @@ export class AgeStripView {
         tuning.ghostHalfLifeMs,
         nowMs,
       );
-      if (state.pressureMemory.hasGhosts())
+      const tuning = getAgeStripTuning();
+      if (
+        state.pressureMemory.hasVisibleGhosts(
+          nowMs,
+          tuning.ghostHalfLifeMs,
+        )
+      )
         this.scheduleGhostRefresh();
     }
 

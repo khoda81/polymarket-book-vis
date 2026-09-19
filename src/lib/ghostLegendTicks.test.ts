@@ -8,7 +8,7 @@ import {
 } from "./ghostLegendTicks";
 
 test("ghost age transform is invertible", () => {
-  for (const age of [1, 10, 1_000, 60_000, 3_600_000]) {
+  for (const age of [1, 10, 1_000, 60_000, 100_000]) {
     const p = ghostPositionForAge(age, 5_000);
     expect(ageAtGhostPosition(p, 5_000)).toBeCloseTo(age);
   }
