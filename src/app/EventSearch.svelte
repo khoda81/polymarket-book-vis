@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { fmtVol } from "../lib/math";
+  import { findSeriesBySlug } from "../lib/seriesTimeline";
   import {
     errorMessage,
     type EventSlug,
@@ -9,6 +10,7 @@
   import {
     createPublicClient,
     type Event,
+    type Series,
   } from "@polymarket/client";
 
   type PublicClient = ReturnType<typeof createPublicClient>;
@@ -16,6 +18,8 @@
   export let client: PublicClient;
   export let status: string;
   export let onchoose: (event: Event) => void;
+  export let onchooseseries: (series: Series) => void =
+    () => undefined;
   export let onstatus: (message: string) => void;
 
   let root: HTMLDivElement;
@@ -48,6 +52,14 @@
     query = "";
     clearResults();
     onchoose(event);
+  }
+
+  function acceptSeries(series: Series): void {
+    generation++;
+    if (timer !== undefined) window.clearTimeout(timer);
+    query = "";
+    clearResults();
+    onchooseseries(series);
   }
 
   async function searchNow(value: string, searchGeneration: number): Promise<void> {
@@ -91,6 +103,16 @@
     }
 
     if (looksLikeExactSlug(value)) {
+      try {
+        const series = await findSeriesBySlug(client, value);
+        if (series?.recurrence?.trim()) {
+          acceptSeries(series);
+          return;
+        }
+      } catch {
+        // Series lookup is opportunistic; continue with event resolution.
+      }
+
       try {
         const event = await client.fetchEvent({ slug: value });
         accept(event);
@@ -160,7 +182,7 @@
       name="query"
       type="text"
       role="combobox"
-      placeholder="Search events or paste an exact slug…"
+      placeholder="Search events or paste an event/series slug…"
       autocomplete="off"
       aria-autocomplete="list"
       aria-haspopup="listbox"
