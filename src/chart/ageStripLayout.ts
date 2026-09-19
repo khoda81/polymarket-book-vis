@@ -92,11 +92,63 @@ export interface AgeStripGeometry {
   };
   readonly rows: readonly {
     readonly tokenId: string;
-    /** Optional explicit screen-space center for non-uniform/moving rows. */
+    /** Optional explicit screen-space geometry for moving/non-uniform rows. */
     readonly centerY?: number;
+    readonly topY?: number;
+    readonly bottomY?: number;
   }[];
   readonly canvasWidth: number;
   readonly canvasHeight: number;
+}
+
+
+export function ageStripRowAtY(
+  geometry: AgeStripGeometry,
+  y: number,
+): AgeStripGeometry["rows"][number] | null {
+  const { viewport: vp, rows } = geometry;
+  if (
+    rows.length === 0 ||
+    y < vp.t ||
+    y >= vp.t + vp.height
+  )
+    return null;
+
+  const explicit = rows.find((row) => {
+    const top =
+      row.topY ??
+      (row.centerY !== undefined
+        ? row.centerY - AGE_ROW_BAND_PX / 2
+        : undefined);
+    const bottom =
+      row.bottomY ??
+      (row.centerY !== undefined
+        ? row.centerY + AGE_ROW_BAND_PX / 2
+        : undefined);
+    return top !== undefined && bottom !== undefined && y >= top && y < bottom;
+  });
+  if (explicit) return explicit;
+
+  const rowIndex = Math.floor(
+    ((y - vp.t) / vp.height) * rows.length,
+  );
+  return rows[rowIndex] ?? null;
+}
+
+export function ageStripRowCenterY(
+  geometry: AgeStripGeometry,
+  row: AgeStripGeometry["rows"][number],
+): number {
+  if (row.centerY !== undefined) return row.centerY;
+
+  const index = geometry.rows.indexOf(row);
+  if (index < 0) return geometry.viewport.t;
+
+  const { viewport: vp } = geometry;
+  return (
+    vp.t +
+    ((index + 0.5) / geometry.rows.length) * vp.height
+  );
 }
 
 export interface RowRasterGeometry {
