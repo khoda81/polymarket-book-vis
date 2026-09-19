@@ -114,20 +114,33 @@ export function ageStripRowAtY(
   )
     return null;
 
-  const explicit = rows.find((row) => {
-    const top =
-      row.topY ??
-      (row.centerY !== undefined
-        ? row.centerY - AGE_ROW_BAND_PX / 2
-        : undefined);
-    const bottom =
-      row.bottomY ??
-      (row.centerY !== undefined
-        ? row.centerY + AGE_ROW_BAND_PX / 2
-        : undefined);
-    return top !== undefined && bottom !== undefined && y >= top && y < bottom;
-  });
-  if (explicit) return explicit;
+  const hasExplicitGeometry = rows.some(
+    (row) =>
+      row.centerY !== undefined ||
+      row.topY !== undefined ||
+      row.bottomY !== undefined,
+  );
+  if (hasExplicitGeometry) {
+    const explicit = rows.find((row) => {
+      const top =
+        row.topY ??
+        (row.centerY !== undefined
+          ? row.centerY - AGE_ROW_BAND_PX / 2
+          : undefined);
+      const bottom =
+        row.bottomY ??
+        (row.centerY !== undefined
+          ? row.centerY + AGE_ROW_BAND_PX / 2
+          : undefined);
+      return (
+        top !== undefined &&
+        bottom !== undefined &&
+        y >= top &&
+        y < bottom
+      );
+    });
+    return explicit ?? null;
+  }
 
   const rowIndex = Math.floor(
     ((y - vp.t) / vp.height) * rows.length,
