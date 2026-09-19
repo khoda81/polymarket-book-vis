@@ -8,6 +8,13 @@
   export let onchange: (checked: boolean) => void;
 
   let iconFailed = false;
+
+  $: ageStatus =
+    lifecycle.kind === "resolved"
+      ? `✓ ${lifecycle.winningOutcome}`
+      : lifecycle.kind === "awaiting-resolution"
+        ? "pending"
+        : "";
 </script>
 
 <label
@@ -15,6 +22,7 @@
   data-market-id={control.marketId}
   data-market-order={control.order}
   data-age-label={control.ageLabel}
+  data-age-status={ageStatus}
   data-age-suppress-market-identity={control.suppressAgeIdentity}
   title={control.title}
 >

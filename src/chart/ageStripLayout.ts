@@ -32,10 +32,14 @@ export function ageLabelGutterWidth(
 
   let widest = 0;
   for (const label of labels) {
-    widest = Math.max(
-      widest,
-      measureAgeLabelTextWidth(label.dataset.ageLabel ?? ""),
+    const titleWidth = measureAgeLabelTextWidth(
+      label.dataset.ageLabel ?? "",
     );
+    const status = label.dataset.ageStatus ?? "";
+    const statusWidth = status
+      ? measureAgeLabelTextWidth(status) + 8
+      : 0;
+    widest = Math.max(widest, titleWidth + statusWidth);
   }
 
   return Math.ceil(
