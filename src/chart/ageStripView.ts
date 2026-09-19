@@ -146,6 +146,7 @@ export class AgeStripView {
         visibilityInitialized: false,
         recordingSinceMs: null,
         resolutionMs: null,
+        pressureMemory: new PressureMemory(),
       };
       this.markets.set(tokenId, state);
     }
