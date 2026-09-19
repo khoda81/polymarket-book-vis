@@ -104,6 +104,7 @@ export class SeriesTimelineView {
   >();
   private readonly tokenNameByToken = new Map<string, string>();
   private readonly oppositeTokenNameByToken = new Map<string, string>();
+  private readonly absoluteTimeLabelByStart = new Map<number, string>();
   private readonly hydratedTokens = new Set<string>();
 
   private theme: ChartTheme;
@@ -350,6 +351,13 @@ export class SeriesTimelineView {
       this.rows = compatible
         .map((event) => timedSeriesEvent(event, this.cadenceMs))
         .filter((row): row is TimedSeriesEvent => row !== null);
+      this.absoluteTimeLabelByStart.clear();
+      for (const row of this.rows)
+        this.absoluteTimeLabelByStart.set(
+          row.startMs,
+          this.absoluteTimeLabelByStart.get(row.startMs) ??
+            formatTimelineTime(row.startMs, this.cadenceMs),
+        );
 
       const keepTokens = new Set<string>();
       this.scaleByToken.clear();
