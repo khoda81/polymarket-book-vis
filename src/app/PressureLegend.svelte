@@ -6,7 +6,7 @@
     subscribeAgeStripTuning,
     type AgeStripTuning,
   } from "../lib/ageStripTuning";
-  import { fmtSI } from "../lib/math";
+  import { fmtRelativeTime, fmtSI } from "../lib/math";
   import {
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     signedVolumeColor,
@@ -21,6 +21,9 @@
   let tuning: Readonly<AgeStripTuning> = getAgeStripTuning();
 
   $: reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
+  $: ghostHalfLife = fmtRelativeTime(
+    tuning.ghostHalfLifeMs / 1000,
+  );
   $: values = shareLegendTickValues(reserveShares, width);
   $: negativeColor = signedVolumeColor(
     -1,
@@ -130,7 +133,7 @@
   <div class="volume-legend-header">
     <span>Share pressure</span>
     <span class="volume-legend-scale">
-      reserve {fmtSI(reserveShares)} shares · Q=C → 50% row
+      reserve {fmtSI(reserveShares)} shares · ghost {ghostHalfLife} · Q=C → 50% row
     </span>
   </div>
   <div

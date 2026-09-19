@@ -1,16 +1,20 @@
 import { DEFAULT_VOLUME_PER_CSS_PIXEL } from "./pressureInk";
 
 export const AGE_ROW_BAND_PX = 28;
+export const DEFAULT_GHOST_HALF_LIFE_MS = 5_000;
 
 const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
 
 export interface AgeStripTuning {
   /** Share scale parameter, expressed as shares per CSS pixel of row height. */
   readonly volumePerCssPixel: number;
+  /** Exponential half-life of historical pressure ghosts. */
+  readonly ghostHalfLifeMs: number;
 }
 
 interface StoredAgeStripTuning {
   volumePerCssPixel?: number;
+  ghostHalfLifeMs?: number;
   /** Legacy v1 name; migrated in place to volumePerCssPixel. */
   volumeSoftLimit?: number;
 }
@@ -41,7 +45,21 @@ export function scaleAgeStripVolumePerCssPixel(factor: number): void {
   );
   if (next === tuning.volumePerCssPixel) return;
 
-  tuning = { volumePerCssPixel: next };
+  tuning = { ...tuning, volumePerCssPixel: next };
+  schedulePersist();
+  for (const listener of listeners) listener(tuning);
+}
+
+export function scaleAgeStripGhostHalfLife(factor: number): void {
+  if (!(factor > 0) || !Number.isFinite(factor)) return;
+
+  const next = Math.min(
+    24 * 60 * 60 * 1_000,
+    Math.max(50, tuning.ghostHalfLifeMs * factor),
+  );
+  if (next === tuning.ghostHalfLifeMs) return;
+
+  tuning = { ...tuning, ghostHalfLifeMs: next };
   schedulePersist();
   for (const listener of listeners) listener(tuning);
 }
@@ -49,6 +67,7 @@ export function scaleAgeStripVolumePerCssPixel(factor: number): void {
 function loadTuning(): AgeStripTuning {
   const fallback: AgeStripTuning = {
     volumePerCssPixel: DEFAULT_VOLUME_PER_CSS_PIXEL,
+    ghostHalfLifeMs: DEFAULT_GHOST_HALF_LIFE_MS,
   };
 
   try {
@@ -64,6 +83,12 @@ function loadTuning(): AgeStripTuning {
         typeof stored === "number" && Number.isFinite(stored) && stored > 0
           ? stored
           : fallback.volumePerCssPixel,
+      ghostHalfLifeMs:
+        typeof parsed.ghostHalfLifeMs === "number" &&
+        Number.isFinite(parsed.ghostHalfLifeMs) &&
+        parsed.ghostHalfLifeMs > 0
+          ? parsed.ghostHalfLifeMs
+          : fallback.ghostHalfLifeMs,
     };
   } catch {
     return fallback;
