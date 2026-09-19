@@ -15,9 +15,10 @@ import {
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
 import {
-  ChartTheme,
   OrderBookPlotter,
+  type ChartTheme,
 } from "@/lib/renderer";
+import { chartThemeForDarkMode } from "./chartTheme";
 import { AgeStripView } from "./ageStripView";
 import { LiveBookFeed } from "./liveBookFeed";
 import { VolumeBookView } from "./volumeBookView";
@@ -25,20 +26,6 @@ import {
   TokenId,
   PublicClient,
 } from "@polymarket/client";
-
-const LIGHT_THEME: ChartTheme = {
-  bg: "#ffffff",
-  grid: "rgba(128,128,128,0.15)",
-  axis: "rgba(128,128,128,0.5)",
-  text: "#666666",
-};
-
-const DARK_THEME: ChartTheme = {
-  bg: "#121212",
-  grid: "rgba(255,255,255,0.1)",
-  axis: "rgba(255,255,255,0.3)",
-  text: "#aaaaaa",
-};
 
 export interface ChartSurfaceElements {
   readonly canvas: HTMLCanvasElement;
@@ -115,7 +102,7 @@ export class ChartController {
     });
 
     this.themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    this.theme = this.themeQuery.matches ? DARK_THEME : LIGHT_THEME;
+    this.theme = chartThemeForDarkMode(this.themeQuery.matches);
 
     this.plotter = new OrderBookPlotter(surface.canvas);
 
@@ -164,7 +151,7 @@ export class ChartController {
   }
 
   private handleThemeChange = (event: MediaQueryListEvent) => {
-    this.theme = event.matches ? DARK_THEME : LIGHT_THEME;
+    this.theme = chartThemeForDarkMode(event.matches);
     this.reqDraw();
   };
 
