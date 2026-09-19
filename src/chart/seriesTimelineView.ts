@@ -421,7 +421,6 @@ export class SeriesTimelineView {
     }
 
     const nowMs = Date.now();
-    this.pressure.flushBookUpdates(nowMs);
     const centerMs = nowMs + this.userOffsetMs;
     const spanMs = SERIES_VISIBLE_ROWS * this.cadenceMs;
     const minMs = centerMs - spanMs / 2;
@@ -733,7 +732,7 @@ export class SeriesTimelineView {
           return;
         const key = String(tokenId);
         this.bookCache.set(key, book);
-        this.pressure.queueBookUpdate(key, book);
+        this.pressure.observeBook(key, book);
         this.requestDraw();
       },
       onMarketResolved: (resolution) => {
