@@ -36,6 +36,8 @@ export class RecorderSubscriptionPool {
   constructor(
     private readonly client: PublicClient,
     private readonly onEvent: (event: MarketEvent) => void,
+    private readonly onDebug: (...args: unknown[]) => void =
+      () => undefined,
   ) {}
 
   get connected(): boolean {
@@ -83,7 +85,14 @@ export class RecorderSubscriptionPool {
       this.pending.add(tokenId);
       changed = true;
     }
-    if (changed) this.scheduleSubscribe();
+    if (changed) {
+      this.onDebug(
+        "subscription-queue",
+        `pending=${this.pending.size}`,
+        `batches=${this.batches.size}`,
+      );
+      this.scheduleSubscribe();
+    }
   }
 
   remove(tokenIds: Iterable<string>): void {
@@ -101,6 +110,7 @@ export class RecorderSubscriptionPool {
 
       if (batch.tokenIds.size > 0) continue;
       this.batches.delete(id);
+      this.onDebug("subscription-retire", `batch=${id}`);
       // Closing a transport is cleanup, not correctness. Some websocket
       // implementations can stall here, so never put it on a critical path.
       void batch.handle.close().catch(() => undefined);
@@ -171,6 +181,12 @@ export class RecorderSubscriptionPool {
       for (const tokenId of tokenIds)
         this.subscribed.add(tokenId);
 
+      this.onDebug(
+        "subscription-open",
+        `batch=${id}`,
+        `tokens=${tokenIds.length}`,
+        `active=${this.batches.size}`,
+      );
       void this.consume(batch);
     } finally {
       this.connecting = false;
@@ -230,6 +246,11 @@ export class RecorderSubscriptionPool {
       if (this.batches.get(batch.id) !== batch) return;
 
       this.batches.delete(batch.id);
+      this.onDebug(
+        "subscription-ended",
+        `batch=${batch.id}`,
+        `tokens=${batch.tokenIds.size}`,
+      );
       for (const tokenId of batch.tokenIds) {
         this.subscribed.delete(tokenId);
         if (!this.stopped) this.pending.add(tokenId);
