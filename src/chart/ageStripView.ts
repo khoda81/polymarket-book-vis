@@ -2,16 +2,10 @@ import {
   AGE_ROW_BAND_PX,
   getAgeStripTuning,
   ghostRefreshDelayMs,
-  scaleAgeStripGhostHalfLife,
-  scaleAgeStripVolumePerCssPixel,
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
 import type { TokenBook } from "@/lib/orderBook";
-import {
-  PressureMemory,
-  type PressureCell,
-} from "@/lib/pressureMemory";
-import { signedVolumeSegments } from "@/lib/signedVolume";
+import type { PressureCell } from "@/lib/pressureMemory";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import type { SignedVolumeColorScale } from "@/lib/signedVolume";
 import {
@@ -21,7 +15,6 @@ import {
   VOLUME_RIGHT_PADDING_PX,
   ageLabelGutterWidth,
   hasRealOrders,
-  normalizedWheelDelta,
   positionRowControls,
 } from "./ageStripLayout";
 import {
@@ -30,15 +23,10 @@ import {
   drawResolvedMarketStrip,
 } from "./ageStripRendering";
 import { AgeStripClock } from "./ageStripClock";
+import { handleAgeStripTuningWheel } from "./ageStripInteraction";
+import { AgeStripPressureState } from "./ageStripPressureState";
 import { AgeStripTooltip } from "./ageStripTooltip";
 import type { ChartMarketControl } from "@/lib/chartDefinition";
-
-interface MarketRuntimeState {
-  visibilityInitialized: boolean;
-  recordingSinceMs: number | null;
-  resolutionMs: number | null;
-  readonly pressureMemory: PressureMemory;
-}
 
 export interface AgeStripHost {
   readonly canvas: HTMLCanvasElement;
@@ -68,7 +56,8 @@ export class AgeStripView {
   private readonly clock: AgeStripClock;
   private readonly tooltip: AgeStripTooltip;
   private readonly unsubscribeTuning: () => void;
-  private readonly markets = new Map<string, MarketRuntimeState>();
+  private readonly pressure = new AgeStripPressureState();
+  private readonly visibilityInitialized = new Set<string>();
   private ghostRefreshTimer: number | undefined;
   private layoutMode: "age" | "volume" | null = null;
 
@@ -78,7 +67,7 @@ export class AgeStripView {
       canvasWrap: host.canvasWrap,
       getViewMode: host.getViewMode,
       getTheme: host.getTheme,
-      getTiming: (tokenId) => this.markets.get(tokenId),
+      getTiming: (tokenId) => this.pressure.timing(tokenId),
     });
     this.tooltip = new AgeStripTooltip({
       canvas: host.canvas,
@@ -100,7 +89,8 @@ export class AgeStripView {
   }
 
   reset(): void {
-    this.markets.clear();
+    this.pressure.reset();
+    this.visibilityInitialized.clear();
     this.cancelGhostRefresh();
     this.clock.reset();
     this.tooltip.clear();
@@ -110,20 +100,7 @@ export class AgeStripView {
   setRecordingCoverage(
     recordingSinceMsByToken: Readonly<Record<string, number>>,
   ): void {
-    for (const [tokenId, since] of Object.entries(recordingSinceMsByToken)) {
-      let state = this.markets.get(tokenId);
-      if (!state) {
-        state = {
-          visibilityInitialized: false,
-          recordingSinceMs: null,
-          resolutionMs: null,
-          pressureMemory: new PressureMemory(),
-        };
-        this.markets.set(tokenId, state);
-      }
-      state.recordingSinceMs =
-        Number.isFinite(since) && since >= 0 ? since : null;
-    }
+    this.pressure.setRecordingCoverage(recordingSinceMsByToken);
     this.clock.refresh();
   }
 
@@ -132,70 +109,32 @@ export class AgeStripView {
       Record<string, readonly PressureCell[]>
     >,
   ): void {
-    const nowMs = Date.now();
-    for (const [tokenId, cells] of Object.entries(cellsByToken)) {
-      let state = this.markets.get(tokenId);
-      if (!state) {
-        state = {
-          visibilityInitialized: false,
-          recordingSinceMs: null,
-          resolutionMs: null,
-          pressureMemory: new PressureMemory(),
-        };
-        this.markets.set(tokenId, state);
-      }
-
-      state.pressureMemory.restore(cells);
-
-      // A live websocket snapshot may have beaten recorder hydration. Repaint
-      // it last so current liquidity always dominates persisted ghosts.
-      const book = this.host.getBook(tokenId);
-      if (book)
-        state.pressureMemory.observe(
-          signedVolumeSegments(book),
-          nowMs,
-        );
-
-    }
+    this.pressure.hydrate(
+      cellsByToken,
+      (tokenId) => this.host.getBook(tokenId),
+    );
   }
 
   configureMarkets(
     controls: readonly ChartMarketControl[],
   ): void {
-    this.markets.clear();
-    for (const control of controls) {
-      this.markets.set(String(control.tokenId), {
-        visibilityInitialized: false,
-        recordingSinceMs: null,
+    this.visibilityInitialized.clear();
+    this.pressure.configure(
+      controls.map((control) => ({
+        tokenId: String(control.tokenId),
         resolutionMs: control.resolutionMs,
-        pressureMemory: new PressureMemory(),
-      });
-    }
+      })),
+    );
   }
 
   onBookUpdate(tokenId: string): void {
     const book = this.host.getBook(tokenId);
     if (!book) return;
 
-    let state = this.markets.get(tokenId);
-    if (!state) {
-      state = {
-        visibilityInitialized: false,
-        recordingSinceMs: null,
-        resolutionMs: null,
-        pressureMemory: new PressureMemory(),
-      };
-      this.markets.set(tokenId, state);
-    }
+    this.pressure.observeBook(tokenId, book);
 
-    const nowMs = Date.now();
-    state.pressureMemory.observe(
-      signedVolumeSegments(book),
-      nowMs,
-    );
-
-    if (state.visibilityInitialized) return;
-    state.visibilityInitialized = true;
+    if (this.visibilityInitialized.has(tokenId)) return;
+    this.visibilityInitialized.add(tokenId);
     if (hasRealOrders(book)) return;
 
     if (this.host.activeTokens.has(tokenId))
@@ -203,14 +142,7 @@ export class AgeStripView {
   }
 
   resolveMarket(tokenId: string): void {
-    const state = this.markets.get(tokenId);
-    if (!state) return;
-
-    const nowMs = Date.now();
-    state.pressureMemory.observe(
-      [{ lo: 0, hi: 1, volume: 0 }],
-      nowMs,
-    );
+    this.pressure.resolve(tokenId);
   }
 
   draw(): void {
@@ -258,8 +190,7 @@ export class AgeStripView {
     for (const [index, label] of activeControls.entries()) {
       const tokenId = label.dataset.tokenId;
       if (!tokenId) continue;
-      const state = this.markets.get(tokenId);
-      if (!state) continue;
+      const cells = this.pressure.cells(tokenId);
 
       const resolutionSide =
         label.dataset.ageResolutionSide;
@@ -279,13 +210,14 @@ export class AgeStripView {
       drawPressureMemoryStrip(
         frame,
         y,
-        state.pressureMemory.snapshot(),
+        cells,
         this.host.getPressureColorScale(tokenId),
         tuning.volumePerCssPixel,
         tuning.ghostHalfLifeMs,
         nowMs,
       );
-      hasVisibleGhosts ||= state.pressureMemory.hasVisibleGhosts(
+      hasVisibleGhosts ||= this.pressure.hasVisibleGhosts(
+        tokenId,
         nowMs,
         tuning.ghostHalfLifeMs,
       );
@@ -349,19 +281,12 @@ export class AgeStripView {
   private readonly handleWheel = (event: WheelEvent) => {
     if (
       this.host.getViewMode() !== "age" ||
-      (!event.ctrlKey && !event.shiftKey)
+      !handleAgeStripTuningWheel(event)
     )
       return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
-
-    const factor = Math.exp(
-      normalizedWheelDelta(event) * 0.002,
-    );
-    if (event.shiftKey)
-      scaleAgeStripGhostHalfLife(factor);
-    else scaleAgeStripVolumePerCssPixel(factor);
   };
 
   private scheduleGhostRefresh(delayMs: number): void {
