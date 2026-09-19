@@ -167,14 +167,20 @@ export async function loadSeriesEventsAround(
       ? cadenceHintMs
       : recurrenceDurationMs(series.recurrence) ?? DEFAULT_CADENCE_MS;
   const halfWindowMs = SERIES_WINDOW_ROWS * cadenceMs;
-  const startDateMin = new Date(centerMs - halfWindowMs).toISOString();
-  const startDateMax = new Date(centerMs + halfWindowMs).toISOString();
+  const endDateMin = new Date(centerMs - halfWindowMs).toISOString();
+  const endDateMax = new Date(
+    centerMs + halfWindowMs + cadenceMs,
+  ).toISOString();
 
+  // Recurring crypto events are often listed well before their actual trading
+  // interval. Gamma's event startDate therefore is not a reliable timeline
+  // coordinate for this family. endDate is the actual contract deadline and is
+  // consistently filterable, while schedule.startTime supplies the row start.
   const common = {
     seriesIds: [seriesId],
-    startDateMin,
-    startDateMax,
-    order: "startDate",
+    endDateMin,
+    endDateMax,
+    order: "endDate",
     ascending: true,
     pageSize: 100,
   };
@@ -196,6 +202,20 @@ export async function loadSeriesEventsAround(
       start <= centerMs + halfWindowMs + cadenceMs
     );
   });
+}
+
+export async function findSeriesBySlug(
+  client: PublicClient,
+  slug: string,
+): Promise<Series | null> {
+  const page = await client
+    .listSeries({ slug: [slug], pageSize: 10 })
+    .firstPage();
+  return (
+    page.items.find(
+      (candidate) => candidate.slug?.trim() === slug.trim(),
+    ) ?? null
+  );
 }
 
 async function collectEvents(
