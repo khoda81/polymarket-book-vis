@@ -93,6 +93,7 @@ class AgeRecorder {
   private readonly subscriptions = new RecorderSubscriptionPool(
     this.client,
     (event) => this.consumeEvent(event),
+    (...args) => debugLog(...args),
   );
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
   private persistDirty = false;
