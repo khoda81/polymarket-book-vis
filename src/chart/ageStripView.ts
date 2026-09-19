@@ -173,10 +173,23 @@ export class AgeStripView {
         width: vp.width,
         height: vp.height,
       },
-      rows: activeControls.map((label, index) => ({
-        tokenId:
-          label.dataset.tokenId ?? `missing-row-${index}`,
-      })),
+      rows: activeControls.map((label, index) => {
+        const tokenId =
+          label.dataset.tokenId ?? `missing-row-${index}`;
+        const side = label.dataset.ageResolutionSide;
+        const resolution =
+          side === "primary" || side === "opposite"
+            ? {
+                side,
+                outcome:
+                  label.dataset.ageResolutionOutcome ?? "",
+                marketEndMs:
+                  this.pressure.timing(tokenId)?.resolutionMs ?? null,
+              }
+            : undefined;
+
+        return { tokenId, resolution };
+      }),
       canvasWidth:
         vp.l + vp.width + this.host.plotter.padding.r,
       canvasHeight:
@@ -196,7 +209,7 @@ export class AgeStripView {
       if (
         resolutionSide === "primary" ||
         resolutionSide === "opposite"
-      )
+      ) {
         drawResolvedMarketStrip(
           frame,
           rowCount - 1 - index,
@@ -204,6 +217,8 @@ export class AgeStripView {
           label.dataset.ageResolutionOutcome ?? "",
           this.host.getPressureColorScale(tokenId),
         );
+        continue;
+      }
 
       const y = rowCount - 1 - index;
       drawPressureMemoryStrip(
