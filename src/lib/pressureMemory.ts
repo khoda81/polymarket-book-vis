@@ -115,15 +115,16 @@ export class PressureMemory {
     halfLifeMs: number,
     minAlpha = 1 / 255,
   ): boolean {
+    const visibleSinceMs = ghostVisibleSinceMs(
+      nowMs,
+      halfLifeMs,
+      minAlpha,
+    );
     return this.cells.some((cell) =>
       cell.bands.some(
         (band) =>
           band.state.kind === "ghost" &&
-          ghostAlpha(
-            band.state.sinceMs,
-            nowMs,
-            halfLifeMs,
-          ) > minAlpha,
+          band.state.sinceMs > visibleSinceMs,
       ),
     );
   }
@@ -154,6 +155,21 @@ export class PressureMemory {
       })),
     );
   }
+}
+
+export function ghostVisibleSinceMs(
+  nowMs: number,
+  halfLifeMs: number,
+  minAlpha = 1 / 255,
+): number {
+  validateHalfLife(halfLifeMs);
+  if (!(minAlpha >= 0 && minAlpha < 1))
+    throw new RangeError("min alpha must be in [0, 1)");
+  if (minAlpha === 0) return Number.NEGATIVE_INFINITY;
+
+  const maxVisibleAgeMs =
+    (-Math.log(minAlpha) / Math.LN2) * halfLifeMs;
+  return nowMs - maxVisibleAgeMs;
 }
 
 export function ghostAlpha(
