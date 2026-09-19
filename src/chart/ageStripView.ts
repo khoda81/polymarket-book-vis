@@ -269,11 +269,6 @@ export class AgeStripView {
           this.host.getPressureColorScale(tokenId),
         );
 
-      state.pressureMemory.prune(
-        nowMs,
-        tuning.ghostHalfLifeMs,
-      );
-
       const y = rowCount - 1 - index;
       drawPressureMemoryStrip(
         frame,

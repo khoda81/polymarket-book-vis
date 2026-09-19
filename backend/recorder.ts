@@ -23,8 +23,6 @@ const STATE_PATH = resolve(
 );
 const PERSIST_DEBOUNCE_MS = 250;
 const MAX_CLOCK_SKEW_MS = 60_000;
-const MAX_GHOST_HALF_LIFE_MS = 24 * 60 * 60 * 1_000;
-const RECORDER_GHOST_MIN_ALPHA = 0.005;
 
 interface PersistedRecorderStateV2 {
   version: 2;
@@ -138,11 +136,6 @@ class AgeRecorder {
       for (const tokenId of requested) {
         const memory = this.memories.get(tokenId);
         if (!memory) continue;
-        memory.prune(
-          nowMs,
-          MAX_GHOST_HALF_LIFE_MS,
-          RECORDER_GHOST_MIN_ALPHA,
-        );
         states[tokenId] = {
           cells: memory.snapshot(),
         };
@@ -308,11 +301,6 @@ class AgeRecorder {
     const nowMs = Date.now();
     const memory = this.memories.get(tokenId) ?? new PressureMemory();
     memory.observe(signedVolumeSegments(book), nowMs);
-    memory.prune(
-      nowMs,
-      MAX_GHOST_HALF_LIFE_MS,
-      RECORDER_GHOST_MIN_ALPHA,
-    );
     this.memories.set(tokenId, memory);
     this.schedulePersist();
   }
@@ -348,14 +336,8 @@ class AgeRecorder {
   private async persistSnapshot(): Promise<void> {
     const savedAtMs = Date.now();
     const states: Record<string, readonly PressureCell[]> = {};
-    for (const [tokenId, memory] of this.memories) {
-      memory.prune(
-        savedAtMs,
-        MAX_GHOST_HALF_LIFE_MS,
-        RECORDER_GHOST_MIN_ALPHA,
-      );
+    for (const [tokenId, memory] of this.memories)
       states[tokenId] = memory.snapshot();
-    }
 
     const payload: PersistedRecorderStateV2 = {
       version: 2,
