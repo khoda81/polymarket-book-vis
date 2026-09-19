@@ -125,6 +125,34 @@ export class AgeStripTooltip {
       return;
     }
 
+    const rowCenterY =
+      pointer.canvasTop + ageStripRowCenterY(geometry, row);
+    const anchorX = pointer.canvasLeft + sx;
+
+    if (row.resolution) {
+      const resolution = row.resolution;
+      const signature = [
+        "resolved",
+        resolution.side,
+        resolution.outcome,
+        resolution.marketEndMs ?? "",
+      ].join("|");
+
+      if (signature !== this.signature) {
+        renderResolutionTooltip(
+          this.overlay,
+          resolution.side,
+          resolution.outcome,
+          resolution.marketEndMs,
+          this.host.getPressureColorScale(row.tokenId),
+        );
+        this.signature = signature;
+      }
+
+      this.positionOverlay(anchorX, rowCenterY);
+      return;
+    }
+
     const book = this.host.getBook(row.tokenId);
     if (!book) {
       this.hide();
@@ -156,10 +184,10 @@ export class AgeStripTooltip {
       this.signature = signature;
     }
 
-    const anchorX = pointer.canvasLeft + sx;
-    const rowCenterY =
-      pointer.canvasTop + ageStripRowCenterY(geometry, row);
+    this.positionOverlay(anchorX, rowCenterY);
+  }
 
+  private positionOverlay(anchorX: number, rowCenterY: number): void {
     this.overlay.style.display = "block";
     this.overlay.style.left = `${anchorX}px`;
     this.overlay.style.top = `${rowCenterY}px`;
@@ -237,6 +265,45 @@ export function renderAgeTooltip(
         formatProbability(effectivePrice),
       ),
     );
+}
+
+export function renderResolutionTooltip(
+  overlay: HTMLDivElement,
+  side: "primary" | "opposite",
+  outcome: string,
+  marketEndMs: number | null,
+  colorScale: SignedVolumeColorScale,
+): void {
+  overlay.replaceChildren();
+
+  const title = document.createElement("div");
+  title.className = "cpv-ov-label";
+  title.textContent = "Resolved";
+  title.style.color = signedVolumeColor(
+    side === "primary" ? 1 : -1,
+    colorScale,
+  );
+  overlay.appendChild(title);
+
+  overlay.appendChild(
+    tooltipRow("Winner", outcome || "(unknown)"),
+  );
+
+  if (marketEndMs !== null && Number.isFinite(marketEndMs))
+    overlay.appendChild(
+      tooltipRow("Market end", formatResolutionTime(marketEndMs)),
+    );
+}
+
+const RESOLUTION_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function formatResolutionTime(timestampMs: number): string {
+  return RESOLUTION_TIME_FORMATTER.format(new Date(timestampMs));
 }
 
 function tooltipRow(
