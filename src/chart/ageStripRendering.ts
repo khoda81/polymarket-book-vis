@@ -97,7 +97,6 @@ export function drawPressureMemoryStrip(
   const colors = pressureColors(colorScale);
   const positiveColor = colors.positive;
   const negativeColor = colors.negative;
-  const ghostAlphaBySince = new Map<number, number>();
 
   ctx.save();
   ctx.beginPath();
@@ -134,7 +133,6 @@ export function drawPressureMemoryStrip(
       geometry.heightCss,
       ghostHalfLifeMs,
       nowMs,
-      ghostAlphaBySince,
     );
   }
 
@@ -153,7 +151,6 @@ function drawMemoryBands(
   rowHeightCss: number,
   ghostHalfLifeMs: number,
   nowMs: number,
-  ghostAlphaBySince: Map<number, number>,
 ): void {
   // Paint outer history first, then progressively newer inner envelopes.
   //
@@ -173,8 +170,7 @@ function drawMemoryBands(
     const targetAlpha =
       band.state.kind === "live"
         ? 1
-        : cachedGhostAlpha(
-            ghostAlphaBySince,
+        : ghostAlpha(
             band.state.sinceMs,
             nowMs,
             ghostHalfLifeMs,
@@ -248,20 +244,6 @@ function snapToDevicePixel(
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
-}
-
-function cachedGhostAlpha(
-  cache: Map<number, number>,
-  sinceMs: number,
-  nowMs: number,
-  halfLifeMs: number,
-): number {
-  const cached = cache.get(sinceMs);
-  if (cached !== undefined) return cached;
-
-  const alpha = ghostAlpha(sinceMs, nowMs, halfLifeMs);
-  cache.set(sinceMs, alpha);
-  return alpha;
 }
 
 export function drawResolvedMarketStrip(
