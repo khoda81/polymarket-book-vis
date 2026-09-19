@@ -287,7 +287,6 @@ export class ChartController {
 
   private performDraw() {
     this.raf = null;
-    this.ageView.flushBookUpdates();
     if (this.viewMode === "age") {
       this.ageView.draw();
       return;
