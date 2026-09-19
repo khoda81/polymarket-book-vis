@@ -99,7 +99,10 @@ export class SeriesTimelineView {
   private feedKey = "";
   private loadGeneration = 0;
   private loadedCenterMs: number | null = null;
+  private loadedMinStartMs: number | null = null;
+  private loadedMaxStartMs: number | null = null;
   private loadingCenterMs: number | null = null;
+  private lastEdgeRefreshMs = 0;
   private clockTimer: number | undefined;
   private raf: number | null = null;
   private destroyed = false;
@@ -283,7 +286,16 @@ export class SeriesTimelineView {
         this.series.recurrence,
       );
       this.loadedCenterMs = centerMs;
+      const starts = compatible
+        .map((event) => event.schedule.startTime ?? event.schedule.startDate)
+        .map((value) => (value ? Date.parse(String(value)) : NaN))
+        .filter(Number.isFinite);
+      this.loadedMinStartMs =
+        starts.length > 0 ? Math.min(...starts) : null;
+      this.loadedMaxStartMs =
+        starts.length > 0 ? Math.max(...starts) : null;
       this.loadingCenterMs = null;
+      this.lastEdgeRefreshMs = Date.now();
       this.onWindowChanged(compatible.length);
       this.scheduleClockFrame();
       this.requestDraw();
@@ -371,7 +383,7 @@ export class SeriesTimelineView {
 
     this.drawTimeline(frame, rows, nowMs);
     this.refreshFeed(activeTokens);
-    void this.ensureWindow(centerMs);
+    this.refreshWindowIfNeeded(centerMs, minMs, maxMs, nowMs);
   }
 
   private drawTimeline(
@@ -543,10 +555,7 @@ export class SeriesTimelineView {
     this.feed?.destroy();
     this.feed = null;
 
-    if (unique.length === 0) {
-      this.onConnectionStatus("disconnected");
-      return;
-    }
+    if (unique.length === 0) return;
 
     const feed = new LiveBookFeed(this.client, {
       onConnectionStatus: (status) => {
@@ -591,6 +600,35 @@ export class SeriesTimelineView {
         error instanceof Error ? error.message : String(error),
       );
     });
+  }
+
+  private refreshWindowIfNeeded(
+    centerMs: number,
+    minMs: number,
+    maxMs: number,
+    nowMs: number,
+  ): void {
+    const edgePaddingMs =
+      Math.max(SERIES_VISIBLE_ROWS, 3) * this.cadenceMs;
+    const nearPastEdge =
+      this.loadedMinStartMs === null ||
+      minMs <= this.loadedMinStartMs + edgePaddingMs;
+    const nearFutureEdge =
+      this.loadedMaxStartMs === null ||
+      maxMs >= this.loadedMaxStartMs - edgePaddingMs;
+
+    if (!nearPastEdge && !nearFutureEdge) {
+      void this.ensureWindow(centerMs);
+      return;
+    }
+
+    const refreshEveryMs = Math.max(
+      5_000,
+      Math.min(60_000, this.cadenceMs / 2),
+    );
+    if (nowMs - this.lastEdgeRefreshMs < refreshEveryMs) return;
+    this.lastEdgeRefreshMs = nowMs;
+    void this.ensureWindow(centerMs, true);
   }
 
   private scheduleClockFrame(): void {
