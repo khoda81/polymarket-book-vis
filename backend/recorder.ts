@@ -27,6 +27,7 @@ const STATE_PATH = resolve(
 );
 const PERSIST_DEBOUNCE_MS = 250;
 const MAX_CLOCK_SKEW_MS = 60_000;
+const RECORDER_DEBUG = process.env.RECORDER_DEBUG === "1";
 
 interface PersistedRecorderStateV2 {
   version: 2;
@@ -63,6 +64,23 @@ interface StateResponse {
   states: Record<string, TransportState>;
   /** Watched tokens that have not produced their first recorder snapshot yet. */
   pendingTokenIds: string[];
+  debug?: {
+    subscriptionBatches: number;
+    tokens: Record<
+      string,
+      {
+        watched: boolean;
+        completed: boolean;
+        hasBook: boolean;
+        hasMemory: boolean;
+        memoryCells: number;
+        recordingSinceMs: number | null;
+        subscription:
+          | { state: "pending" | "subscribed" | "untracked"; batchId?: number }
+          | undefined;
+      }
+    >;
+  };
 }
 
 class AgeRecorder {
@@ -134,10 +152,20 @@ class AgeRecorder {
 
     this.schedulePersist();
     this.subscriptions.add(added);
+    debugLog(
+      "watch",
+      added.map(shortToken),
+      `watched=${this.watched.size}`,
+      `batches=${this.subscriptions.activeBatchCount}`,
+    );
     return true;
   }
 
-  state(tokenIds: Iterable<string>, includeStates = true): StateResponse {
+  state(
+    tokenIds: Iterable<string>,
+    includeStates = true,
+    includeDebug = false,
+  ): StateResponse {
     const requested = [...tokenIds];
     const nowMs = Date.now();
     const states: Record<string, TransportState> = {};
@@ -166,18 +194,47 @@ class AgeRecorder {
       }),
     );
 
-    return {
+    const pendingTokenIds = requested.filter(
+      (tokenId) =>
+        this.watched.has(tokenId) &&
+        !this.memories.has(tokenId),
+    );
+
+    const result: StateResponse = {
       serverNowMs: nowMs,
       connected: this.subscriptions.connected,
       recordingSinceMs,
       recordingSinceMsByToken,
       states,
-      pendingTokenIds: requested.filter(
-        (tokenId) =>
-          this.watched.has(tokenId) &&
-          !this.memories.has(tokenId),
-      ),
+      pendingTokenIds,
     };
+
+    if (includeDebug) {
+      const subscription = this.subscriptions.debugStatus(requested);
+      result.debug = {
+        subscriptionBatches: this.subscriptions.activeBatchCount,
+        tokens: Object.fromEntries(
+          requested.map((tokenId) => {
+            const memory = this.memories.get(tokenId);
+            return [
+              tokenId,
+              {
+                watched: this.watched.has(tokenId),
+                completed: this.completed.has(tokenId),
+                hasBook: this.books.has(tokenId),
+                hasMemory: memory !== undefined,
+                memoryCells: memory?.snapshot().length ?? 0,
+                recordingSinceMs:
+                  this.recordingSince.get(tokenId) ?? null,
+                subscription: subscription[tokenId],
+              },
+            ];
+          }),
+        ),
+      };
+    }
+
+    return result;
   }
 
   stats() {
@@ -264,8 +321,14 @@ class AgeRecorder {
 
     // Coverage begins at the first authoritative websocket snapshot/update we
     // actually observed, not when the browser merely asked us to watch it.
-    if (!this.recordingSince.has(tokenId))
+    if (!this.recordingSince.has(tokenId)) {
       this.recordingSince.set(tokenId, nowMs);
+      debugLog(
+        "first-snapshot",
+        shortToken(tokenId),
+        `cells=${memory.snapshot().length}`,
+      );
+    }
 
     this.schedulePersist();
   }
@@ -644,7 +707,18 @@ const server = Bun.serve({
       const tokenIds = parseTokenIds(url.searchParams);
       recorder.watch(tokenIds);
       const includeStates = url.searchParams.get("metadataOnly") !== "1";
-      return response(recorder.state(tokenIds, includeStates));
+      const includeDebug =
+        RECORDER_DEBUG || url.searchParams.get("debug") === "1";
+      const body = recorder.state(tokenIds, includeStates, includeDebug);
+      if (includeDebug)
+        debugLog(
+          "state",
+          `requested=${tokenIds.length}`,
+          `states=${Object.keys(body.states).length}`,
+          `pending=${body.pendingTokenIds.length}`,
+          `connected=${body.connected}`,
+        );
+      return response(body);
     }
 
     if (url.pathname === "/api/recorder/watch" && request.method === "POST") {
@@ -679,6 +753,16 @@ const shutdown = async (signal: NodeJS.Signals) => {
 };
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
+
+function debugLog(...args: unknown[]): void {
+  if (RECORDER_DEBUG) console.log("[recorder]", ...args);
+}
+
+function shortToken(tokenId: string): string {
+  return tokenId.length <= 12
+    ? tokenId
+    : `${tokenId.slice(0, 6)}…${tokenId.slice(-4)}`;
+}
 
 function parseTokenIds(params: URLSearchParams): string[] {
   return params
