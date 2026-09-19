@@ -302,7 +302,6 @@ export class AgeStripView {
         tuning.ghostHalfLifeMs,
         nowMs,
       );
-      const tuning = getAgeStripTuning();
       if (
         state.pressureMemory.hasVisibleGhosts(
           nowMs,
