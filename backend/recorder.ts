@@ -1,4 +1,10 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  rename,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { createPublicClient, OrderSide, TransportError } from "@polymarket/client";
 import type {
@@ -486,7 +492,25 @@ class AgeRecorder {
     for (const [tokenId, memory] of restoredMemories)
       this.memories.set(tokenId, memory);
 
-    if (migrated) this.schedulePersist();
+    if (migrated) {
+      await this.backupLegacyState();
+      this.schedulePersist();
+    }
+  }
+
+  private async backupLegacyState(): Promise<void> {
+    const backup = `${STATE_PATH}.v1-backup-${Date.now()}`;
+    try {
+      await copyFile(STATE_PATH, backup);
+      console.log(
+        `Preserved v1 recorder state before migration: ${backup}`,
+      );
+    } catch (error) {
+      this.persistenceBlocked = true;
+      throw new Error(
+        `Could not preserve v1 recorder state before migration to v2: ${String(error)}`,
+      );
+    }
   }
 
   private async quarantineUnreadableState(error: unknown): Promise<void> {
