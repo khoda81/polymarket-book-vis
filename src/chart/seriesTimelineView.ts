@@ -32,6 +32,7 @@ import {
   type ChartTheme,
   type Frame,
 } from "@/lib/renderer";
+import { chartThemeForDarkMode } from "./chartTheme";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   type SignedVolumeColorScale,
@@ -55,20 +56,6 @@ import type {
   Series,
   TokenId,
 } from "@polymarket/client";
-
-const LIGHT_THEME: ChartTheme = {
-  bg: "#ffffff",
-  grid: "rgba(128,128,128,0.15)",
-  axis: "rgba(128,128,128,0.5)",
-  text: "#666666",
-};
-
-const DARK_THEME: ChartTheme = {
-  bg: "#121212",
-  grid: "rgba(255,255,255,0.1)",
-  axis: "rgba(255,255,255,0.3)",
-  text: "#aaaaaa",
-};
 
 const LEFT_PADDING_PX = AGE_TIME_GUTTER_PX;
 const RIGHT_PADDING_PX = 108;
@@ -165,7 +152,7 @@ export class SeriesTimelineView {
     this.onError = options.onError ?? (() => undefined);
 
     this.themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    this.theme = this.themeQuery.matches ? DARK_THEME : LIGHT_THEME;
+    this.theme = chartThemeForDarkMode(this.themeQuery.matches);
 
     this.plotter = new OrderBookPlotter(canvas);
     this.plotter.padding.l = LEFT_PADDING_PX;
@@ -275,7 +262,7 @@ export class SeriesTimelineView {
   }
 
   private readonly handleThemeChange = (event: MediaQueryListEvent) => {
-    this.theme = event.matches ? DARK_THEME : LIGHT_THEME;
+    this.theme = chartThemeForDarkMode(event.matches);
     this.ageClock.refresh();
     this.requestDraw();
   };
