@@ -130,7 +130,7 @@ export class AgeStripView {
     const book = this.host.getBook(tokenId);
     if (!book) return;
 
-    this.pressure.queueBookUpdate(tokenId, book);
+    this.pressure.observeBook(tokenId, book);
 
     if (this.visibilityInitialized.has(tokenId)) return;
     this.visibilityInitialized.add(tokenId);
@@ -144,10 +144,6 @@ export class AgeStripView {
     this.pressure.resolve(tokenId);
   }
 
-  flushBookUpdates(nowMs = Date.now()): void {
-    this.pressure.flushBookUpdates(nowMs);
-  }
-
   draw(): void {
     // A book-driven redraw already advances the ghosts. Reset the decay timer
     // so a ghost-only frame happens only after the chart has gone quiet.
@@ -155,7 +151,6 @@ export class AgeStripView {
 
     const tuning = getAgeStripTuning();
     const nowMs = Date.now();
-    this.flushBookUpdates(nowMs);
     let hasVisibleGhosts = false;
 
     const controls = this.collectControls();
