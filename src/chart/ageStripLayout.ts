@@ -90,7 +90,11 @@ export interface AgeStripGeometry {
     readonly width: number;
     readonly height: number;
   };
-  readonly rows: readonly { readonly tokenId: string }[];
+  readonly rows: readonly {
+    readonly tokenId: string;
+    /** Optional explicit screen-space center for non-uniform/moving rows. */
+    readonly centerY?: number;
+  }[];
   readonly canvasWidth: number;
   readonly canvasHeight: number;
 }
