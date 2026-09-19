@@ -1,21 +1,23 @@
+import { AgeStripClock } from "./ageStripClock";
+import { handleAgeStripTuningWheel } from "./ageStripInteraction";
 import {
-  drawLivePressureStrip,
+  AGE_TIME_GUTTER_PX,
+  rowRasterGeometry,
+  type AgeStripGeometry,
+} from "./ageStripLayout";
+import { AgeStripPressureState } from "./ageStripPressureState";
+import {
+  drawPressureMemoryStrip,
   drawResolvedMarketStrip,
 } from "./ageStripRendering";
-import {
-  rowRasterGeometry,
-} from "./ageStripLayout";
 import { LiveBookFeed } from "./liveBookFeed";
+import { fetchRecorderHydration } from "@/lib/ageRecorderClient";
 import {
-  SERIES_ROW_HEIGHT_PX,
-  SERIES_VISIBLE_ROWS,
-  SERIES_WINDOW_ROWS,
-  inferSeriesCadenceMs,
-  loadSeriesEventsAround,
-  timedSeriesEvent,
-  type TimedSeriesEvent,
-} from "@/lib/seriesTimeline";
-import { getAgeStripTuning } from "@/lib/ageStripTuning";
+  getAgeStripTuning,
+  ghostRefreshDelayMs,
+  subscribeAgeStripTuning,
+} from "@/lib/ageStripTuning";
+import { defaultPressureScaleForMarket } from "@/lib/chartDefinition";
 import type { TokenBook } from "@/lib/orderBook";
 import {
   initialMarketLifecycle,
@@ -23,7 +25,6 @@ import {
   type MarketLifecycle,
   type MarketResolutionUpdate,
 } from "@/lib/marketLifecycle";
-import { stableHue } from "@/lib/negRiskColors";
 import {
   OrderBookPlotter,
   type ChartTheme,
@@ -33,7 +34,15 @@ import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
-import { semanticYesNeutralNoScale } from "@/lib/thresholdColors";
+import {
+  SERIES_ROW_HEIGHT_PX,
+  SERIES_VISIBLE_ROWS,
+  SERIES_WINDOW_ROWS,
+  inferSeriesCadenceMs,
+  loadSeriesEventsAround,
+  timedSeriesEvent,
+  type TimedSeriesEvent,
+} from "@/lib/seriesTimeline";
 import type {
   ConnectionStatus,
 } from "@/lib/chartState";
@@ -59,11 +68,11 @@ const DARK_THEME: ChartTheme = {
   text: "#aaaaaa",
 };
 
-const LEFT_PADDING_PX = 16;
-const RIGHT_PADDING_PX = 110;
+const LEFT_PADDING_PX = AGE_TIME_GUTTER_PX;
+const RIGHT_PADDING_PX = 108;
 const TOP_PADDING_PX = 8;
-const BOTTOM_PADDING_PX = 24;
-const TIMELINE_STATUS_GUTTER_PX = 46;
+const BOTTOM_PADDING_PX = 10;
+const TIMELINE_RELATIVE_GUTTER_PX = 42;
 const SUBSCRIPTION_BUFFER_ROWS = 6;
 const WINDOW_RELOAD_FRACTION = 0.45;
 
@@ -71,6 +80,7 @@ export interface SeriesTimelineViewOptions {
   readonly onConnectionStatus?: (status: ConnectionStatus) => void;
   readonly onFollowingChanged?: (following: boolean) => void;
   readonly onWindowChanged?: (eventCount: number) => void;
+  readonly onAnchorEventChanged?: (event: Event | null) => void;
   readonly onError?: (message: string) => void;
 }
 
@@ -78,10 +88,13 @@ export class SeriesTimelineView {
   private readonly plotter: OrderBookPlotter;
   private readonly resizeObserver: ResizeObserver;
   private readonly themeQuery: MediaQueryList;
-  private readonly scale: SignedVolumeColorScale;
+  private readonly pressure = new AgeStripPressureState();
+  private readonly ageClock: AgeStripClock;
+  private readonly unsubscribeTuning: () => void;
   private readonly onConnectionStatus: (status: ConnectionStatus) => void;
   private readonly onFollowingChanged: (following: boolean) => void;
   private readonly onWindowChanged: (eventCount: number) => void;
+  private readonly onAnchorEventChanged: (event: Event | null) => void;
   private readonly onError: (message: string) => void;
   private readonly resolutionByCondition = new Map<
     string,
@@ -95,6 +108,11 @@ export class SeriesTimelineView {
     string,
     TokenBook<string>
   >();
+  private readonly scaleByToken = new Map<
+    string,
+    SignedVolumeColorScale
+  >();
+  private readonly hydratedTokens = new Set<string>();
 
   private theme: ChartTheme;
   private events: Event[];
@@ -110,7 +128,9 @@ export class SeriesTimelineView {
   private loadedMaxStartMs: number | null = null;
   private loadingCenterMs: number | null = null;
   private lastEdgeRefreshMs = 0;
+  private lastAnchorEventId: string | null = null;
   private clockTimer: number | undefined;
+  private ghostRefreshTimer: number | undefined;
   private raf: number | null = null;
   private destroyed = false;
 
@@ -126,15 +146,14 @@ export class SeriesTimelineView {
       this.events,
       series.recurrence,
     );
-    this.scale = semanticYesNeutralNoScale(
-      stableHue(`series:${String(series.id)}`),
-    );
     this.onConnectionStatus =
       options.onConnectionStatus ?? (() => undefined);
     this.onFollowingChanged =
       options.onFollowingChanged ?? (() => undefined);
     this.onWindowChanged =
       options.onWindowChanged ?? (() => undefined);
+    this.onAnchorEventChanged =
+      options.onAnchorEventChanged ?? (() => undefined);
     this.onError = options.onError ?? (() => undefined);
 
     this.themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -154,6 +173,17 @@ export class SeriesTimelineView {
     };
     this.plotter.onResetZoom = () => this.followLive();
 
+    this.ageClock = new AgeStripClock({
+      canvasWrap,
+      getViewMode: () => "age",
+      getTheme: () => this.theme,
+      getTiming: (tokenId) => this.pressure.timing(tokenId),
+    });
+
+    this.unsubscribeTuning = subscribeAgeStripTuning(() => {
+      this.requestDraw();
+    });
+
     const height =
       TOP_PADDING_PX +
       BOTTOM_PADDING_PX +
@@ -169,6 +199,7 @@ export class SeriesTimelineView {
     this.resizeObserver.observe(canvas);
 
     this.canvas.addEventListener("wheel", this.handleWheel, {
+      capture: true,
       passive: false,
     });
     this.themeQuery.addEventListener("change", this.handleThemeChange);
@@ -203,22 +234,35 @@ export class SeriesTimelineView {
     this.feedGeneration++;
     this.feed?.destroy();
     this.feed = null;
+    this.unsubscribeTuning();
+    this.ageClock.destroy();
     if (this.clockTimer !== undefined)
       window.clearTimeout(this.clockTimer);
+    if (this.ghostRefreshTimer !== undefined)
+      window.clearTimeout(this.ghostRefreshTimer);
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.resizeObserver.disconnect();
     this.plotter.destroy();
-    this.canvas.removeEventListener("wheel", this.handleWheel);
+    this.canvas.removeEventListener(
+      "wheel",
+      this.handleWheel,
+      true,
+    );
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
   }
 
   private readonly handleThemeChange = (event: MediaQueryListEvent) => {
     this.theme = event.matches ? DARK_THEME : LIGHT_THEME;
+    this.ageClock.refresh();
     this.requestDraw();
   };
 
   private readonly handleWheel = (event: WheelEvent) => {
-    if (event.ctrlKey) return;
+    if (handleAgeStripTuningWheel(event)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
 
     let delta = event.deltaY;
     if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
@@ -227,7 +271,7 @@ export class SeriesTimelineView {
 
     this.panByCssPixels(-delta);
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
   };
 
   private panByCssPixels(deltaPx: number): void {
@@ -285,23 +329,39 @@ export class SeriesTimelineView {
         event.markets.some((market) => market.outcomes.yes.tokenId),
       );
       if (compatible.length === 0)
-        throw new Error("No timed binary events were found in this series window");
+        throw new Error(
+          "No timed binary events were found in this series window",
+        );
 
       this.events = compatible;
-      const keepBooks = new Set(
-        compatible.flatMap((event) =>
-          event.markets
-            .map((market) => market.outcomes.yes.tokenId)
-            .filter((tokenId): tokenId is TokenId => tokenId !== null),
-        ).map(String),
-      );
-      for (const tokenId of this.bookCache.keys())
-        if (!keepBooks.has(tokenId)) this.bookCache.delete(tokenId);
-
       this.cadenceMs = inferSeriesCadenceMs(
         compatible,
         this.series.recurrence,
       );
+
+      const keepTokens = new Set<string>();
+      this.scaleByToken.clear();
+      for (const event of compatible) {
+        for (const [marketIndex, market] of event.markets.entries()) {
+          const tokenId = market.outcomes.yes.tokenId;
+          if (!tokenId) continue;
+          const key = String(tokenId);
+          keepTokens.add(key);
+          this.scaleByToken.set(
+            key,
+            defaultPressureScaleForMarket(event, marketIndex),
+          );
+          const row = timedSeriesEvent(event, this.cadenceMs);
+          this.pressure.ensure(key, row?.endMs ?? null);
+        }
+      }
+
+      for (const tokenId of this.bookCache.keys())
+        if (!keepTokens.has(tokenId)) this.bookCache.delete(tokenId);
+      this.pressure.retain(keepTokens);
+      for (const tokenId of [...this.hydratedTokens])
+        if (!keepTokens.has(tokenId)) this.hydratedTokens.delete(tokenId);
+
       this.loadedCenterMs = centerMs;
       const starts = compatible
         .map((event) => event.schedule.startTime ?? event.schedule.startDate)
@@ -314,6 +374,7 @@ export class SeriesTimelineView {
       this.loadingCenterMs = null;
       this.lastEdgeRefreshMs = Date.now();
       this.onWindowChanged(compatible.length);
+      this.updateAnchorEvent(Date.now());
       this.scheduleClockFrame();
       this.requestDraw();
     } catch (error) {
@@ -322,8 +383,6 @@ export class SeriesTimelineView {
       this.onError(
         error instanceof Error ? error.message : String(error),
       );
-      // Initial load with no seed data is fatal. Background window refreshes
-      // keep the last usable cache instead of creating unhandled rejections.
       if (this.events.length === 0) throw error;
     }
   }
@@ -338,6 +397,10 @@ export class SeriesTimelineView {
 
   private draw(): void {
     if (this.destroyed) return;
+    if (this.ghostRefreshTimer !== undefined) {
+      window.clearTimeout(this.ghostRefreshTimer);
+      this.ghostRefreshTimer = undefined;
+    }
 
     const nowMs = Date.now();
     const centerMs = nowMs + this.userOffsetMs;
@@ -366,54 +429,72 @@ export class SeriesTimelineView {
         row.centerMs <= maxMs + this.cadenceMs,
     );
 
-    const activeTokens: TokenId[] = [];
+    const bufferedTokens: TokenId[] = [];
+    const hydratableTokens: string[] = [];
     for (const row of bufferedRows) {
       const market = primaryMarket(row.event);
       const tokenId = market?.outcomes.yes.tokenId;
       if (!market || !tokenId) continue;
-      if (this.marketLifecycle(market).kind === "live")
-        activeTokens.push(tokenId);
-    }
 
-    const volumePerCssPixel = getAgeStripTuning().volumePerCssPixel;
+      hydratableTokens.push(String(tokenId));
+      if (this.marketLifecycle(market).kind === "live")
+        bufferedTokens.push(tokenId);
+    }
+    void this.hydrateTokens(hydratableTokens);
+
+    const tuning = getAgeStripTuning();
+    let hasVisibleGhosts = false;
 
     for (const row of visibleRows) {
       const market = primaryMarket(row.event);
       const tokenId = market?.outcomes.yes.tokenId;
       if (!market || !tokenId) continue;
 
+      const key = String(tokenId);
+      const scale = this.pressureScale(row.event, market);
       const lifecycle = this.marketLifecycle(market);
       const rowOffsetCss = seriesRowOffsetCss(frame, row.centerMs);
+
       if (lifecycle.kind === "resolved") {
         const primaryWon =
-          String(lifecycle.winningTokenId) === String(tokenId);
+          String(lifecycle.winningTokenId) === key;
         drawResolvedMarketStrip(
           frame,
           row.centerMs,
           primaryWon ? "primary" : "opposite",
           lifecycle.winningOutcome,
-          this.scale,
+          scale,
           rowOffsetCss,
         );
-      } else {
-        const book =
-          this.bookCache.get(String(tokenId)) ??
-          this.feed?.getBook(String(tokenId));
-        if (book)
-          drawLivePressureStrip(
-            frame,
-            row.centerMs,
-            book,
-            this.scale,
-            volumePerCssPixel,
-            rowOffsetCss,
-          );
       }
+
+      drawPressureMemoryStrip(
+        frame,
+        row.centerMs,
+        this.pressure.cells(key),
+        scale,
+        tuning.volumePerCssPixel,
+        tuning.ghostHalfLifeMs,
+        nowMs,
+        rowOffsetCss,
+      );
+      hasVisibleGhosts ||= this.pressure.hasVisibleGhosts(
+        key,
+        nowMs,
+        tuning.ghostHalfLifeMs,
+      );
     }
 
     this.drawTimeline(frame, visibleRows, nowMs);
-    this.refreshFeed(activeTokens);
+    this.updateAgeClock(frame, visibleRows);
+    this.updateAnchorEvent(nowMs);
+    this.refreshFeed(bufferedTokens);
     this.refreshWindowIfNeeded(centerMs, minMs, maxMs, nowMs);
+
+    if (hasVisibleGhosts)
+      this.scheduleGhostRefresh(
+        ghostRefreshDelayMs(tuning.ghostHalfLifeMs),
+      );
   }
 
   private drawTimeline(
@@ -424,7 +505,7 @@ export class SeriesTimelineView {
     const { ctx, viewport: vp, theme } = frame;
     const dpr = window.devicePixelRatio || 1;
     const timelineX =
-      vp.l + vp.width + TIMELINE_STATUS_GUTTER_PX;
+      vp.l + vp.width + TIMELINE_RELATIVE_GUTTER_PX;
 
     ctx.lineWidth = 1;
     ctx.strokeStyle = theme.axis;
@@ -436,6 +517,8 @@ export class SeriesTimelineView {
     ctx.font = "10px sans-serif";
     ctx.textBaseline = "middle";
 
+    // Event boundaries are the absolute clock: these drift past the independent
+    // relative-time ticks as wall time advances.
     for (const row of rows) {
       const market = primaryMarket(row.event);
       const tokenId = market?.outcomes.yes.tokenId;
@@ -458,13 +541,14 @@ export class SeriesTimelineView {
       ctx.lineTo(vp.l + vp.width, geometry.topCss);
       ctx.stroke();
 
-      ctx.strokeStyle = signedVolumeColor(-1, this.scale);
+      const scale = this.pressureScale(row.event, market);
+      ctx.strokeStyle = signedVolumeColor(-1, scale);
       ctx.beginPath();
       ctx.moveTo(vp.l, geometry.topCss);
       ctx.lineTo(vp.l, geometry.topCss + geometry.heightCss);
       ctx.stroke();
 
-      ctx.strokeStyle = signedVolumeColor(1, this.scale);
+      ctx.strokeStyle = signedVolumeColor(1, scale);
       ctx.beginPath();
       ctx.moveTo(vp.l + vp.width, geometry.topCss);
       ctx.lineTo(
@@ -477,17 +561,11 @@ export class SeriesTimelineView {
       if (startY >= vp.t - 1 && startY <= vp.t + vp.height + 1) {
         ctx.strokeStyle = theme.axis;
         ctx.beginPath();
-        ctx.moveTo(timelineX - 3, startY);
+        ctx.moveTo(timelineX, startY);
         ctx.lineTo(timelineX + 3, startY);
         ctx.stroke();
 
         ctx.fillStyle = theme.text;
-        ctx.textAlign = "right";
-        ctx.fillText(
-          formatRelativeTimelineTime(row.startMs, nowMs),
-          timelineX - 6,
-          startY,
-        );
         ctx.textAlign = "left";
         ctx.fillText(
           formatTimelineTime(row.startMs, this.cadenceMs),
@@ -497,11 +575,33 @@ export class SeriesTimelineView {
       }
     }
 
-    ctx.fillStyle = theme.text;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    ctx.fillText("0", vp.l, vp.t + vp.height + 8);
-    ctx.fillText("1", vp.l + vp.width, vp.t + vp.height + 8);
+    // Relative ticks are anchored to "now", not to event boundaries.
+    const minK = Math.ceil(
+      (frame.domain.yRange.min - nowMs) / this.cadenceMs,
+    );
+    const maxK = Math.floor(
+      (frame.domain.yRange.max - nowMs) / this.cadenceMs,
+    );
+    for (let k = minK; k <= maxK; k++) {
+      const tickTime = nowMs + k * this.cadenceMs;
+      const tickY = frame.toScreenY(0, tickTime);
+      if (tickY < vp.t - 1 || tickY > vp.t + vp.height + 1)
+        continue;
+
+      ctx.strokeStyle = theme.axis;
+      ctx.beginPath();
+      ctx.moveTo(timelineX - 3, tickY);
+      ctx.lineTo(timelineX, tickY);
+      ctx.stroke();
+
+      ctx.fillStyle = theme.text;
+      ctx.textAlign = "right";
+      ctx.fillText(
+        relativeCadenceLabel(k, this.cadenceMs),
+        timelineX - 6,
+        tickY,
+      );
+    }
 
     const nowY = frame.toScreenY(0, nowMs);
     if (nowY >= vp.t && nowY <= vp.t + vp.height) {
@@ -516,6 +616,49 @@ export class SeriesTimelineView {
       ctx.fill();
       ctx.restore();
     }
+  }
+
+  private updateAgeClock(
+    frame: Frame,
+    rows: readonly TimedSeriesEvent[],
+  ): void {
+    const vp = frame.viewport;
+    const geometry: AgeStripGeometry = {
+      viewport: {
+        l: vp.l,
+        t: vp.t,
+        width: vp.width,
+        height: vp.height,
+      },
+      rows: rows.flatMap((row) => {
+        const market = primaryMarket(row.event);
+        const tokenId = market?.outcomes.yes.tokenId;
+        if (!tokenId) return [];
+        return [{
+          tokenId: String(tokenId),
+          centerY: frame.toScreenY(0, row.centerMs),
+        }];
+      }),
+      canvasWidth:
+        vp.l + vp.width + this.plotter.padding.r,
+      canvasHeight:
+        vp.t + vp.height + this.plotter.padding.b,
+    };
+    this.ageClock.setGeometry(geometry);
+  }
+
+  private pressureScale(
+    event: Event,
+    market: Market,
+  ): SignedVolumeColorScale {
+    const tokenId = market.outcomes.yes.tokenId;
+    if (tokenId) {
+      const cached = this.scaleByToken.get(String(tokenId));
+      if (cached) return cached;
+    }
+
+    const index = Math.max(0, event.markets.indexOf(market));
+    return defaultPressureScaleForMarket(event, index);
   }
 
   private marketLifecycle(market: Market): MarketLifecycle {
@@ -575,7 +718,9 @@ export class SeriesTimelineView {
           generation !== this.feedGeneration
         )
           return;
-        this.bookCache.set(String(tokenId), book);
+        const key = String(tokenId);
+        this.bookCache.set(key, book);
+        this.pressure.observeBook(key, book);
         this.requestDraw();
       },
       onMarketResolved: (resolution) => {
@@ -591,6 +736,7 @@ export class SeriesTimelineView {
         for (const assetId of resolution.assetIds) {
           this.resolutionByAsset.set(assetId, resolution);
           this.bookCache.delete(assetId);
+          this.pressure.resolve(assetId);
         }
         this.requestDraw();
       },
@@ -608,6 +754,60 @@ export class SeriesTimelineView {
         error instanceof Error ? error.message : String(error),
       );
     });
+  }
+
+  private async hydrateTokens(
+    tokenIds: readonly string[],
+  ): Promise<void> {
+    const fresh = [...new Set(tokenIds)].filter(
+      (tokenId) => !this.hydratedTokens.has(tokenId),
+    );
+    if (fresh.length === 0) return;
+
+    for (const tokenId of fresh) this.hydratedTokens.add(tokenId);
+    const hydration = await fetchRecorderHydration(fresh);
+    if (this.destroyed) return;
+
+    this.pressure.setRecordingCoverage(
+      hydration.recordingSinceMsByToken,
+    );
+    this.pressure.hydrate(
+      hydration.pressureCellsByToken,
+      (tokenId) =>
+        this.bookCache.get(tokenId) ??
+        this.feed?.getBook(tokenId),
+    );
+    this.ageClock.refresh();
+    this.requestDraw();
+  }
+
+  private updateAnchorEvent(nowMs: number): void {
+    const rows = this.events
+      .map((event) => timedSeriesEvent(event, this.cadenceMs))
+      .filter((row): row is TimedSeriesEvent => row !== null);
+    if (rows.length === 0) {
+      if (this.lastAnchorEventId !== null) {
+        this.lastAnchorEventId = null;
+        this.onAnchorEventChanged(null);
+      }
+      return;
+    }
+
+    const anchor =
+      rows.find(
+        (row) => row.startMs <= nowMs && nowMs < row.endMs,
+      ) ??
+      rows.reduce((best, row) =>
+        Math.abs(row.centerMs - nowMs) <
+        Math.abs(best.centerMs - nowMs)
+          ? row
+          : best,
+      );
+
+    const id = String(anchor.event.id);
+    if (id === this.lastAnchorEventId) return;
+    this.lastAnchorEventId = id;
+    this.onAnchorEventChanged(anchor.event);
   }
 
   private refreshWindowIfNeeded(
@@ -660,6 +860,16 @@ export class SeriesTimelineView {
       this.scheduleClockFrame();
     }, delayMs);
   }
+
+  private scheduleGhostRefresh(delayMs: number): void {
+    if (this.destroyed || this.ghostRefreshTimer !== undefined)
+      return;
+
+    this.ghostRefreshTimer = window.setTimeout(() => {
+      this.ghostRefreshTimer = undefined;
+      this.requestDraw();
+    }, delayMs);
+  }
 }
 
 function primaryMarket(event: Event): Market | null {
@@ -686,27 +896,28 @@ function formatTimelineTime(
   });
 }
 
-
-function formatRelativeTimelineTime(
-  timestampMs: number,
-  nowMs: number,
+function relativeCadenceLabel(
+  offset: number,
+  cadenceMs: number,
 ): string {
-  const deltaMs = timestampMs - nowMs;
-  const sign = deltaMs < 0 ? "−" : "+";
-  const seconds = Math.abs(deltaMs) / 1_000;
+  if (offset === 0) return "now";
 
-  if (seconds < 60)
-    return `${sign}${Math.max(1, Math.round(seconds))}s`;
+  const magnitudeMs = Math.abs(offset) * cadenceMs;
+  const sign = offset < 0 ? "−" : "";
 
-  const minutes = seconds / 60;
-  if (minutes < 60)
-    return `${sign}${Math.round(minutes)}m`;
-
-  const hours = minutes / 60;
-  if (hours < 48)
-    return `${sign}${formatCompactDuration(hours)}h`;
-
-  return `${sign}${formatCompactDuration(hours / 24)}d`;
+  if (magnitudeMs < 60_000)
+    return `${sign}${Math.round(magnitudeMs / 1_000)}s`;
+  if (magnitudeMs < 60 * 60_000)
+    return `${sign}${formatCompactDuration(
+      magnitudeMs / 60_000,
+    )}m`;
+  if (magnitudeMs < 48 * 60 * 60_000)
+    return `${sign}${formatCompactDuration(
+      magnitudeMs / (60 * 60_000),
+    )}h`;
+  return `${sign}${formatCompactDuration(
+    magnitudeMs / (24 * 60 * 60_000),
+  )}d`;
 }
 
 function formatCompactDuration(value: number): string {
@@ -715,7 +926,6 @@ function formatCompactDuration(value: number): string {
     ? String(rounded)
     : rounded.toFixed(1);
 }
-
 
 function seriesRowOffsetCss(
   frame: Frame,
