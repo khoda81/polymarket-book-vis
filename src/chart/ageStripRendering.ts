@@ -11,7 +11,10 @@ import {
   signedVolumeSegments,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
-import { rowRasterGeometry } from "./ageStripLayout";
+import {
+  rowRasterGeometry,
+  type RowRasterGeometry,
+} from "./ageStripLayout";
 
 /** Draw per-row probability rails using each market's semantic token colors. */
 export function drawAgeAxes(
@@ -73,10 +76,14 @@ export function drawLivePressureStrip(
   book: TokenBook<string>,
   colorScale: SignedVolumeColorScale,
   volumePerCssPixel: number,
+  rowOffsetCss = 0,
 ): void {
   const { ctx, viewport: vp } = frame;
   const dpr = window.devicePixelRatio || 1;
-  const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+  const geometry = offsetRowGeometry(
+    rowRasterGeometry(frame.toScreenY(0, y), dpr),
+    rowOffsetCss,
+  );
   const reserveShares =
     volumePerCssPixel * geometry.heightCss;
 
@@ -284,10 +291,14 @@ export function drawResolvedMarketStrip(
   side: "primary" | "opposite",
   outcome: string,
   colorScale: SignedVolumeColorScale,
+  rowOffsetCss = 0,
 ): void {
   const { ctx, viewport: vp } = frame;
   const dpr = window.devicePixelRatio || 1;
-  const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+  const geometry = offsetRowGeometry(
+    rowRasterGeometry(frame.toScreenY(0, y), dpr),
+    rowOffsetCss,
+  );
   const color = signedVolumeColor(
     side === "primary" ? 1 : -1,
     colorScale,
@@ -358,4 +369,17 @@ export function drawResolvedMarketStrip(
   }
 
   ctx.restore();
+}
+
+
+function offsetRowGeometry(
+  geometry: RowRasterGeometry,
+  offsetCss: number,
+): RowRasterGeometry {
+  if (offsetCss === 0) return geometry;
+  return {
+    ...geometry,
+    topCss: geometry.topCss + offsetCss,
+    centerCss: geometry.centerCss + offsetCss,
+  };
 }
