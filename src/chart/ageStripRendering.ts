@@ -274,3 +274,86 @@ function drawMemoryBand(
     shell,
   );
 }
+
+
+export function drawResolvedMarketStrip(
+  frame: Frame,
+  y: number,
+  side: "primary" | "opposite",
+  outcome: string,
+  colorScale: SignedVolumeColorScale,
+): void {
+  const { ctx, viewport: vp } = frame;
+  const dpr = window.devicePixelRatio || 1;
+  const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+  const color = signedVolumeColor(
+    side === "primary" ? 1 : -1,
+    colorScale,
+  );
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(
+    vp.l,
+    geometry.topCss,
+    vp.width,
+    geometry.heightCss,
+  );
+  ctx.clip();
+
+  // Resolution lives behind pressure memory: surviving ghosts remain legible,
+  // while the empty book still carries a persistent semantic result.
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.025;
+  ctx.fillRect(
+    vp.l,
+    geometry.topCss,
+    vp.width,
+    geometry.heightCss,
+  );
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.18;
+  const spacing = 18;
+  const run = geometry.heightCss + spacing;
+  for (
+    let x = vp.l - geometry.heightCss;
+    x < vp.l + vp.width + geometry.heightCss;
+    x += spacing
+  ) {
+    ctx.beginPath();
+    ctx.moveTo(x, geometry.topCss + geometry.heightCss);
+    ctx.lineTo(x + run, geometry.topCss);
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 0.52;
+  ctx.beginPath();
+  ctx.moveTo(vp.l, geometry.topCss + 0.5 / dpr);
+  ctx.lineTo(vp.l + vp.width, geometry.topCss + 0.5 / dpr);
+  ctx.moveTo(
+    vp.l,
+    geometry.topCss + geometry.heightCss - 0.5 / dpr,
+  );
+  ctx.lineTo(
+    vp.l + vp.width,
+    geometry.topCss + geometry.heightCss - 0.5 / dpr,
+  );
+  ctx.stroke();
+
+  if (outcome) {
+    ctx.globalAlpha = 0.86;
+    ctx.fillStyle = color;
+    ctx.font = "600 10px sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = side === "primary" ? "right" : "left";
+    ctx.fillText(
+      `resolved · ${outcome}`,
+      side === "primary" ? vp.l + vp.width - 7 : vp.l + 7,
+      geometry.centerCss,
+    );
+  }
+
+  ctx.restore();
+}

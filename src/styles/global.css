@@ -201,6 +201,52 @@ body {
     white-space: nowrap;
 }
 
+.ghost-legend-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 3px;
+    margin-bottom: 3px;
+    color: var(--color-text-secondary, #666);
+    font-size: 10px;
+}
+
+.ghost-legend-header > :first-child {
+    color: var(--color-text-primary, #222);
+    font-weight: 600;
+}
+
+.ghost-legend-bar {
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    color: var(--color-text-primary, #222);
+    opacity: 0.68;
+    -webkit-mask-image: linear-gradient(to right, #000, transparent);
+    mask-image: linear-gradient(to right, #000, transparent);
+    box-shadow: inset 0 0 0 1px
+        color-mix(in oklab, currentColor 12%, transparent);
+}
+
+.ghost-legend-ticks {
+    position: relative;
+    height: 14px;
+    margin-top: 2px;
+    color: var(--color-text-secondary, #666);
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+}
+
+.ghost-legend-ticks span {
+    position: absolute;
+    transform: translateX(-50%);
+    white-space: nowrap;
+}
+
+.ghost-legend-ticks span:last-child {
+    transform: translateX(-100%);
+}
+
 .grid {
     display: grid-lanes;
     column-count: 1;

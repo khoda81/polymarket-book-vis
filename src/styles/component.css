@@ -251,20 +251,11 @@
     min-width: 0;
 }
 
-.cpv-market-resolution,
 .cpv-market-awaiting {
     flex: 0 0 auto;
     font-size: 10px;
     line-height: 1;
     white-space: nowrap;
-}
-
-.cpv-market-resolution {
-    color: #1d9e75;
-    font-weight: 600;
-}
-
-.cpv-market-awaiting {
     color: var(--color-text-secondary, #666);
     opacity: 0.72;
 }

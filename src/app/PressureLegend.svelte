@@ -24,6 +24,16 @@
   $: ghostHalfLife = fmtRelativeTime(
     tuning.ghostHalfLifeMs / 1000,
   );
+  $: ghostTicks = [0, 1, 2, 3, 4].map((halves) => ({
+    halves,
+    position: (1 - 2 ** -halves) * 100,
+    label:
+      halves === 0
+        ? "now"
+        : fmtRelativeTime(
+            (tuning.ghostHalfLifeMs * halves) / 1000,
+          ),
+  }));
   $: values = shareLegendTickValues(reserveShares, width);
   $: negativeColor = signedVolumeColor(
     -1,
@@ -133,7 +143,7 @@
   <div class="volume-legend-header">
     <span>Share pressure</span>
     <span class="volume-legend-scale">
-      reserve {fmtSI(reserveShares)} shares · ghost {ghostHalfLife} · Q=C → 50% row
+      reserve {fmtSI(reserveShares)} shares · Q=C → 50% row
     </span>
   </div>
   <div
@@ -152,6 +162,19 @@
         style:left={`${shareLegendPosition(value, reserveShares) * 100}%`}
       >
         {formatTick(value)}
+      </span>
+    {/each}
+  </div>
+
+  <div class="ghost-legend-header">
+    <span>Ghost memory</span>
+    <span>half-life {ghostHalfLife} · Shift+wheel</span>
+  </div>
+  <div class="ghost-legend-bar" aria-hidden="true"></div>
+  <div class="ghost-legend-ticks">
+    {#each ghostTicks as tick (tick.halves)}
+      <span style:left={`${tick.position}%`}>
+        {tick.label}
       </span>
     {/each}
   </div>

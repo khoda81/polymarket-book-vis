@@ -10,11 +10,21 @@
   let iconFailed = false;
 
   $: ageStatus =
+    lifecycle.kind === "awaiting-resolution" ? "pending" : "";
+  $: resolutionSide =
+    lifecycle.kind !== "resolved"
+      ? ""
+      : String(lifecycle.winningTokenId) === String(control.tokenId)
+        ? "primary"
+        : control.oppositeTokenId !== null &&
+            String(lifecycle.winningTokenId) ===
+              String(control.oppositeTokenId)
+          ? "opposite"
+          : "";
+  $: resolutionOutcome =
     lifecycle.kind === "resolved"
-      ? `✓ ${lifecycle.winningOutcome}`
-      : lifecycle.kind === "awaiting-resolution"
-        ? "pending"
-        : "";
+      ? lifecycle.winningOutcome
+      : "";
 </script>
 
 <label
@@ -23,6 +33,8 @@
   data-market-order={control.order}
   data-age-label={control.ageLabel}
   data-age-status={ageStatus}
+  data-age-resolution-side={resolutionSide}
+  data-age-resolution-outcome={resolutionOutcome}
   data-age-suppress-market-identity={control.suppressAgeIdentity}
   title={control.title}
 >
@@ -49,12 +61,7 @@
     />
   {/if}
   <span class="cpv-market-label-text">{control.title}</span>
-  {#if lifecycle.kind === "resolved"}
-    <span
-      class="cpv-market-resolution"
-      title={`Resolved: ${lifecycle.winningOutcome}`}
-    >✓ {lifecycle.winningOutcome}</span>
-  {:else if lifecycle.kind === "awaiting-resolution"}
+  {#if lifecycle.kind === "awaiting-resolution"}
     <span class="cpv-market-awaiting">pending</span>
   {/if}
 </label>

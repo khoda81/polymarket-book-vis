@@ -26,6 +26,7 @@ import {
 import {
   drawAgeAxes,
   drawPressureMemoryStrip,
+  drawResolvedMarketStrip,
 } from "./ageStripRendering";
 import { AgeStripClock } from "./ageStripClock";
 import { AgeStripTooltip } from "./ageStripTooltip";
@@ -244,6 +245,20 @@ export class AgeStripView {
 
       const tuning = getAgeStripTuning();
       const nowMs = Date.now();
+      const resolutionSide =
+        label.dataset.ageResolutionSide;
+      if (
+        resolutionSide === "primary" ||
+        resolutionSide === "opposite"
+      )
+        drawResolvedMarketStrip(
+          frame,
+          rowCount - 1 - index,
+          resolutionSide,
+          label.dataset.ageResolutionOutcome ?? "",
+          this.host.getPressureColorScale(tokenId),
+        );
+
       state.pressureMemory.prune(
         nowMs,
         tuning.ghostHalfLifeMs,
