@@ -10,28 +10,46 @@ import type {
 const SUBSCRIBE_DEBOUNCE_MS = 100;
 const SUBSCRIBE_BATCH_GAP_MS = 40;
 const MAX_SUBSCRIBE_BATCH_TOKENS = 100;
+/**
+ * Conservative physical-connection cap.
+ *
+ * Polymarket does not publish a stable cap, but high subscription counts are
+ * observed to silently stop producing snapshots. Each PublicClient owns one
+ * CLOB market websocket, so we intentionally shard long-lived recorder
+ * subscriptions across clients instead of merely sending smaller logical
+ * subscription messages through one socket.
+ */
+const MAX_TOKENS_PER_CONNECTION = 200;
 const RETRY_DELAY_MS = 1_000;
+
+interface SubscriptionShard {
+  readonly id: number;
+  readonly client: PublicClient;
+  readonly batchIds: Set<number>;
+  /** Physical assets still subscribed on this client. */
+  tokenCount: number;
+}
 
 interface SubscriptionBatch {
   readonly id: number;
+  readonly shardId: number;
   readonly handle: SubscriptionHandle<MarketEvent>;
-  readonly tokenIds: Set<string>;
+  /** Assets owned by this SDK subscription handle. */
+  readonly subscribedTokenIds: Set<string>;
+  /** Assets that the recorder still cares about. */
+  readonly activeTokenIds: Set<string>;
 }
 
 /**
- * Incremental market-subscription registry.
+ * Incremental recorder subscription pool.
  *
- * The Polymarket SDK already multiplexes every market subscription created by
- * one PublicClient onto one physical CLOB websocket. These batches are logical
- * handles on that shared socket. Keeping them separate lets us add/remove
- * assets incrementally without rebuilding the connection.
- *
- * Large initial asset lists are deliberately chunked: sending ~1000 restored
- * assets in one subscription frame can leave many tokens waiting a long time
- * for their first snapshot, whereas small incremental subscribe frames hydrate
- * promptly.
+ * Within one PublicClient, the Polymarket SDK multiplexes logical subscription
+ * handles onto one physical websocket and sends incremental subscribe frames.
+ * We keep that behavior, but cap each physical websocket at a conservative
+ * number of assets and create another PublicClient/socket when necessary.
  */
 export class RecorderSubscriptionPool {
+  private readonly shards = new Map<number, SubscriptionShard>();
   private readonly batches = new Map<number, SubscriptionBatch>();
   private readonly subscribed = new Set<string>();
   private readonly pending = new Set<string>();
@@ -39,9 +57,10 @@ export class RecorderSubscriptionPool {
   private connecting = false;
   private stopped = false;
   private nextBatchId = 1;
+  private nextShardId = 1;
 
   constructor(
-    private readonly client: PublicClient,
+    private readonly createClient: () => PublicClient,
     private readonly onEvent: (event: MarketEvent) => void,
     private readonly onDebug: (...args: unknown[]) => void =
       () => undefined,
@@ -55,25 +74,53 @@ export class RecorderSubscriptionPool {
     return this.batches.size;
   }
 
+  get activeConnectionCount(): number {
+    return this.shards.size;
+  }
+
   debugStatus(
     tokenIds: Iterable<string>,
   ): Record<
     string,
-    { state: "pending" | "subscribed" | "untracked"; batchId?: number }
+    {
+      state: "pending" | "subscribed" | "untracked";
+      batchId?: number;
+      connectionId?: number;
+    }
   > {
-    const batchByToken = new Map<string, number>();
-    for (const [batchId, batch] of this.batches)
-      for (const tokenId of batch.tokenIds)
-        batchByToken.set(tokenId, batchId);
+    const ownerByToken = new Map<
+      string,
+      { batchId: number; connectionId: number }
+    >();
+    for (const [batchId, batch] of this.batches) {
+      for (const tokenId of batch.activeTokenIds) {
+        ownerByToken.set(tokenId, {
+          batchId,
+          connectionId: batch.shardId,
+        });
+      }
+    }
 
     return Object.fromEntries(
       [...tokenIds].map((tokenId) => {
-        const batchId = batchByToken.get(tokenId);
-        if (batchId !== undefined)
-          return [tokenId, { state: "subscribed" as const, batchId }];
+        const owner = ownerByToken.get(tokenId);
+        if (owner)
+          return [
+            tokenId,
+            {
+              state: "subscribed" as const,
+              ...owner,
+            },
+          ];
         if (this.pending.has(tokenId))
-          return [tokenId, { state: "pending" as const }];
-        return [tokenId, { state: "untracked" as const }];
+          return [
+            tokenId,
+            { state: "pending" as const },
+          ];
+        return [
+          tokenId,
+          { state: "untracked" as const },
+        ];
       }),
     );
   }
@@ -92,10 +139,12 @@ export class RecorderSubscriptionPool {
       this.pending.add(tokenId);
       changed = true;
     }
+
     if (changed) {
       this.onDebug(
         "subscription-queue",
         `pending=${this.pending.size}`,
+        `connections=${this.shards.size}`,
         `batches=${this.batches.size}`,
       );
       this.scheduleSubscribe();
@@ -113,14 +162,13 @@ export class RecorderSubscriptionPool {
 
     for (const [id, batch] of this.batches) {
       for (const tokenId of removed)
-        batch.tokenIds.delete(tokenId);
+        batch.activeTokenIds.delete(tokenId);
 
-      if (batch.tokenIds.size > 0) continue;
-      this.batches.delete(id);
-      this.onDebug("subscription-retire", `batch=${id}`);
-      // Closing a transport is cleanup, not correctness. Some websocket
-      // implementations can stall here, so never put it on a critical path.
-      void batch.handle.close().catch(() => undefined);
+      // A logical SDK handle cannot partially release its original asset list.
+      // Keep resolved assets physically subscribed until this handle has no
+      // active recorder tokens, then close the whole handle in one operation.
+      if (batch.activeTokenIds.size > 0) continue;
+      this.retireBatch(id, batch);
     }
   }
 
@@ -137,16 +185,19 @@ export class RecorderSubscriptionPool {
       (batch) => batch.handle,
     );
     this.batches.clear();
+    this.shards.clear();
     this.subscribed.clear();
     this.pending.clear();
 
-    // Process exit will reclaim sockets. Do not let a websocket close handshake
+    // Process exit will reclaim sockets. Do not let websocket close handshakes
     // block recorder persistence or Ctrl-C shutdown.
     for (const handle of handles)
       void handle.close().catch(() => undefined);
   }
 
-  private scheduleSubscribe(delayMs = SUBSCRIBE_DEBOUNCE_MS): void {
+  private scheduleSubscribe(
+    delayMs = SUBSCRIBE_DEBOUNCE_MS,
+  ): void {
     if (
       this.stopped ||
       this.subscribeTimer !== undefined ||
@@ -178,25 +229,35 @@ export class RecorderSubscriptionPool {
 
     this.connecting = true;
     try {
-      const handle = await this.open(tokenIds);
+      const shard = this.pickShard(tokenIds.length);
+      const handle = await this.open(
+        shard.client,
+        tokenIds,
+      );
       if (!handle) return;
 
       const id = this.nextBatchId++;
       const batch: SubscriptionBatch = {
         id,
+        shardId: shard.id,
         handle,
-        tokenIds: new Set(tokenIds),
+        subscribedTokenIds: new Set(tokenIds),
+        activeTokenIds: new Set(tokenIds),
       };
       this.batches.set(id, batch);
+      shard.batchIds.add(id);
+      shard.tokenCount += tokenIds.length;
       for (const tokenId of tokenIds)
         this.subscribed.add(tokenId);
 
       this.onDebug(
         "subscription-open",
+        `connection=${shard.id}`,
         `batch=${id}`,
         `tokens=${tokenIds.length}`,
+        `connectionTokens=${shard.tokenCount}`,
         `remaining=${this.pending.size}`,
-        `active=${this.batches.size}`,
+        `connections=${this.shards.size}`,
       );
       void this.consume(batch);
     } finally {
@@ -208,12 +269,37 @@ export class RecorderSubscriptionPool {
     }
   }
 
+  private pickShard(tokenCount: number): SubscriptionShard {
+    for (const shard of this.shards.values()) {
+      if (
+        shard.tokenCount + tokenCount <=
+        MAX_TOKENS_PER_CONNECTION
+      )
+        return shard;
+    }
+
+    const shard: SubscriptionShard = {
+      id: this.nextShardId++,
+      client: this.createClient(),
+      batchIds: new Set(),
+      tokenCount: 0,
+    };
+    this.shards.set(shard.id, shard);
+    this.onDebug(
+      "connection-create",
+      `connection=${shard.id}`,
+      `active=${this.shards.size}`,
+    );
+    return shard;
+  }
+
   private async open(
+    client: PublicClient,
     tokenIds: readonly string[],
   ): Promise<SubscriptionHandle<MarketEvent> | null> {
     while (!this.stopped) {
       try {
-        const handle = await this.client.subscribe([
+        const handle = await client.subscribe([
           {
             topic: "market",
             tokenIds,
@@ -226,17 +312,12 @@ export class RecorderSubscriptionPool {
         }
         return handle;
       } catch (error) {
-        if (!(error instanceof TransportError)) {
-          console.error(
-            "Recorder websocket subscription failed; retrying…",
-            error,
-          );
-        } else {
-          console.error(
-            "Recorder websocket connection failed; retrying…",
-            error,
-          );
-        }
+        console.error(
+          error instanceof TransportError
+            ? "Recorder websocket connection failed; retrying…"
+            : "Recorder websocket subscription failed; retrying…",
+          error,
+        );
         await Bun.sleep(RETRY_DELAY_MS);
       }
     }
@@ -255,23 +336,49 @@ export class RecorderSubscriptionPool {
       }
     } catch (error) {
       if (!this.stopped)
-        console.error("Recorder websocket stream ended with error", error);
+        console.error(
+          "Recorder websocket stream ended with error",
+          error,
+        );
     } finally {
       if (this.batches.get(batch.id) !== batch) return;
 
-      this.batches.delete(batch.id);
-      this.onDebug(
-        "subscription-ended",
-        `batch=${batch.id}`,
-        `tokens=${batch.tokenIds.size}`,
-      );
-      for (const tokenId of batch.tokenIds) {
+      const active = [...batch.activeTokenIds];
+      this.retireBatch(batch.id, batch);
+      for (const tokenId of active) {
         this.subscribed.delete(tokenId);
-        if (!this.stopped) this.pending.add(tokenId);
+        if (!this.stopped)
+          this.pending.add(tokenId);
       }
 
       if (!this.stopped && this.pending.size > 0)
         this.scheduleSubscribe(RETRY_DELAY_MS);
     }
+  }
+
+  private retireBatch(
+    id: number,
+    batch: SubscriptionBatch,
+  ): void {
+    this.batches.delete(id);
+
+    const shard = this.shards.get(batch.shardId);
+    if (shard) {
+      shard.batchIds.delete(id);
+      shard.tokenCount = Math.max(
+        0,
+        shard.tokenCount -
+          batch.subscribedTokenIds.size,
+      );
+      if (shard.batchIds.size === 0)
+        this.shards.delete(shard.id);
+    }
+
+    this.onDebug(
+      "subscription-retire",
+      `connection=${batch.shardId}`,
+      `batch=${id}`,
+    );
+    void batch.handle.close().catch(() => undefined);
   }
 }
