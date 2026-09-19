@@ -1,6 +1,7 @@
 import { pressureInkThicknessCss } from "@/lib/pressureInk";
 import {
   ghostAlpha,
+  ghostVisibleSinceMs,
   type PressureBand,
   type PressureCell,
 } from "@/lib/pressureMemory";
@@ -97,6 +98,10 @@ export function drawPressureMemoryStrip(
   const colors = pressureColors(colorScale);
   const positiveColor = colors.positive;
   const negativeColor = colors.negative;
+  const visibleGhostSinceMs = ghostVisibleSinceMs(
+    nowMs,
+    ghostHalfLifeMs,
+  );
 
   ctx.save();
   ctx.beginPath();
@@ -133,6 +138,7 @@ export function drawPressureMemoryStrip(
       geometry.heightCss,
       ghostHalfLifeMs,
       nowMs,
+      visibleGhostSinceMs,
     );
   }
 
@@ -151,6 +157,7 @@ function drawMemoryBands(
   rowHeightCss: number,
   ghostHalfLifeMs: number,
   nowMs: number,
+  visibleGhostSinceMs: number,
 ): void {
   // Paint outer history first, then progressively newer inner envelopes.
   //
@@ -167,6 +174,12 @@ function drawMemoryBands(
 
   for (let index = bands.length - 1; index >= 0; index--) {
     const band = bands[index]!;
+    if (
+      band.state.kind === "ghost" &&
+      band.state.sinceMs <= visibleGhostSinceMs
+    )
+      continue;
+
     const targetAlpha =
       band.state.kind === "live"
         ? 1
