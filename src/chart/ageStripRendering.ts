@@ -23,7 +23,7 @@ export function drawAgeAxes(
   labels: readonly HTMLLabelElement[],
   colorScaleForToken: (tokenId: string) => SignedVolumeColorScale,
 ): void {
-  const { ctx, viewport: vp, theme } = frame;
+  const { ctx, viewport: vp } = frame;
   const dpr = window.devicePixelRatio || 1;
 
   ctx.lineWidth = 1;
@@ -57,13 +57,6 @@ export function drawAgeAxes(
     );
     ctx.stroke();
   }
-
-  ctx.fillStyle = theme.text;
-  if (ctx.font !== "11px sans-serif") ctx.font = "11px sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  ctx.fillText("0", vp.l, vp.t + vp.height + 8);
-  ctx.fillText("1", vp.l + vp.width, vp.t + vp.height + 8);
 
   ctx.beginPath();
   ctx.rect(vp.l, vp.t, vp.width, vp.height);
@@ -163,10 +156,14 @@ export function drawPressureMemoryStrip(
   volumePerCssPixel: number,
   ghostHalfLifeMs: number,
   nowMs: number,
+  rowOffsetCss = 0,
 ): void {
   const { ctx, viewport: vp } = frame;
   const dpr = window.devicePixelRatio || 1;
-  const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+  const geometry = offsetRowGeometry(
+    rowRasterGeometry(frame.toScreenY(0, y), dpr),
+    rowOffsetCss,
+  );
   const reserveShares =
     volumePerCssPixel * geometry.heightCss;
 
