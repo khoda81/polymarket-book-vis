@@ -120,6 +120,7 @@ export class AgeStripClock {
       if (!timing) continue;
 
       const rowCenterY =
+        row.centerY ??
         vp.t + ((rowIndex + 0.5) / rowCount) * vp.height;
 
       ctx.font = "9px sans-serif";
