@@ -58,10 +58,11 @@ const DARK_THEME: ChartTheme = {
   text: "#aaaaaa",
 };
 
-const LEFT_PADDING_PX = 72;
-const RIGHT_PADDING_PX = 78;
+const LEFT_PADDING_PX = 16;
+const RIGHT_PADDING_PX = 110;
 const TOP_PADDING_PX = 8;
 const BOTTOM_PADDING_PX = 24;
+const TIMELINE_STATUS_GUTTER_PX = 46;
 const WINDOW_RELOAD_FRACTION = 0.45;
 
 export interface SeriesTimelineViewOptions {
@@ -396,7 +397,8 @@ export class SeriesTimelineView {
   ): void {
     const { ctx, viewport: vp, theme } = frame;
     const dpr = window.devicePixelRatio || 1;
-    const timelineX = vp.l - 15;
+    const timelineX =
+      vp.l + vp.width + TIMELINE_STATUS_GUTTER_PX;
 
     ctx.lineWidth = 1;
     ctx.strokeStyle = theme.axis;
@@ -454,16 +456,16 @@ export class SeriesTimelineView {
         ctx.stroke();
 
         ctx.fillStyle = theme.text;
-        ctx.textAlign = "right";
+        ctx.textAlign = "left";
         ctx.fillText(
           formatTimelineTime(row.startMs, this.cadenceMs),
-          timelineX - 6,
+          timelineX + 6,
           startY,
         );
       }
 
       const lifecycle = this.marketLifecycle(market);
-      ctx.textAlign = "left";
+      ctx.textAlign = "right";
       ctx.fillStyle =
         lifecycle.kind === "resolved"
           ? signedVolumeColor(
@@ -475,7 +477,7 @@ export class SeriesTimelineView {
           : theme.text;
       ctx.fillText(
         rowStatus(row, lifecycle, nowMs),
-        vp.l + vp.width + 8,
+        timelineX - 6,
         geometry.centerCss,
       );
     }
@@ -494,8 +496,8 @@ export class SeriesTimelineView {
       ctx.lineWidth = Math.max(1 / dpr, 1);
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
-      ctx.moveTo(timelineX, nowY);
-      ctx.lineTo(vp.l + vp.width, nowY);
+      ctx.moveTo(vp.l, nowY);
+      ctx.lineTo(timelineX, nowY);
       ctx.stroke();
       ctx.setLineDash([]);
 
@@ -511,9 +513,9 @@ export class SeriesTimelineView {
 
       ctx.fillStyle = this.theme.text;
       ctx.font = "600 9px sans-serif";
-      ctx.textAlign = "left";
+      ctx.textAlign = "right";
       ctx.textBaseline = "bottom";
-      ctx.fillText("NOW", timelineX + 6, nowY - 2);
+      ctx.fillText("NOW", timelineX - 6, nowY - 2);
       ctx.restore();
     }
   }
