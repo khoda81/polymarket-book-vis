@@ -132,6 +132,7 @@ export class AgeStripView {
     >,
   ): void {
     const nowMs = Date.now();
+    const tuning = getAgeStripTuning();
     for (const [tokenId, cells] of Object.entries(cellsByToken)) {
       let state = this.markets.get(tokenId);
       if (!state) {
@@ -194,14 +195,15 @@ export class AgeStripView {
       this.markets.set(tokenId, state);
     }
 
+    const nowMs = Date.now();
     state.pressureMemory.observe(
       signedVolumeSegments(book),
-      Date.now(),
+      nowMs,
     );
     const tuning = getAgeStripTuning();
     if (
       state.pressureMemory.hasVisibleGhosts(
-        Date.now(),
+        nowMs,
         tuning.ghostHalfLifeMs,
       )
     )
@@ -219,14 +221,15 @@ export class AgeStripView {
     const state = this.markets.get(tokenId);
     if (!state) return;
 
+    const nowMs = Date.now();
     state.pressureMemory.observe(
       [{ lo: 0, hi: 1, volume: 0 }],
-      Date.now(),
+      nowMs,
     );
     const tuning = getAgeStripTuning();
     if (
       state.pressureMemory.hasVisibleGhosts(
-        Date.now(),
+        nowMs,
         tuning.ghostHalfLifeMs,
       )
     )
