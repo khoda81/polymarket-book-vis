@@ -16,7 +16,7 @@ export function handleAgeStripTuningWheel(event: WheelEvent): boolean {
   if (!event.ctrlKey && !event.shiftKey) return false;
 
   const factor = Math.exp(
-    normalizedWheelDelta(event) * 0.002,
+    -normalizedWheelDelta(event) * 0.002,
   );
   if (event.shiftKey)
     scaleAgeStripGhostHalfLife(factor);
