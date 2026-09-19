@@ -28,6 +28,7 @@ const STATE_PATH = resolve(
   process.env.RECORDER_STATE_PATH ?? ".data/age-recorder.json",
 );
 const PERSIST_DEBOUNCE_MS = 250;
+const SUBSCRIPTION_RESTART_DEBOUNCE_MS = 100;
 const MAX_CLOCK_SKEW_MS = 60_000;
 
 interface PersistedRecorderStateV2 {
@@ -63,6 +64,8 @@ interface StateResponse {
   /** Recorder coverage start for each requested token. */
   recordingSinceMsByToken: Record<string, number>;
   states: Record<string, TransportState>;
+  /** Watched tokens that have not produced their first recorder snapshot yet. */
+  pendingTokenIds: string[];
 }
 
 class AgeRecorder {
@@ -75,6 +78,7 @@ class AgeRecorder {
   private subscription: SubscriptionHandle<MarketEvent> | null = null;
   private subscriptionGeneration = 0;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
+  private restartTimer: ReturnType<typeof setTimeout> | undefined;
   private persistDirty = false;
   private persistenceBlocked = false;
   private persistChain: Promise<void> = Promise.resolve();
@@ -95,6 +99,10 @@ class AgeRecorder {
       clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
     }
+    if (this.restartTimer !== undefined) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = undefined;
+    }
     if (this.persistenceBlocked)
       throw new Error(
         "Recorder persistence is blocked because corrupt state could not be preserved",
@@ -113,7 +121,6 @@ class AgeRecorder {
 
   watch(tokenIds: Iterable<string>): boolean {
     let changed = false;
-    const nowMs = Date.now();
     for (const tokenId of tokenIds) {
       if (
         !tokenId ||
@@ -122,15 +129,15 @@ class AgeRecorder {
       )
         continue;
       this.watched.add(tokenId);
-      if (!this.recordingSince.has(tokenId))
-        this.recordingSince.set(tokenId, nowMs);
       changed = true;
     }
     if (!changed) return false;
 
     this.schedulePersist();
     // Registration/hydration must never block the UI on recorder connectivity.
-    void this.restartSubscription();
+    // Batch bursts of registrations so a series window does not repeatedly
+    // tear down the websocket before the first snapshots can arrive.
+    this.scheduleSubscriptionRestart();
     return true;
   }
 
@@ -169,6 +176,11 @@ class AgeRecorder {
       recordingSinceMs,
       recordingSinceMsByToken,
       states,
+      pendingTokenIds: requested.filter(
+        (tokenId) =>
+          this.watched.has(tokenId) &&
+          !this.memories.has(tokenId),
+      ),
     };
   }
 
@@ -184,6 +196,14 @@ class AgeRecorder {
       newestRecordingSinceMs: starts.length ? Math.max(...starts) : null,
       statePath: STATE_PATH,
     };
+  }
+
+  private scheduleSubscriptionRestart(): void {
+    if (this.restartTimer !== undefined) return;
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = undefined;
+      void this.restartSubscription();
+    }, SUBSCRIPTION_RESTART_DEBOUNCE_MS);
   }
 
   private restartSubscription(): Promise<void> {
@@ -280,10 +300,7 @@ class AgeRecorder {
             this.completed.add(tokenId);
             this.books.delete(tokenId);
           }
-          if (changed) {
-            this.schedulePersist();
-            void this.restartSubscription();
-          }
+          if (changed) this.schedulePersist();
         }
       }
     } catch (error) {
@@ -308,6 +325,12 @@ class AgeRecorder {
     const memory = this.memories.get(tokenId) ?? new PressureMemory();
     memory.observe(signedVolumeSegments(book), nowMs);
     this.memories.set(tokenId, memory);
+
+    // Coverage begins at the first authoritative websocket snapshot/update we
+    // actually observed, not when the browser merely asked us to watch it.
+    if (!this.recordingSince.has(tokenId))
+      this.recordingSince.set(tokenId, nowMs);
+
     this.schedulePersist();
   }
 
@@ -473,13 +496,6 @@ class AgeRecorder {
       await this.quarantineUnreadableState(error);
       return;
     }
-
-    for (const tokenId of restoredWatched)
-      if (!restoredRecordingSince.has(tokenId))
-        restoredRecordingSince.set(tokenId, migrationNowMs);
-    for (const tokenId of restoredCompleted)
-      if (!restoredRecordingSince.has(tokenId))
-        restoredRecordingSince.set(tokenId, migrationNowMs);
 
     this.watched.clear();
     for (const tokenId of restoredWatched) this.watched.add(tokenId);
