@@ -27,7 +27,10 @@ type FeedState =
 
 export interface LiveBookFeedCallbacks {
   readonly onConnectionStatus: (status: ConnectionStatus) => void;
-  readonly onBookUpdated: (tokenId: TokenId) => void;
+  readonly onBookUpdated: (
+    tokenId: TokenId,
+    book: TokenBook<string>,
+  ) => void;
   readonly onMarketResolved: (resolution: MarketResolutionUpdate) => void;
 }
 
@@ -116,11 +119,12 @@ export class LiveBookFeed {
 
         if (event.type === "book") {
           const tokenId = event.payload.tokenId as TokenId;
-          this.books.set(
-            String(tokenId),
-            bookFromSnapshot(event.payload.bids, event.payload.asks),
+          const book = bookFromSnapshot(
+            event.payload.bids,
+            event.payload.asks,
           );
-          this.callbacks.onBookUpdated(tokenId);
+          this.books.set(String(tokenId), book);
+          this.callbacks.onBookUpdated(tokenId, book);
           continue;
         }
 
@@ -146,8 +150,10 @@ export class LiveBookFeed {
             }
             touched.add(tokenId);
           }
-          for (const tokenId of touched)
-            this.callbacks.onBookUpdated(tokenId);
+          for (const tokenId of touched) {
+            const book = this.books.get(String(tokenId));
+            if (book) this.callbacks.onBookUpdated(tokenId, book);
+          }
           continue;
         }
 
