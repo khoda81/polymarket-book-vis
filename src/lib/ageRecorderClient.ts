@@ -23,6 +23,8 @@ export interface RecorderHydration {
 
 const RECORDER_FETCH_TIMEOUT_MS = 1_500;
 const HYDRATION_RETRY_DELAYS_MS = [100, 200, 400, 800, 1_200] as const;
+const RECORDER_DEBUG =
+  new URLSearchParams(window.location.search).get("recorderDebug") === "1";
 
 /**
  * Register tokens with the recorder and hydrate ghost state.
@@ -49,10 +51,24 @@ export async function fetchRecorderHydration(
   let remaining = requested;
   let lastError: unknown = null;
 
+  recorderDebug(
+    "hydrate-start",
+    requested.map(shortToken),
+  );
+
   for (let attempt = 0; ; attempt++) {
     try {
       const body = await fetchRecorderState(remaining);
       lastError = null;
+
+      recorderDebug("hydrate-response", {
+        attempt: attempt + 1,
+        requested: remaining.map(shortToken),
+        connected: body.connected,
+        states: Object.keys(body.states ?? {}).map(shortToken),
+        pending: (body.pendingTokenIds ?? []).map(shortToken),
+        debug: body.debug,
+      });
 
       mergeRecorderResponse(
         body,
@@ -79,6 +95,11 @@ export async function fetchRecorderHydration(
       if (remaining.length === 0) break;
     } catch (error) {
       lastError = error;
+      recorderDebug("hydrate-error", {
+        attempt: attempt + 1,
+        requested: remaining.map(shortToken),
+        error,
+      });
     }
 
     const delayMs = HYDRATION_RETRY_DELAYS_MS[attempt];
@@ -88,6 +109,17 @@ export async function fetchRecorderHydration(
 
   if (lastError)
     console.warn("Age recorder unavailable", lastError);
+
+  if (remaining.length > 0)
+    recorderDebug(
+      "hydrate-gave-up",
+      remaining.map(shortToken),
+    );
+  else
+    recorderDebug("hydrate-complete", {
+      coverage: Object.keys(recordingSinceMsByToken).length,
+      states: Object.keys(pressureCellsByToken).length,
+    });
 
   return {
     recordingSinceMsByToken,
@@ -100,6 +132,7 @@ async function fetchRecorderState(
 ): Promise<RecorderStateResponse> {
   const params = new URLSearchParams();
   for (const tokenId of tokenIds) params.append("tokenId", tokenId);
+  if (RECORDER_DEBUG) params.set("debug", "1");
 
   const controller = new AbortController();
   const timeout = window.setTimeout(
@@ -159,6 +192,17 @@ function emptyHydration(): RecorderHydration {
     recordingSinceMsByToken: {},
     pressureCellsByToken: {},
   };
+}
+
+function recorderDebug(...args: unknown[]): void {
+  if (RECORDER_DEBUG)
+    console.debug("[recorder:frontend]", ...args);
+}
+
+function shortToken(tokenId: string): string {
+  return tokenId.length <= 12
+    ? tokenId
+    : `${tokenId.slice(0, 6)}…${tokenId.slice(-4)}`;
 }
 
 function delay(ms: number): Promise<void> {
