@@ -1,5 +1,4 @@
 import { pressureInkThicknessCss } from "@/lib/pressureInk";
-import type { TokenBook } from "@/lib/orderBook";
 import {
   ghostAlpha,
   type PressureBand,
@@ -8,7 +7,6 @@ import {
 import type { Frame } from "@/lib/renderer";
 import {
   signedVolumeColor,
-  signedVolumeSegments,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
 import {
@@ -77,91 +75,6 @@ export function drawAgeRowRails(
   ctx.stroke();
 }
 
-export function drawLivePressureStrip(
-  frame: Frame,
-  y: number,
-  book: TokenBook<string>,
-  colorScale: SignedVolumeColorScale,
-  volumePerCssPixel: number,
-  rowOffsetCss = 0,
-): void {
-  const { ctx, viewport: vp } = frame;
-  const dpr = window.devicePixelRatio || 1;
-  const geometry = offsetRowGeometry(
-    rowRasterGeometry(frame.toScreenY(0, y), dpr),
-    rowOffsetCss,
-  );
-  const reserveShares =
-    volumePerCssPixel * geometry.heightCss;
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(
-    vp.l,
-    geometry.topCss,
-    vp.width,
-    geometry.heightCss,
-  );
-  ctx.clip();
-
-  for (const segment of signedVolumeSegments(book)) {
-    if (
-      segment.volume === 0 ||
-      Number.isNaN(segment.volume)
-    )
-      continue;
-
-    // signedVolumeSegments is expressed in canonical primary-token price.
-    // Mirror it for age view so opposite liquidity is left and primary right.
-    const displayLo = 1 - clamp(segment.hi, 0, 1);
-    const displayHi = 1 - clamp(segment.lo, 0, 1);
-    const x0 = snapToDevicePixel(
-      vp.l + displayLo * vp.width,
-      dpr,
-    );
-    const x1 = snapToDevicePixel(
-      vp.l + displayHi * vp.width,
-      dpr,
-    );
-    if (!(x1 > x0)) continue;
-
-    const thickness = pressureInkThicknessCss(
-      segment.volume,
-      reserveShares,
-      geometry.heightCss,
-    );
-
-    if (!(thickness > 0)) continue;
-
-    ctx.fillStyle = signedVolumeColor(
-      segment.volume,
-      colorScale,
-    );
-
-    const boundedThickness = Math.max(0.5 / dpr, thickness);
-    ctx.fillRect(
-      x0,
-      geometry.centerCss - boundedThickness / 2,
-      x1 - x0,
-      boundedThickness,
-    );
-  }
-
-  ctx.restore();
-}
-
-function snapToDevicePixel(
-  value: number,
-  dpr: number,
-): number {
-  return Math.round(value * dpr) / dpr;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-
 export function drawPressureMemoryStrip(
   frame: Frame,
   y: number,
@@ -180,6 +93,9 @@ export function drawPressureMemoryStrip(
   );
   const reserveShares =
     volumePerCssPixel * geometry.heightCss;
+  const positiveColor = signedVolumeColor(1, colorScale);
+  const negativeColor = signedVolumeColor(-1, colorScale);
+  const ghostAlphaBySince = new Map<number, number>();
 
   ctx.save();
   ctx.beginPath();
@@ -210,11 +126,13 @@ export function drawPressureMemoryStrip(
       x0,
       x1,
       cell.bands,
-      colorScale,
+      positiveColor,
+      negativeColor,
       reserveShares,
       geometry.heightCss,
       ghostHalfLifeMs,
       nowMs,
+      ghostAlphaBySince,
     );
   }
 
@@ -227,11 +145,13 @@ function drawMemoryBands(
   x0: number,
   x1: number,
   bands: readonly PressureBand[],
-  colorScale: SignedVolumeColorScale,
+  positiveColor: string,
+  negativeColor: string,
   reserveShares: number,
   rowHeightCss: number,
   ghostHalfLifeMs: number,
   nowMs: number,
+  ghostAlphaBySince: Map<number, number>,
 ): void {
   // Paint outer history first, then progressively newer inner envelopes.
   //
@@ -251,7 +171,8 @@ function drawMemoryBands(
     const targetAlpha =
       band.state.kind === "live"
         ? 1
-        : ghostAlpha(
+        : cachedGhostAlpha(
+            ghostAlphaBySince,
             band.state.sinceMs,
             nowMs,
             ghostHalfLifeMs,
@@ -283,10 +204,8 @@ function drawMemoryBands(
     if (!(thickness > 0)) continue;
 
     ctx.globalAlpha = sourceAlpha;
-    ctx.fillStyle = signedVolumeColor(
-      band.side,
-      colorScale,
-    );
+    ctx.fillStyle =
+      band.side < 0 ? negativeColor : positiveColor;
     ctx.fillRect(
       x0,
       centerY - thickness / 2,
@@ -294,6 +213,20 @@ function drawMemoryBands(
       thickness,
     );
   }
+}
+
+function cachedGhostAlpha(
+  cache: Map<number, number>,
+  sinceMs: number,
+  nowMs: number,
+  halfLifeMs: number,
+): number {
+  const cached = cache.get(sinceMs);
+  if (cached !== undefined) return cached;
+
+  const alpha = ghostAlpha(sinceMs, nowMs, halfLifeMs);
+  cache.set(sinceMs, alpha);
+  return alpha;
 }
 
 export function drawResolvedMarketStrip(
