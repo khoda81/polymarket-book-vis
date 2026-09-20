@@ -30,12 +30,17 @@
     "polymarket-book-vis:pinned-event-slugs:v1";
   const PINNED_SERIES_STORAGE_KEY =
     "polymarket-book-vis:pinned-series-ids:v1";
+  const COLUMN_COUNT_STORAGE_KEY =
+    "polymarket-book-vis:dashboard-columns:v1";
+  const MIN_COLUMNS = 1;
+  const MAX_COLUMNS = 6;
 
   const client = createPublicClient();
 
   let entries: DashboardItem[] = [];
   let pinnedSlugs: EventSlug[] = loadPinnedSlugs();
   let pinnedSeriesIds: string[] = loadPinnedSeriesIds();
+  let columnCount = loadColumnCount();
   let status = "";
 
   $: orderedEntries = orderDashboardItems(
@@ -66,6 +71,68 @@
     } catch {
       return [];
     }
+  }
+
+  function loadColumnCount(): number {
+    try {
+      const raw = localStorage.getItem(COLUMN_COUNT_STORAGE_KEY);
+      if (raw !== null) {
+        const parsed = Number(raw);
+        if (Number.isInteger(parsed))
+          return Math.min(MAX_COLUMNS, Math.max(MIN_COLUMNS, parsed));
+      }
+    } catch {
+      // Fall back to the responsive default below.
+    }
+
+    if (window.innerWidth < 800) return 1;
+    if (window.innerWidth < 1200) return 2;
+    return 3;
+  }
+
+  function setColumnCount(next: number): void {
+    columnCount = Math.min(
+      MAX_COLUMNS,
+      Math.max(MIN_COLUMNS, Math.round(next)),
+    );
+    localStorage.setItem(COLUMN_COUNT_STORAGE_KEY, String(columnCount));
+  }
+
+  function masonryItem(node: HTMLElement): { destroy(): void } {
+    let frame = 0;
+
+    const measure = (): void => {
+      const grid = node.parentElement;
+      if (!grid) return;
+
+      const styles = getComputedStyle(grid);
+      const rowHeight = Number.parseFloat(styles.gridAutoRows);
+      const rowGap = Number.parseFloat(styles.rowGap);
+      if (!Number.isFinite(rowHeight) || !Number.isFinite(rowGap)) return;
+
+      const height = node.getBoundingClientRect().height;
+      const span = Math.max(
+        1,
+        Math.ceil((height + rowGap) / (rowHeight + rowGap)),
+      );
+      node.style.gridRowEnd = `span ${span}`;
+    };
+
+    const scheduleMeasure = (): void => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    };
+
+    const observer = new ResizeObserver(scheduleMeasure);
+    observer.observe(node);
+    scheduleMeasure();
+
+    return {
+      destroy() {
+        cancelAnimationFrame(frame);
+        observer.disconnect();
+      },
+    };
   }
 
   function persistPinnedSlugs(next: readonly EventSlug[]): void {
@@ -351,33 +418,53 @@
   />
 
   <div class="dashboard-meta">
+    <div class="layout-columns" aria-label="Dashboard columns">
+      <button
+        type="button"
+        onclick={() => setColumnCount(columnCount - 1)}
+        disabled={columnCount <= MIN_COLUMNS}
+        aria-label="Use fewer columns"
+      >−</button>
+      <span>{columnCount} col{columnCount === 1 ? "" : "s"}</span>
+      <button
+        type="button"
+        onclick={() => setColumnCount(columnCount + 1)}
+        disabled={columnCount >= MAX_COLUMNS}
+        aria-label="Use more columns"
+      >+</button>
+    </div>
     <PressureLegend />
   </div>
 </header>
 
-<div class="grid">
+<div
+  class="grid"
+  style={`--dashboard-columns: ${columnCount}`}
+>
   {#each orderedEntries as entry (itemKey(entry))}
-    {#if isSeriesEntry(entry)}
-      <SeriesCard
-        series={entry.series}
-        {client}
-        pinned={pinnedSeriesIds.includes(String(entry.series.id))}
-        onpin={(pinned) =>
-          setSeriesPinned(String(entry.series.id), pinned, "end")}
-        onremove={() => removeSeries(entry)}
-        onready={() => itemReady(entry)}
-        onfailure={(message) => itemFailed(entry, message)}
-      />
-    {:else}
-      <EventCard
-        event={entry.event}
-        {client}
-        pin={pinState(entry.event, pinnedSlugs)}
-        onpin={togglePin}
-        onremove={() => removeEvent(entry)}
-        onready={() => itemReady(entry)}
-        onfailure={(message) => itemFailed(entry, message)}
-      />
-    {/if}
+    <div class="grid-item" use:masonryItem>
+      {#if isSeriesEntry(entry)}
+        <SeriesCard
+          series={entry.series}
+          {client}
+          pinned={pinnedSeriesIds.includes(String(entry.series.id))}
+          onpin={(pinned) =>
+            setSeriesPinned(String(entry.series.id), pinned, "end")}
+          onremove={() => removeSeries(entry)}
+          onready={() => itemReady(entry)}
+          onfailure={(message) => itemFailed(entry, message)}
+        />
+      {:else}
+        <EventCard
+          event={entry.event}
+          {client}
+          pin={pinState(entry.event, pinnedSlugs)}
+          onpin={togglePin}
+          onremove={() => removeEvent(entry)}
+          onready={() => itemReady(entry)}
+          onfailure={(message) => itemFailed(entry, message)}
+        />
+      {/if}
+    </div>
   {/each}
 </div>
