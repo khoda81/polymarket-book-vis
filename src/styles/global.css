@@ -144,6 +144,19 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+.layout-columns input {
+    width: 4.5ch;
+    height: 28px;
+    padding: 0 4px;
+    color: inherit;
+    text-align: center;
+    background: var(--color-background-primary, #fff);
+    border: 1px solid var(--color-border-secondary, #ccc);
+    border-radius: 7px;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+}
+
 .layout-columns button {
     display: grid;
     place-items: center;
@@ -318,6 +331,11 @@ body {
 .grid-item {
     min-width: 0;
     align-self: start;
+    transition: opacity 90ms ease;
+}
+
+.grid-item--dragging {
+    opacity: 0.62;
 }
 
 .card {
@@ -341,6 +359,7 @@ body {
 }
 
 .card-view,
+.card-drag,
 .card-pin,
 .card-close {
     height: 28px;
@@ -356,6 +375,7 @@ body {
     font-size: 12px;
 }
 
+.card-drag,
 .card-pin,
 .card-close {
     display: grid;
@@ -366,6 +386,7 @@ body {
     line-height: 1;
 }
 
+.card-drag svg,
 .card-pin svg,
 .card-close svg {
     display: block;
@@ -379,9 +400,23 @@ body {
 }
 
 .card-view:hover,
+.card-drag:hover,
 .card-pin:hover,
 .card-close:hover {
     background: var(--color-background-hover, #e5e5e5);
+}
+
+.card-drag {
+    cursor: grab;
+    touch-action: none;
+}
+
+.card-drag:active {
+    cursor: grabbing;
+}
+
+.card-drag svg circle {
+    fill: currentColor;
 }
 
 .card-pin:disabled,
@@ -391,7 +426,7 @@ body {
 }
 
 .card .cpv-header {
-    padding-right: 150px;
+    padding-right: 184px;
 }
 
 .card-pin[aria-pressed="true"] {
@@ -399,7 +434,7 @@ body {
 }
 
 .series-card .cpv-header {
-    padding-right: 82px;
+    padding-right: 116px;
 }
 
 .series-recurrence {
