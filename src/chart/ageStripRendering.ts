@@ -7,6 +7,11 @@ import {
 } from "@/lib/pressureMemory";
 import type { Frame } from "@/lib/renderer";
 import {
+  rasterizeNestedBands,
+  type NestedRasterLayer,
+  type RgbColor,
+} from "./nestedBandRaster";
+import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
@@ -87,6 +92,7 @@ export function drawPressureMemoryStrip(
   nowMs: number,
   rowOffsetCss = 0,
 ): void {
+  if (cells.length === 0) return;
   const { ctx, viewport: vp } = frame;
   const dpr = window.devicePixelRatio || 1;
   const geometry = offsetRowGeometry(
@@ -96,8 +102,7 @@ export function drawPressureMemoryStrip(
   const reserveShares =
     volumePerCssPixel * geometry.heightCss;
   const colors = pressureColors(colorScale);
-  const positiveColor = colors.positive;
-  const negativeColor = colors.negative;
+  const rgbColors = pressureRgbColors(colorScale, colors);
   const visibleGhostSinceMs = ghostVisibleSinceMs(
     nowMs,
     ghostHalfLifeMs,
@@ -132,8 +137,8 @@ export function drawPressureMemoryStrip(
       x0,
       x1,
       cell.bands,
-      positiveColor,
-      negativeColor,
+      rgbColors.positive,
+      rgbColors.negative,
       reserveShares,
       geometry.heightCss,
       ghostHalfLifeMs,
@@ -151,25 +156,28 @@ function drawMemoryBands(
   x0: number,
   x1: number,
   bands: readonly PressureBand[],
-  positiveColor: string,
-  negativeColor: string,
+  positiveColor: RgbColor,
+  negativeColor: RgbColor,
   reserveShares: number,
   rowHeightCss: number,
   ghostHalfLifeMs: number,
   nowMs: number,
   visibleGhostSinceMs: number,
 ): void {
-  // Paint outer history first, then progressively newer inner envelopes.
-  //
-  // This is deliberately *not* drawn as adjacent translucent shells. Canvas
-  // anti-aliases each fill independently, so two shell edges sharing the same
-  // fractional pixel can double-blend and look like a dark stroke. Nested
-  // rectangles have only one anti-aliased edge at each boundary.
-  //
-  // For equal colors the alpha correction below reproduces the exact requested
-  // opacity for every band. If the side changed, source-over naturally mixes
-  // the old/new colors at the boundary and gives us the desired "rainbow"
-  // history without dark seams.
+  const dpr = window.devicePixelRatio || 1;
+  const rowTopDevice = Math.floor(
+    (centerY - rowHeightCss / 2) * dpr,
+  );
+  const rowHeightDevice = Math.ceil(
+    (centerY + rowHeightCss / 2) * dpr,
+  ) - rowTopDevice;
+  const centerDevice = centerY * dpr;
+
+  // Build the exact nested layer stack first. Opacity belongs to temporal
+  // state; subpixel coverage belongs to geometry and is applied later by the
+  // rasterizer. Keeping those two concepts separate prevents overlapping
+  // anti-aliased rectangles from charging the same device pixel twice.
+  const layers: NestedRasterLayer[] = [];
   let coveredAlpha = 0;
 
   for (let index = bands.length - 1; index >= 0; index--) {
@@ -184,26 +192,23 @@ function drawMemoryBands(
       band.state.kind === "live"
         ? 1
         : ghostAlpha(
-            band.state.sinceMs,
-            nowMs,
-            ghostHalfLifeMs,
-          );
+          band.state.sinceMs,
+          nowMs,
+          ghostHalfLifeMs,
+        );
     if (!(targetAlpha > 1 / 255)) continue;
 
-    // PressureMemory guarantees newer/inner bands are at least as opaque as
-    // older/outer bands. Solve source-over for the alpha needed to move from
-    // the already-painted outer alpha to this band's target alpha.
     const sourceAlpha =
       coveredAlpha >= 1
         ? 0
         : Math.max(
-            0,
-            Math.min(
-              1,
-              (targetAlpha - coveredAlpha) /
-                (1 - coveredAlpha),
-            ),
-          );
+          0,
+          Math.min(
+            1,
+            (targetAlpha - coveredAlpha) /
+            (1 - coveredAlpha),
+          ),
+        );
     coveredAlpha = Math.max(coveredAlpha, targetAlpha);
     if (!(sourceAlpha > 1 / 255)) continue;
 
@@ -214,16 +219,32 @@ function drawMemoryBands(
     );
     if (!(thickness > 0)) continue;
 
-    ctx.globalAlpha = sourceAlpha;
-    ctx.fillStyle =
-      band.side < 0 ? negativeColor : positiveColor;
-    ctx.fillRect(
-      x0,
-      centerY - thickness / 2,
-      x1 - x0,
-      thickness,
-    );
+    layers.push({
+      halfThickness: (thickness * dpr) / 2,
+      alpha: sourceAlpha,
+      color: band.side < 0 ? negativeColor : positiveColor,
+    });
   }
+
+  if (layers.length === 0) return;
+  const pixels = rasterizeNestedBands(
+    layers,
+    centerDevice,
+    rowTopDevice,
+    rowHeightDevice,
+  );
+  const raster = pressureRasterCanvas(rowHeightDevice);
+  const image = raster.ctx.createImageData(1, rowHeightDevice);
+  image.data.set(pixels);
+  raster.ctx.putImageData(image, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    raster.canvas,
+    x0,
+    rowTopDevice / dpr,
+    x1 - x0,
+    rowHeightDevice / dpr,
+  );
 }
 
 interface PressureColors {
@@ -246,6 +267,64 @@ function pressureColors(
   };
   PRESSURE_COLOR_CACHE.set(scale, colors);
   return colors;
+}
+
+interface PressureRgbColors {
+  readonly positive: RgbColor;
+  readonly negative: RgbColor;
+}
+
+const PRESSURE_RGB_CACHE =
+  new WeakMap<SignedVolumeColorScale, PressureRgbColors>();
+
+function pressureRgbColors(
+  scale: SignedVolumeColorScale,
+  colors: PressureColors,
+): PressureRgbColors {
+  const cached = PRESSURE_RGB_CACHE.get(scale);
+  if (cached) return cached;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 1;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("2D canvas context is not available");
+
+  const sample = (color: string): RgbColor => {
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, 1, 1);
+    const pixel = ctx.getImageData(0, 0, 1, 1).data;
+    return {
+      r: pixel[0]! / 255,
+      g: pixel[1]! / 255,
+      b: pixel[2]! / 255,
+    };
+  };
+  const rgb = {
+    positive: sample(colors.positive),
+    negative: sample(colors.negative),
+  };
+  PRESSURE_RGB_CACHE.set(scale, rgb);
+  return rgb;
+}
+
+let pressureRaster: {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+} | null = null;
+
+function pressureRasterCanvas(height: number) {
+  if (!pressureRaster) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("2D canvas context is not available");
+    pressureRaster = { canvas, ctx };
+  }
+  if (pressureRaster.canvas.height !== height) {
+    pressureRaster.canvas.width = 1;
+    pressureRaster.canvas.height = height;
+  }
+  return pressureRaster;
 }
 
 function snapToDevicePixel(
