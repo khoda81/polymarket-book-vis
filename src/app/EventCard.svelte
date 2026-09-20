@@ -45,6 +45,7 @@
   export let onremove: () => void;
   export let onready: () => void;
   export let onfailure: (message: string) => void;
+  export let onreorderstart: (event: PointerEvent) => void;
 
   let viewMode: ViewMode = "age";
   let runtime: RuntimeState = { kind: "metadata-loading" };
@@ -115,6 +116,23 @@
   data-event-slug={pin.kind === "unavailable" ? "" : pin.slug}
 >
   <div class="card-actions">
+    <button
+      type="button"
+      class="card-drag"
+      aria-label="Rearrange card"
+      title="Drag to rearrange"
+      onpointerdown={onreorderstart}
+    >
+      <svg viewBox="0 0 18 18" aria-hidden="true">
+        <circle cx="5" cy="4" r="1.25" />
+        <circle cx="13" cy="4" r="1.25" />
+        <circle cx="5" cy="9" r="1.25" />
+        <circle cx="13" cy="9" r="1.25" />
+        <circle cx="5" cy="14" r="1.25" />
+        <circle cx="13" cy="14" r="1.25" />
+      </svg>
+    </button>
+
     <select
       class="card-view"
       aria-label="Visualization mode"
