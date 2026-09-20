@@ -32,22 +32,21 @@
     "polymarket-book-vis:pinned-series-ids:v1";
   const COLUMN_COUNT_STORAGE_KEY =
     "polymarket-book-vis:dashboard-columns:v1";
+  const LAYOUT_ORDER_STORAGE_KEY =
+    "polymarket-book-vis:dashboard-order:v1";
   const MIN_COLUMNS = 1;
-  const MAX_COLUMNS = 6;
 
   const client = createPublicClient();
 
   let entries: DashboardItem[] = [];
   let pinnedSlugs: EventSlug[] = loadPinnedSlugs();
   let pinnedSeriesIds: string[] = loadPinnedSeriesIds();
+  let layoutOrder = loadLayoutOrder(pinnedSlugs, pinnedSeriesIds);
   let columnCount = loadColumnCount();
+  let draggingKey: string | null = null;
   let status = "";
 
-  $: orderedEntries = orderDashboardItems(
-    entries,
-    pinnedSlugs,
-    pinnedSeriesIds,
-  );
+  $: orderedEntries = orderDashboardItems(entries, layoutOrder);
 
   function loadPinnedSlugs(): EventSlug[] {
     try {
@@ -78,8 +77,8 @@
       const raw = localStorage.getItem(COLUMN_COUNT_STORAGE_KEY);
       if (raw !== null) {
         const parsed = Number(raw);
-        if (Number.isInteger(parsed))
-          return Math.min(MAX_COLUMNS, Math.max(MIN_COLUMNS, parsed));
+        if (Number.isInteger(parsed) && parsed >= MIN_COLUMNS)
+          return parsed;
       }
     } catch {
       // Fall back to the responsive default below.
@@ -91,11 +90,179 @@
   }
 
   function setColumnCount(next: number): void {
-    columnCount = Math.min(
-      MAX_COLUMNS,
-      Math.max(MIN_COLUMNS, Math.round(next)),
-    );
+    if (!Number.isFinite(next)) return;
+    columnCount = Math.max(MIN_COLUMNS, Math.round(next));
     localStorage.setItem(COLUMN_COUNT_STORAGE_KEY, String(columnCount));
+  }
+
+  function loadLayoutOrder(
+    eventPins: readonly EventSlug[],
+    seriesPins: readonly string[],
+  ): string[] {
+    try {
+      const raw = localStorage.getItem(LAYOUT_ORDER_STORAGE_KEY);
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const seen = new Set<string>();
+          return parsed.filter((value): value is string => {
+            if (
+              typeof value !== "string" ||
+              seen.has(value) ||
+              (!value.startsWith("event:") &&
+                !value.startsWith("series:"))
+            )
+              return false;
+            seen.add(value);
+            return true;
+          });
+        }
+      }
+    } catch {
+      // Fall through to the legacy pin ordering below.
+    }
+
+    return [
+      ...seriesPins.map((id) => `series:${id}`),
+      ...eventPins.map((slug) => `event:${slug}`),
+    ];
+  }
+
+  function persistLayoutOrder(): void {
+    localStorage.setItem(
+      LAYOUT_ORDER_STORAGE_KEY,
+      JSON.stringify(layoutOrder),
+    );
+  }
+
+  function rememberLayoutKey(
+    key: string,
+    placement: "start" | "end" = "end",
+  ): void {
+    if (layoutOrder.includes(key)) return;
+    layoutOrder =
+      placement === "start"
+        ? [key, ...layoutOrder]
+        : [...layoutOrder, key];
+    persistLayoutOrder();
+  }
+
+  function forgetLayoutKey(key: string): void {
+    if (!layoutOrder.includes(key)) return;
+    layoutOrder = layoutOrder.filter((candidate) => candidate !== key);
+    persistLayoutOrder();
+  }
+
+  function startReorder(event: PointerEvent, key: string): void {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.preventDefault();
+
+    draggingKey = key;
+    window.addEventListener("pointermove", moveReorder, {
+      passive: false,
+    });
+    window.addEventListener("pointerup", finishReorder, { once: true });
+    window.addEventListener("pointercancel", finishReorder, {
+      once: true,
+    });
+  }
+
+  function moveReorder(event: PointerEvent): void {
+    if (!draggingKey) return;
+    event.preventDefault();
+
+    const target = reorderTargetAt(event.clientX, event.clientY);
+    const targetKey = target?.dataset.layoutKey;
+    if (!targetKey || targetKey === draggingKey) return;
+
+    const rect = target.getBoundingClientRect();
+    const nearMiddle =
+      Math.abs(event.clientY - (rect.top + rect.height / 2)) <
+      rect.height * 0.2;
+    const insertAfter =
+      event.clientY > rect.top + rect.height / 2 ||
+      (nearMiddle && event.clientX > rect.left + rect.width / 2);
+
+    const without = layoutOrder.filter(
+      (candidate) => candidate !== draggingKey,
+    );
+    const targetIndex = without.indexOf(targetKey);
+    if (targetIndex < 0) return;
+
+    const insertAt = targetIndex + (insertAfter ? 1 : 0);
+    const next = [
+      ...without.slice(0, insertAt),
+      draggingKey,
+      ...without.slice(insertAt),
+    ];
+    if (
+      next.length === layoutOrder.length &&
+      next.every((key, index) => key === layoutOrder[index])
+    )
+      return;
+
+    layoutOrder = next;
+  }
+
+  function reorderTargetAt(
+    clientX: number,
+    clientY: number,
+  ): HTMLElement | null {
+    const grid = document.querySelector<HTMLElement>(".grid");
+    if (!grid) return null;
+
+    const gridRect = grid.getBoundingClientRect();
+    if (
+      clientX < gridRect.left ||
+      clientX > gridRect.right ||
+      clientY < gridRect.top ||
+      clientY > gridRect.bottom
+    )
+      return null;
+
+    const direct = document
+      .elementFromPoint(clientX, clientY)
+      ?.closest<HTMLElement>(".grid-item[data-layout-key]");
+    if (
+      direct &&
+      direct.dataset.layoutKey !== draggingKey
+    )
+      return direct;
+
+    let nearest: HTMLElement | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const candidate of grid.querySelectorAll<HTMLElement>(
+      ".grid-item[data-layout-key]",
+    )) {
+      if (candidate.dataset.layoutKey === draggingKey) continue;
+      const rect = candidate.getBoundingClientRect();
+      const dx =
+        clientX < rect.left
+          ? rect.left - clientX
+          : clientX > rect.right
+            ? clientX - rect.right
+            : 0;
+      const dy =
+        clientY < rect.top
+          ? rect.top - clientY
+          : clientY > rect.bottom
+            ? clientY - rect.bottom
+            : 0;
+      const distance = dx * dx + dy * dy;
+      if (distance < nearestDistance) {
+        nearest = candidate;
+        nearestDistance = distance;
+      }
+    }
+    return nearest;
+  }
+
+  function finishReorder(): void {
+    window.removeEventListener("pointermove", moveReorder);
+    window.removeEventListener("pointerup", finishReorder);
+    window.removeEventListener("pointercancel", finishReorder);
+    if (draggingKey) persistLayoutOrder();
+    draggingKey = null;
   }
 
   function masonryItem(node: HTMLElement): { destroy(): void } {
@@ -193,10 +360,13 @@
       return false;
     }
 
-    entries = [
-      ...entries,
-      { kind: "event", event, announceLifecycle },
-    ];
+    const entry: DashboardEntry = {
+      kind: "event",
+      event,
+      announceLifecycle,
+    };
+    rememberLayoutKey(itemKey(entry));
+    entries = [...entries, entry];
     return true;
   }
 
@@ -222,10 +392,13 @@
       return false;
     }
 
-    entries = [
-      ...entries,
-      { kind: "series", series, announceLifecycle },
-    ];
+    const entry: SeriesDashboardEntry = {
+      kind: "series",
+      series,
+      announceLifecycle,
+    };
+    rememberLayoutKey(itemKey(entry));
+    entries = [...entries, entry];
     return true;
   }
 
@@ -242,7 +415,10 @@
     }
 
     const slug = eventSlug(event);
-    if (slug) setPinned(slug, true, "start");
+    if (slug) {
+      setPinned(slug, true, "start");
+      rememberLayoutKey(`event:${slug}`, "start");
+    }
     addEvent(event, true);
   }
 
@@ -251,7 +427,9 @@
     const legacySlug = toEventSlug(series.slug);
     if (legacySlug && pinnedSlugs.includes(legacySlug))
       setPinned(legacySlug, false);
-    setSeriesPinned(String(series.id), true, "start");
+    const seriesId = String(series.id);
+    setSeriesPinned(seriesId, true, "start");
+    rememberLayoutKey(`series:${seriesId}`, "start");
     addSeries(series, true);
   }
 
@@ -286,6 +464,8 @@
   function removeEvent(entry: DashboardEntry): void {
     const slug = eventSlug(entry.event);
     if (slug && pinnedSlugs.includes(slug)) setPinned(slug, false);
+    forgetLayoutKey(itemKey(entry));
+    forgetLayoutKey(itemKey(entry));
     entries = entries.filter(
       (candidate) =>
         isSeriesEntry(candidate) ||
@@ -298,6 +478,7 @@
     const seriesId = String(entry.series.id);
     if (pinnedSeriesIds.includes(seriesId))
       setSeriesPinned(seriesId, false);
+    forgetLayoutKey(itemKey(entry));
     entries = entries.filter(
       (candidate) =>
         !isSeriesEntry(candidate) ||
@@ -319,6 +500,7 @@
   ): void {
     if (isSeriesEntry(entry)) {
       const seriesId = String(entry.series.id);
+      forgetLayoutKey(itemKey(entry));
       entries = entries.filter(
         (candidate) =>
           !isSeriesEntry(candidate) ||
@@ -370,27 +552,24 @@
     for (const seriesId of pinnedSeriesIds)
       void loadPinnedSeries(seriesId);
     for (const slug of pinnedSlugs) void loadPinned(slug);
+
+    return () => finishReorder();
   });
 
   function orderDashboardItems(
     items: readonly DashboardItem[],
-    eventPins: readonly EventSlug[],
-    seriesPins: readonly string[],
+    order: readonly string[],
   ): DashboardItem[] {
-    const pinRanks = new Map<string, number>();
-    let rank = 0;
-    for (const id of seriesPins)
-      pinRanks.set(`series:${id}`, rank++);
-    for (const slug of eventPins)
-      pinRanks.set(`event:${slug}`, rank++);
-
+    const ranks = new Map(
+      order.map((key, index) => [key, index]),
+    );
     const insertion = new Map(
       items.map((entry, index) => [itemKey(entry), index]),
     );
 
     return [...items].sort((a, b) => {
-      const aRank = pinRanks.get(itemKey(a));
-      const bRank = pinRanks.get(itemKey(b));
+      const aRank = ranks.get(itemKey(a));
+      const bRank = ranks.get(itemKey(b));
       if (aRank !== undefined && bRank !== undefined) return aRank - bRank;
       if (aRank !== undefined) return -1;
       if (bRank !== undefined) return 1;
@@ -425,11 +604,16 @@
         disabled={columnCount <= MIN_COLUMNS}
         aria-label="Use fewer columns"
       >−</button>
-      <span>{columnCount} col{columnCount === 1 ? "" : "s"}</span>
+      <input
+        type="number"
+        value={columnCount}
+        aria-label="Dashboard column count"
+        oninput={(event) =>
+          setColumnCount(Number(event.currentTarget.value))}
+      />
       <button
         type="button"
         onclick={() => setColumnCount(columnCount + 1)}
-        disabled={columnCount >= MAX_COLUMNS}
         aria-label="Use more columns"
       >+</button>
     </div>
@@ -442,7 +626,12 @@
   style={`--dashboard-columns: ${columnCount}`}
 >
   {#each orderedEntries as entry (itemKey(entry))}
-    <div class="grid-item" use:masonryItem>
+    <div
+      class="grid-item"
+      class:grid-item--dragging={draggingKey === itemKey(entry)}
+      data-layout-key={itemKey(entry)}
+      use:masonryItem
+    >
       {#if isSeriesEntry(entry)}
         <SeriesCard
           series={entry.series}
@@ -453,6 +642,8 @@
           onremove={() => removeSeries(entry)}
           onready={() => itemReady(entry)}
           onfailure={(message) => itemFailed(entry, message)}
+          onreorderstart={(event) =>
+            startReorder(event, itemKey(entry))}
         />
       {:else}
         <EventCard
@@ -463,6 +654,8 @@
           onremove={() => removeEvent(entry)}
           onready={() => itemReady(entry)}
           onfailure={(message) => itemFailed(entry, message)}
+          onreorderstart={(event) =>
+            startReorder(event, itemKey(entry))}
         />
       {/if}
     </div>
