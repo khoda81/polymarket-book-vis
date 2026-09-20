@@ -156,6 +156,7 @@
   function startReorder(event: PointerEvent, key: string): void {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.preventDefault();
+    finishReorder();
 
     draggingKey = key;
     window.addEventListener("pointermove", moveReorder, {
@@ -465,7 +466,6 @@
     const slug = eventSlug(entry.event);
     if (slug && pinnedSlugs.includes(slug)) setPinned(slug, false);
     forgetLayoutKey(itemKey(entry));
-    forgetLayoutKey(itemKey(entry));
     entries = entries.filter(
       (candidate) =>
         isSeriesEntry(candidate) ||
@@ -510,6 +510,7 @@
       return;
     }
 
+    forgetLayoutKey(itemKey(entry));
     entries = entries.filter(
       (candidate) =>
         isSeriesEntry(candidate) ||
