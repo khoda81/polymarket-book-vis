@@ -118,7 +118,7 @@ export class PressureFrontierMemory {
         state.history.unshift({ sinceMs: nowMs, root: previous });
       state.current = next;
       state.updatedAtMs = nowMs;
-      }
+    }
     this.lastUpdateMs = nowMs;
   }
 
@@ -153,6 +153,7 @@ export class PressureFrontierMemory {
     this.priceKeys.clear();
     this.priceKeys.add(0);
     this.priceKeys.add(1);
+    this.cachedPriceBoundaries = null;
     this.rememberSidePrices(this.bid, "bid");
     this.rememberSidePrices(this.ask, "ask");
 
@@ -555,26 +556,4 @@ function frontierFromLegacyCells(
     outer = value;
   }
   return buildFrontier(levels);
-}
-
-function bandsEqual(
-  a: readonly PressureBand[],
-  b: readonly PressureBand[],
-): boolean {
-  if (a === b) return true;
-  return (
-    a.length === b.length &&
-    a.every((band, index) => {
-      const other = b[index]!;
-      return (
-        band.loVolume === other.loVolume &&
-        band.hiVolume === other.hiVolume &&
-        band.side === other.side &&
-        band.state.kind === other.state.kind &&
-        (band.state.kind === "live" ||
-          (other.state.kind === "ghost" &&
-            band.state.sinceMs === other.state.sinceMs))
-      );
-    })
-  );
 }
