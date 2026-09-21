@@ -124,14 +124,10 @@ function join(left: FrontierRoot, right: FrontierRoot): FrontierRoot {
     );
 
   const [successor, nextRight] = removeMin(right);
-  return rebalance(
-    makeNode(successor.key, successor.weight, left, nextRight),
-  );
+  return rebalance(makeNode(successor.key, successor.weight, left, nextRight));
 }
 
-function removeMin(
-  node: FrontierNode,
-): readonly [FrontierNode, FrontierRoot] {
+function removeMin(node: FrontierNode): readonly [FrontierNode, FrontierRoot] {
   if (!node.left) return [node, node.right];
 
   const [minimum, left] = removeMin(node.left);
