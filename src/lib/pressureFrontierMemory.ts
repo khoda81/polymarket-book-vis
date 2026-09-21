@@ -13,10 +13,7 @@ import {
   type PressureBand,
   type PressureSide,
 } from "./pressureField";
-import {
-  parsePressureCells,
-  type PressureCell,
-} from "./legacyPressureCells";
+import { parsePressureCells, type PressureCell } from "./legacyPressureCells";
 import {
   parsePressureFrontierSnapshot,
   restoreSnapshotSide,
