@@ -209,7 +209,6 @@ export class AgeStripView {
       }
 
       const y = rowCount - 1 - index;
-      memory.prune(nowMs, tuning.ghostHalfLifeMs, 1 / 255);
       drawPressureMemoryStrip(
         frame,
         y,
