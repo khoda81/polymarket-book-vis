@@ -189,11 +189,7 @@ export class PressureFrontierMemory {
     );
   }
 
-  prune(
-    nowMs: number,
-    halfLifeMs: number,
-    minAlpha = 0.01,
-  ): void {
+  prune(nowMs: number, halfLifeMs: number, minAlpha = 0.01): void {
     const cutoff = ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha);
     this.bid.history = this.bid.history.filter(
       (layer) => layer.sinceMs > cutoff,
@@ -233,10 +229,7 @@ export class PressureFrontierMemory {
     if (levelsEqual(previousLevels, normalized)) return;
 
     const next = buildFrontier(normalized);
-    if (
-      state.current &&
-      frontierLostAtoms(previousLevels, normalized)
-    )
+    if (state.current && frontierLostAtoms(previousLevels, normalized))
       state.history.unshift({ sinceMs: nowMs, root: state.current });
 
     state.current = next;
@@ -293,9 +286,7 @@ function localKey(
   return side === "bid" ? canonicalPrice : 1 - canonicalPrice;
 }
 
-function normalizeLevels(
-  levels: readonly FrontierLevel[],
-): FrontierLevel[] {
+function normalizeLevels(levels: readonly FrontierLevel[]): FrontierLevel[] {
   const byKey = new Map<number, number>();
   for (const { key, weight } of levels) {
     if (
@@ -347,10 +338,7 @@ function frontierLostAtoms(
   return false;
 }
 
-function appendBand(
-  bands: PressureBand[],
-  band: PressureBand,
-): void {
+function appendBand(bands: PressureBand[], band: PressureBand): void {
   const previous = bands[bands.length - 1];
   if (
     previous &&
