@@ -50,6 +50,7 @@ export class PressureFrontierMemory {
   private readonly bid: SideFrontierState = emptySideState();
   private readonly ask: SideFrontierState = emptySideState();
   private lastUpdateMs: number | undefined;
+  private readonly priceKeys = new Set<number>([0, 1]);
   private cachedCells: readonly PressureCell[] | null = null;
   private cachedPriceBoundaries: readonly number[] | null = null;
 
@@ -91,6 +92,7 @@ export class PressureFrontierMemory {
       if (key === null) continue;
       if (!Number.isFinite(change.shares) || change.shares < 0) continue;
       finalByKey.set(key, change.shares);
+      this.rememberPrice(change.price);
     }
     if (finalByKey.size === 0) {
       this.lastUpdateMs = nowMs;
@@ -127,6 +129,11 @@ export class PressureFrontierMemory {
     const cells = parsePressureCells(value);
     this.clear();
 
+    for (const cell of cells) {
+      this.rememberPrice(cell.lo);
+      this.rememberPrice(cell.hi);
+    }
+
     const bidCurrent = frontierFromLegacyCells(cells, 1, "live");
     const askCurrent = frontierFromLegacyCells(cells, -1, "live");
     this.bid.current = bidCurrent;
@@ -153,10 +160,7 @@ export class PressureFrontierMemory {
   priceBoundaries(): readonly number[] {
     if (this.cachedPriceBoundaries) return this.cachedPriceBoundaries;
 
-    const boundaries = new Set<number>([0, 1]);
-    collectCanonicalBoundaries(boundaries, this.bid, "bid");
-    collectCanonicalBoundaries(boundaries, this.ask, "ask");
-    this.cachedPriceBoundaries = [...boundaries].sort((a, b) => a - b);
+    this.cachedPriceBoundaries = [...this.priceKeys].sort((a, b) => a - b);
     return this.cachedPriceBoundaries;
   }
 
@@ -307,6 +311,9 @@ export class PressureFrontierMemory {
     this.ask.updatedAtMs = Number.NEGATIVE_INFINITY;
     this.ask.history = [];
     this.lastUpdateMs = undefined;
+    this.priceKeys.clear();
+    this.priceKeys.add(0);
+    this.priceKeys.add(1);
     this.invalidateProjection();
   }
 
@@ -331,6 +338,8 @@ export class PressureFrontierMemory {
     nowMs: number,
   ): void {
     const normalized = normalizeLevels(levels);
+    for (const level of normalized)
+      this.rememberPrice(side === "bid" ? level.key : 1 - level.key);
     const previousLevels = frontierLevels(state.current);
     if (levelsEqual(previousLevels, normalized)) return;
 
@@ -341,9 +350,13 @@ export class PressureFrontierMemory {
     state.current = next;
     state.updatedAtMs = nowMs;
 
-    // Keep the side parameter in this seam intentionally: snapshot conversion
-    // is where canonical price and side-local price meet.
-    void side;
+  }
+
+  private rememberPrice(price: number): void {
+    if (!Number.isFinite(price) || price < 0 || price > 1) return;
+    if (this.priceKeys.has(price)) return;
+    this.priceKeys.add(price);
+    this.cachedPriceBoundaries = null;
   }
 
   private sideState(side: PressureBookSide): SideFrontierState {
@@ -526,19 +539,6 @@ function frontierFromLegacyCells(
     outer = value;
   }
   return buildFrontier(levels);
-}
-
-function collectCanonicalBoundaries(
-  boundaries: Set<number>,
-  state: SideFrontierState,
-  side: PressureBookSide,
-): void {
-  const collect = (root: FrontierRoot) => {
-    for (const { key } of frontierLevels(root))
-      boundaries.add(side === "bid" ? key : 1 - key);
-  };
-  collect(state.current);
-  for (const layer of state.history) collect(layer.root);
 }
 
 function bandsEqual(
