@@ -33,5 +33,14 @@ test("rebasing preserves ghost ages across clocks", () => {
     100_000,
   );
 
-  expect(rebased.bid.history[0]?.sinceMs).toBe(99_000);
+  const restored = new PressureFrontierMemory();
+  restored.restore(rebased);
+  expect(restored.shellsAtPrice(0.4)).toEqual([
+    {
+      loVolume: 0,
+      hiVolume: 50,
+      side: 1,
+      state: { kind: "ghost", sinceMs: 99_000 },
+    },
+  ]);
 });
