@@ -109,10 +109,7 @@ export function drawPressureMemoryStrip(
     const hi = boundaries[index + 1]!;
     if (!(hi > lo)) continue;
 
-    const bands = memory.shellsAtPrice(
-      (lo + hi) / 2,
-      visibleGhostSinceMs,
-    );
+    const bands = memory.shellsAtPrice((lo + hi) / 2, visibleGhostSinceMs);
     if (bands.length === 0) continue;
 
     rasterizePressureBandsInto(
@@ -134,12 +131,8 @@ export function drawPressureMemoryStrip(
     );
 
     // Age view mirrors canonical YES price horizontally.
-    const x0Device = Math.round(
-      (vp.l + (1 - hi) * vp.width) * dpr,
-    );
-    const x1Device = Math.round(
-      (vp.l + (1 - lo) * vp.width) * dpr,
-    );
+    const x0Device = Math.round((vp.l + (1 - hi) * vp.width) * dpr);
+    const x1Device = Math.round((vp.l + (1 - lo) * vp.width) * dpr);
     const x0 = clamp(x0Device - rowLeftDevice, 0, rowWidthDevice);
     const x1 = clamp(x1Device - rowLeftDevice, 0, rowWidthDevice);
     if (!(x1 > x0)) continue;
@@ -152,13 +145,9 @@ export function drawPressureMemoryStrip(
         raster.column[offset + 2]!,
         raster.column[offset + 3]!,
       );
-      if ((rgba >>> 24) === 0 && LITTLE_ENDIAN) continue;
+      if (rgba >>> 24 === 0 && LITTLE_ENDIAN) continue;
       if (!LITTLE_ENDIAN && (rgba & 0xff) === 0) continue;
-      packed.fill(
-        rgba,
-        row * rowWidthDevice + x0,
-        row * rowWidthDevice + x1,
-      );
+      packed.fill(rgba, row * rowWidthDevice + x0, row * rowWidthDevice + x1);
     }
   }
 
@@ -175,7 +164,6 @@ export function drawPressureMemoryStrip(
   );
   ctx.restore();
 }
-
 
 interface PressureColors {
   readonly positive: string;
@@ -277,12 +265,7 @@ function pressureRowRasterCanvas(width: number, height: number) {
 const LITTLE_ENDIAN =
   new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
 
-function packRgba(
-  r: number,
-  g: number,
-  b: number,
-  a: number,
-): number {
+function packRgba(r: number, g: number, b: number, a: number): number {
   return LITTLE_ENDIAN
     ? (r | (g << 8) | (b << 16) | (a << 24)) >>> 0
     : ((r << 24) | (g << 16) | (b << 8) | a) >>> 0;
