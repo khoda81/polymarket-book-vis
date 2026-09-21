@@ -38,10 +38,40 @@ export function rasterizeNestedBands(
 ): Uint8ClampedArray {
   const height = Math.max(0, Math.floor(heightDevice));
   const result = new Uint8ClampedArray(height * 4);
-  if (height === 0 || layers.length === 0) return result;
+  rasterizeNestedBandsInto(
+    layers,
+    centerDevice,
+    topDevice,
+    height,
+    result,
+  );
+  return result;
+}
+
+/**
+ * Rasterize into caller-owned storage.
+ *
+ * The output is cleared before writing so the same buffer can be reused across
+ * cells/frames without stale transparent pixels surviving from the previous
+ * raster.
+ */
+export function rasterizeNestedBandsInto(
+  layers: readonly NestedRasterLayer[],
+  centerDevice: number,
+  topDevice: number,
+  heightDevice: number,
+  result: Uint8ClampedArray,
+): void {
+  const height = Math.max(0, Math.floor(heightDevice));
+  const byteLength = height * 4;
+  if (result.length < byteLength)
+    throw new RangeError("nested-band raster buffer is too small");
+
+  result.fill(0, 0, byteLength);
+  if (height === 0 || layers.length === 0) return;
 
   const shells = buildShells(layers);
-  if (shells.length === 0) return result;
+  if (shells.length === 0) return;
 
   for (let row = 0; row < height; row++) {
     const lo = topDevice + row - centerDevice;
@@ -74,7 +104,6 @@ export function rasterizeNestedBands(
     result[offset + 3] = Math.round(255 * clamp01(a));
   }
 
-  return result;
 }
 
 function buildShells(layers: readonly NestedRasterLayer[]): RasterShell[] {
