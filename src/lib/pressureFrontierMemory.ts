@@ -210,9 +210,7 @@ export class PressureFrontierMemory {
   }
 
   prune(nowMs: number, halfLifeMs: number, minAlpha = 0.01): void {
-    this.field.pruneGhosts(
-      ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha),
-    );
+    this.field.pruneGhosts(ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha));
   }
 
   clear(): void {
@@ -305,9 +303,11 @@ export class PressureFrontierMemory {
   private validateFieldAgainstFrontiers(): void {
     for (const run of this.field.renderRuns()) {
       const price = (run.lo + run.hi) / 2;
-      const snapshot = this.field.snapshot().runs.find(
-        (candidate) => candidate.lo === run.lo && candidate.hi === run.hi,
-      );
+      const snapshot = this.field
+        .snapshot()
+        .runs.find(
+          (candidate) => candidate.lo === run.lo && candidate.hi === run.hi,
+        );
       if (!snapshot) continue;
 
       const bidVolume = frontierVolumeAt(this.bid.current, price);
@@ -370,8 +370,7 @@ function legacyV1ShellsAtPrice(
   let covered = 0;
   if (bidLive > 0 || askLive > 0) {
     const useBid =
-      bidLive > 0 &&
-      (!(askLive > 0) || bid.updatedAtMs >= ask.updatedAtMs);
+      bidLive > 0 && (!(askLive > 0) || bid.updatedAtMs >= ask.updatedAtMs);
     const liveVolume = useBid ? bidLive : askLive;
     appendBand(shells, {
       loVolume: 0,
@@ -482,10 +481,7 @@ function levelsEqual(
   );
 }
 
-function liveExtent(
-  bands: readonly PressureBand[],
-  side: 1 | -1,
-): number {
+function liveExtent(bands: readonly PressureBand[], side: 1 | -1): number {
   let extent = 0;
   for (const band of bands)
     if (band.side === side && band.state.kind === "live")
@@ -524,8 +520,7 @@ function statesEqual(a: PressureBand, b: PressureBand): boolean {
   return (
     a.state.kind === b.state.kind &&
     (a.state.kind === "live" ||
-      (b.state.kind === "ghost" &&
-        a.state.sinceMs === b.state.sinceMs))
+      (b.state.kind === "ghost" && a.state.sinceMs === b.state.sinceMs))
   );
 }
 
@@ -536,8 +531,7 @@ function frontierFromLegacyCells(
 ): FrontierRoot {
   const localSamples = cells.map((cell) => {
     const band = cell.bands.find(
-      (candidate) =>
-        candidate.side === side && candidate.state.kind === state,
+      (candidate) => candidate.side === side && candidate.state.kind === state,
     );
     const lo = side > 0 ? cell.lo : 1 - cell.hi;
     const hi = side > 0 ? cell.hi : 1 - cell.lo;
