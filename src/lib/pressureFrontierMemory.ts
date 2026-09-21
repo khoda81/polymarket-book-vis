@@ -142,8 +142,7 @@ export class PressureFrontierMemory {
     const ghostTimes = new Set<number>();
     for (const cell of cells)
       for (const band of cell.bands)
-        if (band.state.kind === "ghost")
-          ghostTimes.add(band.state.sinceMs);
+        if (band.state.kind === "ghost") ghostTimes.add(band.state.sinceMs);
 
     const newestFirst = [...ghostTimes].sort((a, b) => b - a);
     for (const sinceMs of newestFirst) {
@@ -437,8 +436,7 @@ function levelsEqual(
     a.length === b.length &&
     a.every(
       (level, index) =>
-        level.key === b[index]!.key &&
-        level.weight === b[index]!.weight,
+        level.key === b[index]!.key && level.weight === b[index]!.weight,
     )
   );
 }
@@ -454,9 +452,7 @@ function frontierLostAtoms(
     const before = previous[i]!;
     while (j < next.length && next[j]!.key < before.key) j++;
     const after =
-      j < next.length && next[j]!.key === before.key
-        ? next[j]!.weight
-        : 0;
+      j < next.length && next[j]!.key === before.key ? next[j]!.weight : 0;
     if (after < before.weight) return true;
     i++;
   }
@@ -485,7 +481,6 @@ function appendBand(bands: PressureBand[], band: PressureBand): void {
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
-
 
 type LegacyState = "live" | number;
 
