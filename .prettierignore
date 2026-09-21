@@ -1,1 +1,6 @@
 bun.lock
+# Temporary while the monotone-pressure-field branch is under active rewrite.
+src/chart/liveBookFeed.ts
+src/lib/monotoneFrontier.ts
+src/lib/monotoneFrontier.test.ts
+src/lib/pressureFrontierMemory.ts
