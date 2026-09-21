@@ -39,8 +39,7 @@ export interface PressureFrontierSnapshotV2 {
 }
 
 export type PressureFrontierSnapshot =
-  | PressureFrontierSnapshotV1
-  | PressureFrontierSnapshotV2;
+  PressureFrontierSnapshotV1 | PressureFrontierSnapshotV2;
 
 export interface RestoredPressureFrontierSideV1 {
   readonly updatedAtMs: number;
@@ -256,10 +255,7 @@ function parseSideV1(
         rawLayer.sinceMs,
         `${label} history[${index}].sinceMs`,
       ),
-      levels: parseLevels(
-        rawLayer.levels,
-        `${label} history[${index}].levels`,
-      ),
+      levels: parseLevels(rawLayer.levels, `${label} history[${index}].levels`),
     };
   });
 
@@ -298,14 +294,8 @@ function parseRun(value: unknown, index: number): PressureFieldRunSnapshot {
     hi: finiteNumber(value.hi, `run[${index}].hi`),
     bidVolume: finiteNumber(value.bidVolume, `run[${index}].bidVolume`),
     askVolume: finiteNumber(value.askVolume, `run[${index}].askVolume`),
-    bidRevision: finiteNumber(
-      value.bidRevision,
-      `run[${index}].bidRevision`,
-    ),
-    askRevision: finiteNumber(
-      value.askRevision,
-      `run[${index}].askRevision`,
-    ),
+    bidRevision: finiteNumber(value.bidRevision, `run[${index}].bidRevision`),
+    askRevision: finiteNumber(value.askRevision, `run[${index}].askRevision`),
     bands: value.bands.map((band, bandIndex) =>
       parseBand(band, `run[${index}].bands[${bandIndex}]`),
     ),
@@ -313,8 +303,7 @@ function parseRun(value: unknown, index: number): PressureFieldRunSnapshot {
 }
 
 function parseBand(value: unknown, label: string): PressureBand {
-  if (!isRecord(value))
-    throw new TypeError(`${label} must be an object`);
+  if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
   if (value.side !== -1 && value.side !== 1)
     throw new RangeError(`${label}.side must be -1 or 1`);
   if (!isRecord(value.state))
