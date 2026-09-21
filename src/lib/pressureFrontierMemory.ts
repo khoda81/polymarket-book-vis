@@ -51,6 +51,7 @@ export class PressureFrontierMemory {
   private readonly ask: SideFrontierState = emptySideState();
   private lastUpdateMs: number | undefined;
   private cachedCells: readonly PressureCell[] | null = null;
+  private cachedPriceBoundaries: readonly number[] | null = null;
 
   observeBook(book: TokenBook<unknown>, nowMs: number): void {
     this.validateTime(nowMs);
@@ -73,7 +74,7 @@ export class PressureFrontierMemory {
     );
 
     this.lastUpdateMs = nowMs;
-    this.cachedCells = null;
+    this.invalidateProjection();
   }
 
   updateLevels(
@@ -109,7 +110,7 @@ export class PressureFrontierMemory {
         state.history.unshift({ sinceMs: nowMs, root: previous });
       state.current = next;
       state.updatedAtMs = nowMs;
-      this.cachedCells = null;
+      this.invalidateProjection();
     }
     this.lastUpdateMs = nowMs;
   }
@@ -146,7 +147,17 @@ export class PressureFrontierMemory {
     }
 
     this.lastUpdateMs = newestFirst[0];
-    this.cachedCells = null;
+    this.invalidateProjection();
+  }
+
+  priceBoundaries(): readonly number[] {
+    if (this.cachedPriceBoundaries) return this.cachedPriceBoundaries;
+
+    const boundaries = new Set<number>([0, 1]);
+    collectCanonicalBoundaries(boundaries, this.bid, "bid");
+    collectCanonicalBoundaries(boundaries, this.ask, "ask");
+    this.cachedPriceBoundaries = [...boundaries].sort((a, b) => a - b);
+    return this.cachedPriceBoundaries;
   }
 
   /**
@@ -158,10 +169,7 @@ export class PressureFrontierMemory {
   cells(): readonly PressureCell[] {
     if (this.cachedCells) return this.cachedCells;
 
-    const boundaries = new Set<number>([0, 1]);
-    collectCanonicalBoundaries(boundaries, this.bid, "bid");
-    collectCanonicalBoundaries(boundaries, this.ask, "ask");
-    const sorted = [...boundaries].sort((a, b) => a - b);
+    const sorted = this.priceBoundaries();
     const cells: PressureCell[] = [];
 
     for (let index = 0; index + 1 < sorted.length; index++) {
@@ -192,7 +200,10 @@ export class PressureFrontierMemory {
    * The result is a contiguous radial prefix. Every point belongs to exactly
    * one newest state, so callers never need to composite overlapping history.
    */
-  shellsAtPrice(price: number): readonly PressureBand[] {
+  shellsAtPrice(
+    price: number,
+    visibleGhostSinceMs = Number.NEGATIVE_INFINITY,
+  ): readonly PressureBand[] {
     if (!Number.isFinite(price)) return [];
     const p = clamp01(price);
 
@@ -229,6 +240,11 @@ export class PressureFrontierMemory {
           bid.sinceMs > ask.sinceMs ||
           (bid.sinceMs === ask.sinceMs && bidIndex <= askIndex));
       const layer = takeBid ? bid! : ask!;
+      if (layer.sinceMs <= visibleGhostSinceMs) {
+        if (takeBid) bidIndex++;
+        else askIndex++;
+        continue;
+      }
       const side: PressureSide = takeBid ? 1 : -1;
       const u = takeBid ? p : 1 - p;
       const volume = frontierVolumeAt(layer.root, u);
@@ -280,7 +296,7 @@ export class PressureFrontierMemory {
       bidLength !== this.bid.history.length ||
       askLength !== this.ask.history.length
     )
-      this.cachedCells = null;
+      this.invalidateProjection();
   }
 
   clear(): void {
@@ -291,7 +307,12 @@ export class PressureFrontierMemory {
     this.ask.updatedAtMs = Number.NEGATIVE_INFINITY;
     this.ask.history = [];
     this.lastUpdateMs = undefined;
+    this.invalidateProjection();
+  }
+
+  private invalidateProjection(): void {
     this.cachedCells = null;
+    this.cachedPriceBoundaries = null;
   }
 
   /** Debug/test view of the current side-local atoms. */
