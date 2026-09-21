@@ -668,11 +668,11 @@ export class SeriesTimelineView {
         if (!this.destroyed && generation === this.feedGeneration)
           this.onConnectionStatus(status);
       },
-      onBookUpdated: (tokenId, book) => {
+      onBookUpdated: (tokenId, book, update) => {
         if (this.destroyed || generation !== this.feedGeneration) return;
         const key = String(tokenId);
         this.bookCache.set(key, book);
-        this.pressure.observeBook(key, book);
+        this.pressure.applyBookUpdate(key, book, update);
         this.requestDraw();
       },
       onMarketResolved: (resolution) => {
