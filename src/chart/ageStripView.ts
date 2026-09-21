@@ -5,7 +5,7 @@ import {
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
 import type { TokenBook } from "@/lib/orderBook";
-import type { PressureCell } from "@/lib/pressureMemory";
+import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import type { SignedVolumeColorScale } from "@/lib/signedVolume";
 import {
@@ -105,9 +105,9 @@ export class AgeStripView {
   }
 
   hydratePressureMemory(
-    cellsByToken: Readonly<Record<string, readonly PressureCell[]>>,
+    snapshotsByToken: Readonly<Record<string, PressureFrontierSnapshot>>,
   ): void {
-    this.pressure.hydrate(cellsByToken, (tokenId) =>
+    this.pressure.hydrate(snapshotsByToken, (tokenId) =>
       this.host.getBook(tokenId),
     );
   }
