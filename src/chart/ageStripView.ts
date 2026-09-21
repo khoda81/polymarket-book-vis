@@ -25,6 +25,7 @@ import {
 import { AgeStripClock } from "./ageStripClock";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
 import { AgeStripPressureState } from "./ageStripPressureState";
+import type { LiveBookUpdate } from "./liveBookFeed";
 import { AgeStripTooltip } from "./ageStripTooltip";
 import type { ChartMarketControl } from "@/lib/chartDefinition";
 
@@ -121,11 +122,11 @@ export class AgeStripView {
     );
   }
 
-  onBookUpdate(tokenId: string): void {
+  onBookUpdate(tokenId: string, update: LiveBookUpdate): void {
     const book = this.host.getBook(tokenId);
     if (!book) return;
 
-    this.pressure.observeBook(tokenId, book);
+    this.pressure.applyBookUpdate(tokenId, book, update);
 
     if (this.visibilityInitialized.has(tokenId)) return;
     this.visibilityInitialized.add(tokenId);
