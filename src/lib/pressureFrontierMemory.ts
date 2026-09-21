@@ -75,7 +75,7 @@ export class PressureFrontierMemory {
     );
 
     this.lastUpdateMs = nowMs;
-    this.invalidateProjection();
+    this.invalidateCells();
   }
 
   updateLevels(
@@ -112,7 +112,7 @@ export class PressureFrontierMemory {
         state.history.unshift({ sinceMs: nowMs, root: previous });
       state.current = next;
       state.updatedAtMs = nowMs;
-      this.invalidateProjection();
+      this.invalidateCells();
     }
     this.lastUpdateMs = nowMs;
   }
@@ -154,7 +154,7 @@ export class PressureFrontierMemory {
     }
 
     this.lastUpdateMs = newestFirst[0];
-    this.invalidateProjection();
+    this.invalidateCells();
   }
 
   priceBoundaries(): readonly number[] {
@@ -238,6 +238,12 @@ export class PressureFrontierMemory {
     ) {
       const bid = this.bid.history[bidIndex];
       const ask = this.ask.history[askIndex];
+      if (
+        (bid?.sinceMs ?? Number.NEGATIVE_INFINITY) <= visibleGhostSinceMs &&
+        (ask?.sinceMs ?? Number.NEGATIVE_INFINITY) <= visibleGhostSinceMs
+      )
+        break;
+
       const takeBid =
         !!bid &&
         (!ask ||
@@ -300,7 +306,7 @@ export class PressureFrontierMemory {
       bidLength !== this.bid.history.length ||
       askLength !== this.ask.history.length
     )
-      this.invalidateProjection();
+      this.invalidateCells();
   }
 
   clear(): void {
@@ -314,12 +320,12 @@ export class PressureFrontierMemory {
     this.priceKeys.clear();
     this.priceKeys.add(0);
     this.priceKeys.add(1);
-    this.invalidateProjection();
-  }
-
-  private invalidateProjection(): void {
     this.cachedCells = null;
     this.cachedPriceBoundaries = null;
+  }
+
+  private invalidateCells(): void {
+    this.cachedCells = null;
   }
 
   /** Debug/test view of the current side-local atoms. */
@@ -349,7 +355,6 @@ export class PressureFrontierMemory {
 
     state.current = next;
     state.updatedAtMs = nowMs;
-
   }
 
   private rememberPrice(price: number): void {
@@ -357,6 +362,7 @@ export class PressureFrontierMemory {
     if (this.priceKeys.has(price)) return;
     this.priceKeys.add(price);
     this.cachedPriceBoundaries = null;
+    this.cachedCells = null;
   }
 
   private sideState(side: PressureBookSide): SideFrontierState {
