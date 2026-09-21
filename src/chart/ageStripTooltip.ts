@@ -10,6 +10,11 @@ import {
   type AgeStripGeometry,
 } from "./ageStripLayout";
 import type { ViewMode } from "@/lib/chartState";
+import {
+  hideSharedTooltip,
+  releaseSharedTooltip,
+  showSharedTooltip,
+} from "@/lib/sharedTooltip";
 
 export interface AgeStripTooltipHost {
   readonly canvas: HTMLCanvasElement;
@@ -33,18 +38,11 @@ interface HoverPointer {
 }
 
 export class AgeStripTooltip {
-  private readonly overlay: HTMLDivElement;
+  private readonly tooltipOwner = Symbol("age-strip-tooltip");
   private geometry: AgeStripGeometry | null = null;
   private pointer: HoverPointer | null = null;
-  private signature = "";
 
   constructor(private readonly host: AgeStripTooltipHost) {
-    // Portal outside the clipped canvas wrapper so the tooltip can overflow.
-    this.overlay = document.createElement("div");
-    this.overlay.className = "cpv-overlay";
-    this.overlay.setAttribute("role", "tooltip");
-    document.body.appendChild(this.overlay);
-
     host.canvas.addEventListener(
       "pointermove",
       this.handlePointerMove,
@@ -64,7 +62,6 @@ export class AgeStripTooltip {
   clear(): void {
     this.geometry = null;
     this.pointer = null;
-    this.signature = "";
     this.hide();
   }
 
@@ -77,7 +74,7 @@ export class AgeStripTooltip {
       "pointerleave",
       this.handlePointerLeave,
     );
-    this.overlay.remove();
+    releaseSharedTooltip(this.tooltipOwner);
   }
 
   private readonly handlePointerMove = (event: PointerEvent) => {
@@ -138,18 +135,20 @@ export class AgeStripTooltip {
         resolution.marketEndMs ?? "",
       ].join("|");
 
-      if (signature !== this.signature) {
-        renderResolutionTooltip(
-          this.overlay,
-          resolution.side,
-          resolution.outcome,
-          resolution.marketEndMs,
-          this.host.getPressureColorScale(row.tokenId),
-        );
-        this.signature = signature;
-      }
-
-      this.positionOverlay(anchorX, rowCenterY);
+      showSharedTooltip(
+        this.tooltipOwner,
+        signature,
+        (overlay) =>
+          renderResolutionTooltip(
+            overlay,
+            resolution.side,
+            resolution.outcome,
+            resolution.marketEndMs,
+            this.host.getPressureColorScale(row.tokenId),
+          ),
+        anchorX,
+        rowCenterY,
+      );
       return;
     }
 
@@ -174,33 +173,23 @@ export class AgeStripTooltip {
     const resolvedName = tokenName ?? "(unknown)";
     const signature = tooltipSignature(resolvedName, hover);
 
-    if (signature !== this.signature) {
-      renderAgeTooltip(
-        this.overlay,
-        resolvedName,
-        hover,
-        this.host.getPressureColorScale(row.tokenId),
-      );
-      this.signature = signature;
-    }
-
-    this.positionOverlay(anchorX, rowCenterY);
-  }
-
-  private positionOverlay(anchorX: number, rowCenterY: number): void {
-    this.overlay.style.display = "block";
-    this.overlay.style.left = `${anchorX}px`;
-    this.overlay.style.top = `${rowCenterY}px`;
-    this.overlay.style.transform =
-      `${anchorX > window.innerWidth / 2
-        ? "translateX(calc(-100% - 12px))"
-        : "translateX(12px)"} ${rowCenterY > window.innerHeight / 2
-          ? "translateY(calc(-100% - 12px))"
-          : "translateY(12px)"}`;
+    showSharedTooltip(
+      this.tooltipOwner,
+      signature,
+      (overlay) =>
+        renderAgeTooltip(
+          overlay,
+          resolvedName,
+          hover,
+          this.host.getPressureColorScale(row.tokenId),
+        ),
+      anchorX,
+      rowCenterY,
+    );
   }
 
   private hide(): void {
-    this.overlay.style.display = "none";
+    hideSharedTooltip(this.tooltipOwner);
   }
 }
 
