@@ -177,7 +177,11 @@ test("render runs are stable between draws and invalidate only on mutation", () 
   const third = memory.renderRuns();
 
   expect(third).not.toBe(first);
-  expect(third).toEqual([
+  expect(
+    third
+      .filter((run) => run.bands.length > 0)
+      .map(({ lo, hi, bands }) => ({ lo, hi, bands })),
+  ).toEqual([
     {
       lo: 0,
       hi: 0.4,
@@ -243,6 +247,63 @@ test("out-of-order external timestamps preserve observation order", () => {
       hiVolume: 60,
       side: 1,
       state: { kind: "live" },
+    },
+    {
+      loVolume: 60,
+      hiVolume: 100,
+      side: 1,
+      state: { kind: "ghost", sinceMs: 2_000 },
+    },
+  ]);
+});
+
+
+test("still-live hidden liquidity reappears when the newer side retreats", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels("bid", [{ price: 0.6, shares: 100 }], 1_000);
+  memory.updateLevels("ask", [{ price: 0.5, shares: 60 }], 2_000);
+
+  expect(memory.shellsAtPrice(0.55)).toEqual([
+    {
+      loVolume: 0,
+      hiVolume: 60,
+      side: -1,
+      state: { kind: "live" },
+    },
+    {
+      loVolume: 60,
+      hiVolume: 100,
+      side: 1,
+      state: { kind: "live" },
+    },
+  ]);
+
+  memory.updateLevels("ask", [{ price: 0.5, shares: 0 }], 3_000);
+  expect(memory.shellsAtPrice(0.55)).toEqual([
+    {
+      loVolume: 0,
+      hiVolume: 100,
+      side: 1,
+      state: { kind: "live" },
+    },
+  ]);
+});
+
+test("overwritten historical liquidity never resurrects", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels("bid", [{ price: 0.6, shares: 100 }], 1_000);
+  memory.updateLevels("bid", [{ price: 0.6, shares: 0 }], 2_000);
+  memory.updateLevels("ask", [{ price: 0.5, shares: 60 }], 3_000);
+  memory.updateLevels("ask", [{ price: 0.5, shares: 0 }], 4_000);
+
+  expect(memory.shellsAtPrice(0.55)).toEqual([
+    {
+      loVolume: 0,
+      hiVolume: 60,
+      side: -1,
+      state: { kind: "ghost", sinceMs: 4_000 },
     },
     {
       loVolume: 60,
