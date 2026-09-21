@@ -4,8 +4,8 @@ import type { MarketEvent } from "@polymarket/client/actions";
 import { RecorderStore } from "./recorderStore";
 import { RecorderSubscriptionPool } from "./recorderSubscriptionPool";
 import { HalfBook, type TokenBook } from "../src/lib/orderBook";
-import { PressureMemory, type PressureCell } from "../src/lib/pressureMemory";
-import { signedVolumeSegments } from "../src/lib/signedVolume";
+import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
+import type { PressureFrontierSnapshot } from "../src/lib/pressureFrontierSnapshot";
 
 const PORT = Number(process.env.RECORDER_PORT ?? 3001);
 const LEGACY_STATE_PATH = resolve(
@@ -32,7 +32,7 @@ interface BufferedPriceChangeEvent {
 }
 
 interface TransportState {
-  cells: readonly PressureCell[];
+  pressure: PressureFrontierSnapshot;
 }
 
 interface StateResponse {
@@ -55,7 +55,7 @@ interface StateResponse {
         completed: boolean;
         hasBook: boolean;
         hasMemory: boolean;
-        memoryCells: number;
+        historyLayers: number;
         recordingSinceMs: number | null;
         seedInFlight: boolean;
         bufferedPriceChanges: number;
@@ -80,7 +80,7 @@ class AgeRecorder {
   private readonly recordingSince = new Map<string, number>();
   private readonly snapshotClient = createPublicClient();
   private readonly books = new Map<string, TokenBook<string>>();
-  private readonly memories = new Map<string, PressureMemory>();
+  private readonly memories = new Map<string, PressureFrontierMemory>();
   private readonly pendingPriceChanges = new Map<
     string,
     BufferedPriceChangeEvent[]
@@ -182,7 +182,7 @@ class AgeRecorder {
         const memory = this.memories.get(tokenId);
         if (!memory) continue;
         states[tokenId] = {
-          cells: memory.snapshot(),
+          pressure: memory.snapshot(),
         };
       }
     }
@@ -230,7 +230,9 @@ class AgeRecorder {
                 completed: this.completed.has(tokenId),
                 hasBook: this.books.has(tokenId),
                 hasMemory: memory !== undefined,
-                memoryCells: memory?.snapshot().length ?? 0,
+                historyLayers: memory
+                  ? memory.historyDepth("bid") + memory.historyDepth("ask")
+                  : 0,
                 recordingSinceMs: this.recordingSince.get(tokenId) ?? null,
                 seedInFlight: this.seedInFlight.has(tokenId),
                 bufferedPriceChanges:
@@ -313,7 +315,7 @@ class AgeRecorder {
         }
 
         for (const change of changes) applyPriceChange(book, change);
-        this.updateMemory(tokenId, book, timestampMs);
+        this.updateMemory(tokenId, book, timestampMs, changes);
       }
       return;
     }
@@ -325,7 +327,7 @@ class AgeRecorder {
       for (const tokenIdValue of stream.payload.assetIds ?? []) {
         const tokenId = String(tokenIdValue);
         const memory = this.memories.get(tokenId);
-        memory?.observe([{ lo: 0, hi: 1, volume: 0 }], nowMs);
+        memory?.clear();
 
         if (this.watched.delete(tokenId)) resolvedTokenIds.push(tokenId);
 
@@ -367,7 +369,7 @@ class AgeRecorder {
         for (const event of buffered) {
           if (event.timestampMs <= snapshotMs) continue;
           for (const change of event.changes) applyPriceChange(book, change);
-          this.updateMemory(tokenId, book, event.timestampMs);
+          this.updateMemory(tokenId, book, event.timestampMs, event.changes);
         }
         this.pendingPriceChanges.delete(tokenId);
 
@@ -375,7 +377,10 @@ class AgeRecorder {
           "rest-seed",
           shortToken(tokenId),
           `buffered=${buffered.length}`,
-          `cells=${this.memories.get(tokenId)?.snapshot().length ?? 0}`,
+          `historyLayers=${
+            (this.memories.get(tokenId)?.historyDepth("bid") ?? 0) +
+            (this.memories.get(tokenId)?.historyDepth("ask") ?? 0)
+          }`,
         );
       }
     } catch (error) {
@@ -398,9 +403,31 @@ class AgeRecorder {
     tokenId: string,
     book: TokenBook<string>,
     observedAtMs = Date.now(),
+    changes?: readonly {
+      side: OrderSide;
+      price: string;
+      size: string;
+    }[],
   ): void {
-    const memory = this.memories.get(tokenId) ?? new PressureMemory();
-    memory.observe(signedVolumeSegments(book), observedAtMs);
+    const memory =
+      this.memories.get(tokenId) ?? new PressureFrontierMemory();
+
+    if (changes === undefined) {
+      memory.observeBook(book, observedAtMs);
+    } else {
+      const bids: Array<{ price: number; shares: number }> = [];
+      const asks: Array<{ price: number; shares: number }> = [];
+      for (const change of changes) {
+        const target = change.side === OrderSide.BUY ? bids : asks;
+        target.push({
+          price: Number(change.price),
+          shares: Number(change.size),
+        });
+      }
+      if (bids.length > 0) memory.updateLevels("bid", bids, observedAtMs);
+      if (asks.length > 0) memory.updateLevels("ask", asks, observedAtMs);
+    }
+
     this.memories.set(tokenId, memory);
 
     if (!this.recordingSince.has(tokenId)) {
@@ -408,7 +435,7 @@ class AgeRecorder {
       debugLog(
         "first-snapshot",
         shortToken(tokenId),
-        `cells=${memory.snapshot().length}`,
+        `priceBoundaries=${memory.priceBoundaries().length}`,
       );
     }
 
@@ -465,7 +492,7 @@ class AgeRecorder {
               ? ("completed" as const)
               : ("watched" as const),
             recordingSinceMs: this.recordingSince.get(tokenId) ?? null,
-            cells: this.memories.get(tokenId)?.snapshot() ?? null,
+            pressure: this.memories.get(tokenId)?.snapshot() ?? null,
             savedAtMs,
           })),
         );
@@ -497,12 +524,12 @@ class AgeRecorder {
       if (record.status === "completed") this.completed.add(record.tokenId);
       else this.watched.add(record.tokenId);
 
-      if (record.recordingSinceMs !== null && record.cells !== null)
+      if (record.recordingSinceMs !== null && record.pressure !== null)
         this.recordingSince.set(record.tokenId, record.recordingSinceMs);
 
-      if (record.cells !== null) {
-        const memory = new PressureMemory();
-        memory.restore(record.cells);
+      if (record.pressure !== null) {
+        const memory = new PressureFrontierMemory();
+        memory.restore(record.pressure);
         this.memories.set(record.tokenId, memory);
       }
     }
