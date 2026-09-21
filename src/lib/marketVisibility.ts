@@ -118,12 +118,30 @@ export function setUserMarketVisible(
   );
 }
 
+export function mergeUserHiddenMarketIds(
+  persisted: ReadonlySet<string>,
+  visibilityByMarketId: ReadonlyMap<string, MarketVisibility>,
+): Set<string> {
+  const userHidden = new Set(persisted);
+
+  // Each ChartHost only owns the markets in one event. Update those entries
+  // without discarding user preferences belonging to every other chart.
+  for (const [marketId, visibility] of visibilityByMarketId) {
+    if (visibility.kind === "hidden" && visibility.reason === "user")
+      userHidden.add(marketId);
+    else userHidden.delete(marketId);
+  }
+
+  return userHidden;
+}
+
 export function persistUserVisibility(
   visibilityByMarketId: ReadonlyMap<string, MarketVisibility>,
 ): void {
-  const userHidden = new Set<string>();
-  for (const [marketId, visibility] of visibilityByMarketId)
-    if (visibility.kind === "hidden" && visibility.reason === "user")
-      userHidden.add(marketId);
-  persistUserHiddenMarketIds(userHidden);
+  persistUserHiddenMarketIds(
+    mergeUserHiddenMarketIds(
+      loadUserHiddenMarketIds(),
+      visibilityByMarketId,
+    ),
+  );
 }
