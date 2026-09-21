@@ -21,9 +21,8 @@ test("frontier is monotone by construction", () => {
   expect(frontierVolumeAt(root, 0.7)).toBe(30);
   expect(frontierVolumeAt(root, 0.9)).toBe(0);
 
-  const samples = Array.from(
-    { length: 101 },
-    (_, index) => frontierVolumeAt(root, index / 100),
+  const samples = Array.from({ length: 101 }, (_, index) =>
+    frontierVolumeAt(root, index / 100),
   );
   for (let index = 1; index < samples.length; index++)
     expect(samples[index]!).toBeLessThanOrEqual(samples[index - 1]!);
@@ -60,7 +59,5 @@ test("zero weight removes a level without changing other levels", () => {
 test("invalid atoms cannot enter the frontier", () => {
   expect(() => setFrontierLevel(null, -0.1, 1)).toThrow();
   expect(() => setFrontierLevel(null, 0.5, -1)).toThrow();
-  expect(() =>
-    setFrontierLevel(null, 0.5, Number.POSITIVE_INFINITY),
-  ).toThrow();
+  expect(() => setFrontierLevel(null, 0.5, Number.POSITIVE_INFINITY)).toThrow();
 });
