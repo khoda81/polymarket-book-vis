@@ -146,8 +146,7 @@ export class MaterializedPressureField {
     return this.runs.some((run) =>
       run.bands.some(
         (band) =>
-          band.state.kind === "ghost" &&
-          band.state.sinceMs > visibleSinceMs,
+          band.state.kind === "ghost" && band.state.sinceMs > visibleSinceMs,
       ),
     );
   }
@@ -208,10 +207,7 @@ export class MaterializedPressureField {
     this.mergeAdjacentRuns();
   }
 
-  restoreRuns(
-    runs: readonly PressureFieldRunSnapshot[],
-    revision = 0,
-  ): void {
+  restoreRuns(runs: readonly PressureFieldRunSnapshot[], revision = 0): void {
     this.restore({ revision, runs });
   }
 
@@ -505,8 +501,7 @@ function nonNegative(value: number, label: string): number {
 }
 
 function finite(value: number, label: string): number {
-  if (!Number.isFinite(value))
-    throw new RangeError(`${label} must be finite`);
+  if (!Number.isFinite(value)) throw new RangeError(`${label} must be finite`);
   return value;
 }
 
