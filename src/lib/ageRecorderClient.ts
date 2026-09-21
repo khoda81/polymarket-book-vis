@@ -1,7 +1,4 @@
-import {
-  parsePressureCells,
-  rebasePressureCells,
-} from "./pressureMemory";
+import { parsePressureCells, rebasePressureCells } from "./pressureMemory";
 import { PressureFrontierMemory } from "./pressureFrontierMemory";
 import {
   parsePressureFrontierSnapshot,
