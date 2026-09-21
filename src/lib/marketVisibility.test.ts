@@ -74,7 +74,6 @@ test("user visibility update replaces state without a second source of truth", (
   });
 });
 
-
 test("persisting one event preserves user-hidden markets from other events", () => {
   const persisted = new Set(["country-fr", "country-de", "other-event-market"]);
   const currentEvent = new Map<
