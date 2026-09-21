@@ -155,9 +155,8 @@ export class AgeStripPressureState {
     halfLifeMs: number,
   ): boolean {
     return (
-      this.states
-        .get(tokenId)
-        ?.memory.hasVisibleGhosts(nowMs, halfLifeMs) ?? false
+      this.states.get(tokenId)?.memory.hasVisibleGhosts(nowMs, halfLifeMs) ??
+      false
     );
   }
 }
