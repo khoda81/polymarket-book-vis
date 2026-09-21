@@ -131,6 +131,65 @@ export function rebasePressureFrontierSnapshot(
   };
 }
 
+export function stalePressureFrontierSnapshot(
+  snapshot: PressureFrontierSnapshot,
+  staleSinceMs: number,
+): PressureFrontierSnapshot {
+  if (!Number.isFinite(staleSinceMs))
+    throw new RangeError("stale pressure timestamp must be finite");
+
+  if (snapshot.version === 1) {
+    const staleSide = (
+      side: PressureFrontierSideSnapshotV1,
+    ): PressureFrontierSideSnapshotV1 => ({
+      updatedAtMs: null,
+      current: [],
+      history:
+        side.current.length === 0
+          ? side.history
+          : [
+              {
+                sinceMs: staleSinceMs,
+                levels: side.current,
+              },
+              ...side.history,
+            ],
+    });
+
+    return {
+      version: 1,
+      bid: staleSide(snapshot.bid),
+      ask: staleSide(snapshot.ask),
+    };
+  }
+
+  return {
+    version: 2,
+    bid: { current: [] },
+    ask: { current: [] },
+    field: {
+      revision: 0,
+      runs: snapshot.field.runs.map((run) => ({
+        ...run,
+        bidVolume: 0,
+        askVolume: 0,
+        bidRevision: 0,
+        askRevision: 0,
+        bands: run.bands.map((band) => ({
+          ...band,
+          state:
+            band.state.kind === "live"
+              ? {
+                  kind: "ghost" as const,
+                  sinceMs: staleSinceMs,
+                }
+              : band.state,
+        })),
+      })),
+    },
+  };
+}
+
 export function snapshotCurrentSide(
   current: FrontierRoot,
 ): PressureFrontierCurrentSideSnapshot {
