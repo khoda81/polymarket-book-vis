@@ -1,10 +1,1 @@
 bun.lock
-# Temporary while the monotone-pressure-field branch is under active rewrite.
-src/chart/liveBookFeed.ts
-src/lib/monotoneFrontier.ts
-src/lib/monotoneFrontier.test.ts
-src/lib/pressureFrontierMemory.ts
-src/chart/ageStripPressureState.ts
-src/chart/ageStripRendering.ts
-src/chart/pressureFieldRaster.ts
-src/chart/pressureFieldRaster.test.ts
