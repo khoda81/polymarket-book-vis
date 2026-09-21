@@ -146,7 +146,7 @@ export class LiveBookFeed {
           this.books.set(String(tokenId), book);
           this.callbacks.onBookUpdated(tokenId, book, {
             kind: "snapshot",
-            observedAtMs: eventTimeMs(event.payload),
+            observedAtMs: observationTimeMs(),
           });
           continue;
         }
@@ -189,7 +189,7 @@ export class LiveBookFeed {
             changesByToken.set(tokenId, changes);
           }
 
-          const observedAtMs = eventTimeMs(event.payload);
+          const observedAtMs = observationTimeMs();
           for (const [tokenId, changes] of changesByToken) {
             const book = this.books.get(String(tokenId));
             if (!book) continue;
@@ -258,23 +258,10 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function eventTimeMs(payload: unknown): number {
-  if (
-    payload !== null &&
-    typeof payload === "object" &&
-    "timestamp" in payload
-  ) {
-    const raw = (payload as { timestamp?: unknown }).timestamp;
-    const parsed =
-      typeof raw === "number"
-        ? raw
-        : typeof raw === "string"
-          ? Number(raw)
-          : NaN;
-    if (Number.isFinite(parsed)) {
-      // Polymarket timestamps have appeared in both seconds and milliseconds.
-      return parsed < 100_000_000_000 ? parsed * 1_000 : parsed;
-    }
-  }
-  return Date.now();
+function observationTimeMs(): number {
+  // Pressure history is defined by the order in which this client observes
+  // and applies book states. Exchange timestamps may arrive out of order.
+  // performance.timeOrigin + performance.now() gives us epoch-compatible,
+  // monotonic time for ghost aging without trusting transport ordering.
+  return performance.timeOrigin + performance.now();
 }
