@@ -409,8 +409,7 @@ class AgeRecorder {
       size: string;
     }[],
   ): void {
-    const memory =
-      this.memories.get(tokenId) ?? new PressureFrontierMemory();
+    const memory = this.memories.get(tokenId) ?? new PressureFrontierMemory();
 
     if (changes === undefined) {
       memory.observeBook(book, observedAtMs);
