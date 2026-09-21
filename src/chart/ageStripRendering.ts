@@ -1,4 +1,4 @@
-import { ghostVisibleSinceMs } from "@/lib/pressureMemory";
+import { ghostVisibleSinceMs } from "@/lib/pressureField";
 import type { PressureFrontierMemory } from "@/lib/pressureFrontierMemory";
 import type { Frame } from "@/lib/renderer";
 import {
