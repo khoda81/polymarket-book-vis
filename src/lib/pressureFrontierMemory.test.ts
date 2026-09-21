@@ -228,3 +228,28 @@ test("render runs merge adjacent price intervals with identical shell stacks", (
   expect(runs.every((run) => run.hi > run.lo)).toBe(true);
   expect(memory.renderRuns()).toBe(runs);
 });
+
+
+test("out-of-order external timestamps preserve observation order", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels("bid", [{ price: 0.5, shares: 100 }], 2_000);
+  expect(() =>
+    memory.updateLevels("bid", [{ price: 0.5, shares: 60 }], 1_500),
+  ).not.toThrow();
+
+  expect(memory.shellsAtPrice(0.4)).toEqual([
+    {
+      loVolume: 0,
+      hiVolume: 60,
+      side: 1,
+      state: { kind: "live" },
+    },
+    {
+      loVolume: 60,
+      hiVolume: 100,
+      side: 1,
+      state: { kind: "ghost", sinceMs: 2_000 },
+    },
+  ]);
+});
