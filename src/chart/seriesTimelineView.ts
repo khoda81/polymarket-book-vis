@@ -58,6 +58,7 @@ const BOTTOM_PADDING_PX = 0;
 const TIMELINE_RELATIVE_GUTTER_PX = 42;
 const SUBSCRIPTION_BUFFER_ROWS = 2;
 const WINDOW_RELOAD_FRACTION = 0.45;
+const MAX_AUTO_SCROLL_FRAME_DELAY_MS = 250;
 
 export interface SeriesTimelineViewOptions {
   readonly onConnectionStatus?: (status: ConnectionStatus) => void;
@@ -156,6 +157,7 @@ export class SeriesTimelineView {
       getViewMode: () => "age",
       getTheme: () => this.theme,
       getTiming: (tokenId) => this.pressure.timing(tokenId),
+      refreshMode: "frame",
     });
     this.tooltip = new AgeStripTooltip({
       canvas,
@@ -779,7 +781,10 @@ export class SeriesTimelineView {
     const currentPx = nowMs * pixelsPerMs;
     const nextPx = (Math.floor(currentPx / stepCssPx) + 1) * stepCssPx;
     const nextMs = nextPx / pixelsPerMs;
-    const delayMs = Math.max(16, nextMs - nowMs);
+    const delayMs = Math.max(
+      16,
+      Math.min(MAX_AUTO_SCROLL_FRAME_DELAY_MS, nextMs - nowMs),
+    );
 
     this.clockTimer = window.setTimeout(() => {
       this.clockTimer = undefined;
