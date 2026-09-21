@@ -7,6 +7,7 @@ import {
   type AgeStripGeometry,
 } from "./ageStripLayout";
 import { AgeStripPressureState } from "./ageStripPressureState";
+import { PressureFrontierMemory } from "@/lib/pressureFrontierMemory";
 import {
   drawAgeRowRails,
   drawPressureMemoryStrip,
@@ -450,7 +451,7 @@ export class SeriesTimelineView {
       drawPressureMemoryStrip(
         frame,
         row.centerMs,
-        this.pressure.cells(key),
+        this.pressure.memory(key) ?? new PressureFrontierMemory(),
         scale,
         tuning.volumePerCssPixel,
         tuning.ghostHalfLifeMs,
