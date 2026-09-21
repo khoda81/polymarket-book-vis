@@ -141,6 +141,10 @@ export class AgeStripPressureState {
     return this.states.get(tokenId)?.memory.cells() ?? [];
   }
 
+  memory(tokenId: string): PressureFrontierMemory | undefined {
+    return this.states.get(tokenId)?.memory;
+  }
+
   timing(tokenId: string): AgeStripPressureTiming | undefined {
     return this.states.get(tokenId);
   }
