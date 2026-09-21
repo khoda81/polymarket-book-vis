@@ -22,10 +22,7 @@ export interface FrontierLevel {
   readonly weight: number;
 }
 
-export function frontierLevel(
-  root: FrontierRoot,
-  key: number,
-): number {
+export function frontierLevel(root: FrontierRoot, key: number): number {
   validateKey(key);
   let node = root;
   while (node) {
@@ -46,10 +43,7 @@ export function setFrontierLevel(
 }
 
 /** Cumulative shares at side-local coordinate u. */
-export function frontierVolumeAt(
-  root: FrontierRoot,
-  u: number,
-): number {
+export function frontierVolumeAt(root: FrontierRoot, u: number): number {
   if (!Number.isFinite(u)) return 0;
   if (u <= 0) return root?.sum ?? 0;
   if (u > 1) return 0;
@@ -84,9 +78,7 @@ export function frontierLevels(root: FrontierRoot): FrontierLevel[] {
   return result;
 }
 
-export function buildFrontier(
-  levels: readonly FrontierLevel[],
-): FrontierRoot {
+export function buildFrontier(levels: readonly FrontierLevel[]): FrontierRoot {
   let root: FrontierRoot = null;
   for (const { key, weight } of levels)
     root = setFrontierLevel(root, key, weight);
@@ -98,10 +90,7 @@ function setNode(
   key: number,
   weight: number,
 ): FrontierRoot {
-  if (!node)
-    return weight > 0
-      ? makeNode(key, weight, null, null)
-      : null;
+  if (!node) return weight > 0 ? makeNode(key, weight, null, null) : null;
 
   if (key === node.key) {
     if (!(weight > 0)) return join(node.left, node.right);
@@ -120,31 +109,18 @@ function setNode(
   return rebalance(makeNode(node.key, node.weight, node.left, right));
 }
 
-function join(
-  left: FrontierRoot,
-  right: FrontierRoot,
-): FrontierRoot {
+function join(left: FrontierRoot, right: FrontierRoot): FrontierRoot {
   if (!left) return right;
   if (!right) return left;
 
   if (height(left) > height(right) + 1)
     return rebalance(
-      makeNode(
-        left.key,
-        left.weight,
-        left.left,
-        join(left.right, right),
-      ),
+      makeNode(left.key, left.weight, left.left, join(left.right, right)),
     );
 
   if (height(right) > height(left) + 1)
     return rebalance(
-      makeNode(
-        right.key,
-        right.weight,
-        join(left, right.left),
-        right.right,
-      ),
+      makeNode(right.key, right.weight, join(left, right.left), right.right),
     );
 
   const [successor, nextRight] = removeMin(right);
@@ -172,12 +148,7 @@ function rebalance(node: FrontierNode): FrontierNode {
     const left = node.left!;
     if (height(left.left) < height(left.right))
       return rotateRight(
-        makeNode(
-          node.key,
-          node.weight,
-          rotateLeft(left),
-          node.right,
-        ),
+        makeNode(node.key, node.weight, rotateLeft(left), node.right),
       );
     return rotateRight(node);
   }
@@ -186,12 +157,7 @@ function rebalance(node: FrontierNode): FrontierNode {
     const right = node.right!;
     if (height(right.right) < height(right.left))
       return rotateLeft(
-        makeNode(
-          node.key,
-          node.weight,
-          node.left,
-          rotateRight(right),
-        ),
+        makeNode(node.key, node.weight, node.left, rotateRight(right)),
       );
     return rotateLeft(node);
   }
