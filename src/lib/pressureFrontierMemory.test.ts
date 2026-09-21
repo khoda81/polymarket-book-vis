@@ -157,7 +157,6 @@ test("same-timestamp batch uses final absolute level sizes", () => {
   expect(memory.shellsAtPrice(0.4)[0]?.hiVolume).toBe(120);
 });
 
-
 test("render runs are stable between draws and invalidate only on mutation", () => {
   const memory = new PressureFrontierMemory();
 
