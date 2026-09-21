@@ -10,11 +10,13 @@ import {
 } from "./monotoneFrontier";
 import {
   ghostVisibleSinceMs,
-  parsePressureCells,
   type PressureBand,
-  type PressureCell,
   type PressureSide,
-} from "./pressureMemory";
+} from "./pressureField";
+import {
+  parsePressureCells,
+  type PressureCell,
+} from "./legacyPressureCells";
 import {
   parsePressureFrontierSnapshot,
   restoreSnapshotSide,
@@ -57,7 +59,6 @@ export class PressureFrontierMemory {
   private readonly ask: SideFrontierState = emptySideState();
   private lastUpdateMs: number | undefined;
   private readonly priceKeys = new Set<number>([0, 1]);
-  private cachedCells: readonly PressureCell[] | null = null;
   private cachedPriceBoundaries: readonly number[] | null = null;
 
   observeBook(book: TokenBook<unknown>, nowMs: number): void {
@@ -81,7 +82,6 @@ export class PressureFrontierMemory {
     );
 
     this.lastUpdateMs = nowMs;
-    this.invalidateCells();
   }
 
   updateLevels(
@@ -118,8 +118,7 @@ export class PressureFrontierMemory {
         state.history.unshift({ sinceMs: nowMs, root: previous });
       state.current = next;
       state.updatedAtMs = nowMs;
-      this.invalidateCells();
-    }
+      }
     this.lastUpdateMs = nowMs;
   }
 
@@ -167,7 +166,6 @@ export class PressureFrontierMemory {
       newestHistoryMs,
     );
     if (!Number.isFinite(this.lastUpdateMs)) this.lastUpdateMs = undefined;
-    this.invalidateCells();
   }
 
   /**
@@ -206,7 +204,6 @@ export class PressureFrontierMemory {
     }
 
     this.lastUpdateMs = newestFirst[0];
-    this.invalidateCells();
   }
 
   priceBoundaries(): readonly number[] {
@@ -214,40 +211,6 @@ export class PressureFrontierMemory {
 
     this.cachedPriceBoundaries = [...this.priceKeys].sort((a, b) => a - b);
     return this.cachedPriceBoundaries;
-  }
-
-  /**
-   * Cached compatibility projection for the existing cell renderer.
-   *
-   * This is deliberately a migration seam. The framebuffer renderer should
-   * consume frontier history directly and delete this projection.
-   */
-  cells(): readonly PressureCell[] {
-    if (this.cachedCells) return this.cachedCells;
-
-    const sorted = this.priceBoundaries();
-    const cells: PressureCell[] = [];
-
-    for (let index = 0; index + 1 < sorted.length; index++) {
-      const lo = sorted[index]!;
-      const hi = sorted[index + 1]!;
-      if (!(hi > lo)) continue;
-      const bands = this.shellsAtPrice((lo + hi) / 2);
-      const previous = cells[cells.length - 1];
-
-      if (previous && bandsEqual(previous.bands, bands)) {
-        cells[cells.length - 1] = {
-          lo: previous.lo,
-          hi,
-          bands: previous.bands,
-        };
-      } else {
-        cells.push({ lo, hi, bands });
-      }
-    }
-
-    this.cachedCells = cells;
-    return cells;
   }
 
   /**
@@ -358,8 +321,7 @@ export class PressureFrontierMemory {
       bidLength !== this.bid.history.length ||
       askLength !== this.ask.history.length
     )
-      this.invalidateCells();
-  }
+    }
 
   clear(): void {
     this.bid.current = null;
@@ -372,12 +334,7 @@ export class PressureFrontierMemory {
     this.priceKeys.clear();
     this.priceKeys.add(0);
     this.priceKeys.add(1);
-    this.cachedCells = null;
     this.cachedPriceBoundaries = null;
-  }
-
-  private invalidateCells(): void {
-    this.cachedCells = null;
   }
 
   /** Debug/test view of the current side-local atoms. */
@@ -426,7 +383,6 @@ export class PressureFrontierMemory {
     if (this.priceKeys.has(price)) return;
     this.priceKeys.add(price);
     this.cachedPriceBoundaries = null;
-    this.cachedCells = null;
   }
 
   private sideState(side: PressureBookSide): SideFrontierState {
