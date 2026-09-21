@@ -28,6 +28,12 @@ export interface PressureLevelChange {
   readonly shares: number;
 }
 
+export interface PressureRenderRun {
+  readonly lo: number;
+  readonly hi: number;
+  readonly bands: readonly PressureBand[];
+}
+
 interface HistoricalFrontier {
   readonly sinceMs: number;
   readonly root: FrontierRoot;
@@ -57,6 +63,7 @@ export class PressureFrontierMemory {
   private lastUpdateMs: number | undefined;
   private readonly priceKeys = new Set<number>([0, 1]);
   private cachedPriceBoundaries: readonly number[] | null = null;
+  private cachedRenderRuns: readonly PressureRenderRun[] | null = null;
 
   observeBook(book: TokenBook<unknown>, nowMs: number): void {
     this.validateTime(nowMs);
@@ -95,7 +102,6 @@ export class PressureFrontierMemory {
       if (key === null) continue;
       if (!Number.isFinite(change.shares) || change.shares < 0) continue;
       finalByKey.set(key, change.shares);
-      this.rememberPrice(change.price);
     }
     if (finalByKey.size === 0) {
       this.lastUpdateMs = nowMs;
@@ -115,6 +121,10 @@ export class PressureFrontierMemory {
         state.history.unshift({ sinceMs: nowMs, root: previous });
       state.current = next;
       state.updatedAtMs = nowMs;
+      for (const [key, shares] of finalByKey)
+        if (shares > 0)
+          this.rememberPrice(side === "bid" ? key : 1 - key);
+      this.invalidateRenderPlan();
     }
     this.lastUpdateMs = nowMs;
   }
@@ -164,6 +174,7 @@ export class PressureFrontierMemory {
       newestHistoryMs,
     );
     if (!Number.isFinite(this.lastUpdateMs)) this.lastUpdateMs = undefined;
+    this.cachedRenderRuns = null;
   }
 
   /**
@@ -202,6 +213,7 @@ export class PressureFrontierMemory {
     }
 
     this.lastUpdateMs = newestFirst[0];
+    this.cachedRenderRuns = null;
   }
 
   priceBoundaries(): readonly number[] {
@@ -209,6 +221,39 @@ export class PressureFrontierMemory {
 
     this.cachedPriceBoundaries = [...this.priceKeys].sort((a, b) => a - b);
     return this.cachedPriceBoundaries;
+  }
+
+  renderRuns(): readonly PressureRenderRun[] {
+    if (this.cachedRenderRuns) return this.cachedRenderRuns;
+
+    const boundaries = this.priceBoundaries();
+    const runs: PressureRenderRun[] = [];
+    for (let index = 0; index + 1 < boundaries.length; index++) {
+      const lo = boundaries[index]!;
+      const hi = boundaries[index + 1]!;
+      if (!(hi > lo)) continue;
+
+      const bands = this.shellsAtPrice((lo + hi) / 2);
+      if (bands.length === 0) continue;
+
+      const previous = runs[runs.length - 1];
+      if (
+        previous &&
+        previous.hi === lo &&
+        bandsEqual(previous.bands, bands)
+      ) {
+        runs[runs.length - 1] = {
+          lo: previous.lo,
+          hi,
+          bands: previous.bands,
+        };
+      } else {
+        runs.push({ lo, hi, bands });
+      }
+    }
+
+    this.cachedRenderRuns = runs;
+    return runs;
   }
 
   /**
@@ -307,12 +352,22 @@ export class PressureFrontierMemory {
 
   prune(nowMs: number, halfLifeMs: number, minAlpha = 0.01): void {
     const cutoff = ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha);
-    this.bid.history = this.bid.history.filter(
+    const bidHistory = this.bid.history.filter(
       (layer) => layer.sinceMs > cutoff,
     );
-    this.ask.history = this.ask.history.filter(
+    const askHistory = this.ask.history.filter(
       (layer) => layer.sinceMs > cutoff,
     );
+    if (
+      bidHistory.length === this.bid.history.length &&
+      askHistory.length === this.ask.history.length
+    )
+      return;
+
+    this.bid.history = bidHistory;
+    this.ask.history = askHistory;
+    this.rebuildPriceKeys();
+    this.invalidateRenderPlan();
   }
 
   clear(): void {
@@ -327,6 +382,7 @@ export class PressureFrontierMemory {
     this.priceKeys.add(0);
     this.priceKeys.add(1);
     this.cachedPriceBoundaries = null;
+    this.cachedRenderRuns = null;
   }
 
   /** Debug/test view of the current side-local atoms. */
@@ -356,6 +412,7 @@ export class PressureFrontierMemory {
 
     state.current = next;
     state.updatedAtMs = nowMs;
+    this.invalidateRenderPlan();
   }
 
   private rememberSidePrices(
@@ -375,6 +432,19 @@ export class PressureFrontierMemory {
     if (this.priceKeys.has(price)) return;
     this.priceKeys.add(price);
     this.cachedPriceBoundaries = null;
+  }
+
+  private rebuildPriceKeys(): void {
+    this.priceKeys.clear();
+    this.priceKeys.add(0);
+    this.priceKeys.add(1);
+    this.cachedPriceBoundaries = null;
+    this.rememberSidePrices(this.bid, "bid");
+    this.rememberSidePrices(this.ask, "ask");
+  }
+
+  private invalidateRenderPlan(): void {
+    this.cachedRenderRuns = null;
   }
 
   private sideState(side: PressureBookSide): SideFrontierState {
@@ -489,6 +559,28 @@ function appendBand(bands: PressureBand[], band: PressureBand): void {
     return;
   }
   bands.push(band);
+}
+
+function bandsEqual(
+  a: readonly PressureBand[],
+  b: readonly PressureBand[],
+): boolean {
+  if (a === b) return true;
+  return (
+    a.length === b.length &&
+    a.every((band, index) => {
+      const other = b[index]!;
+      return (
+        band.loVolume === other.loVolume &&
+        band.hiVolume === other.hiVolume &&
+        band.side === other.side &&
+        band.state.kind === other.state.kind &&
+        (band.state.kind === "live" ||
+          (other.state.kind === "ghost" &&
+            band.state.sinceMs === other.state.sinceMs))
+      );
+    })
+  );
 }
 
 function clamp01(value: number): number {
