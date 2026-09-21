@@ -10,6 +10,13 @@ export interface RgbColor {
   readonly b: number;
 }
 
+interface RasterShell {
+  readonly innerRadius: number;
+  readonly outerRadius: number;
+  readonly alpha: number;
+  readonly color: RgbColor;
+}
+
 export interface PressureColumnRasterOptions {
   readonly positiveColor: RgbColor;
   readonly negativeColor: RgbColor;
@@ -45,6 +52,9 @@ export function rasterizePressureBandsInto(
   result.fill(0, 0, byteLength);
   if (height === 0 || bands.length === 0) return;
 
+  const shells = buildRasterShells(bands, options);
+  if (shells.length === 0) return;
+
   for (let row = 0; row < height; row++) {
     const lo = options.topDevice + row - options.centerDevice;
     const hi = lo + 1;
@@ -54,55 +64,19 @@ export function rasterizePressureBandsInto(
     let premulB = 0;
     let alpha = 0;
 
-    for (const band of bands) {
-      if (
-        band.state.kind === "ghost" &&
-        band.state.sinceMs <= options.visibleGhostSinceMs
-      )
-        continue;
-
-      const bandAlpha =
-        band.state.kind === "live"
-          ? 1
-          : ghostAlpha(
-              band.state.sinceMs,
-              options.nowMs,
-              options.ghostHalfLifeMs,
-            );
-      if (!(bandAlpha > 1 / 255)) continue;
-
-      const innerRadius =
-        (pressureInkThicknessCss(
-          band.loVolume,
-          options.reserveShares,
-          options.rowHeightCss,
-        ) *
-          options.dpr) /
-        2;
-      const outerRadius =
-        (pressureInkThicknessCss(
-          band.hiVolume,
-          options.reserveShares,
-          options.rowHeightCss,
-        ) *
-          options.dpr) /
-        2;
-      if (!(outerRadius > innerRadius)) continue;
-
+    for (const shell of shells) {
       const coverage = symmetricShellOverlap(
         lo,
         hi,
-        innerRadius,
-        outerRadius,
+        shell.innerRadius,
+        shell.outerRadius,
       );
       if (!(coverage > 0)) continue;
 
-      const contribution = coverage * bandAlpha;
-      const color =
-        band.side < 0 ? options.negativeColor : options.positiveColor;
-      premulR += color.r * contribution;
-      premulG += color.g * contribution;
-      premulB += color.b * contribution;
+      const contribution = coverage * shell.alpha;
+      premulR += shell.color.r * contribution;
+      premulG += shell.color.g * contribution;
+      premulB += shell.color.b * contribution;
       alpha += contribution;
     }
 
@@ -113,6 +87,59 @@ export function rasterizePressureBandsInto(
     result[offset + 2] = Math.round(255 * clamp01(premulB / alpha));
     result[offset + 3] = Math.round(255 * clamp01(alpha));
   }
+}
+
+function buildRasterShells(
+  bands: readonly PressureBand[],
+  options: PressureColumnRasterOptions,
+): RasterShell[] {
+  const shells: RasterShell[] = [];
+
+  for (const band of bands) {
+    if (
+      band.state.kind === "ghost" &&
+      band.state.sinceMs <= options.visibleGhostSinceMs
+    )
+      continue;
+
+    const alpha =
+      band.state.kind === "live"
+        ? 1
+        : ghostAlpha(
+            band.state.sinceMs,
+            options.nowMs,
+            options.ghostHalfLifeMs,
+          );
+    if (!(alpha > 1 / 255)) continue;
+
+    const innerRadius =
+      (pressureInkThicknessCss(
+        band.loVolume,
+        options.reserveShares,
+        options.rowHeightCss,
+      ) *
+        options.dpr) /
+      2;
+    const outerRadius =
+      (pressureInkThicknessCss(
+        band.hiVolume,
+        options.reserveShares,
+        options.rowHeightCss,
+      ) *
+        options.dpr) /
+      2;
+    if (!(outerRadius > innerRadius)) continue;
+
+    shells.push({
+      innerRadius,
+      outerRadius,
+      alpha,
+      color:
+        band.side < 0 ? options.negativeColor : options.positiveColor,
+    });
+  }
+
+  return shells;
 }
 
 function symmetricShellOverlap(
