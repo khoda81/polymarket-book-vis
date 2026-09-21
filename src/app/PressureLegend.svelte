@@ -21,11 +21,11 @@
     signedVolumeColor,
   } from "../lib/signedVolume";
 
-  const MIN_LABEL_DISTANCE_PX = 48;
+  const MIN_LABEL_DISTANCE_PX = 40;
   // Tick families may be denser than labels; labels get their own collision pass.
   // Using the label distance here made every non-zero family fade out on the
   // compact legend at realistic reserve sizes.
-  const MIN_TICK_FAMILY_DISTANCE_PX = 16;
+  const MIN_TICK_FAMILY_DISTANCE_PX = 10;
   let shareBar: HTMLDivElement;
   let ghostBar: HTMLDivElement;
   let shareWidth = 0;

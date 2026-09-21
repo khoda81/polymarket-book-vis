@@ -4,6 +4,12 @@
   import EventDescription from "./EventDescription.svelte";
   import EventHeader from "./EventHeader.svelte";
   import MarketRules from "./MarketRules.svelte";
+  import {
+    cardReorderSurface,
+    reorderHandleClick,
+    reorderHandleKeydown,
+    type CardReorderStart,
+  } from "./cardReorderSurface";
   import type {
     ConnectionStatus,
     ViewMode,
@@ -45,7 +51,8 @@
   export let onremove: () => void;
   export let onready: () => void;
   export let onfailure: (message: string) => void;
-  export let onreorderstart: (event: PointerEvent) => void;
+  export let onreorderstart: (start: CardReorderStart) => void;
+  export let onreorderstep: (direction: -1 | 1) => void;
 
   let viewMode: ViewMode = "age";
   let runtime: RuntimeState = { kind: "metadata-loading" };
@@ -114,25 +121,26 @@
   class:card--pinned={pinned}
   data-event-id={event.id}
   data-event-slug={pin.kind === "unavailable" ? "" : pin.slug}
+  use:cardReorderSurface={onreorderstart}
 >
+  <button
+    type="button"
+    class="card-drag"
+    aria-label="Drag to rearrange card"
+    title="Drag to rearrange; arrow keys move card"
+    onclick={(event) => reorderHandleClick(event, onreorderstep)}
+    onkeydown={(event) => reorderHandleKeydown(event, onreorderstep)}
+  >
+    <svg viewBox="0 0 18 18" aria-hidden="true">
+      <circle cx="5" cy="4" r="1.25" />
+      <circle cx="13" cy="4" r="1.25" />
+      <circle cx="5" cy="9" r="1.25" />
+      <circle cx="13" cy="9" r="1.25" />
+      <circle cx="5" cy="14" r="1.25" />
+      <circle cx="13" cy="14" r="1.25" />
+    </svg>
+  </button>
   <div class="card-actions">
-    <button
-      type="button"
-      class="card-drag"
-      aria-label="Rearrange card"
-      title="Drag to rearrange"
-      onpointerdown={onreorderstart}
-    >
-      <svg viewBox="0 0 18 18" aria-hidden="true">
-        <circle cx="5" cy="4" r="1.25" />
-        <circle cx="13" cy="4" r="1.25" />
-        <circle cx="5" cy="9" r="1.25" />
-        <circle cx="13" cy="9" r="1.25" />
-        <circle cx="5" cy="14" r="1.25" />
-        <circle cx="13" cy="14" r="1.25" />
-      </svg>
-    </button>
-
     <select
       class="card-view"
       aria-label="Visualization mode"

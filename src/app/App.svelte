@@ -4,6 +4,7 @@
   import EventSearch from "./EventSearch.svelte";
   import PressureLegend from "./PressureLegend.svelte";
   import SeriesCard from "./SeriesCard.svelte";
+  import type { CardReorderStart } from "./cardReorderSurface";
   import { findSeriesBySlug } from "../lib/seriesTimeline";
   import { setSharedTooltipSuppressed } from "../lib/sharedTooltip";
   import {
@@ -101,6 +102,17 @@
     localStorage.setItem(COLUMN_COUNT_STORAGE_KEY, String(columnCount));
   }
 
+  function commitColumnCount(input: HTMLInputElement): void {
+    const value = Number(input.value);
+    if (
+      input.value.trim() !== "" &&
+      Number.isInteger(value) &&
+      value >= MIN_COLUMNS
+    )
+      setColumnCount(value);
+    input.value = String(columnCount);
+  }
+
   function loadLayoutOrder(
     eventPins: readonly EventSlug[],
     seriesPins: readonly string[],
@@ -159,8 +171,8 @@
     persistLayoutOrder();
   }
 
-  function startReorder(event: PointerEvent, key: string): void {
-    if (event.pointerType === "mouse" && event.button !== 0) return;
+  function startReorder(start: CardReorderStart, key: string): void {
+    const { event, origin, surface } = start;
     event.preventDefault();
     finishReorder();
 
@@ -230,18 +242,15 @@
         columnCount,
       },
       grabOffset: {
-        x: event.clientX - draggedRect.left,
-        y: event.clientY - draggedRect.top,
+        x: origin.x - draggedRect.left,
+        y: origin.y - draggedRect.top,
       },
     };
 
-    const handle = event.currentTarget;
-    if (handle instanceof HTMLElement) {
-      try {
-        handle.setPointerCapture(event.pointerId);
-      } catch {
-        // Pointer capture can fail if the pointer ended synchronously.
-      }
+    try {
+      surface.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture can fail if the pointer ended synchronously.
     }
 
     setSharedTooltipSuppressed(true);
@@ -257,6 +266,7 @@
       capture: true,
       once: true,
     });
+    moveReorder(event);
   }
 
   function moveReorder(event: PointerEvent): void {
@@ -295,6 +305,22 @@
     draggingKey = null;
     dragSnapshot = null;
     setSharedTooltipSuppressed(false);
+  }
+
+  function stepReorder(key: string, direction: -1 | 1): void {
+    const visibleKeys = orderedEntries.map(itemKey);
+    const index = visibleKeys.indexOf(key);
+    const neighbor = visibleKeys[index + direction];
+    if (index < 0 || !neighbor) return;
+
+    const from = layoutOrder.indexOf(key);
+    const to = layoutOrder.indexOf(neighbor);
+    if (from < 0 || to < 0) return;
+
+    const next = [...layoutOrder];
+    [next[from], next[to]] = [next[to]!, next[from]!];
+    layoutOrder = next;
+    persistLayoutOrder();
   }
 
   function masonryItem(node: HTMLElement): { destroy(): void } {
@@ -641,10 +667,12 @@
           id="dashboard-columns"
           type="number"
           min={MIN_COLUMNS}
+          step="1"
+          inputmode="numeric"
           value={columnCount}
           aria-label="Dashboard column count"
-          oninput={(event) =>
-            setColumnCount(Number(event.currentTarget.value))}
+          onchange={(event) =>
+            commitColumnCount(event.currentTarget)}
         />
         <button
           type="button"
@@ -681,6 +709,8 @@
           onfailure={(message) => itemFailed(entry, message)}
           onreorderstart={(event) =>
             startReorder(event, itemKey(entry))}
+          onreorderstep={(direction) =>
+            stepReorder(itemKey(entry), direction)}
         />
       {:else}
         <EventCard
@@ -693,6 +723,8 @@
           onfailure={(message) => itemFailed(entry, message)}
           onreorderstart={(event) =>
             startReorder(event, itemKey(entry))}
+          onreorderstep={(direction) =>
+            stepReorder(itemKey(entry), direction)}
         />
       {/if}
     </div>

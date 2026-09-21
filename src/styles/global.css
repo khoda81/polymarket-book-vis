@@ -163,37 +163,50 @@ body {
 
 .layout-columns label {
     font-weight: 600;
+    color: var(--color-text-primary, #222);
 }
 
 .layout-columns-controls {
     display: flex;
     align-items: center;
-    gap: 0.375rem;
+    overflow: hidden;
+    color: var(--color-text-primary, #222);
+    background: var(--color-background-secondary, #f2f2f2);
+    border: 1px solid var(--color-border-secondary, #ccc);
+    border-radius: 0.375rem;
 }
 
 .layout-columns input {
-    width: 3.25rem;
+    width: 2.75rem;
     height: 2.375rem;
     padding: 0 0.25rem;
     color: inherit;
     text-align: center;
-    background: var(--color-background-primary, #fff);
-    border: 1px solid var(--color-border-secondary, #ccc);
-    border-radius: 0.375rem;
+    appearance: textfield;
+    background: transparent;
+    border: 0;
+    border-right: 1px solid var(--color-border-secondary, #ccc);
+    border-left: 1px solid var(--color-border-secondary, #ccc);
     font: inherit;
+    font-size: 0.8125rem;
     font-variant-numeric: tabular-nums;
+}
+
+.layout-columns input::-webkit-inner-spin-button,
+.layout-columns input::-webkit-outer-spin-button {
+    margin: 0;
+    -webkit-appearance: none;
 }
 
 .layout-columns button {
     display: grid;
     place-items: center;
-    width: 2.375rem;
+    width: 2rem;
     height: 2.375rem;
     padding: 0;
     color: inherit;
-    background: var(--color-background-secondary, #f2f2f2);
-    border: 1px solid var(--color-border-secondary, #ccc);
-    border-radius: 0.375rem;
+    background: transparent;
+    border: 0;
     cursor: pointer;
     font: inherit;
     font-size: 1rem;
@@ -202,6 +215,14 @@ body {
 
 .layout-columns button:hover:not(:disabled) {
     background: var(--color-background-hover, #e5e5e5);
+}
+
+.layout-columns input:focus-visible,
+.layout-columns button:focus-visible {
+    position: relative;
+    z-index: 1;
+    outline: 2px solid #1d9e75;
+    outline-offset: -2px;
 }
 
 .layout-columns button:disabled {
@@ -213,7 +234,7 @@ body {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1.5rem;
-    width: min(100%, 42rem);
+    width: 100%;
     min-width: 0;
 }
 
@@ -385,7 +406,6 @@ body {
 }
 
 .card-view,
-.card-drag,
 .card-pin,
 .card-close {
     height: 28px;
@@ -401,7 +421,6 @@ body {
     font-size: 12px;
 }
 
-.card-drag,
 .card-pin,
 .card-close {
     display: grid;
@@ -412,7 +431,6 @@ body {
     line-height: 1;
 }
 
-.card-drag svg,
 .card-pin svg,
 .card-close svg {
     display: block;
@@ -426,23 +444,62 @@ body {
 }
 
 .card-view:hover,
-.card-drag:hover,
 .card-pin:hover,
 .card-close:hover {
     background: var(--color-background-hover, #e5e5e5);
 }
 
 .card-drag {
+    position: absolute;
+    top: 0.75rem;
+    left: 0.125rem;
+    z-index: 21;
+    display: grid;
+    place-items: center;
+    width: 0.75rem;
+    height: 2rem;
+    padding: 0;
+    color: var(--color-text-secondary, #666);
+    background: transparent;
+    border: 0;
     cursor: grab;
+    opacity: 0;
+    pointer-events: none;
     touch-action: none;
+    transition: opacity 100ms ease;
+}
+
+.card--reorder-hover,
+.card--reorder-hover .cpv-wrap {
+    cursor: grab;
+}
+
+.card--reorder-hover .card-drag,
+.card-drag:focus-visible,
+.grid-item--dragging .card-drag {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .card-drag:active {
     cursor: grabbing;
 }
 
+.card-drag svg {
+    display: block;
+    width: 0.75rem;
+    height: 1.25rem;
+}
+
 .card-drag svg circle {
     fill: currentColor;
+}
+
+@media (hover: none) {
+    .card-drag {
+        opacity: 1;
+        pointer-events: auto;
+    }
 }
 
 .card-pin:disabled,
@@ -452,7 +509,7 @@ body {
 }
 
 .card .cpv-header {
-    padding-right: 184px;
+    padding-right: 160px;
 }
 
 .card-pin[aria-pressed="true"] {
@@ -460,7 +517,7 @@ body {
 }
 
 .series-card .cpv-header {
-    padding-right: 116px;
+    padding-right: 82px;
 }
 
 .series-recurrence {
