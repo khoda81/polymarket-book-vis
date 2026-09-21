@@ -257,7 +257,6 @@ test("out-of-order external timestamps preserve observation order", () => {
   ]);
 });
 
-
 test("still-live hidden liquidity reappears when the newer side retreats", () => {
   const memory = new PressureFrontierMemory();
 
