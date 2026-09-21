@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { rasterizeNestedBands, rasterizeNestedBandsInto } from "./nestedBandRaster";
+import {
+  rasterizeNestedBands,
+  rasterizeNestedBandsInto,
+} from "./nestedBandRaster";
 
 const cyan = { r: 0, g: 1, b: 1 };
 
