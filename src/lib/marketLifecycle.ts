@@ -21,9 +21,7 @@ export interface MarketResolutionUpdate {
   readonly winningOutcome: string | null;
 }
 
-export function initialMarketLifecycle(
-  market: Market,
-): MarketLifecycle {
+export function initialMarketLifecycle(market: Market): MarketLifecycle {
   const winner = resolvedWinnerFromPrices(market);
   if (winner) return winner;
 
@@ -71,24 +69,16 @@ export function summarizeEventMarketStatus(
   lifecycles: Iterable<MarketLifecycle>,
 ): EventMarketStatus {
   const values = [...lifecycles];
-  if (
-    values.length > 0 &&
-    values.every((state) => state.kind === "resolved")
-  )
+  if (values.length > 0 && values.every((state) => state.kind === "resolved"))
     return { kind: "resolved" };
 
-  if (
-    values.length > 0 &&
-    values.every((state) => state.kind !== "live")
-  )
+  if (values.length > 0 && values.every((state) => state.kind !== "live"))
     return { kind: "awaiting-resolution" };
 
   return { kind: "trading" };
 }
 
-function resolvedWinnerFromPrices(
-  market: Market,
-): MarketLifecycle | null {
+function resolvedWinnerFromPrices(market: Market): MarketLifecycle | null {
   const yes = exactResolutionPrice(market.outcomes.yes.price);
   const no = exactResolutionPrice(market.outcomes.no.price);
   if (yes === null || no === null || yes === no) return null;

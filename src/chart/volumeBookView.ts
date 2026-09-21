@@ -1,7 +1,13 @@
 import type { ChartDefinition } from "@/lib/chartDefinition";
 import { marketColor } from "@/lib/math";
 import { emptyTokenBook, type BookOrder } from "@/lib/orderBook";
-import type { ChartTheme, Frame, OrderBookPlotter, StackDirection, BoxStyle } from "@/lib/renderer";
+import type {
+  ChartTheme,
+  Frame,
+  OrderBookPlotter,
+  StackDirection,
+  BoxStyle,
+} from "@/lib/renderer";
 import { signedVolumeColor } from "@/lib/signedVolume";
 import type { TokenId } from "@polymarket/client";
 
@@ -44,18 +50,13 @@ export class VolumeBookView {
 
   draw(): void {
     const yAbsMax = Math.pow(10, this.scale);
-    const frame = this.host.plotter.beginFrame(
-      this.host.getTheme(),
-      {
-        xRange: { min: 0, max: 1 },
-        yRange: { min: -yAbsMax, max: yAbsMax },
-      },
-    );
+    const frame = this.host.plotter.beginFrame(this.host.getTheme(), {
+      xRange: { min: 0, max: 1 },
+      yRange: { min: -yAbsMax, max: yAbsMax },
+    });
     frame.drawAxes();
 
-    const pointerData = this.pointer
-      ? frame.toData(this.pointer)
-      : null;
+    const pointerData = this.pointer ? frame.toData(this.pointer) : null;
     const empty = emptyTokenBook();
     const placeholderColor = marketColor("", 0);
 
@@ -70,18 +71,17 @@ export class VolumeBookView {
       color: placeholderColor,
     });
 
-    for (const [index, market] of
-      this.host.definition.event.markets.entries()) {
+    for (const [
+      index,
+      market,
+    ] of this.host.definition.event.markets.entries()) {
       const tokenId = market.outcomes.yes.tokenId;
-      if (!tokenId || !this.host.activeTokens.has(tokenId))
-        continue;
+      if (!tokenId || !this.host.activeTokens.has(tokenId)) continue;
 
-      const book =
-        this.host.getBook(String(tokenId)) ?? emptyTokenBook();
-      const semanticScale =
-        this.host.definition.pressureScales.get(
-          String(tokenId),
-        );
+      const book = this.host.getBook(String(tokenId)) ?? emptyTokenBook();
+      const semanticScale = this.host.definition.pressureScales.get(
+        String(tokenId),
+      );
       const yesColor = semanticScale
         ? signedVolumeColor(1, semanticScale)
         : marketColor(this.host.definition.event.id, index);
@@ -93,17 +93,13 @@ export class VolumeBookView {
         direction: "up",
         orders: book.usdToYes.asOrders(),
         color: yesColor,
-        fillDepth: pointerData
-          ? Math.max(pointerData.y, 0)
-          : undefined,
+        fillDepth: pointerData ? Math.max(pointerData.y, 0) : undefined,
       });
       drawBookView(frame, {
         direction: "down",
         orders: book.yesToUsd.asSellOrders(),
         color: noColor,
-        fillDepth: pointerData
-          ? Math.max(-pointerData.y, 0)
-          : undefined,
+        fillDepth: pointerData ? Math.max(-pointerData.y, 0) : undefined,
       });
     }
 
@@ -121,10 +117,7 @@ function drawBookView(frame: Frame, view: BookBoxView): void {
   );
 
   let remainingHeight = frame.domain.yRange.max;
-  let fillRemaining = Math.min(
-    view.fillDepth ?? 0,
-    remainingHeight,
-  );
+  let fillRemaining = Math.min(view.fillDepth ?? 0, remainingHeight);
 
   for (const level of view.orders) {
     const rowHeight = Math.min(level.take, remainingHeight);
@@ -132,23 +125,13 @@ function drawBookView(frame: Frame, view: BookBoxView): void {
 
     const filledHeight = Math.min(rowHeight, fillRemaining);
     if (filledHeight > 0) {
-      commitBoxRow(
-        pen,
-        level.price,
-        filledHeight,
-        filledStyle,
-      );
+      commitBoxRow(pen, level.price, filledHeight, filledStyle);
       fillRemaining -= filledHeight;
     }
 
     const emptyHeight = rowHeight - filledHeight;
     if (emptyHeight > 0)
-      commitBoxRow(
-        pen,
-        level.price,
-        emptyHeight,
-        emptyStyle,
-      );
+      commitBoxRow(pen, level.price, emptyHeight, emptyStyle);
 
     remainingHeight -= rowHeight;
     if (remainingHeight <= 0) break;
@@ -166,14 +149,9 @@ function commitBoxRow(
   pen.commitRow(height);
 }
 
-function boxStyle(
-  color: string,
-  filled: boolean,
-): BoxStyle {
+function boxStyle(color: string, filled: boolean): BoxStyle {
   return {
     stroke: color,
-    fill: filled
-      ? { kind: "solid-dim", alpha: 0.25 }
-      : { kind: "none" },
+    fill: filled ? { kind: "solid-dim", alpha: 0.25 } : { kind: "none" },
   };
 }

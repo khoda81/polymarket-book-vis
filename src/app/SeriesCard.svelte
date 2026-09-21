@@ -124,7 +124,7 @@
       {series}
       {client}
       onready={timelineReady}
-      onfailure={onfailure}
+      {onfailure}
       onconnection={(status) => (connection = status)}
       onanchorevent={(event) => (anchorEvent = event)}
     />

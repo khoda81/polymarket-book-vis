@@ -27,7 +27,7 @@ function negRiskEvent(
 }
 
 function hueDistance(a: number, b: number): number {
-  return ((b - a) % 360 + 360) % 360;
+  return (((b - a) % 360) + 360) % 360;
 }
 
 describe("negative-risk color geometry", () => {
@@ -40,8 +40,12 @@ describe("negative-risk color geometry", () => {
     expect(a.scale.negativeHue).toBeCloseTo(b.hue, 12);
     expect(b.scale.negativeHue).toBeCloseTo(a.hue, 12);
 
-    expect(a.scale.positiveChroma).toBe(DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma);
-    expect(a.scale.negativeChroma).toBe(DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma);
+    expect(a.scale.positiveChroma).toBe(
+      DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma,
+    );
+    expect(a.scale.negativeChroma).toBe(
+      DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma,
+    );
     expect(a.scale.negativeLuminance).toBe(0.72);
   });
 
@@ -55,9 +59,10 @@ describe("negative-risk color geometry", () => {
         DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma,
       );
       expect(outcome.scale.negativeChroma).toBeCloseTo(expectedNoChroma, 12);
-      expect(
-        hueDistance(outcome.hue, outcome.scale.negativeHue),
-      ).toBeCloseTo(180, 12);
+      expect(hueDistance(outcome.hue, outcome.scale.negativeHue)).toBeCloseTo(
+        180,
+        12,
+      );
     }
 
     const hues = palette!.outcomes.map((outcome) => outcome.hue);

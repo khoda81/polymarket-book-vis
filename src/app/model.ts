@@ -46,10 +46,7 @@ export function isSeriesEntry(
   return entry.kind === "series";
 }
 
-export function pinState(
-  event: Event,
-  pinned: readonly EventSlug[],
-): PinState {
+export function pinState(event: Event, pinned: readonly EventSlug[]): PinState {
   const slug = eventSlug(event);
   if (!slug) return { kind: "unavailable" };
   return pinned.includes(slug)

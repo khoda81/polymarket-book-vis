@@ -27,11 +27,7 @@ import {
   type MarketLifecycle,
   type MarketResolutionUpdate,
 } from "@/lib/marketLifecycle";
-import {
-  OrderBookPlotter,
-  type ChartTheme,
-  type Frame,
-} from "@/lib/renderer";
+import { OrderBookPlotter, type ChartTheme, type Frame } from "@/lib/renderer";
 import { chartThemeForDarkMode } from "./chartTheme";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
@@ -46,9 +42,7 @@ import {
   timedSeriesEvent,
   type TimedSeriesEvent,
 } from "@/lib/seriesTimeline";
-import type {
-  ConnectionStatus,
-} from "@/lib/chartState";
+import type { ConnectionStatus } from "@/lib/chartState";
 import type {
   Event,
   Market,
@@ -94,14 +88,8 @@ export class SeriesTimelineView {
     string,
     MarketResolutionUpdate
   >();
-  private readonly bookCache = new Map<
-    string,
-    TokenBook<string>
-  >();
-  private readonly scaleByToken = new Map<
-    string,
-    SignedVolumeColorScale
-  >();
+  private readonly bookCache = new Map<string, TokenBook<string>>();
+  private readonly scaleByToken = new Map<string, SignedVolumeColorScale>();
   private readonly tokenNameByToken = new Map<string, string>();
   private readonly oppositeTokenNameByToken = new Map<string, string>();
   private readonly absoluteTimeLabelByStart = new Map<number, string>();
@@ -135,19 +123,13 @@ export class SeriesTimelineView {
     options: SeriesTimelineViewOptions = {},
   ) {
     const seedEvents = [...(series.events ?? [])];
-    this.cadenceMs = inferSeriesCadenceMs(
-      seedEvents,
-      series.recurrence,
-    );
+    this.cadenceMs = inferSeriesCadenceMs(seedEvents, series.recurrence);
     this.rows = seedEvents
       .map((event) => timedSeriesEvent(event, this.cadenceMs))
       .filter((row): row is TimedSeriesEvent => row !== null);
-    this.onConnectionStatus =
-      options.onConnectionStatus ?? (() => undefined);
-    this.onFollowingChanged =
-      options.onFollowingChanged ?? (() => undefined);
-    this.onWindowChanged =
-      options.onWindowChanged ?? (() => undefined);
+    this.onConnectionStatus = options.onConnectionStatus ?? (() => undefined);
+    this.onFollowingChanged = options.onFollowingChanged ?? (() => undefined);
+    this.onWindowChanged = options.onWindowChanged ?? (() => undefined);
     this.onAnchorEventChanged =
       options.onAnchorEventChanged ?? (() => undefined);
     this.onError = options.onError ?? (() => undefined);
@@ -179,15 +161,12 @@ export class SeriesTimelineView {
       canvas,
       getViewMode: () => "age",
       getBook: (tokenId) =>
-        this.bookCache.get(tokenId) ??
-        this.feed?.getBook(tokenId),
-      getTokenName: (tokenId) =>
-        this.tokenNameByToken.get(tokenId),
+        this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId),
+      getTokenName: (tokenId) => this.tokenNameByToken.get(tokenId),
       getOppositeTokenName: (tokenId) =>
         this.oppositeTokenNameByToken.get(tokenId),
       getPressureColorScale: (tokenId) =>
-        this.scaleByToken.get(tokenId) ??
-        DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+        this.scaleByToken.get(tokenId) ?? DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     });
 
     this.unsubscribeTuning = subscribeAgeStripTuning(() => {
@@ -247,18 +226,13 @@ export class SeriesTimelineView {
     this.unsubscribeTuning();
     this.ageClock.destroy();
     this.tooltip.destroy();
-    if (this.clockTimer !== undefined)
-      window.clearTimeout(this.clockTimer);
+    if (this.clockTimer !== undefined) window.clearTimeout(this.clockTimer);
     if (this.ghostRefreshTimer !== undefined)
       window.clearTimeout(this.ghostRefreshTimer);
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.resizeObserver.disconnect();
     this.plotter.destroy();
-    this.canvas.removeEventListener(
-      "wheel",
-      this.handleWheel,
-      true,
-    );
+    this.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
   }
 
@@ -287,8 +261,7 @@ export class SeriesTimelineView {
 
   private panByCssPixels(deltaPx: number): void {
     if (!Number.isFinite(deltaPx) || deltaPx === 0) return;
-    this.userOffsetMs +=
-      (deltaPx / SERIES_ROW_HEIGHT_PX) * this.cadenceMs;
+    this.userOffsetMs += (deltaPx / SERIES_ROW_HEIGHT_PX) * this.cadenceMs;
     this.setFollowing(false);
     const center = Date.now() + this.userOffsetMs;
     void this.ensureWindow(center);
@@ -301,16 +274,11 @@ export class SeriesTimelineView {
     this.onFollowingChanged(value);
   }
 
-  private async ensureWindow(
-    centerMs: number,
-    force = false,
-  ): Promise<void> {
+  private async ensureWindow(centerMs: number, force = false): Promise<void> {
     if (this.destroyed) return;
 
     const reloadDistance =
-      SERIES_WINDOW_ROWS *
-      this.cadenceMs *
-      WINDOW_RELOAD_FRACTION;
+      SERIES_WINDOW_ROWS * this.cadenceMs * WINDOW_RELOAD_FRACTION;
     if (
       !force &&
       this.loadedCenterMs !== null &&
@@ -344,10 +312,7 @@ export class SeriesTimelineView {
           "No timed binary events were found in this series window",
         );
 
-      this.cadenceMs = inferSeriesCadenceMs(
-        compatible,
-        this.series.recurrence,
-      );
+      this.cadenceMs = inferSeriesCadenceMs(compatible, this.series.recurrence);
       this.rows = compatible
         .map((event) => timedSeriesEvent(event, this.cadenceMs))
         .filter((row): row is TimedSeriesEvent => row !== null);
@@ -373,15 +338,9 @@ export class SeriesTimelineView {
             key,
             defaultPressureScaleForMarket(row.event, marketIndex),
           );
-          this.tokenNameByToken.set(
-            key,
-            market.outcomes.yes.label,
-          );
+          this.tokenNameByToken.set(key, market.outcomes.yes.label);
           if (market.outcomes.no.label)
-            this.oppositeTokenNameByToken.set(
-              key,
-              market.outcomes.no.label,
-            );
+            this.oppositeTokenNameByToken.set(key, market.outcomes.no.label);
           this.pressure.ensure(key, row.endMs);
         }
       }
@@ -406,9 +365,7 @@ export class SeriesTimelineView {
     } catch (error) {
       if (this.destroyed || generation !== this.loadGeneration) return;
       this.loadingCenterMs = null;
-      this.onError(
-        error instanceof Error ? error.message : String(error),
-      );
+      this.onError(error instanceof Error ? error.message : String(error));
       if (this.rows.length === 0) throw error;
     }
   }
@@ -439,8 +396,7 @@ export class SeriesTimelineView {
       yRange: { min: minMs, max: maxMs },
     });
 
-    const subscriptionPaddingMs =
-      SUBSCRIPTION_BUFFER_ROWS * this.cadenceMs;
+    const subscriptionPaddingMs = SUBSCRIPTION_BUFFER_ROWS * this.cadenceMs;
     const bufferedRows = this.rows.filter(
       (row) =>
         row.centerMs >= minMs - subscriptionPaddingMs &&
@@ -460,10 +416,8 @@ export class SeriesTimelineView {
       if (!market || !tokenId) continue;
 
       const lifecycle = this.marketLifecycle(market);
-      if (lifecycle.kind !== "resolved")
-        hydratableTokens.push(String(tokenId));
-      if (lifecycle.kind === "live")
-        bufferedTokens.push(tokenId);
+      if (lifecycle.kind !== "resolved") hydratableTokens.push(String(tokenId));
+      if (lifecycle.kind === "live") bufferedTokens.push(tokenId);
     }
     void this.hydrateTokens(hydratableTokens);
 
@@ -481,8 +435,7 @@ export class SeriesTimelineView {
       const rowOffsetCss = seriesRowOffsetCss(frame, row.centerMs);
 
       if (lifecycle.kind === "resolved") {
-        const primaryWon =
-          String(lifecycle.winningTokenId) === key;
+        const primaryWon = String(lifecycle.winningTokenId) === key;
         drawResolvedMarketStrip(
           frame,
           row.centerMs,
@@ -518,9 +471,7 @@ export class SeriesTimelineView {
     this.refreshWindowIfNeeded(centerMs, minMs, maxMs, nowMs);
 
     if (hasVisibleGhosts)
-      this.scheduleGhostRefresh(
-        ghostRefreshDelayMs(tuning.ghostHalfLifeMs),
-      );
+      this.scheduleGhostRefresh(ghostRefreshDelayMs(tuning.ghostHalfLifeMs));
   }
 
   private drawTimeline(
@@ -530,8 +481,7 @@ export class SeriesTimelineView {
   ): void {
     const { ctx, viewport: vp, theme } = frame;
     const dpr = window.devicePixelRatio || 1;
-    const timelineX =
-      vp.l + vp.width + TIMELINE_RELATIVE_GUTTER_PX;
+    const timelineX = vp.l + vp.width + TIMELINE_RELATIVE_GUTTER_PX;
 
     ctx.lineWidth = 1;
     ctx.strokeStyle = theme.axis;
@@ -550,11 +500,7 @@ export class SeriesTimelineView {
       const tokenId = market?.outcomes.yes.tokenId;
       if (!market || !tokenId) continue;
 
-      const geometry = seriesRowGeometry(
-        frame,
-        row.centerMs,
-        dpr,
-      );
+      const geometry = seriesRowGeometry(frame, row.centerMs, dpr);
       if (
         geometry.topCss > vp.t + vp.height ||
         geometry.topCss + geometry.heightCss < vp.t
@@ -583,17 +529,12 @@ export class SeriesTimelineView {
     }
 
     // Relative ticks are anchored to "now", not to event boundaries.
-    const minK = Math.ceil(
-      (frame.domain.yRange.min - nowMs) / this.cadenceMs,
-    );
-    const maxK = Math.floor(
-      (frame.domain.yRange.max - nowMs) / this.cadenceMs,
-    );
+    const minK = Math.ceil((frame.domain.yRange.min - nowMs) / this.cadenceMs);
+    const maxK = Math.floor((frame.domain.yRange.max - nowMs) / this.cadenceMs);
     for (let k = minK; k <= maxK; k++) {
       const tickTime = nowMs + k * this.cadenceMs;
       const tickY = frame.toScreenY(0, tickTime);
-      if (tickY < vp.t - 1 || tickY > vp.t + vp.height + 1)
-        continue;
+      if (tickY < vp.t - 1 || tickY > vp.t + vp.height + 1) continue;
 
       ctx.strokeStyle = theme.axis;
       ctx.beginPath();
@@ -643,11 +584,7 @@ export class SeriesTimelineView {
         const tokenId = market?.outcomes.yes.tokenId;
         if (!tokenId) return [];
 
-        const raster = seriesRowGeometry(
-          frame,
-          row.centerMs,
-          dpr,
-        );
+        const raster = seriesRowGeometry(frame, row.centerMs, dpr);
         const lifecycle = this.marketLifecycle(market);
         const resolution =
           lifecycle.kind === "resolved"
@@ -661,27 +598,24 @@ export class SeriesTimelineView {
               }
             : undefined;
 
-        return [{
-          tokenId: String(tokenId),
-          centerY: raster.centerCss,
-          topY: raster.topCss,
-          bottomY: raster.topCss + raster.heightCss,
-          resolution,
-        }];
+        return [
+          {
+            tokenId: String(tokenId),
+            centerY: raster.centerCss,
+            topY: raster.topCss,
+            bottomY: raster.topCss + raster.heightCss,
+            resolution,
+          },
+        ];
       }),
-      canvasWidth:
-        vp.l + vp.width + this.plotter.padding.r,
-      canvasHeight:
-        vp.t + vp.height + this.plotter.padding.b,
+      canvasWidth: vp.l + vp.width + this.plotter.padding.r,
+      canvasHeight: vp.t + vp.height + this.plotter.padding.b,
     };
     this.ageClock.setGeometry(geometry);
     this.tooltip.setGeometry(geometry);
   }
 
-  private pressureScale(
-    event: Event,
-    market: Market,
-  ): SignedVolumeColorScale {
+  private pressureScale(event: Event, market: Market): SignedVolumeColorScale {
     const tokenId = market.outcomes.yes.tokenId;
     if (tokenId) {
       const cached = this.scaleByToken.get(String(tokenId));
@@ -694,21 +628,15 @@ export class SeriesTimelineView {
 
   private marketLifecycle(market: Market): MarketLifecycle {
     const initial = initialMarketLifecycle(market);
-    const conditionId = market.conditionId
-      ? String(market.conditionId)
-      : null;
+    const conditionId = market.conditionId ? String(market.conditionId) : null;
     const primary = market.outcomes.yes.tokenId;
     const opposite = market.outcomes.no.tokenId;
     if (!primary) return initial;
 
     const update =
-      (conditionId
-        ? this.resolutionByCondition.get(conditionId)
-        : undefined) ??
+      (conditionId ? this.resolutionByCondition.get(conditionId) : undefined) ??
       this.resolutionByAsset.get(String(primary)) ??
-      (opposite
-        ? this.resolutionByAsset.get(String(opposite))
-        : undefined);
+      (opposite ? this.resolutionByAsset.get(String(opposite)) : undefined);
     if (!update) return initial;
 
     return resolveMarketLifecycle(
@@ -737,33 +665,19 @@ export class SeriesTimelineView {
 
     const feed = new LiveBookFeed(this.client, {
       onConnectionStatus: (status) => {
-        if (
-          !this.destroyed &&
-          generation === this.feedGeneration
-        )
+        if (!this.destroyed && generation === this.feedGeneration)
           this.onConnectionStatus(status);
       },
       onBookUpdated: (tokenId, book) => {
-        if (
-          this.destroyed ||
-          generation !== this.feedGeneration
-        )
-          return;
+        if (this.destroyed || generation !== this.feedGeneration) return;
         const key = String(tokenId);
         this.bookCache.set(key, book);
         this.pressure.observeBook(key, book);
         this.requestDraw();
       },
       onMarketResolved: (resolution) => {
-        if (
-          this.destroyed ||
-          generation !== this.feedGeneration
-        )
-          return;
-        this.resolutionByCondition.set(
-          resolution.conditionId,
-          resolution,
-        );
+        if (this.destroyed || generation !== this.feedGeneration) return;
+        this.resolutionByCondition.set(resolution.conditionId, resolution);
         for (const assetId of resolution.assetIds) {
           this.resolutionByAsset.set(assetId, resolution);
           this.bookCache.delete(assetId);
@@ -775,21 +689,13 @@ export class SeriesTimelineView {
     this.feed = feed;
 
     void feed.start(unique).catch((error) => {
-      if (
-        this.destroyed ||
-        generation !== this.feedGeneration
-      )
-        return;
+      if (this.destroyed || generation !== this.feedGeneration) return;
       this.onConnectionStatus("disconnected");
-      this.onError(
-        error instanceof Error ? error.message : String(error),
-      );
+      this.onError(error instanceof Error ? error.message : String(error));
     });
   }
 
-  private async hydrateTokens(
-    tokenIds: readonly string[],
-  ): Promise<void> {
+  private async hydrateTokens(tokenIds: readonly string[]): Promise<void> {
     const fresh = [...new Set(tokenIds)].filter(
       (tokenId) => !this.hydratedTokens.has(tokenId),
     );
@@ -799,14 +705,10 @@ export class SeriesTimelineView {
     const hydration = await fetchRecorderHydration(fresh);
     if (this.destroyed) return;
 
-    this.pressure.setRecordingCoverage(
-      hydration.recordingSinceMsByToken,
-    );
+    this.pressure.setRecordingCoverage(hydration.recordingSinceMsByToken);
     this.pressure.hydrate(
       hydration.pressureCellsByToken,
-      (tokenId) =>
-        this.bookCache.get(tokenId) ??
-        this.feed?.getBook(tokenId),
+      (tokenId) => this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId),
     );
     this.ageClock.refresh();
     this.requestDraw();
@@ -822,12 +724,9 @@ export class SeriesTimelineView {
     }
 
     const anchor =
-      this.rows.find(
-        (row) => row.startMs <= nowMs && nowMs < row.endMs,
-      ) ??
+      this.rows.find((row) => row.startMs <= nowMs && nowMs < row.endMs) ??
       this.rows.reduce((best, row) =>
-        Math.abs(row.centerMs - nowMs) <
-        Math.abs(best.centerMs - nowMs)
+        Math.abs(row.centerMs - nowMs) < Math.abs(best.centerMs - nowMs)
           ? row
           : best,
       );
@@ -844,8 +743,7 @@ export class SeriesTimelineView {
     maxMs: number,
     nowMs: number,
   ): void {
-    const edgePaddingMs =
-      Math.max(SERIES_VISIBLE_ROWS, 3) * this.cadenceMs;
+    const edgePaddingMs = Math.max(SERIES_VISIBLE_ROWS, 3) * this.cadenceMs;
     const nearPastEdge =
       this.loadedMinStartMs === null ||
       minMs <= this.loadedMinStartMs + edgePaddingMs;
@@ -869,16 +767,14 @@ export class SeriesTimelineView {
 
   private scheduleClockFrame(): void {
     if (this.destroyed) return;
-    if (this.clockTimer !== undefined)
-      window.clearTimeout(this.clockTimer);
+    if (this.clockTimer !== undefined) window.clearTimeout(this.clockTimer);
 
     const nowMs = Date.now();
     const dpr = window.devicePixelRatio || 1;
     const stepCssPx = 0.25 / dpr;
     const pixelsPerMs = SERIES_ROW_HEIGHT_PX / this.cadenceMs;
     const currentPx = nowMs * pixelsPerMs;
-    const nextPx =
-      (Math.floor(currentPx / stepCssPx) + 1) * stepCssPx;
+    const nextPx = (Math.floor(currentPx / stepCssPx) + 1) * stepCssPx;
     const nextMs = nextPx / pixelsPerMs;
     const delayMs = Math.max(16, nextMs - nowMs);
 
@@ -890,8 +786,7 @@ export class SeriesTimelineView {
   }
 
   private scheduleGhostRefresh(delayMs: number): void {
-    if (this.destroyed || this.ghostRefreshTimer !== undefined)
-      return;
+    if (this.destroyed || this.ghostRefreshTimer !== undefined) return;
 
     this.ghostRefreshTimer = window.setTimeout(() => {
       this.ghostRefreshTimer = undefined;
@@ -901,16 +796,10 @@ export class SeriesTimelineView {
 }
 
 function primaryMarket(event: Event): Market | null {
-  return (
-    event.markets.find((market) => market.outcomes.yes.tokenId) ??
-    null
-  );
+  return event.markets.find((market) => market.outcomes.yes.tokenId) ?? null;
 }
 
-function formatTimelineTime(
-  timestampMs: number,
-  cadenceMs: number,
-): string {
+function formatTimelineTime(timestampMs: number, cadenceMs: number): string {
   const date = new Date(timestampMs);
   if (cadenceMs >= 24 * 60 * 60_000)
     return date.toLocaleDateString([], {
@@ -924,52 +813,33 @@ function formatTimelineTime(
   });
 }
 
-function relativeCadenceLabel(
-  offset: number,
-  cadenceMs: number,
-): string {
+function relativeCadenceLabel(offset: number, cadenceMs: number): string {
   if (offset === 0) return "now";
 
   const magnitudeMs = Math.abs(offset) * cadenceMs;
   const sign = offset < 0 ? "−" : "";
 
-  if (magnitudeMs < 60_000)
-    return `${sign}${Math.round(magnitudeMs / 1_000)}s`;
+  if (magnitudeMs < 60_000) return `${sign}${Math.round(magnitudeMs / 1_000)}s`;
   if (magnitudeMs < 60 * 60_000)
-    return `${sign}${formatCompactDuration(
-      magnitudeMs / 60_000,
-    )}m`;
+    return `${sign}${formatCompactDuration(magnitudeMs / 60_000)}m`;
   if (magnitudeMs < 48 * 60 * 60_000)
-    return `${sign}${formatCompactDuration(
-      magnitudeMs / (60 * 60_000),
-    )}h`;
-  return `${sign}${formatCompactDuration(
-    magnitudeMs / (24 * 60 * 60_000),
-  )}d`;
+    return `${sign}${formatCompactDuration(magnitudeMs / (60 * 60_000))}h`;
+  return `${sign}${formatCompactDuration(magnitudeMs / (24 * 60 * 60_000))}d`;
 }
 
 function formatCompactDuration(value: number): string {
   const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded)
-    ? String(rounded)
-    : rounded.toFixed(1);
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
-function seriesRowOffsetCss(
-  frame: Frame,
-  y: number,
-): number {
+function seriesRowOffsetCss(frame: Frame, y: number): number {
   const dpr = window.devicePixelRatio || 1;
   const desiredCenter = frame.toScreenY(0, y);
   const snapped = rowRasterGeometry(desiredCenter, dpr);
   return desiredCenter - snapped.centerCss;
 }
 
-function seriesRowGeometry(
-  frame: Frame,
-  y: number,
-  dpr: number,
-) {
+function seriesRowGeometry(frame: Frame, y: number, dpr: number) {
   const desiredCenter = frame.toScreenY(0, y);
   const geometry = rowRasterGeometry(desiredCenter, dpr);
   const offsetCss = desiredCenter - geometry.centerCss;

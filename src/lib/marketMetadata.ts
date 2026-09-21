@@ -6,8 +6,7 @@ export function indexRawMarketsById(
   const indexed = new Map<string, unknown>();
   for (const rawMarket of rawMarkets) {
     const record = asRecord(rawMarket);
-    if (record?.id !== undefined)
-      indexed.set(String(record.id), rawMarket);
+    if (record?.id !== undefined) indexed.set(String(record.id), rawMarket);
   }
   return indexed;
 }
@@ -22,19 +21,13 @@ export function resolutionOrder(
     .map((market, originalIndex) => ({
       market,
       originalIndex,
-      timestamp: resolutionTimestamp(
-        rawById.get(String(market.id)),
-        market,
-      ),
+      timestamp: resolutionTimestamp(rawById.get(String(market.id)), market),
     }))
     .sort((a, b) => {
       const aKnown = Number.isFinite(a.timestamp);
       const bKnown = Number.isFinite(b.timestamp);
       if (aKnown && bKnown)
-        return (
-          a.timestamp - b.timestamp ||
-          a.originalIndex - b.originalIndex
-        );
+        return a.timestamp - b.timestamp || a.originalIndex - b.originalIndex;
       if (aKnown !== bKnown) return aKnown ? -1 : 1;
       return a.originalIndex - b.originalIndex;
     });
@@ -47,9 +40,7 @@ export function resolutionOrder(
   return order;
 }
 
-export function resolutionTimestamp(
-  ...sources: readonly unknown[]
-): number {
+export function resolutionTimestamp(...sources: readonly unknown[]): number {
   for (const source of sources) {
     const record = asRecord(source);
     if (!record) continue;
@@ -64,10 +55,7 @@ export function resolutionTimestamp(
       record.end_date_iso,
     ]) {
       if (candidate instanceof Date) return candidate.getTime();
-      if (
-        typeof candidate === "number" &&
-        Number.isFinite(candidate)
-      )
+      if (typeof candidate === "number" && Number.isFinite(candidate))
         return candidate;
       if (typeof candidate === "string") {
         const parsed = Date.parse(candidate);
@@ -87,16 +75,10 @@ export function sameDisplayTitle(
 }
 
 function normalizeDisplayTitle(value: string): string {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
+  return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-function asRecord(
-  value: unknown,
-): Record<string, unknown> | undefined {
+function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object"
     ? (value as Record<string, unknown>)
     : undefined;

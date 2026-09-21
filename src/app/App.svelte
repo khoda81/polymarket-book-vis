@@ -32,14 +32,10 @@
     type Series,
   } from "@polymarket/client";
 
-  const PINNED_STORAGE_KEY =
-    "polymarket-book-vis:pinned-event-slugs:v1";
-  const PINNED_SERIES_STORAGE_KEY =
-    "polymarket-book-vis:pinned-series-ids:v1";
-  const COLUMN_COUNT_STORAGE_KEY =
-    "polymarket-book-vis:dashboard-columns:v1";
-  const LAYOUT_ORDER_STORAGE_KEY =
-    "polymarket-book-vis:dashboard-order:v1";
+  const PINNED_STORAGE_KEY = "polymarket-book-vis:pinned-event-slugs:v1";
+  const PINNED_SERIES_STORAGE_KEY = "polymarket-book-vis:pinned-series-ids:v1";
+  const COLUMN_COUNT_STORAGE_KEY = "polymarket-book-vis:dashboard-columns:v1";
+  const LAYOUT_ORDER_STORAGE_KEY = "polymarket-book-vis:dashboard-order:v1";
   const MIN_COLUMNS = 1;
 
   const client = createPublicClient();
@@ -71,9 +67,7 @@
       const raw = localStorage.getItem(PINNED_SERIES_STORAGE_KEY);
       if (!raw) return [];
       const parsed: unknown = JSON.parse(raw);
-      return Array.isArray(parsed)
-        ? normalizePinnedSeriesIds(parsed)
-        : [];
+      return Array.isArray(parsed) ? normalizePinnedSeriesIds(parsed) : [];
     } catch {
       return [];
     }
@@ -84,8 +78,7 @@
       const raw = localStorage.getItem(COLUMN_COUNT_STORAGE_KEY);
       if (raw !== null) {
         const parsed = Number(raw);
-        if (Number.isInteger(parsed) && parsed >= MIN_COLUMNS)
-          return parsed;
+        if (Number.isInteger(parsed) && parsed >= MIN_COLUMNS) return parsed;
       }
     } catch {
       // Fall back to the responsive default below.
@@ -127,8 +120,7 @@
             if (
               typeof value !== "string" ||
               seen.has(value) ||
-              (!value.startsWith("event:") &&
-                !value.startsWith("series:"))
+              (!value.startsWith("event:") && !value.startsWith("series:"))
             )
               return false;
             seen.add(value);
@@ -147,10 +139,7 @@
   }
 
   function persistLayoutOrder(): void {
-    localStorage.setItem(
-      LAYOUT_ORDER_STORAGE_KEY,
-      JSON.stringify(layoutOrder),
-    );
+    localStorage.setItem(LAYOUT_ORDER_STORAGE_KEY, JSON.stringify(layoutOrder));
   }
 
   function rememberLayoutKey(
@@ -159,9 +148,7 @@
   ): void {
     if (layoutOrder.includes(key)) return;
     layoutOrder =
-      placement === "start"
-        ? [key, ...layoutOrder]
-        : [...layoutOrder, key];
+      placement === "start" ? [key, ...layoutOrder] : [...layoutOrder, key];
     persistLayoutOrder();
   }
 
@@ -180,13 +167,9 @@
     if (!grid) return;
 
     const nodes = Array.from(
-      grid.querySelectorAll<HTMLElement>(
-        ".grid-item[data-layout-key]",
-      ),
+      grid.querySelectorAll<HTMLElement>(".grid-item[data-layout-key]"),
     );
-    const draggedNode = nodes.find(
-      (node) => node.dataset.layoutKey === key,
-    );
+    const draggedNode = nodes.find((node) => node.dataset.layoutKey === key);
     if (!draggedNode) return;
 
     const gridStyles = getComputedStyle(grid);
@@ -211,14 +194,16 @@
       if (!itemKey) return [];
 
       const rect = node.getBoundingClientRect();
-      return [{
-        key: itemKey,
-        height: rect.height,
-        rowSpan: Math.max(
-          1,
-          Math.ceil((rect.height + rowGap) / (rowHeight + rowGap)),
-        ),
-      }];
+      return [
+        {
+          key: itemKey,
+          height: rect.height,
+          rowSpan: Math.max(
+            1,
+            Math.ceil((rect.height + rowGap) / (rowHeight + rowGap)),
+          ),
+        },
+      ];
     });
     const visibleKeys = new Set(items.map((item) => item.key));
     const visibleOrder = [
@@ -275,17 +260,14 @@
     event.preventDefault();
     event.stopPropagation();
 
-    const nextVisible = dashboardOrderForPointer(
-      dragSnapshot,
-      draggingKey,
-      { x: event.clientX, y: event.clientY },
-    );
+    const nextVisible = dashboardOrderForPointer(dragSnapshot, draggingKey, {
+      x: event.clientX,
+      y: event.clientY,
+    });
     const visible = new Set(dragSnapshot.order);
     let nextIndex = 0;
     const next = layoutOrder.map((itemKey) =>
-      visible.has(itemKey)
-        ? nextVisible[nextIndex++] ?? itemKey
-        : itemKey
+      visible.has(itemKey) ? (nextVisible[nextIndex++] ?? itemKey) : itemKey,
     );
 
     if (
@@ -365,10 +347,7 @@
   }
 
   function persistPinnedSeriesIds(next: readonly string[]): void {
-    localStorage.setItem(
-      PINNED_SERIES_STORAGE_KEY,
-      JSON.stringify(next),
-    );
+    localStorage.setItem(PINNED_SERIES_STORAGE_KEY, JSON.stringify(next));
   }
 
   function setPinned(
@@ -403,8 +382,7 @@
 
   function addEvent(event: Event, announceLifecycle: boolean): boolean {
     const existing = entries.find(
-      (entry) =>
-        !isSeriesEntry(entry) && entry.event.id === event.id,
+      (entry) => !isSeriesEntry(entry) && entry.event.id === event.id,
     );
     if (existing) {
       status = `${eventLabel(event)} is already on the dashboard.`;
@@ -428,15 +406,10 @@
     return true;
   }
 
-  function addSeries(
-    series: Series,
-    announceLifecycle: boolean,
-  ): boolean {
+  function addSeries(series: Series, announceLifecycle: boolean): boolean {
     const seriesId = String(series.id);
     const existing = entries.find(
-      (entry) =>
-        isSeriesEntry(entry) &&
-        String(entry.series.id) === seriesId,
+      (entry) => isSeriesEntry(entry) && String(entry.series.id) === seriesId,
     );
     if (existing) {
       status = `${seriesLabel(series)} is already on the dashboard.`;
@@ -491,9 +464,7 @@
     addSeries(series, true);
   }
 
-  async function recurringSeriesFor(
-    event: Event,
-  ): Promise<Series | null> {
+  async function recurringSeriesFor(event: Event): Promise<Series | null> {
     // Series view currently means one recurring binary event per timeline row.
     // Multi-market events retain the ordinary event-card representation.
     if (event.markets.length !== 1) return null;
@@ -525,21 +496,18 @@
     forgetLayoutKey(itemKey(entry));
     entries = entries.filter(
       (candidate) =>
-        isSeriesEntry(candidate) ||
-        candidate.event.id !== entry.event.id,
+        isSeriesEntry(candidate) || candidate.event.id !== entry.event.id,
     );
     status = `Removed ${eventLabel(entry.event)}.`;
   }
 
   function removeSeries(entry: SeriesDashboardEntry): void {
     const seriesId = String(entry.series.id);
-    if (pinnedSeriesIds.includes(seriesId))
-      setSeriesPinned(seriesId, false);
+    if (pinnedSeriesIds.includes(seriesId)) setSeriesPinned(seriesId, false);
     forgetLayoutKey(itemKey(entry));
     entries = entries.filter(
       (candidate) =>
-        !isSeriesEntry(candidate) ||
-        String(candidate.series.id) !== seriesId,
+        !isSeriesEntry(candidate) || String(candidate.series.id) !== seriesId,
     );
     status = `Removed ${seriesLabel(entry.series)}.`;
   }
@@ -551,17 +519,13 @@
       : `Added ${eventLabel(entry.event)}.`;
   }
 
-  function itemFailed(
-    entry: DashboardItem,
-    message: string,
-  ): void {
+  function itemFailed(entry: DashboardItem, message: string): void {
     if (isSeriesEntry(entry)) {
       const seriesId = String(entry.series.id);
       forgetLayoutKey(itemKey(entry));
       entries = entries.filter(
         (candidate) =>
-          !isSeriesEntry(candidate) ||
-          String(candidate.series.id) !== seriesId,
+          !isSeriesEntry(candidate) || String(candidate.series.id) !== seriesId,
       );
       status = `Could not add ${seriesLabel(entry.series)}: ${message}`;
       return;
@@ -570,8 +534,7 @@
     forgetLayoutKey(itemKey(entry));
     entries = entries.filter(
       (candidate) =>
-        isSeriesEntry(candidate) ||
-        candidate.event.id !== entry.event.id,
+        isSeriesEntry(candidate) || candidate.event.id !== entry.event.id,
     );
     status = `Could not add ${eventLabel(entry.event)}: ${message}`;
   }
@@ -607,8 +570,7 @@
   }
 
   onMount(() => {
-    for (const seriesId of pinnedSeriesIds)
-      void loadPinnedSeries(seriesId);
+    for (const seriesId of pinnedSeriesIds) void loadPinnedSeries(seriesId);
     for (const slug of pinnedSlugs) void loadPinned(slug);
 
     return () => finishReorder();
@@ -618,9 +580,7 @@
     items: readonly DashboardItem[],
     order: readonly string[],
   ): DashboardItem[] {
-    const ranks = new Map(
-      order.map((key, index) => [key, index]),
-    );
+    const ranks = new Map(order.map((key, index) => [key, index]));
     const insertion = new Map(
       items.map((entry, index) => [itemKey(entry), index]),
     );
@@ -632,15 +592,13 @@
       if (aRank !== undefined) return -1;
       if (bRank !== undefined) return 1;
       return (
-        (insertion.get(itemKey(a)) ?? 0) -
-        (insertion.get(itemKey(b)) ?? 0)
+        (insertion.get(itemKey(a)) ?? 0) - (insertion.get(itemKey(b)) ?? 0)
       );
     });
   }
 
   function itemKey(entry: DashboardItem): string {
-    if (isSeriesEntry(entry))
-      return `series:${String(entry.series.id)}`;
+    if (isSeriesEntry(entry)) return `series:${String(entry.series.id)}`;
     return `event:${eventSlug(entry.event) ?? entry.event.id}`;
   }
 </script>
@@ -661,8 +619,8 @@
           type="button"
           onclick={() => setColumnCount(columnCount - 1)}
           disabled={columnCount <= MIN_COLUMNS}
-          aria-label="Use fewer columns"
-        >−</button>
+          aria-label="Use fewer columns">−</button
+        >
         <input
           id="dashboard-columns"
           type="number"
@@ -671,14 +629,13 @@
           inputmode="numeric"
           value={columnCount}
           aria-label="Dashboard column count"
-          onchange={(event) =>
-            commitColumnCount(event.currentTarget)}
+          onchange={(event) => commitColumnCount(event.currentTarget)}
         />
         <button
           type="button"
           onclick={() => setColumnCount(columnCount + 1)}
-          aria-label="Use more columns"
-        >+</button>
+          aria-label="Use more columns">+</button
+        >
       </div>
     </div>
   </div>
@@ -707,10 +664,8 @@
           onremove={() => removeSeries(entry)}
           onready={() => itemReady(entry)}
           onfailure={(message) => itemFailed(entry, message)}
-          onreorderstart={(event) =>
-            startReorder(event, itemKey(entry))}
-          onreorderstep={(direction) =>
-            stepReorder(itemKey(entry), direction)}
+          onreorderstart={(event) => startReorder(event, itemKey(entry))}
+          onreorderstep={(direction) => stepReorder(itemKey(entry), direction)}
         />
       {:else}
         <EventCard
@@ -721,10 +676,8 @@
           onremove={() => removeEvent(entry)}
           onready={() => itemReady(entry)}
           onfailure={(message) => itemFailed(entry, message)}
-          onreorderstart={(event) =>
-            startReorder(event, itemKey(entry))}
-          onreorderstep={(direction) =>
-            stepReorder(itemKey(entry), direction)}
+          onreorderstart={(event) => startReorder(event, itemKey(entry))}
+          onreorderstep={(direction) => stepReorder(itemKey(entry), direction)}
         />
       {/if}
     </div>

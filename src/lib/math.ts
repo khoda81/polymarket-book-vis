@@ -80,17 +80,13 @@ export function relativeTimeDisplay(
   seconds: number,
   direction: RelativeTimeDirection = "elapsed",
 ): RelativeTimeDisplay {
-  const clamped = Math.max(
-    0,
-    Number.isFinite(seconds) ? seconds : 0,
-  );
+  const clamped = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
   if (direction === "remaining" && clamped <= 0)
     return { text: "due", nextChangeMs: null };
 
   const unit =
-    RELATIVE_TIME_UNITS.find(
-      (candidate) => clamped < candidate.maxSeconds,
-    ) ?? RELATIVE_TIME_UNITS.at(-1)!;
+    RELATIVE_TIME_UNITS.find((candidate) => clamped < candidate.maxSeconds) ??
+    RELATIVE_TIME_UNITS.at(-1)!;
 
   const rawValue = clamped / unit.seconds;
   const decimals = compactSignificantDecimals(rawValue);
@@ -101,25 +97,17 @@ export function relativeTimeDisplay(
     direction === "elapsed"
       ? Math.floor(scaled + 1e-9)
       : Math.ceil(scaled - 1e-9);
-  const representedSeconds = Math.max(
-    0,
-    ticks * quantumSeconds,
-  );
+  const representedSeconds = Math.max(0, ticks * quantumSeconds);
 
   let nextChangeSeconds: number;
   if (direction === "elapsed") {
-    const nextQuantumBoundary =
-      (ticks + 1) * quantumSeconds;
+    const nextQuantumBoundary = (ticks + 1) * quantumSeconds;
     nextChangeSeconds =
       Math.min(nextQuantumBoundary, unit.maxSeconds) - clamped;
   } else {
-    const previousQuantumBoundary = Math.max(
-      0,
-      (ticks - 1) * quantumSeconds,
-    );
+    const previousQuantumBoundary = Math.max(0, (ticks - 1) * quantumSeconds);
     nextChangeSeconds =
-      clamped -
-      Math.max(previousQuantumBoundary, unit.minSeconds);
+      clamped - Math.max(previousQuantumBoundary, unit.minSeconds);
   }
 
   return {
@@ -142,10 +130,7 @@ function compactSignificantDecimals(value: number): number {
   //   0.53 -> 2 decimals
   //   3.4  -> 1 decimal
   //   18   -> 0 decimals
-  return Math.max(
-    0,
-    1 - Math.floor(Math.log10(value)),
-  );
+  return Math.max(0, 1 - Math.floor(Math.log10(value)));
 }
 
 function formatCompactRelativeTime(
@@ -156,10 +141,7 @@ function formatCompactRelativeTime(
   const text =
     decimals === 0
       ? String(Math.round(value))
-      : value
-          .toFixed(decimals)
-          .replace(/0+$/, "")
-          .replace(/\.$/, "");
+      : value.toFixed(decimals).replace(/0+$/, "").replace(/\.$/, "");
   return `${text}${suffix}`;
 }
 
@@ -190,7 +172,7 @@ export const MARKET_COLOR_CHROMA = 0.16;
 const GOLDEN_ANGLE = 137.50776405003785;
 
 export function idToHue(idx: number, offset: number = 56.234): number {
-  return ((idx * GOLDEN_ANGLE + offset) % 360 + 360) % 360;
+  return (((idx * GOLDEN_ANGLE + offset) % 360) + 360) % 360;
 }
 
 export function idToColor(idx: number, offset: number = 56.234): string {

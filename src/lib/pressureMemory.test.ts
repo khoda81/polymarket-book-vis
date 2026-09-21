@@ -7,11 +7,7 @@ import {
   type PressureCell,
 } from "./pressureMemory";
 
-function observe(
-  memory: PressureMemory,
-  volume: number,
-  time: number,
-): void {
+function observe(memory: PressureMemory, volume: number, time: number): void {
   memory.observe([{ lo: 0, hi: 1, volume }], time);
 }
 
@@ -25,22 +21,11 @@ test("visible ghost cutoff matches exponential alpha threshold", () => {
   const nowMs = 20_000;
   const halfLifeMs = 5_000;
   const threshold = 1 / 255;
-  const cutoff = ghostVisibleSinceMs(
-    nowMs,
-    halfLifeMs,
-    threshold,
-  );
+  const cutoff = ghostVisibleSinceMs(nowMs, halfLifeMs, threshold);
 
-  expect(ghostAlpha(cutoff, nowMs, halfLifeMs)).toBeCloseTo(
-    threshold,
-    10,
-  );
-  expect(
-    ghostAlpha(cutoff + 1, nowMs, halfLifeMs),
-  ).toBeGreaterThan(threshold);
-  expect(
-    ghostAlpha(cutoff - 1, nowMs, halfLifeMs),
-  ).toBeLessThan(threshold);
+  expect(ghostAlpha(cutoff, nowMs, halfLifeMs)).toBeCloseTo(threshold, 10);
+  expect(ghostAlpha(cutoff + 1, nowMs, halfLifeMs)).toBeGreaterThan(threshold);
+  expect(ghostAlpha(cutoff - 1, nowMs, halfLifeMs)).toBeLessThan(threshold);
 });
 
 test("shrinking live pressure leaves only the uncovered shell as a ghost", () => {
@@ -158,7 +143,6 @@ test("ghost decay uses half-life and pruning never removes live pressure", () =>
   ]);
 });
 
-
 test("restore validates pressure memory and rebases ghost ages between clocks", () => {
   const cells = [
     {
@@ -179,11 +163,7 @@ test("restore validates pressure memory and rebases ghost ages between clocks", 
   restored.restore(cells);
   expect(restored.snapshot()).toEqual(cells);
 
-  const rebased = rebasePressureCells(
-    cells,
-    10_000,
-    100_000,
-  );
+  const rebased = rebasePressureCells(cells, 10_000, 100_000);
   expect(rebased[0]?.bands[0]?.state).toEqual({
     kind: "ghost",
     sinceMs: 98_000,
@@ -216,7 +196,6 @@ test("restore rejects non-contiguous volume bands", () => {
   ).toThrow();
 });
 
-
 test("changing half-life can revive retained ghosts without mutating history", () => {
   const memory = new PressureMemory();
   observe(memory, 100, 0);
@@ -227,7 +206,6 @@ test("changing half-life can revive retained ghosts without mutating history", (
   expect(memory.hasGhosts()).toBe(true);
 });
 
-
 test("generated pressure memory always forms a contiguous volume prefix", () => {
   const memory = new PressureMemory();
   observe(memory, 100, 1_000);
@@ -237,7 +215,5 @@ test("generated pressure memory always forms a contiguous volume prefix", () => 
   const bands = onlyCell(memory).bands;
   expect(bands[0]?.loVolume).toBe(0);
   for (let i = 1; i < bands.length; i++)
-    expect(bands[i]!.loVolume).toBe(
-      bands[i - 1]!.hiVolume,
-    );
+    expect(bands[i]!.loVolume).toBe(bands[i - 1]!.hiVolume);
 });

@@ -33,15 +33,10 @@ export interface PressureCell {
  * This is not a timeline. Once history is overdrawn it is intentionally lost.
  */
 export class PressureMemory {
-  private cells: PressureCell[] = [
-    { lo: 0, hi: 1, bands: [] },
-  ];
+  private cells: PressureCell[] = [{ lo: 0, hi: 1, bands: [] }];
 
   observe(
-    segments: readonly Pick<
-      SignedVolumeSegment,
-      "lo" | "hi" | "volume"
-    >[],
+    segments: readonly Pick<SignedVolumeSegment, "lo" | "hi" | "volume">[],
     nowMs: number,
   ): void {
     if (!Number.isFinite(nowMs))
@@ -81,11 +76,7 @@ export class PressureMemory {
       next.push({
         lo,
         hi,
-        bands: evolveBands(
-          oldCell?.bands ?? [],
-          volume,
-          nowMs,
-        ),
+        bands: evolveBands(oldCell?.bands ?? [], volume, nowMs),
       });
     }
 
@@ -115,25 +106,16 @@ export class PressureMemory {
     halfLifeMs: number,
     minAlpha = 1 / 255,
   ): boolean {
-    const visibleSinceMs = ghostVisibleSinceMs(
-      nowMs,
-      halfLifeMs,
-      minAlpha,
-    );
+    const visibleSinceMs = ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha);
     return this.cells.some((cell) =>
       cell.bands.some(
         (band) =>
-          band.state.kind === "ghost" &&
-          band.state.sinceMs > visibleSinceMs,
+          band.state.kind === "ghost" && band.state.sinceMs > visibleSinceMs,
       ),
     );
   }
 
-  prune(
-    nowMs: number,
-    halfLifeMs: number,
-    minAlpha = 0.01,
-  ): void {
+  prune(nowMs: number, halfLifeMs: number, minAlpha = 0.01): void {
     validateHalfLife(halfLifeMs);
     if (!(minAlpha >= 0 && minAlpha < 1))
       throw new RangeError("min alpha must be in [0, 1)");
@@ -145,11 +127,7 @@ export class PressureMemory {
           cell.bands.filter(
             (band) =>
               band.state.kind === "live" ||
-              ghostAlpha(
-                band.state.sinceMs,
-                nowMs,
-                halfLifeMs,
-              ) > minAlpha,
+              ghostAlpha(band.state.sinceMs, nowMs, halfLifeMs) > minAlpha,
           ),
         ),
       })),
@@ -167,8 +145,7 @@ export function ghostVisibleSinceMs(
     throw new RangeError("min alpha must be in [0, 1)");
   if (minAlpha === 0) return Number.NEGATIVE_INFINITY;
 
-  const maxVisibleAgeMs =
-    (-Math.log(minAlpha) / Math.LN2) * halfLifeMs;
+  const maxVisibleAgeMs = (-Math.log(minAlpha) / Math.LN2) * halfLifeMs;
   return nowMs - maxVisibleAgeMs;
 }
 
@@ -198,10 +175,7 @@ function evolveBands(
   // Reuse cells whose live envelope did not change instead of rebuilding all
   // of their bands on every websocket message.
   const first = oldBands[0];
-  if (
-    magnitude === 0 &&
-    (!first || first.state.kind !== "live")
-  )
+  if (magnitude === 0 && (!first || first.state.kind !== "live"))
     return oldBands;
   if (
     magnitude > 0 &&
@@ -244,10 +218,7 @@ function evolveBands(
 }
 
 function normalizeSamples(
-  segments: readonly Pick<
-    SignedVolumeSegment,
-    "lo" | "hi" | "volume"
-  >[],
+  segments: readonly Pick<SignedVolumeSegment, "lo" | "hi" | "volume">[],
 ): PressureSample[] {
   return segments
     .filter(
@@ -285,9 +256,7 @@ function uniqueSortedBoundaries(
   return [...boundaries].sort((a, b) => a - b);
 }
 
-function mergeAdjacentCells(
-  cells: readonly PressureCell[],
-): PressureCell[] {
+function mergeAdjacentCells(cells: readonly PressureCell[]): PressureCell[] {
   const result: PressureCell[] = [];
   for (const cell of cells) {
     const previous = result[result.length - 1];
@@ -308,9 +277,7 @@ function mergeAdjacentCells(
   return result;
 }
 
-function mergeAdjacentBands(
-  bands: readonly PressureBand[],
-): PressureBand[] {
+function mergeAdjacentBands(bands: readonly PressureBand[]): PressureBand[] {
   const result: PressureBand[] = [];
   for (const band of bands) {
     const previous = result[result.length - 1];
@@ -350,21 +317,15 @@ function bandsEqual(
   );
 }
 
-function statesEqual(
-  a: PressureBandState,
-  b: PressureBandState,
-): boolean {
+function statesEqual(a: PressureBandState, b: PressureBandState): boolean {
   return (
     a.kind === b.kind &&
-    (a.kind === "live" ||
-      (b.kind === "ghost" && a.sinceMs === b.sinceMs))
+    (a.kind === "live" || (b.kind === "ghost" && a.sinceMs === b.sinceMs))
   );
 }
 
 function contains(
-  interval:
-    | { readonly lo: number; readonly hi: number }
-    | undefined,
+  interval: { readonly lo: number; readonly hi: number } | undefined,
   value: number,
 ): boolean {
   return !!interval && interval.lo <= value && value < interval.hi;
@@ -378,7 +339,6 @@ function validateHalfLife(value: number): void {
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
-
 
 export function parsePressureCells(value: unknown): PressureCell[] {
   if (!Array.isArray(value))
@@ -400,14 +360,8 @@ export function parsePressureCells(value: unknown): PressureCell[] {
       if (!isRecord(rawBand))
         throw new TypeError("pressure band must be an object");
 
-      const loVolume = finiteNumber(
-        rawBand.loVolume,
-        "band loVolume",
-      );
-      const hiVolume = finiteNumber(
-        rawBand.hiVolume,
-        "band hiVolume",
-      );
+      const loVolume = finiteNumber(rawBand.loVolume, "band loVolume");
+      const hiVolume = finiteNumber(rawBand.hiVolume, "band hiVolume");
       if (!(loVolume >= 0 && hiVolume > loVolume))
         throw new RangeError("invalid pressure band interval");
 
@@ -423,10 +377,7 @@ export function parsePressureCells(value: unknown): PressureCell[] {
       } else if (rawBand.state.kind === "ghost") {
         state = {
           kind: "ghost",
-          sinceMs: finiteNumber(
-            rawBand.state.sinceMs,
-            "ghost sinceMs",
-          ),
+          sinceMs: finiteNumber(rawBand.state.sinceMs, "ghost sinceMs"),
         };
       } else {
         throw new RangeError("unknown pressure band state");
@@ -470,25 +421,18 @@ export function rebasePressureCells(
           : {
               kind: "ghost" as const,
               sinceMs:
-                targetNowMs -
-                Math.max(0, sourceNowMs - band.state.sinceMs),
+                targetNowMs - Math.max(0, sourceNowMs - band.state.sinceMs),
             },
     })),
   }));
 }
 
-function assertContiguousBands(
-  bands: readonly PressureBand[],
-): void {
+function assertContiguousBands(bands: readonly PressureBand[]): void {
   if (bands.length === 0) return;
 
-  const ordered = [...bands].sort(
-    (a, b) => a.loVolume - b.loVolume,
-  );
+  const ordered = [...bands].sort((a, b) => a.loVolume - b.loVolume);
   if (ordered[0]!.loVolume !== 0)
-    throw new RangeError(
-      "pressure bands must start at zero volume",
-    );
+    throw new RangeError("pressure bands must start at zero volume");
 
   for (let i = 1; i < ordered.length; i++) {
     const previous = ordered[i - 1]!;
@@ -506,8 +450,6 @@ function finiteNumber(value: unknown, label: string): number {
   return value;
 }
 
-function isRecord(
-  value: unknown,
-): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

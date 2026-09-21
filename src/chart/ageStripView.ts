@@ -104,19 +104,14 @@ export class AgeStripView {
   }
 
   hydratePressureMemory(
-    cellsByToken: Readonly<
-      Record<string, readonly PressureCell[]>
-    >,
+    cellsByToken: Readonly<Record<string, readonly PressureCell[]>>,
   ): void {
-    this.pressure.hydrate(
-      cellsByToken,
-      (tokenId) => this.host.getBook(tokenId),
+    this.pressure.hydrate(cellsByToken, (tokenId) =>
+      this.host.getBook(tokenId),
     );
   }
 
-  configureMarkets(
-    controls: readonly ChartMarketControl[],
-  ): void {
+  configureMarkets(controls: readonly ChartMarketControl[]): void {
     this.visibilityInitialized.clear();
     this.pressure.configure(
       controls.map((control) => ({
@@ -136,8 +131,7 @@ export class AgeStripView {
     this.visibilityInitialized.add(tokenId);
     if (hasRealOrders(book)) return;
 
-    if (this.host.activeTokens.has(tokenId))
-      this.host.hideToken(tokenId);
+    if (this.host.activeTokens.has(tokenId)) this.host.hideToken(tokenId);
   }
 
   resolveMarket(tokenId: string): void {
@@ -174,15 +168,13 @@ export class AgeStripView {
         height: vp.height,
       },
       rows: activeControls.map((label, index) => {
-        const tokenId =
-          label.dataset.tokenId ?? `missing-row-${index}`;
+        const tokenId = label.dataset.tokenId ?? `missing-row-${index}`;
         const side = label.dataset.ageResolutionSide;
         const resolution =
           side === "primary" || side === "opposite"
             ? {
                 side: side as "primary" | "opposite",
-                outcome:
-                  label.dataset.ageResolutionOutcome ?? "",
+                outcome: label.dataset.ageResolutionOutcome ?? "",
                 marketEndMs:
                   this.pressure.timing(tokenId)?.resolutionMs ?? null,
               }
@@ -190,10 +182,8 @@ export class AgeStripView {
 
         return { tokenId, resolution };
       }),
-      canvasWidth:
-        vp.l + vp.width + this.host.plotter.padding.r,
-      canvasHeight:
-        vp.t + vp.height + this.host.plotter.padding.b,
+      canvasWidth: vp.l + vp.width + this.host.plotter.padding.r,
+      canvasHeight: vp.t + vp.height + this.host.plotter.padding.b,
     };
     this.clock.setEnabled(true);
     this.clock.setGeometry(geometry);
@@ -204,12 +194,8 @@ export class AgeStripView {
       if (!tokenId) continue;
       const cells = this.pressure.cells(tokenId);
 
-      const resolutionSide =
-        label.dataset.ageResolutionSide;
-      if (
-        resolutionSide === "primary" ||
-        resolutionSide === "opposite"
-      ) {
+      const resolutionSide = label.dataset.ageResolutionSide;
+      if (resolutionSide === "primary" || resolutionSide === "opposite") {
         drawResolvedMarketStrip(
           frame,
           rowCount - 1 - index,
@@ -237,17 +223,12 @@ export class AgeStripView {
       );
     }
 
-    drawAgeAxes(
-      frame,
-      rowCount,
-      activeControls,
-      (tokenId) => this.host.getPressureColorScale(tokenId),
+    drawAgeAxes(frame, rowCount, activeControls, (tokenId) =>
+      this.host.getPressureColorScale(tokenId),
     );
 
     if (hasVisibleGhosts)
-      this.scheduleGhostRefresh(
-        ghostRefreshDelayMs(tuning.ghostHalfLifeMs),
-      );
+      this.scheduleGhostRefresh(ghostRefreshDelayMs(tuning.ghostHalfLifeMs));
   }
 
   prepareVolumeView(): void {
@@ -283,20 +264,13 @@ export class AgeStripView {
   destroy(): void {
     this.unsubscribeTuning();
     this.cancelGhostRefresh();
-    this.host.canvas.removeEventListener(
-      "wheel",
-      this.handleWheel,
-      true,
-    );
+    this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.clock.destroy();
     this.tooltip.destroy();
   }
 
   private readonly handleWheel = (event: WheelEvent) => {
-    if (
-      this.host.getViewMode() !== "age" ||
-      !handleAgeStripTuningWheel(event)
-    )
+    if (this.host.getViewMode() !== "age" || !handleAgeStripTuningWheel(event))
       return;
 
     event.preventDefault();
@@ -363,8 +337,7 @@ export class AgeStripView {
       ),
     ).sort(
       (a, b) =>
-        Number(a.dataset.marketOrder ?? 0) -
-        Number(b.dataset.marketOrder ?? 0),
+        Number(a.dataset.marketOrder ?? 0) - Number(b.dataset.marketOrder ?? 0),
     );
   }
 

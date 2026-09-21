@@ -4,24 +4,17 @@ import type { MarketEvent } from "@polymarket/client/actions";
 import { RecorderStore } from "./recorderStore";
 import { RecorderSubscriptionPool } from "./recorderSubscriptionPool";
 import { HalfBook, type TokenBook } from "../src/lib/orderBook";
-import {
-  PressureMemory,
-  type PressureCell,
-} from "../src/lib/pressureMemory";
+import { PressureMemory, type PressureCell } from "../src/lib/pressureMemory";
 import { signedVolumeSegments } from "../src/lib/signedVolume";
 
 const PORT = Number(process.env.RECORDER_PORT ?? 3001);
 const LEGACY_STATE_PATH = resolve(
-  process.env.RECORDER_STATE_PATH ??
-    ".data/age-recorder.json",
+  process.env.RECORDER_STATE_PATH ?? ".data/age-recorder.json",
 );
 const DATABASE_PATH = resolve(
-  process.env.RECORDER_DB_PATH ??
-    sqlitePathFor(LEGACY_STATE_PATH),
+  process.env.RECORDER_DB_PATH ?? sqlitePathFor(LEGACY_STATE_PATH),
 );
-const PERSIST_DEBOUNCE_MS = Number(
-  process.env.RECORDER_PERSIST_MS ?? 1_000,
-);
+const PERSIST_DEBOUNCE_MS = Number(process.env.RECORDER_PERSIST_MS ?? 1_000);
 const PERSIST_BATCH_TOKENS = Number(
   process.env.RECORDER_PERSIST_BATCH_TOKENS ?? 8,
 );
@@ -68,10 +61,7 @@ interface StateResponse {
         bufferedPriceChanges: number;
         subscription:
           | {
-              state:
-                | "pending"
-                | "subscribed"
-                | "untracked";
+              state: "pending" | "subscribed" | "untracked";
               batchId?: number;
               connectionId?: number;
             }
@@ -82,9 +72,8 @@ interface StateResponse {
 }
 
 class AgeRecorder {
-  private readonly store = new RecorderStore(
-    DATABASE_PATH,
-    (...args) => debugLog(...args),
+  private readonly store = new RecorderStore(DATABASE_PATH, (...args) =>
+    debugLog(...args),
   );
   private readonly watched = new Set<string>();
   private readonly completed = new Set<string>();
@@ -104,9 +93,7 @@ class AgeRecorder {
     (event) => this.consumeEvent(event),
     (...args) => debugLog(...args),
   );
-  private persistTimer:
-    | ReturnType<typeof setTimeout>
-    | undefined;
+  private persistTimer: ReturnType<typeof setTimeout> | undefined;
   private persistPromise: Promise<void> | null = null;
 
   async start(): Promise<void> {
@@ -124,10 +111,8 @@ class AgeRecorder {
       this.persistTimer = undefined;
     }
 
-    if (this.persistPromise)
-      await this.persistPromise;
-    while (this.dirtyTokens.size > 0)
-      await this.flushDirtyPass();
+    if (this.persistPromise) await this.persistPromise;
+    while (this.dirtyTokens.size > 0) await this.flushDirtyPass();
 
     this.store.checkpoint();
     this.store.close();
@@ -142,11 +127,7 @@ class AgeRecorder {
   watch(tokenIds: Iterable<string>): boolean {
     const added: string[] = [];
     for (const tokenId of tokenIds) {
-      if (
-        !tokenId ||
-        this.watched.has(tokenId) ||
-        this.completed.has(tokenId)
-      )
+      if (!tokenId || this.watched.has(tokenId) || this.completed.has(tokenId))
         continue;
 
       this.watched.add(tokenId);
@@ -181,12 +162,8 @@ class AgeRecorder {
       offset < candidates.length;
       offset += REST_SEED_BATCH_TOKENS
     ) {
-      const batch = candidates.slice(
-        offset,
-        offset + REST_SEED_BATCH_TOKENS,
-      );
-      for (const tokenId of batch)
-        this.seedInFlight.add(tokenId);
+      const batch = candidates.slice(offset, offset + REST_SEED_BATCH_TOKENS);
+      for (const tokenId of batch) this.seedInFlight.add(tokenId);
       void this.seedFromRest(batch);
     }
   }
@@ -211,34 +188,22 @@ class AgeRecorder {
     }
 
     const coverageStarts = requested
-      .map((tokenId) =>
-        this.recordingSince.get(tokenId),
-      )
-      .filter(
-        (value): value is number =>
-          value !== undefined,
-      );
+      .map((tokenId) => this.recordingSince.get(tokenId))
+      .filter((value): value is number => value !== undefined);
     const recordingSinceMs =
-      requested.length > 0 &&
-      coverageStarts.length === requested.length
+      requested.length > 0 && coverageStarts.length === requested.length
         ? Math.max(...coverageStarts)
         : null;
 
-    const recordingSinceMsByToken =
-      Object.fromEntries(
-        requested.flatMap((tokenId) => {
-          const since =
-            this.recordingSince.get(tokenId);
-          return since === undefined
-            ? []
-            : [[tokenId, since] as const];
-        }),
-      );
+    const recordingSinceMsByToken = Object.fromEntries(
+      requested.flatMap((tokenId) => {
+        const since = this.recordingSince.get(tokenId);
+        return since === undefined ? [] : [[tokenId, since] as const];
+      }),
+    );
 
     const pendingTokenIds = requested.filter(
-      (tokenId) =>
-        this.watched.has(tokenId) &&
-        !this.memories.has(tokenId),
+      (tokenId) => this.watched.has(tokenId) && !this.memories.has(tokenId),
     );
 
     const result: StateResponse = {
@@ -251,39 +216,26 @@ class AgeRecorder {
     };
 
     if (includeDebug) {
-      const subscription =
-        this.subscriptions.debugStatus(requested);
+      const subscription = this.subscriptions.debugStatus(requested);
       result.debug = {
-        subscriptionConnections:
-          this.subscriptions.activeConnectionCount,
-        subscriptionBatches:
-          this.subscriptions.activeBatchCount,
+        subscriptionConnections: this.subscriptions.activeConnectionCount,
+        subscriptionBatches: this.subscriptions.activeBatchCount,
         tokens: Object.fromEntries(
           requested.map((tokenId) => {
-            const memory =
-              this.memories.get(tokenId);
+            const memory = this.memories.get(tokenId);
             return [
               tokenId,
               {
-                watched:
-                  this.watched.has(tokenId),
-                completed:
-                  this.completed.has(tokenId),
-                hasBook:
-                  this.books.has(tokenId),
+                watched: this.watched.has(tokenId),
+                completed: this.completed.has(tokenId),
+                hasBook: this.books.has(tokenId),
                 hasMemory: memory !== undefined,
-                memoryCells:
-                  memory?.snapshot().length ?? 0,
-                recordingSinceMs:
-                  this.recordingSince.get(
-                    tokenId,
-                  ) ?? null,
-                seedInFlight:
-                  this.seedInFlight.has(tokenId),
+                memoryCells: memory?.snapshot().length ?? 0,
+                recordingSinceMs: this.recordingSince.get(tokenId) ?? null,
+                seedInFlight: this.seedInFlight.has(tokenId),
                 bufferedPriceChanges:
                   this.pendingPriceChanges.get(tokenId)?.length ?? 0,
-                subscription:
-                  subscription[tokenId],
+                subscription: subscription[tokenId],
               },
             ];
           }),
@@ -295,40 +247,28 @@ class AgeRecorder {
   }
 
   stats() {
-    const starts = [
-      ...this.recordingSince.values(),
-    ];
+    const starts = [...this.recordingSince.values()];
     return {
       watchedTokens: this.watched.size,
       completedTokens: this.completed.size,
       hydratedTokens: this.memories.size,
       liveBooks: this.books.size,
       connected: this.subscriptions.connected,
-      subscriptionConnections:
-        this.subscriptions.activeConnectionCount,
-      subscriptionBatches:
-        this.subscriptions.activeBatchCount,
+      subscriptionConnections: this.subscriptions.activeConnectionCount,
+      subscriptionBatches: this.subscriptions.activeBatchCount,
       dirtyTokens: this.dirtyTokens.size,
-      oldestRecordingSinceMs: starts.length
-        ? Math.min(...starts)
-        : null,
-      newestRecordingSinceMs: starts.length
-        ? Math.max(...starts)
-        : null,
+      oldestRecordingSinceMs: starts.length ? Math.min(...starts) : null,
+      newestRecordingSinceMs: starts.length ? Math.max(...starts) : null,
       databasePath: DATABASE_PATH,
     };
   }
 
   private consumeEvent(stream: MarketEvent): void {
     if (stream.type === "book") {
-      const tokenId = String(
-        stream.payload.tokenId,
-      );
+      const tokenId = String(stream.payload.tokenId);
       if (!this.watched.has(tokenId)) return;
 
-      const book = bookFromSnapshot(
-        stream.payload,
-      );
+      const book = bookFromSnapshot(stream.payload);
       this.books.set(tokenId, book);
       this.pendingPriceChanges.delete(tokenId);
       this.updateMemory(
@@ -340,9 +280,7 @@ class AgeRecorder {
     }
 
     if (stream.type === "price_change") {
-      const timestampMs = eventTimestampMs(
-        stream.payload.timestamp,
-      );
+      const timestampMs = eventTimestampMs(stream.payload.timestamp);
       const changesByToken = new Map<
         string,
         Array<{
@@ -356,8 +294,7 @@ class AgeRecorder {
         const tokenId = String(change.tokenId);
         if (!this.watched.has(tokenId)) continue;
 
-        const changes =
-          changesByToken.get(tokenId) ?? [];
+        const changes = changesByToken.get(tokenId) ?? [];
         changes.push({
           side: change.side,
           price: change.price,
@@ -369,15 +306,13 @@ class AgeRecorder {
       for (const [tokenId, changes] of changesByToken) {
         const book = this.books.get(tokenId);
         if (!book) {
-          const pending =
-            this.pendingPriceChanges.get(tokenId) ?? [];
+          const pending = this.pendingPriceChanges.get(tokenId) ?? [];
           pending.push({ timestampMs, changes });
           this.pendingPriceChanges.set(tokenId, pending);
           continue;
         }
 
-        for (const change of changes)
-          applyPriceChange(book, change);
+        for (const change of changes) applyPriceChange(book, change);
         this.updateMemory(tokenId, book, timestampMs);
       }
       return;
@@ -387,20 +322,12 @@ class AgeRecorder {
       const nowMs = Date.now();
       const resolvedTokenIds: string[] = [];
 
-      for (
-        const tokenIdValue of
-        stream.payload.assetIds ?? []
-      ) {
+      for (const tokenIdValue of stream.payload.assetIds ?? []) {
         const tokenId = String(tokenIdValue);
-        const memory =
-          this.memories.get(tokenId);
-        memory?.observe(
-          [{ lo: 0, hi: 1, volume: 0 }],
-          nowMs,
-        );
+        const memory = this.memories.get(tokenId);
+        memory?.observe([{ lo: 0, hi: 1, volume: 0 }], nowMs);
 
-        if (this.watched.delete(tokenId))
-          resolvedTokenIds.push(tokenId);
+        if (this.watched.delete(tokenId)) resolvedTokenIds.push(tokenId);
 
         this.completed.add(tokenId);
         this.books.delete(tokenId);
@@ -410,22 +337,17 @@ class AgeRecorder {
       }
 
       if (resolvedTokenIds.length > 0)
-        this.subscriptions.remove(
-          resolvedTokenIds,
-        );
+        this.subscriptions.remove(resolvedTokenIds);
     }
   }
 
-  private async seedFromRest(
-    tokenIds: readonly string[],
-  ): Promise<void> {
+  private async seedFromRest(tokenIds: readonly string[]): Promise<void> {
     const startedAt = performance.now();
 
     try {
-      const snapshots =
-        await this.snapshotClient.fetchOrderBooks(
-          tokenIds.map((assetId) => ({ assetId })),
-        );
+      const snapshots = await this.snapshotClient.fetchOrderBooks(
+        tokenIds.map((assetId) => ({ assetId })),
+      );
 
       for (const snapshot of snapshots) {
         const tokenId = String(snapshot.assetId);
@@ -436,24 +358,16 @@ class AgeRecorder {
         )
           continue;
 
-        const snapshotMs = eventTimestampMs(
-          snapshot.timestamp,
-        );
+        const snapshotMs = eventTimestampMs(snapshot.timestamp);
         const book = bookFromSnapshot(snapshot);
         this.books.set(tokenId, book);
         this.updateMemory(tokenId, book, snapshotMs);
 
-        const buffered =
-          this.pendingPriceChanges.get(tokenId) ?? [];
+        const buffered = this.pendingPriceChanges.get(tokenId) ?? [];
         for (const event of buffered) {
           if (event.timestampMs <= snapshotMs) continue;
-          for (const change of event.changes)
-            applyPriceChange(book, change);
-          this.updateMemory(
-            tokenId,
-            book,
-            event.timestampMs,
-          );
+          for (const change of event.changes) applyPriceChange(book, change);
+          this.updateMemory(tokenId, book, event.timestampMs);
         }
         this.pendingPriceChanges.delete(tokenId);
 
@@ -461,9 +375,7 @@ class AgeRecorder {
           "rest-seed",
           shortToken(tokenId),
           `buffered=${buffered.length}`,
-          `cells=${
-            this.memories.get(tokenId)?.snapshot().length ?? 0
-          }`,
+          `cells=${this.memories.get(tokenId)?.snapshot().length ?? 0}`,
         );
       }
     } catch (error) {
@@ -471,14 +383,9 @@ class AgeRecorder {
       for (const tokenId of tokenIds)
         if (!this.memories.has(tokenId))
           this.seedRetryAfterMs.set(tokenId, retryAt);
-      debugLog(
-        "rest-seed-error",
-        tokenIds.map(shortToken),
-        error,
-      );
+      debugLog("rest-seed-error", tokenIds.map(shortToken), error);
     } finally {
-      for (const tokenId of tokenIds)
-        this.seedInFlight.delete(tokenId);
+      for (const tokenId of tokenIds) this.seedInFlight.delete(tokenId);
       debugLog(
         "rest-seed-batch",
         `requested=${tokenIds.length}`,
@@ -492,20 +399,12 @@ class AgeRecorder {
     book: TokenBook<string>,
     observedAtMs = Date.now(),
   ): void {
-    const memory =
-      this.memories.get(tokenId) ??
-      new PressureMemory();
-    memory.observe(
-      signedVolumeSegments(book),
-      observedAtMs,
-    );
+    const memory = this.memories.get(tokenId) ?? new PressureMemory();
+    memory.observe(signedVolumeSegments(book), observedAtMs);
     this.memories.set(tokenId, memory);
 
     if (!this.recordingSince.has(tokenId)) {
-      this.recordingSince.set(
-        tokenId,
-        observedAtMs,
-      );
+      this.recordingSince.set(tokenId, observedAtMs);
       debugLog(
         "first-snapshot",
         shortToken(tokenId),
@@ -516,17 +415,12 @@ class AgeRecorder {
     this.markDirty([tokenId]);
   }
 
-  private markDirty(
-    tokenIds: Iterable<string>,
-  ): void {
-    for (const tokenId of tokenIds)
-      this.dirtyTokens.add(tokenId);
+  private markDirty(tokenIds: Iterable<string>): void {
+    for (const tokenId of tokenIds) this.dirtyTokens.add(tokenId);
     this.schedulePersist();
   }
 
-  private schedulePersist(
-    delayMs = PERSIST_DEBOUNCE_MS,
-  ): void {
+  private schedulePersist(delayMs = PERSIST_DEBOUNCE_MS): void {
     if (
       this.dirtyTokens.size === 0 ||
       this.persistTimer !== undefined ||
@@ -538,15 +432,11 @@ class AgeRecorder {
       this.persistTimer = undefined;
       this.persistPromise = this.flushDirtyPass()
         .catch((error) => {
-          console.error(
-            "Could not persist recorder state",
-            error,
-          );
+          console.error("Could not persist recorder state", error);
         })
         .finally(() => {
           this.persistPromise = null;
-          if (this.dirtyTokens.size > 0)
-            this.schedulePersist();
+          if (this.dirtyTokens.size > 0) this.schedulePersist();
         });
     }, delayMs);
   }
@@ -556,8 +446,7 @@ class AgeRecorder {
 
     const startedAt = performance.now();
     const tokenIds = [...this.dirtyTokens];
-    for (const tokenId of tokenIds)
-      this.dirtyTokens.delete(tokenId);
+    for (const tokenId of tokenIds) this.dirtyTokens.delete(tokenId);
 
     let written = 0;
     try {
@@ -566,10 +455,7 @@ class AgeRecorder {
         offset < tokenIds.length;
         offset += PERSIST_BATCH_TOKENS
       ) {
-        const batch = tokenIds.slice(
-          offset,
-          offset + PERSIST_BATCH_TOKENS,
-        );
+        const batch = tokenIds.slice(offset, offset + PERSIST_BATCH_TOKENS);
         const savedAtMs = Date.now();
 
         this.store.write(
@@ -578,12 +464,8 @@ class AgeRecorder {
             status: this.completed.has(tokenId)
               ? ("completed" as const)
               : ("watched" as const),
-            recordingSinceMs:
-              this.recordingSince.get(tokenId) ?? null,
-            cells:
-              this.memories
-                .get(tokenId)
-                ?.snapshot() ?? null,
+            recordingSinceMs: this.recordingSince.get(tokenId) ?? null,
+            cells: this.memories.get(tokenId)?.snapshot() ?? null,
             savedAtMs,
           })),
         );
@@ -592,8 +474,7 @@ class AgeRecorder {
         // bun:sqlite is synchronous. Keep transactions deliberately small and
         // yield between them so recorder HTTP/WebSocket traffic is never stuck
         // behind a multi-second checkpoint.
-        if (offset + batch.length < tokenIds.length)
-          await Bun.sleep(0);
+        if (offset + batch.length < tokenIds.length) await Bun.sleep(0);
       }
     } catch (error) {
       for (const tokenId of tokenIds.slice(written))
@@ -613,47 +494,28 @@ class AgeRecorder {
     const startedAt = performance.now();
 
     for (const record of this.store.loadAll()) {
-      if (record.status === "completed")
-        this.completed.add(record.tokenId);
-      else
-        this.watched.add(record.tokenId);
+      if (record.status === "completed") this.completed.add(record.tokenId);
+      else this.watched.add(record.tokenId);
 
-      if (
-        record.recordingSinceMs !== null &&
-        record.cells !== null
-      )
-        this.recordingSince.set(
-          record.tokenId,
-          record.recordingSinceMs,
-        );
+      if (record.recordingSinceMs !== null && record.cells !== null)
+        this.recordingSince.set(record.tokenId, record.recordingSinceMs);
 
       if (record.cells !== null) {
         const memory = new PressureMemory();
         memory.restore(record.cells);
-        this.memories.set(
-          record.tokenId,
-          memory,
-        );
+        this.memories.set(record.tokenId, memory);
       }
     }
 
     debugLog(
       "sqlite-load",
-      `tokens=${
-        this.watched.size +
-        this.completed.size
-      }`,
-      `ms=${Math.round(
-        performance.now() - startedAt,
-      )}`,
+      `tokens=${this.watched.size + this.completed.size}`,
+      `ms=${Math.round(performance.now() - startedAt)}`,
     );
   }
 }
 
-function eventTimestampMs(
-  value: unknown,
-  fallbackMs = Date.now(),
-): number {
+function eventTimestampMs(value: unknown, fallbackMs = Date.now()): number {
   const timestamp = Number(value);
   if (
     !Number.isFinite(timestamp) ||
@@ -664,9 +526,7 @@ function eventTimestampMs(
   return timestamp;
 }
 
-function sqlitePathFor(
-  legacyPath: string,
-): string {
+function sqlitePathFor(legacyPath: string): string {
   return legacyPath.endsWith(".json")
     ? `${legacyPath.slice(0, -5)}.sqlite`
     : `${legacyPath}.sqlite`;
@@ -696,8 +556,7 @@ function bookFromSnapshot(payload: {
     const canonicalAsk = Number(ask.price);
     yesToUsd.setLevel(ask.price, {
       price: 1 / canonicalAsk,
-      take:
-        Number(ask.size) * canonicalAsk,
+      take: Number(ask.size) * canonicalAsk,
     });
   }
 
@@ -722,18 +581,12 @@ function applyPriceChange(
   const size = Number(change.size);
 
   if (change.side === OrderSide.BUY) {
-    book.usdToYes.setLevel(
-      change.price,
-      { price, take: size },
-    );
+    book.usdToYes.setLevel(change.price, { price, take: size });
   } else {
-    book.yesToUsd.setLevel(
-      change.price,
-      {
-        price: 1 / price,
-        take: size * price,
-      },
-    );
+    book.yesToUsd.setLevel(change.price, {
+      price: 1 / price,
+      take: size * price,
+    });
   }
 }
 
@@ -745,178 +598,101 @@ const server = Bun.serve({
   async fetch(request) {
     const url = new URL(request.url);
 
-    if (request.method === "OPTIONS")
-      return response(null, 204);
+    if (request.method === "OPTIONS") return response(null, 204);
 
-    if (
-      url.pathname ===
-      "/api/recorder/health"
-    )
+    if (url.pathname === "/api/recorder/health")
       return response(recorder.stats());
 
-    if (
-      url.pathname ===
-        "/api/recorder/state" &&
-      request.method === "GET"
-    ) {
-      const tokenIds = parseTokenIds(
-        url.searchParams,
-      );
+    if (url.pathname === "/api/recorder/state" && request.method === "GET") {
+      const tokenIds = parseTokenIds(url.searchParams);
       recorder.watch(tokenIds);
       recorder.seedPending(tokenIds);
-      const includeStates =
-        url.searchParams.get(
-          "metadataOnly",
-        ) !== "1";
+      const includeStates = url.searchParams.get("metadataOnly") !== "1";
       const includeDebug =
-        RECORDER_DEBUG ||
-        url.searchParams.get("debug") ===
-          "1";
-      const body = recorder.state(
-        tokenIds,
-        includeStates,
-        includeDebug,
-      );
+        RECORDER_DEBUG || url.searchParams.get("debug") === "1";
+      const body = recorder.state(tokenIds, includeStates, includeDebug);
 
       if (includeDebug)
         debugLog(
           "state",
           `requested=${tokenIds.length}`,
-          `states=${
-            Object.keys(body.states).length
-          }`,
-          `pending=${
-            body.pendingTokenIds.length
-          }`,
+          `states=${Object.keys(body.states).length}`,
+          `pending=${body.pendingTokenIds.length}`,
           `connected=${body.connected}`,
         );
 
       return response(body);
     }
 
-    if (
-      url.pathname ===
-        "/api/recorder/watch" &&
-      request.method === "POST"
-    ) {
-      const body =
-        (await request.json()) as {
-          tokenIds?: unknown;
-        };
-      const tokenIds = Array.isArray(
-        body.tokenIds,
-      )
+    if (url.pathname === "/api/recorder/watch" && request.method === "POST") {
+      const body = (await request.json()) as {
+        tokenIds?: unknown;
+      };
+      const tokenIds = Array.isArray(body.tokenIds)
         ? body.tokenIds.filter(
-            (
-              value,
-            ): value is string =>
-              typeof value === "string",
+            (value): value is string => typeof value === "string",
           )
         : [];
-      const changed =
-        recorder.watch(tokenIds);
+      const changed = recorder.watch(tokenIds);
       return response({
         changed,
         ...recorder.stats(),
       });
     }
 
-    return response(
-      { error: "not found" },
-      404,
-    );
+    return response({ error: "not found" }, 404);
   },
 });
 
-console.log(
-  `Age recorder listening on http://127.0.0.1:${PORT}`,
-);
-console.log(
-  `Persistent state: ${DATABASE_PATH} (SQLite/WAL)`,
-);
+console.log(`Age recorder listening on http://127.0.0.1:${PORT}`);
+console.log(`Persistent state: ${DATABASE_PATH} (SQLite/WAL)`);
 
 let shuttingDown = false;
-const shutdown = async (
-  signal: NodeJS.Signals,
-) => {
+const shutdown = async (signal: NodeJS.Signals) => {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  console.log(
-    `Received ${signal}; flushing recorder state…`,
-  );
+  console.log(`Received ${signal}; flushing recorder state…`);
 
   try {
     server.stop(false);
     await recorder.stop();
     process.exit(0);
   } catch (error) {
-    console.error(
-      "Recorder shutdown flush failed",
-      error,
-    );
+    console.error("Recorder shutdown flush failed", error);
     process.exit(1);
   }
 };
 
-process.once(
-  "SIGINT",
-  () => void shutdown("SIGINT"),
-);
-process.once(
-  "SIGTERM",
-  () => void shutdown("SIGTERM"),
-);
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
-function debugLog(
-  ...args: unknown[]
-): void {
-  if (RECORDER_DEBUG)
-    console.log("[recorder]", ...args);
+function debugLog(...args: unknown[]): void {
+  if (RECORDER_DEBUG) console.log("[recorder]", ...args);
 }
 
-function shortToken(
-  tokenId: string,
-): string {
+function shortToken(tokenId: string): string {
   return tokenId.length <= 12
     ? tokenId
-    : `${tokenId.slice(
-        0,
-        6,
-      )}…${tokenId.slice(-4)}`;
+    : `${tokenId.slice(0, 6)}…${tokenId.slice(-4)}`;
 }
 
-function parseTokenIds(
-  params: URLSearchParams,
-): string[] {
+function parseTokenIds(params: URLSearchParams): string[] {
   return params
     .getAll("tokenId")
-    .flatMap((value) =>
-      value.split(","),
-    )
+    .flatMap((value) => value.split(","))
     .map((value) => value.trim())
     .filter(Boolean);
 }
 
-function response(
-  body: unknown,
-  status = 200,
-): Response {
-  return new Response(
-    body === null
-      ? null
-      : JSON.stringify(body),
-    {
-      status,
-      headers: {
-        "content-type":
-          "application/json",
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods":
-          "GET,POST,OPTIONS",
-        "access-control-allow-headers":
-          "content-type",
-      },
+function response(body: unknown, status = 200): Response {
+  return new Response(body === null ? null : JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET,POST,OPTIONS",
+      "access-control-allow-headers": "content-type",
     },
-  );
+  });
 }

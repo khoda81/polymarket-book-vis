@@ -1,9 +1,6 @@
 import type { ConnectionStatus } from "@/lib/chartState";
 import type { MarketResolutionUpdate } from "@/lib/marketLifecycle";
-import {
-  HalfBook,
-  type TokenBook,
-} from "@/lib/orderBook";
+import { HalfBook, type TokenBook } from "@/lib/orderBook";
 import {
   OrderSide,
   TransportError,
@@ -27,10 +24,7 @@ type FeedState =
 
 export interface LiveBookFeedCallbacks {
   readonly onConnectionStatus: (status: ConnectionStatus) => void;
-  readonly onBookUpdated: (
-    tokenId: TokenId,
-    book: TokenBook<string>,
-  ) => void;
+  readonly onBookUpdated: (tokenId: TokenId, book: TokenBook<string>) => void;
   readonly onMarketResolved: (resolution: MarketResolutionUpdate) => void;
 }
 
@@ -50,9 +44,7 @@ export class LiveBookFeed {
 
   async start(tokenIds: readonly TokenId[]): Promise<void> {
     if (this.state.kind !== "idle")
-      throw new Error(
-        `LiveBookFeed cannot start from ${this.state.kind}`,
-      );
+      throw new Error(`LiveBookFeed cannot start from ${this.state.kind}`);
 
     this.tokenIds = [...tokenIds];
     this.state = { kind: "connecting" };
@@ -115,10 +107,7 @@ export class LiveBookFeed {
       } catch (error) {
         if (this.state.kind !== "connecting") return null;
         if (!(error instanceof TransportError)) throw error;
-        console.error(
-          "Error connecting to websocket; retrying in 1s",
-          error,
-        );
+        console.error("Error connecting to websocket; retrying in 1s", error);
         await delay(1_000);
       }
     }
@@ -130,18 +119,11 @@ export class LiveBookFeed {
   ): Promise<void> {
     try {
       for await (const event of stream) {
-        if (
-          this.state.kind !== "live" ||
-          this.state.stream !== stream
-        )
-          return;
+        if (this.state.kind !== "live" || this.state.stream !== stream) return;
 
         if (event.type === "book") {
           const tokenId = event.payload.tokenId as TokenId;
-          const book = bookFromSnapshot(
-            event.payload.bids,
-            event.payload.asks,
-          );
+          const book = bookFromSnapshot(event.payload.bids, event.payload.asks);
           this.books.set(String(tokenId), book);
           this.callbacks.onBookUpdated(tokenId, book);
           continue;
@@ -178,8 +160,7 @@ export class LiveBookFeed {
 
         if (event.type === "market_resolved") {
           const assetIds = (event.payload.assetIds ?? []).map(String);
-          for (const tokenId of assetIds)
-            this.books.delete(tokenId);
+          for (const tokenId of assetIds) this.books.delete(tokenId);
 
           this.callbacks.onMarketResolved({
             conditionId: String(event.payload.conditionId),
@@ -192,16 +173,10 @@ export class LiveBookFeed {
         }
       }
     } catch (error) {
-      if (
-        this.state.kind === "live" &&
-        this.state.stream === stream
-      )
+      if (this.state.kind === "live" && this.state.stream === stream)
         console.error("Market websocket stream ended with error", error);
     } finally {
-      if (
-        this.state.kind === "live" &&
-        this.state.stream === stream
-      ) {
+      if (this.state.kind === "live" && this.state.stream === stream) {
         this.state = { kind: "ended" };
         this.callbacks.onConnectionStatus("disconnected");
         this.reconnect();

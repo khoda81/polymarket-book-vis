@@ -8,10 +8,7 @@
     buildChartDefinition,
     type ChartMarketControl,
   } from "../lib/chartDefinition";
-  import type {
-    ConnectionStatus,
-    ViewMode,
-  } from "../lib/chartState";
+  import type { ConnectionStatus, ViewMode } from "../lib/chartState";
   import type { EventBundle } from "../lib/eventBundle";
   import {
     summarizeEventMarketStatus,
@@ -38,22 +35,16 @@
   export let viewMode: ViewMode;
   export let onready: () => void = () => undefined;
   export let onfailure: (message: string) => void = () => undefined;
-  export let onconnection: (status: ConnectionStatus) => void =
-    () => undefined;
-  export let onmarketstatus: (status: EventMarketStatus) => void =
-    () => undefined;
+  export let onconnection: (status: ConnectionStatus) => void = () => undefined;
+  export let onmarketstatus: (status: EventMarketStatus) => void = () =>
+    undefined;
 
   const definition = buildChartDefinition(bundle);
   const VISIBLE_MARKET: MarketVisibility = { kind: "visible" };
 
-  let visibilityByMarketId = loadMarketVisibility(
-    definition.controls,
-  );
+  let visibilityByMarketId = loadMarketVisibility(definition.controls);
   let lifecycleByMarketId = new Map<string, MarketLifecycle>(
-    definition.controls.map((control) => [
-      control.marketId,
-      control.lifecycle,
-    ]),
+    definition.controls.map((control) => [control.marketId, control.lifecycle]),
   );
 
   let canvas: HTMLCanvasElement;
@@ -69,14 +60,9 @@
   $: hiddenControls = controlPartition.hidden;
   $: toggledControls =
     viewMode === "age" ? visibleControls : definition.controls;
-  $: onmarketstatus(
-    summarizeEventMarketStatus(lifecycleByMarketId.values()),
-  );
+  $: onmarketstatus(summarizeEventMarketStatus(lifecycleByMarketId.values()));
 
-  function userSetVisible(
-    control: ChartMarketControl,
-    visible: boolean,
-  ): void {
+  function userSetVisible(control: ChartMarketControl, visible: boolean): void {
     visibilityByMarketId = setUserMarketVisible(
       visibilityByMarketId,
       control.marketId,
@@ -95,27 +81,21 @@
 
     if (lifecycle.kind !== "resolved") return;
 
-    const visibility =
-      visibilityByMarketId.get(marketId) ?? VISIBLE_MARKET;
+    const visibility = visibilityByMarketId.get(marketId) ?? VISIBLE_MARKET;
     if (visibility.kind !== "visible") return;
 
-    visibilityByMarketId = setMarketVisibility(
-      visibilityByMarketId,
-      marketId,
-      { kind: "hidden", reason: "resolved-default" },
-    );
+    visibilityByMarketId = setMarketVisibility(visibilityByMarketId, marketId, {
+      kind: "hidden",
+      reason: "resolved-default",
+    });
     chart?.setMarketVisible(marketId, false);
   }
 
-  function autoHide(
-    marketId: string,
-    reason: AutoHiddenReason,
-  ): void {
-    visibilityByMarketId = setMarketVisibility(
-      visibilityByMarketId,
-      marketId,
-      { kind: "hidden", reason },
-    );
+  function autoHide(marketId: string, reason: AutoHiddenReason): void {
+    visibilityByMarketId = setMarketVisibility(visibilityByMarketId, marketId, {
+      kind: "hidden",
+      reason,
+    });
   }
 
   function initialHiddenMarketIds(): Set<string> {
@@ -142,8 +122,7 @@
         if (alive) autoHide(marketId, reason);
       },
       onMarketLifecycleChanged: (marketId, lifecycle) => {
-        if (alive)
-          marketLifecycleChanged(marketId, lifecycle);
+        if (alive) marketLifecycleChanged(marketId, lifecycle);
       },
     });
     chart = next;
@@ -155,9 +134,7 @@
       },
       (error: unknown) => {
         if (alive)
-          onfailure(
-            error instanceof Error ? error.message : String(error),
-          );
+          onfailure(error instanceof Error ? error.message : String(error));
       },
     );
 
@@ -185,8 +162,7 @@
       <MarketControl
         {control}
         checked={isMarketVisible(
-          visibilityByMarketId.get(control.marketId) ??
-            VISIBLE_MARKET
+          visibilityByMarketId.get(control.marketId) ?? VISIBLE_MARKET,
         )}
         lifecycle={lifecycleByMarketId.get(control.marketId) ??
           control.lifecycle}

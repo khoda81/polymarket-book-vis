@@ -33,37 +33,25 @@
   let tuning: Readonly<AgeStripTuning> = getAgeStripTuning();
 
   $: reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
-  $: ghostHalfLife = formatDurationTick(
-    tuning.ghostHalfLifeMs,
-  );
-  $: ghostTicks = ghostLegendTicks(
-    tuning.ghostHalfLifeMs,
-    ghostWidth,
-    { minDistancePx: MIN_LABEL_DISTANCE_PX },
-  );
+  $: ghostHalfLife = formatDurationTick(tuning.ghostHalfLifeMs);
+  $: ghostTicks = ghostLegendTicks(tuning.ghostHalfLifeMs, ghostWidth, {
+    minDistancePx: MIN_LABEL_DISTANCE_PX,
+  });
   $: ghostLabels = selectGhostLegendLabels(
     ghostTicks,
     ghostWidth,
     MIN_LABEL_DISTANCE_PX,
   );
-  $: shareTicks = shareLegendTicks(
-    reserveShares,
-    shareWidth,
-    { minDistancePx: MIN_TICK_FAMILY_DISTANCE_PX },
-  );
+  $: shareTicks = shareLegendTicks(reserveShares, shareWidth, {
+    minDistancePx: MIN_TICK_FAMILY_DISTANCE_PX,
+  });
   $: shareLabels = selectShareLegendLabels(
     shareTicks,
     shareWidth,
     MIN_LABEL_DISTANCE_PX,
   );
-  $: negativeColor = signedVolumeColor(
-    -1,
-    DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  );
-  $: positiveColor = signedVolumeColor(
-    1,
-    DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  );
+  $: negativeColor = signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
+  $: positiveColor = signedVolumeColor(1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
 
   function formatTick(value: number): string {
     if (Object.is(value, -0) || value === 0) return "0";

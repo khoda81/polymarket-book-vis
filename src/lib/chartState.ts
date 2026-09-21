@@ -1,6 +1,3 @@
 export type ViewMode = "age" | "volume";
 
-export type ConnectionStatus =
-  | "disconnected"
-  | "connecting"
-  | "live";
+export type ConnectionStatus = "disconnected" | "connecting" | "live";

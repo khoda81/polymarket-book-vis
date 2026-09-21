@@ -9,16 +9,14 @@
 
   let iconFailed = false;
 
-  $: ageStatus =
-    lifecycle.kind === "awaiting-resolution" ? "pending" : "";
+  $: ageStatus = lifecycle.kind === "awaiting-resolution" ? "pending" : "";
   $: resolutionSide =
     lifecycle.kind !== "resolved"
       ? ""
       : String(lifecycle.winningTokenId) === String(control.tokenId)
         ? "primary"
         : control.oppositeTokenId !== null &&
-            String(lifecycle.winningTokenId) ===
-              String(control.oppositeTokenId)
+            String(lifecycle.winningTokenId) === String(control.oppositeTokenId)
           ? "opposite"
           : "";
   $: resolutionOutcome =

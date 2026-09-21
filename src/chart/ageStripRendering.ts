@@ -15,10 +15,7 @@ import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
-import {
-  rowRasterGeometry,
-  type RowRasterGeometry,
-} from "./ageStripLayout";
+import { rowRasterGeometry, type RowRasterGeometry } from "./ageStripLayout";
 
 /** Draw per-row probability rails using each market's semantic token colors. */
 export function drawAgeAxes(
@@ -36,22 +33,14 @@ export function drawAgeAxes(
     if (!tokenId) continue;
 
     const y = rowCount - 1 - index;
-    const geometry = rowRasterGeometry(
-      frame.toScreenY(0, y),
-      dpr,
-    );
-    drawAgeRowRails(
-      frame,
-      geometry,
-      colorScaleForToken(tokenId),
-    );
+    const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+    drawAgeRowRails(frame, geometry, colorScaleForToken(tokenId));
   }
 
   ctx.beginPath();
   ctx.rect(vp.l, vp.t, vp.width, vp.height);
   ctx.clip();
 }
-
 
 export function drawAgeRowRails(
   frame: Frame,
@@ -66,19 +55,13 @@ export function drawAgeRowRails(
   ctx.strokeStyle = colors.negative;
   ctx.beginPath();
   ctx.moveTo(vp.l, geometry.topCss);
-  ctx.lineTo(
-    vp.l,
-    geometry.topCss + geometry.heightCss,
-  );
+  ctx.lineTo(vp.l, geometry.topCss + geometry.heightCss);
   ctx.stroke();
 
   ctx.strokeStyle = colors.positive;
   ctx.beginPath();
   ctx.moveTo(vp.l + vp.width, geometry.topCss);
-  ctx.lineTo(
-    vp.l + vp.width,
-    geometry.topCss + geometry.heightCss,
-  );
+  ctx.lineTo(vp.l + vp.width, geometry.topCss + geometry.heightCss);
   ctx.stroke();
 }
 
@@ -99,36 +82,21 @@ export function drawPressureMemoryStrip(
     rowRasterGeometry(frame.toScreenY(0, y), dpr),
     rowOffsetCss,
   );
-  const reserveShares =
-    volumePerCssPixel * geometry.heightCss;
+  const reserveShares = volumePerCssPixel * geometry.heightCss;
   const colors = pressureColors(colorScale);
   const rgbColors = pressureRgbColors(colorScale, colors);
-  const visibleGhostSinceMs = ghostVisibleSinceMs(
-    nowMs,
-    ghostHalfLifeMs,
-  );
+  const visibleGhostSinceMs = ghostVisibleSinceMs(nowMs, ghostHalfLifeMs);
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(
-    vp.l,
-    geometry.topCss,
-    vp.width,
-    geometry.heightCss,
-  );
+  ctx.rect(vp.l, geometry.topCss, vp.width, geometry.heightCss);
   ctx.clip();
 
   for (const cell of cells) {
     const displayLo = 1 - clamp(cell.hi, 0, 1);
     const displayHi = 1 - clamp(cell.lo, 0, 1);
-    const x0 = snapToDevicePixel(
-      vp.l + displayLo * vp.width,
-      dpr,
-    );
-    const x1 = snapToDevicePixel(
-      vp.l + displayHi * vp.width,
-      dpr,
-    );
+    const x0 = snapToDevicePixel(vp.l + displayLo * vp.width, dpr);
+    const x1 = snapToDevicePixel(vp.l + displayHi * vp.width, dpr);
     if (!(x1 > x0)) continue;
 
     drawMemoryBands(
@@ -165,12 +133,9 @@ function drawMemoryBands(
   visibleGhostSinceMs: number,
 ): void {
   const dpr = window.devicePixelRatio || 1;
-  const rowTopDevice = Math.floor(
-    (centerY - rowHeightCss / 2) * dpr,
-  );
-  const rowHeightDevice = Math.ceil(
-    (centerY + rowHeightCss / 2) * dpr,
-  ) - rowTopDevice;
+  const rowTopDevice = Math.floor((centerY - rowHeightCss / 2) * dpr);
+  const rowHeightDevice =
+    Math.ceil((centerY + rowHeightCss / 2) * dpr) - rowTopDevice;
   const centerDevice = centerY * dpr;
 
   // Build the exact nested layer stack first. Opacity belongs to temporal
@@ -191,24 +156,16 @@ function drawMemoryBands(
     const targetAlpha =
       band.state.kind === "live"
         ? 1
-        : ghostAlpha(
-          band.state.sinceMs,
-          nowMs,
-          ghostHalfLifeMs,
-        );
+        : ghostAlpha(band.state.sinceMs, nowMs, ghostHalfLifeMs);
     if (!(targetAlpha > 1 / 255)) continue;
 
     const sourceAlpha =
       coveredAlpha >= 1
         ? 0
         : Math.max(
-          0,
-          Math.min(
-            1,
-            (targetAlpha - coveredAlpha) /
-            (1 - coveredAlpha),
-          ),
-        );
+            0,
+            Math.min(1, (targetAlpha - coveredAlpha) / (1 - coveredAlpha)),
+          );
     coveredAlpha = Math.max(coveredAlpha, targetAlpha);
     if (!(sourceAlpha > 1 / 255)) continue;
 
@@ -252,12 +209,12 @@ interface PressureColors {
   readonly negative: string;
 }
 
-const PRESSURE_COLOR_CACHE =
-  new WeakMap<SignedVolumeColorScale, PressureColors>();
+const PRESSURE_COLOR_CACHE = new WeakMap<
+  SignedVolumeColorScale,
+  PressureColors
+>();
 
-function pressureColors(
-  scale: SignedVolumeColorScale,
-): PressureColors {
+function pressureColors(scale: SignedVolumeColorScale): PressureColors {
   const cached = PRESSURE_COLOR_CACHE.get(scale);
   if (cached) return cached;
 
@@ -274,8 +231,10 @@ interface PressureRgbColors {
   readonly negative: RgbColor;
 }
 
-const PRESSURE_RGB_CACHE =
-  new WeakMap<SignedVolumeColorScale, PressureRgbColors>();
+const PRESSURE_RGB_CACHE = new WeakMap<
+  SignedVolumeColorScale,
+  PressureRgbColors
+>();
 
 function pressureRgbColors(
   scale: SignedVolumeColorScale,
@@ -327,10 +286,7 @@ function pressureRasterCanvas(height: number) {
   return pressureRaster;
 }
 
-function snapToDevicePixel(
-  value: number,
-  dpr: number,
-): number {
+function snapToDevicePixel(value: number, dpr: number): number {
   return Math.round(value * dpr) / dpr;
 }
 
@@ -353,29 +309,18 @@ export function drawResolvedMarketStrip(
     rowOffsetCss,
   );
   const colors = pressureColors(colorScale);
-  const color =
-    side === "primary" ? colors.positive : colors.negative;
+  const color = side === "primary" ? colors.positive : colors.negative;
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(
-    vp.l,
-    geometry.topCss,
-    vp.width,
-    geometry.heightCss,
-  );
+  ctx.rect(vp.l, geometry.topCss, vp.width, geometry.heightCss);
   ctx.clip();
 
   // Resolution lives behind pressure memory: surviving ghosts remain legible,
   // while the empty book still carries a persistent semantic result.
   ctx.fillStyle = color;
   ctx.globalAlpha = 0.025;
-  ctx.fillRect(
-    vp.l,
-    geometry.topCss,
-    vp.width,
-    geometry.heightCss,
-  );
+  ctx.fillRect(vp.l, geometry.topCss, vp.width, geometry.heightCss);
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
@@ -397,14 +342,8 @@ export function drawResolvedMarketStrip(
   ctx.beginPath();
   ctx.moveTo(vp.l, geometry.topCss + 0.5 / dpr);
   ctx.lineTo(vp.l + vp.width, geometry.topCss + 0.5 / dpr);
-  ctx.moveTo(
-    vp.l,
-    geometry.topCss + geometry.heightCss - 0.5 / dpr,
-  );
-  ctx.lineTo(
-    vp.l + vp.width,
-    geometry.topCss + geometry.heightCss - 0.5 / dpr,
-  );
+  ctx.moveTo(vp.l, geometry.topCss + geometry.heightCss - 0.5 / dpr);
+  ctx.lineTo(vp.l + vp.width, geometry.topCss + geometry.heightCss - 0.5 / dpr);
   ctx.stroke();
 
   if (outcome) {
@@ -422,7 +361,6 @@ export function drawResolvedMarketStrip(
 
   ctx.restore();
 }
-
 
 function offsetRowGeometry(
   geometry: RowRasterGeometry,

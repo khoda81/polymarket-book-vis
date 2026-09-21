@@ -11,10 +11,7 @@ export function reorderHandleKeydown(
   if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
     event.preventDefault();
     step(-1);
-  } else if (
-    event.key === "ArrowRight" ||
-    event.key === "ArrowDown"
-  ) {
+  } else if (event.key === "ArrowRight" || event.key === "ArrowDown") {
     event.preventDefault();
     step(1);
   }
@@ -54,8 +51,7 @@ function isReorderSurface(
   card: HTMLElement,
   target: EventTarget | null,
 ): boolean {
-  if (!(target instanceof Element) || !card.contains(target))
-    return false;
+  if (!(target instanceof Element) || !card.contains(target)) return false;
   if (target.closest(".card-drag")) return true;
   return !target.closest(NO_REORDER_SELECTOR);
 }
@@ -95,12 +91,10 @@ export function cardReorderSurface(
   };
 
   const pointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || !isReorderSurface(card, event.target))
-      return;
+    if (event.button !== 0 || !isReorderSurface(card, event.target)) return;
     if (
       event.pointerType !== "mouse" &&
-      !(event.target instanceof Element &&
-        event.target.closest(".card-drag"))
+      !(event.target instanceof Element && event.target.closest(".card-drag"))
     )
       return;
 
@@ -121,8 +115,7 @@ export function cardReorderSurface(
   const pointerMove = (event: PointerEvent): void => {
     card.classList.toggle(
       "card--reorder-hover",
-      event.pointerType === "mouse" &&
-        isReorderSurface(card, event.target),
+      event.pointerType === "mouse" && isReorderSurface(card, event.target),
     );
   };
 

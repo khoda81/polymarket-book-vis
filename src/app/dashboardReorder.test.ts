@@ -35,37 +35,52 @@ test("same drag-start snapshot and pointer always give the same order", () => {
 test("matches the cursor column, then the dragged grab point's height", () => {
   // Inserting a after b and c puts it in the shorter second lane at y=120,
   // so its original grab point lands at (200, 140).
-  expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 202, y: 142 }),
-  ).toEqual(["b", "c", "a", "d"]);
+  expect(dashboardOrderForPointer(snapshot, "a", { x: 202, y: 142 })).toEqual([
+    "b",
+    "c",
+    "a",
+    "d",
+  ]);
 
   // Leaving it first keeps the grab point at (80, 20).
-  expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 78, y: 18 }),
-  ).toEqual(["a", "b", "c", "d"]);
+  expect(dashboardOrderForPointer(snapshot, "a", { x: 78, y: 18 })).toEqual([
+    "a",
+    "b",
+    "c",
+    "d",
+  ]);
 });
 
 test("keeps a card in the column under the cursor across the track", () => {
   // The left track spans x=0..100. A closer vertical match in the right
   // track must not pull the card across when the pointer is at x=90.
-  expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 90, y: 140 }),
-  ).toEqual(["b", "c", "d", "a"]);
+  expect(dashboardOrderForPointer(snapshot, "a", { x: 90, y: 140 })).toEqual([
+    "b",
+    "c",
+    "d",
+    "a",
+  ]);
 
   // Conversely, the right track starts at x=120, even though the left
   // candidate has a perfect vertical match at y=220.
-  expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 130, y: 220 }),
-  ).toEqual(["b", "c", "a", "d"]);
+  expect(dashboardOrderForPointer(snapshot, "a", { x: 130, y: 220 })).toEqual([
+    "b",
+    "c",
+    "a",
+    "d",
+  ]);
 });
 
 test("different card heights are accounted for by masonry simulation", () => {
   // With b much taller than c, putting a late in the order lands it in the
   // shorter left lane, rather than simply after whichever old rectangle is
   // nearest to the pointer.
-  expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 80, y: 220 }),
-  ).toEqual(["b", "c", "d", "a"]);
+  expect(dashboardOrderForPointer(snapshot, "a", { x: 80, y: 220 })).toEqual([
+    "b",
+    "c",
+    "d",
+    "a",
+  ]);
 });
 
 test("exact ties prefer the drag-start insertion index", () => {
@@ -88,7 +103,8 @@ test("exact ties prefer the drag-start insertion index", () => {
   };
 
   // Midway between a's grab point at y=50 and its candidate point at y=170.
-  expect(
-    dashboardOrderForPointer(tied, "a", { x: 50, y: 110 }),
-  ).toEqual(["a", "b"]);
+  expect(dashboardOrderForPointer(tied, "a", { x: 50, y: 110 })).toEqual([
+    "a",
+    "b",
+  ]);
 });

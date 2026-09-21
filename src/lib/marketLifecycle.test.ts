@@ -6,9 +6,7 @@ import {
   summarizeEventMarketStatus,
 } from "./marketLifecycle";
 
-function market(
-  overrides: Partial<Market> = {},
-): Market {
+function market(overrides: Partial<Market> = {}): Market {
   return {
     id: "m1",
     conditionId: "condition-1",
@@ -102,22 +100,38 @@ test("resolution update carries the actual winner instead of hiding the market",
 test("event status only becomes resolved when every market is resolved", () => {
   expect(
     summarizeEventMarketStatus([
-      { kind: "resolved", winningTokenId: "a" as TokenId, winningOutcome: "Yes" },
-      { kind: "resolved", winningTokenId: "b" as TokenId, winningOutcome: "No" },
+      {
+        kind: "resolved",
+        winningTokenId: "a" as TokenId,
+        winningOutcome: "Yes",
+      },
+      {
+        kind: "resolved",
+        winningTokenId: "b" as TokenId,
+        winningOutcome: "No",
+      },
     ]),
   ).toEqual({ kind: "resolved" });
 
   expect(
     summarizeEventMarketStatus([
       { kind: "awaiting-resolution" },
-      { kind: "resolved", winningTokenId: "b" as TokenId, winningOutcome: "No" },
+      {
+        kind: "resolved",
+        winningTokenId: "b" as TokenId,
+        winningOutcome: "No",
+      },
     ]),
   ).toEqual({ kind: "awaiting-resolution" });
 
   expect(
     summarizeEventMarketStatus([
       { kind: "live" },
-      { kind: "resolved", winningTokenId: "b" as TokenId, winningOutcome: "No" },
+      {
+        kind: "resolved",
+        winningTokenId: "b" as TokenId,
+        winningOutcome: "No",
+      },
     ]),
   ).toEqual({ kind: "trading" });
 });

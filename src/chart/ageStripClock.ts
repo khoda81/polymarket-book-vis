@@ -15,9 +15,7 @@ export interface AgeStripClockHost {
   readonly canvasWrap: HTMLElement;
   readonly getViewMode: () => ViewMode;
   readonly getTheme: () => ChartTheme;
-  readonly getTiming: (
-    tokenId: string,
-  ) => AgeStripTiming | undefined;
+  readonly getTiming: (tokenId: string) => AgeStripTiming | undefined;
 }
 
 export class AgeStripClock {
@@ -82,14 +80,8 @@ export class AgeStripClock {
       return;
 
     const dpr = window.devicePixelRatio || 1;
-    const width = Math.max(
-      1,
-      Math.round(geometry.canvasWidth * dpr),
-    );
-    const height = Math.max(
-      1,
-      Math.round(geometry.canvasHeight * dpr),
-    );
+    const width = Math.max(1, Math.round(geometry.canvasWidth * dpr));
+    const height = Math.max(1, Math.round(geometry.canvasHeight * dpr));
     if (this.canvas.width !== width) this.canvas.width = width;
     if (this.canvas.height !== height) this.canvas.height = height;
 
@@ -97,22 +89,14 @@ export class AgeStripClock {
     if (!ctx) return;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(
-      0,
-      0,
-      geometry.canvasWidth,
-      geometry.canvasHeight,
-    );
+    ctx.clearRect(0, 0, geometry.canvasWidth, geometry.canvasHeight);
     ctx.textBaseline = "middle";
     ctx.fillStyle = this.host.getTheme().text;
 
     const nowMs = Date.now();
     const { viewport: vp } = geometry;
     const rowCount = geometry.rows.length;
-    const timeX = Math.max(
-      4,
-      vp.l - AGE_LABEL_HORIZONTAL_INSET_PX,
-    );
+    const timeX = Math.max(4, vp.l - AGE_LABEL_HORIZONTAL_INSET_PX);
     let nextChangeMs = Infinity;
 
     for (const [rowIndex, row] of geometry.rows.entries()) {
@@ -120,8 +104,7 @@ export class AgeStripClock {
       if (!timing) continue;
 
       const rowCenterY =
-        row.centerY ??
-        vp.t + ((rowIndex + 0.5) / rowCount) * vp.height;
+        row.centerY ?? vp.t + ((rowIndex + 0.5) / rowCount) * vp.height;
 
       ctx.font = "9px sans-serif";
       ctx.textAlign = "right";
@@ -135,51 +118,34 @@ export class AgeStripClock {
         ctx.globalAlpha = 0.55;
         ctx.fillText(display.text, timeX, rowCenterY - 5);
         if (display.nextChangeMs !== null)
-          nextChangeMs = Math.min(
-            nextChangeMs,
-            display.nextChangeMs,
-          );
+          nextChangeMs = Math.min(nextChangeMs, display.nextChangeMs);
       }
 
       const resolutionMs = timing.resolutionMs;
-      if (
-        resolutionMs !== null &&
-        Number.isFinite(resolutionMs)
-      ) {
+      if (resolutionMs !== null && Number.isFinite(resolutionMs)) {
         const display = relativeTimeDisplay(
           Math.max(0, resolutionMs - nowMs) / 1000,
           "remaining",
         );
         ctx.globalAlpha = 0.82;
         ctx.fillText(
-          display.text === "due"
-            ? "due"
-            : `T−${display.text}`,
+          display.text === "due" ? "due" : `T−${display.text}`,
           timeX,
           rowCenterY + 5,
         );
         if (display.nextChangeMs !== null)
-          nextChangeMs = Math.min(
-            nextChangeMs,
-            display.nextChangeMs,
-          );
+          nextChangeMs = Math.min(nextChangeMs, display.nextChangeMs);
       }
     }
 
     ctx.globalAlpha = 1;
-    if (Number.isFinite(nextChangeMs))
-      this.scheduleRefresh(nextChangeMs);
+    if (Number.isFinite(nextChangeMs)) this.scheduleRefresh(nextChangeMs);
   }
 
   clear(): void {
     const ctx = this.canvas.getContext?.("2d");
     if (!ctx) return;
-    ctx.clearRect(
-      0,
-      0,
-      this.canvas.width,
-      this.canvas.height,
-    );
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
   reset(): void {
@@ -204,10 +170,13 @@ export class AgeStripClock {
       return;
     }
 
-    this.timer = window.setTimeout(() => {
-      this.timer = undefined;
-      this.refresh();
-    }, Math.max(1, Math.ceil(delayMs) + 1));
+    this.timer = window.setTimeout(
+      () => {
+        this.timer = undefined;
+        this.refresh();
+      },
+      Math.max(1, Math.ceil(delayMs) + 1),
+    );
   }
 
   private cancelRefresh(): void {

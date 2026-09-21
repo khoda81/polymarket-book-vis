@@ -65,43 +65,35 @@ export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
     const primaryColor = scale
       ? signedVolumeColor(1, scale)
       : marketColor(event.id, index);
-    const oppositeColor = scale
-      ? signedVolumeColor(-1, scale)
-      : primaryColor;
+    const oppositeColor = scale ? signedVolumeColor(-1, scale) : primaryColor;
     const dotColor = primaryColor;
     const title =
-      bundle.marketTitles.get(marketId) ??
-      market.question ??
-      "(untitled)";
+      bundle.marketTitles.get(marketId) ?? market.question ?? "(untitled)";
     const suppressAgeIdentity =
-      event.markets.length === 1 &&
-      sameDisplayTitle(title, event.title);
-    const timestamp = resolutionTimestamp(
-      rawById.get(marketId),
-      market,
-    );
+      event.markets.length === 1 && sameDisplayTitle(title, event.title);
+    const timestamp = resolutionTimestamp(rawById.get(marketId), market);
 
-    return [{
-      marketId,
-      tokenId,
-      oppositeTokenId: market.outcomes.no.tokenId,
-      conditionId: market.conditionId
-        ? String(market.conditionId)
-        : null,
-      primaryOutcome: market.outcomes.yes.label,
-      oppositeOutcome: market.outcomes.no.label,
-      lifecycle: initialMarketLifecycle(market),
-      title,
-      iconUrl: bundle.marketIcons.get(marketId) ?? null,
-      dotColor,
-      primaryColor,
-      oppositeColor,
-      acceptingOrders: market.state.acceptingOrders === true,
-      order: orderByToken.get(String(tokenId)) ?? index,
-      resolutionMs: Number.isFinite(timestamp) ? timestamp : null,
-      ageLabel: suppressAgeIdentity ? "" : title,
-      suppressAgeIdentity,
-    }];
+    return [
+      {
+        marketId,
+        tokenId,
+        oppositeTokenId: market.outcomes.no.tokenId,
+        conditionId: market.conditionId ? String(market.conditionId) : null,
+        primaryOutcome: market.outcomes.yes.label,
+        oppositeOutcome: market.outcomes.no.label,
+        lifecycle: initialMarketLifecycle(market),
+        title,
+        iconUrl: bundle.marketIcons.get(marketId) ?? null,
+        dotColor,
+        primaryColor,
+        oppositeColor,
+        acceptingOrders: market.state.acceptingOrders === true,
+        order: orderByToken.get(String(tokenId)) ?? index,
+        resolutionMs: Number.isFinite(timestamp) ? timestamp : null,
+        ageLabel: suppressAgeIdentity ? "" : title,
+        suppressAgeIdentity,
+      },
+    ];
   });
 
   return {
@@ -120,29 +112,20 @@ function buildPressureScales(
   const threshold = buildThresholdPalette(event, rawMarkets);
   if (threshold)
     return new Map(
-      threshold.outcomes.map((outcome) => [
-        outcome.yesTokenId,
-        outcome.scale,
-      ]),
+      threshold.outcomes.map((outcome) => [outcome.yesTokenId, outcome.scale]),
     );
 
   const negRisk = buildNegRiskPalette(event);
   if (negRisk)
     return new Map(
-      negRisk.outcomes.map((outcome) => [
-        outcome.yesTokenId,
-        outcome.scale,
-      ]),
+      negRisk.outcomes.map((outcome) => [outcome.yesTokenId, outcome.scale]),
     );
 
   const scales = new Map<string, SignedVolumeColorScale>();
   for (const [index, market] of event.markets.entries()) {
     const tokenId = market.outcomes.yes.tokenId;
     if (!tokenId) continue;
-    scales.set(
-      String(tokenId),
-      defaultPressureScaleForMarket(event, index),
-    );
+    scales.set(String(tokenId), defaultPressureScaleForMarket(event, index));
   }
   return scales;
 }
@@ -157,7 +140,6 @@ export function pressureScaleForToken(
   );
 }
 
-
 /**
  * Generic binary-market color rule shared by normal event cards and series
  * occurrences when no threshold/negative-risk palette applies.
@@ -166,7 +148,5 @@ export function defaultPressureScaleForMarket(
   event: Event,
   marketIndex: number,
 ): SignedVolumeColorScale {
-  return semanticYesNeutralNoScale(
-    marketHue(String(event.id), marketIndex),
-  );
+  return semanticYesNeutralNoScale(marketHue(String(event.id), marketIndex));
 }

@@ -77,9 +77,7 @@ export function rasterizeNestedBands(
   return result;
 }
 
-function buildShells(
-  layers: readonly NestedRasterLayer[],
-): RasterShell[] {
+function buildShells(layers: readonly NestedRasterLayer[]): RasterShell[] {
   const envelopes: {
     readonly radius: number;
     readonly color: PremultipliedColor;
@@ -106,11 +104,13 @@ function buildShells(
   return envelopes.flatMap((envelope, index) => {
     const innerRadius = envelopes[index + 1]?.radius ?? 0;
     if (!(envelope.radius > innerRadius)) return [];
-    return [{
-      innerRadius,
-      outerRadius: envelope.radius,
-      color: envelope.color,
-    }];
+    return [
+      {
+        innerRadius,
+        outerRadius: envelope.radius,
+        color: envelope.color,
+      },
+    ];
   });
 }
 
@@ -146,10 +146,7 @@ function intervalOverlap(
   intervalLo: number,
   intervalHi: number,
 ): number {
-  return Math.max(
-    0,
-    Math.min(hi, intervalHi) - Math.max(lo, intervalLo),
-  );
+  return Math.max(0, Math.min(hi, intervalHi) - Math.max(lo, intervalLo));
 }
 
 function clamp01(value: number): number {

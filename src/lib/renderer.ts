@@ -194,10 +194,7 @@ export class OrderBookPlotter {
   readonly ctx: CanvasRenderingContext2D;
   readonly padding = { l: 60, r: 16, t: 24, b: 24 };
 
-  public onZoom?: (
-    delta: number,
-    verticalAnchor: number,
-  ) => boolean;
+  public onZoom?: (delta: number, verticalAnchor: number) => boolean;
   public onPan?: (verticalDelta: number) => void;
   public onResetZoom?: () => void;
   public onPointer?: (p: { sx: number; sy: number } | null) => void;
@@ -511,10 +508,19 @@ export class Frame {
 
     this.ctx.save();
     this.ctx.beginPath();
-    this.ctx.moveTo(this.toScreenX(first.x, baseline), this.toScreenY(0, baseline));
+    this.ctx.moveTo(
+      this.toScreenX(first.x, baseline),
+      this.toScreenY(0, baseline),
+    );
     for (const point of top)
-      this.ctx.lineTo(this.toScreenX(point.x, point.y), this.toScreenY(0, point.y));
-    this.ctx.lineTo(this.toScreenX(last.x, baseline), this.toScreenY(0, baseline));
+      this.ctx.lineTo(
+        this.toScreenX(point.x, point.y),
+        this.toScreenY(0, point.y),
+      );
+    this.ctx.lineTo(
+      this.toScreenX(last.x, baseline),
+      this.toScreenY(0, baseline),
+    );
     this.ctx.closePath();
     this.ctx.fillStyle = style.fill;
     this.ctx.globalAlpha = style.fillAlpha;
@@ -526,10 +532,19 @@ export class Frame {
     this.ctx.lineWidth = style.lineWidth ?? 2;
     this.ctx.lineJoin = "miter";
     this.ctx.beginPath();
-    this.ctx.moveTo(this.toScreenX(first.x, baseline), this.toScreenY(0, baseline));
+    this.ctx.moveTo(
+      this.toScreenX(first.x, baseline),
+      this.toScreenY(0, baseline),
+    );
     for (const point of top)
-      this.ctx.lineTo(this.toScreenX(point.x, point.y), this.toScreenY(0, point.y));
-    this.ctx.lineTo(this.toScreenX(last.x, baseline), this.toScreenY(0, baseline));
+      this.ctx.lineTo(
+        this.toScreenX(point.x, point.y),
+        this.toScreenY(0, point.y),
+      );
+    this.ctx.lineTo(
+      this.toScreenX(last.x, baseline),
+      this.toScreenY(0, baseline),
+    );
     this.ctx.stroke();
   }
 

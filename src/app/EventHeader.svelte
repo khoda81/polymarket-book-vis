@@ -63,8 +63,8 @@
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Open event on Polymarket"
-            title="Open on Polymarket"
-          >↗</a>
+            title="Open on Polymarket">↗</a
+          >
         {/if}
       </div>
 
@@ -73,8 +73,8 @@
           type="button"
           class="cpv-event-slug"
           title="Copy event slug"
-          onclick={copySlug}
-        >{slug}</button>
+          onclick={copySlug}>{slug}</button
+        >
       {/if}
     </div>
   </div>

@@ -1,8 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  AgeStripView,
-  type AgeStripHost,
-} from "./chart/ageStripView";
+import { AgeStripView, type AgeStripHost } from "./chart/ageStripView";
 import { getAgeStripTuning } from "./lib/ageStripTuning";
 
 test("only Ctrl+wheel changes share scale in age mode", () => {

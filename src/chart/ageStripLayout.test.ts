@@ -35,11 +35,7 @@ test("age row hit testing uses explicit moving row geometry", () => {
 test("age row hit testing preserves uniform event geometry", () => {
   const geometry: AgeStripGeometry = {
     viewport: { l: 60, t: 10, width: 300, height: 84 },
-    rows: [
-      { tokenId: "a" },
-      { tokenId: "b" },
-      { tokenId: "c" },
-    ],
+    rows: [{ tokenId: "a" }, { tokenId: "b" }, { tokenId: "c" }],
     canvasWidth: 420,
     canvasHeight: 100,
   };

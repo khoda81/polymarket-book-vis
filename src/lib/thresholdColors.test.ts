@@ -33,8 +33,7 @@ function rawThresholds(
 ): unknown[] {
   return Array.from({ length: count }, (_, index) => ({
     id: String(100 + index),
-    groupItemThreshold:
-      index in overrides ? overrides[index] : String(index),
+    groupItemThreshold: index in overrides ? overrides[index] : String(index),
   }));
 }
 
@@ -88,26 +87,17 @@ describe("nested threshold color geometry", () => {
     )!;
     expect(palette.direction).toBe("suffix");
 
-    const expectedYes = [
-      [0, 1, 2, 3],
-      [0, 1, 2],
-      [0, 1],
-      [0],
-    ];
-    const expectedNo = [
-      [4],
-      [3, 4],
-      [2, 3, 4],
-      [1, 2, 3, 4],
-    ];
+    const expectedYes = [[0, 1, 2, 3], [0, 1, 2], [0, 1], [0]];
+    const expectedNo = [[4], [3, 4], [2, 3, 4], [1, 2, 3, 4]];
 
     for (const [index, outcome] of palette.outcomes.entries()) {
       expect(outcome.yesAtomIndices).toEqual(expectedYes[index]);
       expect(outcome.noAtomIndices).toEqual(expectedNo[index]);
       expect(outcome.scale.negativeChroma).toBeGreaterThan(0);
-      expect(
-        ((outcome.noHue - outcome.hue) % 360 + 360) % 360,
-      ).toBeCloseTo(180, 10);
+      expect((((outcome.noHue - outcome.hue) % 360) + 360) % 360).toBeCloseTo(
+        180,
+        10,
+      );
     }
   });
 
@@ -133,10 +123,7 @@ describe("nested threshold color geometry", () => {
 
   test("refuses ambiguous or incomplete threshold families", () => {
     expect(
-      buildThresholdPalette(
-        thresholdEvent([0.5, 0.5, 0.5]),
-        rawThresholds(3),
-      ),
+      buildThresholdPalette(thresholdEvent([0.5, 0.5, 0.5]), rawThresholds(3)),
     ).toBeNull();
 
     expect(

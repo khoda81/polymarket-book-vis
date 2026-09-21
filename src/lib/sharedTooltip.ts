@@ -24,12 +24,15 @@ export function showSharedTooltip(
   element.style.display = "block";
   element.style.left = `${anchorX}px`;
   element.style.top = `${anchorY}px`;
-  element.style.transform =
-    `${anchorX > window.innerWidth / 2
+  element.style.transform = `${
+    anchorX > window.innerWidth / 2
       ? "translateX(calc(-100% - 12px))"
-      : "translateX(12px)"} ${anchorY > window.innerHeight / 2
-        ? "translateY(calc(-100% - 12px))"
-        : "translateY(12px)"}`;
+      : "translateX(12px)"
+  } ${
+    anchorY > window.innerHeight / 2
+      ? "translateY(calc(-100% - 12px))"
+      : "translateY(12px)"
+  }`;
 }
 
 export function hideSharedTooltip(owner: TooltipOwner): void {

@@ -14,10 +14,8 @@
   export let client: PublicClient;
   export let onready: () => void = () => undefined;
   export let onfailure: (message: string) => void = () => undefined;
-  export let onconnection: (status: ConnectionStatus) => void =
-    () => undefined;
-  export let onanchorevent: (event: Event | null) => void =
-    () => undefined;
+  export let onconnection: (status: ConnectionStatus) => void = () => undefined;
+  export let onanchorevent: (event: Event | null) => void = () => undefined;
 
   let canvas: HTMLCanvasElement;
   let canvasWrap: HTMLDivElement;
@@ -123,6 +121,7 @@
 
 <div class="cpv-chart-stage">
   <div class="cpv-canvas-wrap series-canvas-wrap" bind:this={canvasWrap}>
-    <canvas bind:this={canvas} aria-label="Scrollable series market timeline"></canvas>
+    <canvas bind:this={canvas} aria-label="Scrollable series market timeline"
+    ></canvas>
   </div>
 </div>

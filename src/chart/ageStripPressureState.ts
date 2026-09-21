@@ -1,8 +1,5 @@
 import type { TokenBook } from "@/lib/orderBook";
-import {
-  PressureMemory,
-  type PressureCell,
-} from "@/lib/pressureMemory";
+import { PressureMemory, type PressureCell } from "@/lib/pressureMemory";
 import { signedVolumeSegments } from "@/lib/signedVolume";
 
 export interface AgeStripPressureTiming {
@@ -58,8 +55,7 @@ export class AgeStripPressureState {
     }[],
   ): void {
     this.states.clear();
-    for (const row of rows)
-      this.ensure(row.tokenId, row.resolutionMs);
+    for (const row of rows) this.ensure(row.tokenId, row.resolutionMs);
   }
 
   retain(tokenIds: ReadonlySet<string>): void {
@@ -74,8 +70,7 @@ export class AgeStripPressureState {
       const current = this.ensure(tokenId);
       this.states.set(tokenId, {
         ...current,
-        recordingSinceMs:
-          Number.isFinite(since) && since >= 0 ? since : null,
+        recordingSinceMs: Number.isFinite(since) && since >= 0 ? since : null,
       });
     }
   }
@@ -92,11 +87,7 @@ export class AgeStripPressureState {
       // A websocket snapshot may have arrived before recorder hydration.
       // Paint the current book last so live pressure wins over persisted ghosts.
       const book = getBook(tokenId);
-      if (book)
-        state.memory.observe(
-          signedVolumeSegments(book),
-          nowMs,
-        );
+      if (book) state.memory.observe(signedVolumeSegments(book), nowMs);
     }
   }
 
@@ -105,10 +96,7 @@ export class AgeStripPressureState {
     book: TokenBook<string>,
     nowMs = Date.now(),
   ): void {
-    this.ensure(tokenId).memory.observe(
-      signedVolumeSegments(book),
-      nowMs,
-    );
+    this.ensure(tokenId).memory.observe(signedVolumeSegments(book), nowMs);
   }
 
   resolve(tokenId: string): void {
@@ -135,10 +123,8 @@ export class AgeStripPressureState {
     halfLifeMs: number,
   ): boolean {
     return (
-      this.states.get(tokenId)?.memory.hasVisibleGhosts(
-        nowMs,
-        halfLifeMs,
-      ) ?? false
+      this.states.get(tokenId)?.memory.hasVisibleGhosts(nowMs, halfLifeMs) ??
+      false
     );
   }
 }

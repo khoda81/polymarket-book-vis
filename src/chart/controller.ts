@@ -14,18 +14,12 @@ import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
-import {
-  OrderBookPlotter,
-  type ChartTheme,
-} from "@/lib/renderer";
+import { OrderBookPlotter, type ChartTheme } from "@/lib/renderer";
 import { chartThemeForDarkMode } from "./chartTheme";
 import { AgeStripView } from "./ageStripView";
 import { LiveBookFeed } from "./liveBookFeed";
 import { VolumeBookView } from "./volumeBookView";
-import {
-  TokenId,
-  PublicClient,
-} from "@polymarket/client";
+import { TokenId, PublicClient } from "@polymarket/client";
 
 export interface ChartSurfaceElements {
   readonly canvas: HTMLCanvasElement;
@@ -55,10 +49,7 @@ export class ChartController {
     marketId: string,
     lifecycle: MarketLifecycle,
   ) => void;
-  private readonly lifecycleByMarketId = new Map<
-    string,
-    MarketLifecycle
-  >();
+  private readonly lifecycleByMarketId = new Map<string, MarketLifecycle>();
   private readonly themeQuery: MediaQueryList;
   private readonly resizeObserver: ResizeObserver;
   private readonly activeTokens = new Set<TokenId>();
@@ -79,19 +70,14 @@ export class ChartController {
     options: ChartControllerOptions = {},
   ) {
     this.definition = definition;
-    this.onMarketAutoHidden =
-      options.onMarketAutoHidden ?? (() => undefined);
+    this.onMarketAutoHidden = options.onMarketAutoHidden ?? (() => undefined);
     this.onMarketLifecycleChanged =
       options.onMarketLifecycleChanged ?? (() => undefined);
     for (const control of definition.controls)
-      this.lifecycleByMarketId.set(
-        control.marketId,
-        control.lifecycle,
-      );
+      this.lifecycleByMarketId.set(control.marketId, control.lifecycle);
 
     this.feed = new LiveBookFeed(polyMarketClient, {
-      onConnectionStatus:
-        options.onConnectionStatus ?? (() => undefined),
+      onConnectionStatus: options.onConnectionStatus ?? (() => undefined),
       onBookUpdated: (tokenId) => {
         this.ageView.onBookUpdate(tokenId);
         this.reqDraw();
@@ -135,10 +121,8 @@ export class ChartController {
       isActive: () => this.viewMode === "volume",
       requestDraw: () => this.reqDraw(),
     });
-    this.plotter.onZoom = (delta) =>
-      this.volumeView.zoom(delta);
-    this.plotter.onPointer = (pointer) =>
-      this.volumeView.setPointer(pointer);
+    this.plotter.onZoom = (delta) => this.volumeView.zoom(delta);
+    this.plotter.onPointer = (pointer) => this.volumeView.setPointer(pointer);
 
     this.resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -155,21 +139,15 @@ export class ChartController {
     this.reqDraw();
   };
 
-  async start(
-    hiddenMarketIds: ReadonlySet<string>,
-  ): Promise<void> {
+  async start(hiddenMarketIds: ReadonlySet<string>): Promise<void> {
     if (this.lifecycle !== "new")
-      throw new Error(
-        `ChartController cannot start from ${this.lifecycle}`,
-      );
+      throw new Error(`ChartController cannot start from ${this.lifecycle}`);
     this.lifecycle = "started";
 
     const unresolvedControls = this.definition.controls.filter(
       (control) => control.lifecycle.kind !== "resolved",
     );
-    const tokenIds = unresolvedControls.map(
-      (control) => control.tokenId,
-    );
+    const tokenIds = unresolvedControls.map((control) => control.tokenId);
 
     for (const control of this.definition.controls)
       if (!hiddenMarketIds.has(control.marketId))
@@ -184,12 +162,8 @@ export class ChartController {
       // websocket.
       void fetchRecorderHydration(tokenIds).then((hydration) => {
         if (this.lifecycle === "destroyed") return;
-        this.ageView.setRecordingCoverage(
-          hydration.recordingSinceMsByToken,
-        );
-        this.ageView.hydratePressureMemory(
-          hydration.pressureCellsByToken,
-        );
+        this.ageView.setRecordingCoverage(hydration.recordingSinceMsByToken);
+        this.ageView.hydratePressureMemory(hydration.pressureCellsByToken);
         this.reqDraw();
       });
 
@@ -230,10 +204,7 @@ export class ChartController {
     return pressureScaleForToken(this.definition, String(tokenId));
   }
 
-  private autoHideToken(
-    tokenId: TokenId,
-    reason: AutoHiddenReason,
-  ): void {
+  private autoHideToken(tokenId: TokenId, reason: AutoHiddenReason): void {
     const control = this.definition.controls.find(
       (candidate) => candidate.tokenId === tokenId,
     );
@@ -247,27 +218,21 @@ export class ChartController {
     this.reqDraw();
   }
 
-  private applyResolution(
-    resolution: MarketResolutionUpdate,
-  ): void {
+  private applyResolution(resolution: MarketResolutionUpdate): void {
     for (const control of this.definition.controls) {
       const belongsToMarket =
         (control.conditionId !== null &&
           control.conditionId === resolution.conditionId) ||
         resolution.assetIds.includes(String(control.tokenId)) ||
         (control.oppositeTokenId !== null &&
-          resolution.assetIds.includes(
-            String(control.oppositeTokenId),
-          )) ||
+          resolution.assetIds.includes(String(control.oppositeTokenId))) ||
         resolution.winningTokenId === String(control.tokenId) ||
         (control.oppositeTokenId !== null &&
-          resolution.winningTokenId ===
-            String(control.oppositeTokenId));
+          resolution.winningTokenId === String(control.oppositeTokenId));
       if (!belongsToMarket) continue;
 
       const current =
-        this.lifecycleByMarketId.get(control.marketId) ??
-        control.lifecycle;
+        this.lifecycleByMarketId.get(control.marketId) ?? control.lifecycle;
       const next = resolveMarketLifecycle(
         current,
         resolution,
@@ -301,7 +266,4 @@ export class ChartController {
     this.ageView.prepareVolumeView();
     this.volumeView.draw();
   }
-
-
-
 }

@@ -24,9 +24,7 @@ interface StoredAgeStripTuning {
   volumeSoftLimit?: number;
 }
 
-const listeners = new Set<
-  (tuning: Readonly<AgeStripTuning>) => void
->();
+const listeners = new Set<(tuning: Readonly<AgeStripTuning>) => void>();
 let tuning = loadTuning();
 let persistTimer: number | undefined;
 
@@ -44,10 +42,7 @@ export function subscribeAgeStripTuning(
 export function scaleAgeStripVolumePerCssPixel(factor: number): void {
   if (!(factor > 0) || !Number.isFinite(factor)) return;
 
-  const next = Math.max(
-    1e-3,
-    tuning.volumePerCssPixel * factor,
-  );
+  const next = Math.max(1e-3, tuning.volumePerCssPixel * factor);
   if (next === tuning.volumePerCssPixel) return;
 
   tuning = { ...tuning, volumePerCssPixel: next };
@@ -63,24 +58,15 @@ export function ghostRefreshDelayMs(halfLifeMs: number): number {
   if (!(halfLifeMs > 0) || !Number.isFinite(halfLifeMs))
     return MAX_GHOST_REFRESH_MS;
 
-  const delay =
-    (-Math.log1p(-GHOST_ALPHA_STEP) / Math.LN2) *
-    halfLifeMs;
-  return Math.min(
-    MAX_GHOST_REFRESH_MS,
-    Math.max(MIN_GHOST_REFRESH_MS, delay),
-  );
+  const delay = (-Math.log1p(-GHOST_ALPHA_STEP) / Math.LN2) * halfLifeMs;
+  return Math.min(MAX_GHOST_REFRESH_MS, Math.max(MIN_GHOST_REFRESH_MS, delay));
 }
 
 export function scaleAgeStripGhostHalfLife(factor: number): void {
   if (!(factor > 0) || !Number.isFinite(factor)) return;
 
   const next = tuning.ghostHalfLifeMs * factor;
-  if (
-    next === tuning.ghostHalfLifeMs ||
-    !(next > 0) ||
-    !Number.isFinite(next)
-  )
+  if (next === tuning.ghostHalfLifeMs || !(next > 0) || !Number.isFinite(next))
     return;
 
   tuning = { ...tuning, ghostHalfLifeMs: next };
@@ -124,10 +110,7 @@ function schedulePersist(): void {
   persistTimer = window.setTimeout(() => {
     persistTimer = undefined;
     try {
-      window.localStorage.setItem(
-        TUNING_STORAGE_KEY,
-        JSON.stringify(tuning),
-      );
+      window.localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(tuning));
     } catch {
       // Preferences are best effort.
     }

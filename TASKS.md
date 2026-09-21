@@ -28,7 +28,7 @@
 
 2. [ ] **Resin historical visualization**
    - Keep the current live book sharp and authoritative.
-   - Integrate the *entire* live pressure field through time, so stationary liquidity continuously contributes and develops a historical halo too.
+   - Integrate the _entire_ live pressure field through time, so stationary liquidity continuously contributes and develops a historical halo too.
    - Treat the historical field approximately as ∂H/∂t = D∇²H + αB(t), with history rendered separately beneath the sharp live book.
    - Preserve raw book deltas/snapshots so history can be reconstructed correctly after scale changes instead of warping an already-blurred image.
    - Keep historical rendering off the live Canvas2D hot path and benchmark its independent update cadence before increasing visual fidelity.

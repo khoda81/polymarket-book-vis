@@ -1,7 +1,4 @@
-import {
-  TransportError,
-  type PublicClient,
-} from "@polymarket/client";
+import { TransportError, type PublicClient } from "@polymarket/client";
 import type {
   MarketEvent,
   SubscriptionHandle,
@@ -62,8 +59,7 @@ export class RecorderSubscriptionPool {
   constructor(
     private readonly createClient: () => PublicClient,
     private readonly onEvent: (event: MarketEvent) => void,
-    private readonly onDebug: (...args: unknown[]) => void =
-      () => undefined,
+    private readonly onDebug: (...args: unknown[]) => void = () => undefined,
   ) {}
 
   get connected(): boolean {
@@ -78,9 +74,7 @@ export class RecorderSubscriptionPool {
     return this.shards.size;
   }
 
-  debugStatus(
-    tokenIds: Iterable<string>,
-  ): Record<
+  debugStatus(tokenIds: Iterable<string>): Record<
     string,
     {
       state: "pending" | "subscribed" | "untracked";
@@ -113,14 +107,8 @@ export class RecorderSubscriptionPool {
             },
           ];
         if (this.pending.has(tokenId))
-          return [
-            tokenId,
-            { state: "pending" as const },
-          ];
-        return [
-          tokenId,
-          { state: "untracked" as const },
-        ];
+          return [tokenId, { state: "pending" as const }];
+        return [tokenId, { state: "untracked" as const }];
       }),
     );
   }
@@ -130,11 +118,7 @@ export class RecorderSubscriptionPool {
 
     let changed = false;
     for (const tokenId of tokenIds) {
-      if (
-        !tokenId ||
-        this.subscribed.has(tokenId) ||
-        this.pending.has(tokenId)
-      )
+      if (!tokenId || this.subscribed.has(tokenId) || this.pending.has(tokenId))
         continue;
       this.pending.add(tokenId);
       changed = true;
@@ -161,8 +145,7 @@ export class RecorderSubscriptionPool {
     }
 
     for (const [id, batch] of this.batches) {
-      for (const tokenId of removed)
-        batch.activeTokenIds.delete(tokenId);
+      for (const tokenId of removed) batch.activeTokenIds.delete(tokenId);
 
       // A logical SDK handle cannot partially release its original asset list.
       // Keep resolved assets physically subscribed until this handle has no
@@ -181,9 +164,7 @@ export class RecorderSubscriptionPool {
       this.subscribeTimer = undefined;
     }
 
-    const handles = [...this.batches.values()].map(
-      (batch) => batch.handle,
-    );
+    const handles = [...this.batches.values()].map((batch) => batch.handle);
     this.batches.clear();
     this.shards.clear();
     this.subscribed.clear();
@@ -191,13 +172,10 @@ export class RecorderSubscriptionPool {
 
     // Process exit will reclaim sockets. Do not let websocket close handshakes
     // block recorder persistence or Ctrl-C shutdown.
-    for (const handle of handles)
-      void handle.close().catch(() => undefined);
+    for (const handle of handles) void handle.close().catch(() => undefined);
   }
 
-  private scheduleSubscribe(
-    delayMs = SUBSCRIBE_DEBOUNCE_MS,
-  ): void {
+  private scheduleSubscribe(delayMs = SUBSCRIBE_DEBOUNCE_MS): void {
     if (
       this.stopped ||
       this.subscribeTimer !== undefined ||
@@ -219,21 +197,15 @@ export class RecorderSubscriptionPool {
     }
 
     const tokenIds = [...this.pending]
-      .filter(
-        (tokenId) => !this.subscribed.has(tokenId),
-      )
+      .filter((tokenId) => !this.subscribed.has(tokenId))
       .slice(0, MAX_SUBSCRIBE_BATCH_TOKENS);
-    for (const tokenId of tokenIds)
-      this.pending.delete(tokenId);
+    for (const tokenId of tokenIds) this.pending.delete(tokenId);
     if (tokenIds.length === 0) return;
 
     this.connecting = true;
     try {
       const shard = this.pickShard(tokenIds.length);
-      const handle = await this.open(
-        shard.client,
-        tokenIds,
-      );
+      const handle = await this.open(shard.client, tokenIds);
       if (!handle) return;
 
       const id = this.nextBatchId++;
@@ -247,8 +219,7 @@ export class RecorderSubscriptionPool {
       this.batches.set(id, batch);
       shard.batchIds.add(id);
       shard.tokenCount += tokenIds.length;
-      for (const tokenId of tokenIds)
-        this.subscribed.add(tokenId);
+      for (const tokenId of tokenIds) this.subscribed.add(tokenId);
 
       this.onDebug(
         "subscription-open",
@@ -262,19 +233,13 @@ export class RecorderSubscriptionPool {
       void this.consume(batch);
     } finally {
       this.connecting = false;
-      if (this.pending.size > 0)
-        this.scheduleSubscribe(
-          SUBSCRIBE_BATCH_GAP_MS,
-        );
+      if (this.pending.size > 0) this.scheduleSubscribe(SUBSCRIBE_BATCH_GAP_MS);
     }
   }
 
   private pickShard(tokenCount: number): SubscriptionShard {
     for (const shard of this.shards.values()) {
-      if (
-        shard.tokenCount + tokenCount <=
-        MAX_TOKENS_PER_CONNECTION
-      )
+      if (shard.tokenCount + tokenCount <= MAX_TOKENS_PER_CONNECTION)
         return shard;
     }
 
@@ -327,19 +292,12 @@ export class RecorderSubscriptionPool {
   private async consume(batch: SubscriptionBatch): Promise<void> {
     try {
       for await (const event of batch.handle) {
-        if (
-          this.stopped ||
-          this.batches.get(batch.id) !== batch
-        )
-          return;
+        if (this.stopped || this.batches.get(batch.id) !== batch) return;
         this.onEvent(event);
       }
     } catch (error) {
       if (!this.stopped)
-        console.error(
-          "Recorder websocket stream ended with error",
-          error,
-        );
+        console.error("Recorder websocket stream ended with error", error);
     } finally {
       if (this.batches.get(batch.id) !== batch) return;
 
@@ -347,8 +305,7 @@ export class RecorderSubscriptionPool {
       this.retireBatch(batch.id, batch);
       for (const tokenId of active) {
         this.subscribed.delete(tokenId);
-        if (!this.stopped)
-          this.pending.add(tokenId);
+        if (!this.stopped) this.pending.add(tokenId);
       }
 
       if (!this.stopped && this.pending.size > 0)
@@ -356,10 +313,7 @@ export class RecorderSubscriptionPool {
     }
   }
 
-  private retireBatch(
-    id: number,
-    batch: SubscriptionBatch,
-  ): void {
+  private retireBatch(id: number, batch: SubscriptionBatch): void {
     this.batches.delete(id);
 
     const shard = this.shards.get(batch.shardId);
@@ -367,11 +321,9 @@ export class RecorderSubscriptionPool {
       shard.batchIds.delete(id);
       shard.tokenCount = Math.max(
         0,
-        shard.tokenCount -
-          batch.subscribedTokenIds.size,
+        shard.tokenCount - batch.subscribedTokenIds.size,
       );
-      if (shard.batchIds.size === 0)
-        this.shards.delete(shard.id);
+      if (shard.batchIds.size === 0) this.shards.delete(shard.id);
     }
 
     this.onDebug(

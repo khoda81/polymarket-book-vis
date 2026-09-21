@@ -62,10 +62,7 @@ test("dashboard ordering follows pin order, then insertion order", () => {
     { event: b, announceLifecycle: false },
     { event: c, announceLifecycle: false },
   ];
-  const pinned = [
-    "charlie-event",
-    "alpha-event",
-  ] as EventSlug[];
+  const pinned = ["charlie-event", "alpha-event"] as EventSlug[];
 
   expect(
     orderEntries(entries, pinned).map((entry) => String(entry.event.id)),

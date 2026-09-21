@@ -84,11 +84,9 @@ describe("StaleSignedVolume", () => {
     const field = new StaleSignedVolume();
     field.update(makeBook([[0.45, 12]], [[0.6, 20]]), 0);
 
-    field.update(
-      makeBook([[0.4, 10]], [[0.6, 20]]),
-      10_000,
-      [{ lo: 0, hi: 0.45 }],
-    );
+    field.update(makeBook([[0.4, 10]], [[0.6, 20]]), 10_000, [
+      { lo: 0, hi: 0.45 },
+    ]);
 
     expect(at(field, 15_000, 0.3)).toMatchObject({
       volume: 10,
@@ -109,16 +107,12 @@ describe("StaleSignedVolume", () => {
     const field = new StaleSignedVolume();
     field.update(makeBook([[0.45, 12]], [[0.6, 20]]), 0);
 
-    field.update(
-      makeBook([[0.4, 10]], [[0.6, 20]]),
-      10_000,
-      [{ lo: 0, hi: 0.45 }],
-    );
-    field.update(
-      makeBook([[0.42, 8]], [[0.6, 20]]),
-      20_000,
-      [{ lo: 0, hi: 0.42 }],
-    );
+    field.update(makeBook([[0.4, 10]], [[0.6, 20]]), 10_000, [
+      { lo: 0, hi: 0.45 },
+    ]);
+    field.update(makeBook([[0.42, 8]], [[0.6, 20]]), 20_000, [
+      { lo: 0, hi: 0.42 },
+    ]);
 
     expect(at(field, 30_000, 0.3).ageMs).toBe(10_000);
     expect(at(field, 30_000, 0.41).ageMs).toBe(10_000);
@@ -143,11 +137,9 @@ describe("StaleSignedVolume", () => {
   test("snapshot/restore preserves v4 economic samples and explicit unknowns", () => {
     const field = new StaleSignedVolume();
     field.update(makeBook([[0.45, 12]], [[0.55, 7]]), 10_000);
-    field.update(
-      makeBook([[0.4, 10]], [[0.55, 7]]),
-      20_000,
-      [{ lo: 0, hi: 0.45 }],
-    );
+    field.update(makeBook([[0.4, 10]], [[0.55, 7]]), 20_000, [
+      { lo: 0, hi: 0.45 },
+    ]);
 
     const snapshot = field.snapshot();
     expect(snapshot.version).toBe(4);
@@ -181,19 +173,26 @@ describe("StaleSignedVolume", () => {
       ],
     });
 
-    expect(at(restored, 30_000, 0.2)).toMatchObject({ ageMs: 20_000, sweepCost: null });
-    expect(at(restored, 30_000, 0.5)).toMatchObject({ ageMs: Infinity, sweepCost: null });
-    expect(at(restored, 30_000, 0.8)).toMatchObject({ ageMs: 10_000, sweepCost: null });
+    expect(at(restored, 30_000, 0.2)).toMatchObject({
+      ageMs: 20_000,
+      sweepCost: null,
+    });
+    expect(at(restored, 30_000, 0.5)).toMatchObject({
+      ageMs: Infinity,
+      sweepCost: null,
+    });
+    expect(at(restored, 30_000, 0.8)).toMatchObject({
+      ageMs: 10_000,
+      sweepCost: null,
+    });
   });
 
   test("transport hydration rebases finite ages and preserves sweep cost", () => {
     const source = new StaleSignedVolume();
     source.update(makeBook([[0.45, 12]], [[0.55, 7]]), 10_000);
-    source.update(
-      makeBook([[0.4, 10]], [[0.55, 7]]),
-      20_000,
-      [{ lo: 0, hi: 0.45 }],
-    );
+    source.update(makeBook([[0.4, 10]], [[0.55, 7]]), 20_000, [
+      { lo: 0, hi: 0.45 },
+    ]);
 
     const hydrated = new StaleSignedVolume();
     hydrated.restoreSegments(source.segments(35_000), 1_000);
@@ -211,7 +210,6 @@ describe("StaleSignedVolume", () => {
   });
 });
 
-
 test("repeated empty observations do not refresh stale liquidity", () => {
   const book = emptyTokenBook();
   book.usdToYes.setLevel("bid", { price: 0.4, take: 10 });
@@ -221,18 +219,17 @@ test("repeated empty observations do not refresh stale liquidity", () => {
 
   book.usdToYes.setLevel("bid", { price: 0.4, take: 0 });
   memory.update(book, 1_000, [{ lo: 0, hi: 0.4 }]);
-  const firstStale = memory.segments(1_000).find(
-    (segment) => segment.lo === 0 && segment.hi === 0.4,
-  );
+  const firstStale = memory
+    .segments(1_000)
+    .find((segment) => segment.lo === 0 && segment.hi === 0.4);
   expect(firstStale?.ageMs).toBe(0);
 
   memory.update(book, 2_000, [{ lo: 0, hi: 0.4 }]);
-  const stillStale = memory.segments(2_000).find(
-    (segment) => segment.lo === 0 && segment.hi === 0.4,
-  );
+  const stillStale = memory
+    .segments(2_000)
+    .find((segment) => segment.lo === 0 && segment.hi === 0.4);
   expect(stillStale?.ageMs).toBe(1_000);
 });
-
 
 test("restore rejects overlapping snapshots without mutating current state", () => {
   const memory = new StaleSignedVolume();

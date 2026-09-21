@@ -1,8 +1,5 @@
 import { orderMarkets } from "./marketOrder";
-import type {
-  Event,
-  PublicClient,
-} from "@polymarket/client";
+import type { Event, PublicClient } from "@polymarket/client";
 
 export interface EventDescription {
   readonly preview: string;
@@ -71,9 +68,7 @@ export function buildEventBundle(
   const rawEvent = asRecord(rawEventValue);
   if (!rawEvent) throw new Error("Gamma event payload is not an object");
 
-  const rawMarkets = Array.isArray(rawEvent.markets)
-    ? rawEvent.markets
-    : [];
+  const rawMarkets = Array.isArray(rawEvent.markets) ? rawEvent.markets : [];
   const orderedEvent: Event = {
     ...event,
     markets: orderMarkets(event, rawMarkets),
@@ -91,9 +86,7 @@ export function buildEventBundle(
       : {
           body: usefulDescription,
           preview:
-            subtitle ||
-            descriptionPreview(usefulDescription) ||
-            "Description",
+            subtitle || descriptionPreview(usefulDescription) || "Description",
         };
 
   const marketTitles = new Map<string, string>();
@@ -125,7 +118,11 @@ export function buildEventBundle(
 
     const outcomes = parseStringArray(rawMarket.outcomes);
     const tokenIds = parseStringArray(rawMarket.clobTokenIds);
-    for (let index = 0; index < Math.min(outcomes.length, tokenIds.length); index++) {
+    for (
+      let index = 0;
+      index < Math.min(outcomes.length, tokenIds.length);
+      index++
+    ) {
       const tokenId = tokenIds[index];
       const outcome = outcomes[index];
       if (!tokenId || !outcome) continue;
@@ -142,14 +139,13 @@ export function buildEventBundle(
     const marketId = String(market.id);
     const body = marketDescriptions.get(marketId);
     if (!body) return [];
-    return [{
-      marketId,
-      title:
-        marketTitles.get(marketId) ??
-        market.question ??
-        "(untitled)",
-      body,
-    }];
+    return [
+      {
+        marketId,
+        title: marketTitles.get(marketId) ?? market.question ?? "(untitled)",
+        body,
+      },
+    ];
   });
 
   return {

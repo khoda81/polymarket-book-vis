@@ -7,14 +7,10 @@ import {
 } from "./marketVisibility";
 
 test("market visibility encodes why a row is hidden", () => {
-  expect(
-    initialMarketVisibility(false, { kind: "live" }),
-  ).toEqual({
+  expect(initialMarketVisibility(false, { kind: "live" })).toEqual({
     kind: "visible",
   });
-  expect(
-    initialMarketVisibility(true, { kind: "live" }),
-  ).toEqual({
+  expect(initialMarketVisibility(true, { kind: "live" })).toEqual({
     kind: "hidden",
     reason: "user",
   });
@@ -29,29 +25,17 @@ test("market visibility encodes why a row is hidden", () => {
     reason: "resolved-default",
   });
   expect(isMarketVisible({ kind: "visible" })).toBe(true);
-  expect(
-    isMarketVisible({ kind: "hidden", reason: "empty-book" }),
-  ).toBe(false);
+  expect(isMarketVisible({ kind: "hidden", reason: "empty-book" })).toBe(false);
 });
 
-
 test("visibility partition reacts to a replaced visibility map", () => {
-  const markets = [
-    { marketId: "a" },
-    { marketId: "b" },
-    { marketId: "c" },
-  ];
+  const markets = [{ marketId: "a" }, { marketId: "b" }, { marketId: "c" }];
 
   const first = partitionMarketVisibility(
     markets,
-    new Map([
-      ["b", { kind: "hidden", reason: "empty-book" }],
-    ]),
+    new Map([["b", { kind: "hidden", reason: "empty-book" }]]),
   );
-  expect(first.visible.map((market) => market.marketId)).toEqual([
-    "a",
-    "c",
-  ]);
+  expect(first.visible.map((market) => market.marketId)).toEqual(["a", "c"]);
   expect(first.hidden.map((market) => market.marketId)).toEqual(["b"]);
 
   const second = partitionMarketVisibility(
@@ -62,15 +46,14 @@ test("visibility partition reacts to a replaced visibility map", () => {
     ]),
   );
   expect(second.visible.map((market) => market.marketId)).toEqual(["b"]);
-  expect(second.hidden.map((market) => market.marketId)).toEqual([
-    "a",
-    "c",
-  ]);
+  expect(second.hidden.map((market) => market.marketId)).toEqual(["a", "c"]);
 });
 
-
 test("user visibility update replaces state without a second source of truth", () => {
-  const initial = new Map<string, import("./marketVisibility").MarketVisibility>([
+  const initial = new Map<
+    string,
+    import("./marketVisibility").MarketVisibility
+  >([
     ["a", { kind: "visible" }],
     ["b", { kind: "hidden", reason: "empty-book" }],
   ]);

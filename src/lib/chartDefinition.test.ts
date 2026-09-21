@@ -1,10 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Event } from "@polymarket/client";
 import type { EventBundle } from "./eventBundle";
-import {
-  buildChartDefinition,
-  pressureScaleForToken,
-} from "./chartDefinition";
+import { buildChartDefinition, pressureScaleForToken } from "./chartDefinition";
 import { signedVolumeColor } from "./signedVolume";
 
 function fakeBundle(): EventBundle {
@@ -77,15 +74,11 @@ test("chart definition keeps resolved markets renderable", () => {
     suppressAgeIdentity: false,
   });
   expect(definition.controls[0]?.dotColor).toBe(
-    signedVolumeColor(
-      1,
-      pressureScaleForToken(definition, "yes-1"),
-    ),
+    signedVolumeColor(1, pressureScaleForToken(definition, "yes-1")),
   );
   expect(definition.tokenNames.get("yes-1")).toBe("Primary");
   expect(definition.oppositeTokenNames.get("yes-1")).toBe("Opposite");
 });
-
 
 test("single-market wrapper metadata survives DOM recreation", () => {
   const title = "Putin meets with Iranian officials by December 31?";

@@ -50,14 +50,10 @@ export function dashboardOrderForPointer(
   const originalIndex = snapshot.order.indexOf(draggedKey);
   if (originalIndex < 0) return [...snapshot.order];
 
-  const itemByKey = new Map(
-    snapshot.items.map((item) => [item.key, item]),
-  );
+  const itemByKey = new Map(snapshot.items.map((item) => [item.key, item]));
   if (!itemByKey.has(draggedKey)) return [...snapshot.order];
 
-  const withoutDragged = snapshot.order.filter(
-    (key) => key !== draggedKey,
-  );
+  const withoutDragged = snapshot.order.filter((key) => key !== draggedKey);
   if (withoutDragged.length === 0) return [draggedKey];
 
   let bestOrder = [...snapshot.order];
@@ -89,9 +85,7 @@ export function dashboardOrderForPointer(
     const verticalDistance = squared(
       pointer.y - (rect.top + snapshot.grabOffset.y),
     );
-    const indexDistance = Math.abs(
-      insertionIndex - originalIndex,
-    );
+    const indexDistance = Math.abs(insertionIndex - originalIndex);
 
     if (
       columnDistance < bestColumnDistance ||
@@ -136,9 +130,7 @@ function simulatedRectForKey(
     if (key === targetKey) {
       return {
         column,
-        top:
-          grid.top +
-          row * (grid.rowHeight + grid.rowGap),
+        top: grid.top + row * (grid.rowHeight + grid.rowGap),
       };
     }
 

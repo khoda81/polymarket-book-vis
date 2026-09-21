@@ -1,13 +1,7 @@
 import type { MarketLifecycle } from "./marketLifecycle";
-export type HiddenMarketReason =
-  | "user"
-  | "empty-book"
-  | "resolved-default";
+export type HiddenMarketReason = "user" | "empty-book" | "resolved-default";
 
-export type AutoHiddenReason = Extract<
-  HiddenMarketReason,
-  "empty-book"
->;
+export type AutoHiddenReason = Extract<HiddenMarketReason, "empty-book">;
 
 export type MarketVisibility =
   | { readonly kind: "visible" }
@@ -16,8 +10,7 @@ export type MarketVisibility =
       readonly reason: HiddenMarketReason;
     };
 
-const STORAGE_KEY =
-  "polymarket-book-vis.age-strip-hidden-markets.v1";
+const STORAGE_KEY = "polymarket-book-vis.age-strip-hidden-markets.v1";
 
 export function initialMarketVisibility(
   userHidden: boolean,
@@ -29,9 +22,7 @@ export function initialMarketVisibility(
   return { kind: "visible" };
 }
 
-export function isMarketVisible(
-  visibility: MarketVisibility,
-): boolean {
+export function isMarketVisible(visibility: MarketVisibility): boolean {
   return visibility.kind === "visible";
 }
 
@@ -42,9 +33,7 @@ export function loadUserHiddenMarketIds(): Set<string> {
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed)
       ? new Set(
-          parsed.filter(
-            (value): value is string => typeof value === "string",
-          ),
+          parsed.filter((value): value is string => typeof value === "string"),
         )
       : new Set();
   } catch {
@@ -56,15 +45,11 @@ export function persistUserHiddenMarketIds(
   marketIds: ReadonlySet<string>,
 ): void {
   try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify([...marketIds]),
-    );
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...marketIds]));
   } catch {
     // Preferences are best effort.
   }
 }
-
 
 export interface MarketIdentified {
   readonly marketId: string;
@@ -83,18 +68,16 @@ export function partitionMarketVisibility<T extends MarketIdentified>(
   const hidden: T[] = [];
 
   for (const market of markets) {
-    const visibility =
-      visibilityByMarketId.get(market.marketId) ??
-      { kind: "visible" as const };
+    const visibility = visibilityByMarketId.get(market.marketId) ?? {
+      kind: "visible" as const,
+    };
     (isMarketVisible(visibility) ? visible : hidden).push(market);
   }
 
   return { visible, hidden };
 }
 
-
-export interface VisibilityInitializableMarket
-  extends MarketIdentified {
+export interface VisibilityInitializableMarket extends MarketIdentified {
   readonly lifecycle: MarketLifecycle;
 }
 
@@ -131,9 +114,7 @@ export function setUserMarketVisible(
   return setMarketVisibility(
     current,
     marketId,
-    visible
-      ? { kind: "visible" }
-      : { kind: "hidden", reason: "user" },
+    visible ? { kind: "visible" } : { kind: "hidden", reason: "user" },
   );
 }
 
@@ -142,10 +123,7 @@ export function persistUserVisibility(
 ): void {
   const userHidden = new Set<string>();
   for (const [marketId, visibility] of visibilityByMarketId)
-    if (
-      visibility.kind === "hidden" &&
-      visibility.reason === "user"
-    )
+    if (visibility.kind === "hidden" && visibility.reason === "user")
       userHidden.add(marketId);
   persistUserHiddenMarketIds(userHidden);
 }

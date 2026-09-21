@@ -10,23 +10,11 @@
     reorderHandleKeydown,
     type CardReorderStart,
   } from "./cardReorderSurface";
-  import type {
-    ConnectionStatus,
-    ViewMode,
-  } from "../lib/chartState";
-  import {
-    loadEventBundle,
-    type EventBundle,
-  } from "../lib/eventBundle";
-  import {
-    eventSlug,
-    type PinState,
-  } from "./model";
+  import type { ConnectionStatus, ViewMode } from "../lib/chartState";
+  import { loadEventBundle, type EventBundle } from "../lib/eventBundle";
+  import { eventSlug, type PinState } from "./model";
   import type { EventMarketStatus } from "../lib/marketLifecycle";
-  import {
-    createPublicClient,
-    type Event,
-  } from "@polymarket/client";
+  import { createPublicClient, type Event } from "@polymarket/client";
 
   type PublicClient = ReturnType<typeof createPublicClient>;
 

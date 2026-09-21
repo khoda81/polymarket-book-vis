@@ -1,6 +1,9 @@
 import type { Event, Market } from "@polymarket/client";
 
-export function orderMarkets(event: Event, rawMarkets: readonly unknown[]): Market[] {
+export function orderMarkets(
+  event: Event,
+  rawMarkets: readonly unknown[],
+): Market[] {
   const byPrice = event.display.sortBy === "price";
   const descending = byPrice || event.display.sortBy === "descending";
   const thresholds = new Map<string, number | undefined>();

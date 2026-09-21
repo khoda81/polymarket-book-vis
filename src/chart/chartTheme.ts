@@ -14,8 +14,6 @@ export const DARK_CHART_THEME: ChartTheme = {
   text: "#aaaaaa",
 };
 
-export function chartThemeForDarkMode(
-  dark: boolean,
-): ChartTheme {
+export function chartThemeForDarkMode(dark: boolean): ChartTheme {
   return dark ? DARK_CHART_THEME : LIGHT_CHART_THEME;
 }

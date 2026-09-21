@@ -1,10 +1,5 @@
 import { Database } from "bun:sqlite";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   parsePressureCells,
@@ -52,8 +47,7 @@ interface PersistedRecorderStateV1 {
 }
 
 type PersistedRecorderState =
-  | PersistedRecorderStateV2
-  | PersistedRecorderStateV1;
+  PersistedRecorderStateV2 | PersistedRecorderStateV1;
 
 /**
  * Durable recorder storage.
@@ -67,8 +61,7 @@ export class RecorderStore {
 
   constructor(
     readonly path: string,
-    private readonly debug: (...args: unknown[]) => void =
-      () => undefined,
+    private readonly debug: (...args: unknown[]) => void = () => undefined,
   ) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path, { create: true });
@@ -93,16 +86,15 @@ export class RecorderStore {
 
   get count(): number {
     const row = this.db
-      .query<{ count: number }, []>(
-        "SELECT COUNT(*) AS count FROM token_state",
-      )
+      .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM token_state")
       .get();
     return Number(row?.count ?? 0);
   }
 
   loadAll(nowMs = Date.now()): RecorderStoreRecord[] {
     const rows = this.db
-      .query<DatabaseRow, []>(`
+      .query<DatabaseRow, []>(
+        `
         SELECT
           token_id,
           status,
@@ -110,16 +102,15 @@ export class RecorderStore {
           cells_json,
           saved_at_ms
         FROM token_state
-      `)
+      `,
+      )
       .all();
 
     return rows.map((row) => ({
       tokenId: row.token_id,
       status: row.status,
       recordingSinceMs:
-        row.recording_since_ms === null
-          ? null
-          : Number(row.recording_since_ms),
+        row.recording_since_ms === null ? null : Number(row.recording_since_ms),
       cells:
         row.cells_json === null
           ? null
@@ -156,9 +147,7 @@ export class RecorderStore {
             record.tokenId,
             record.status,
             record.recordingSinceMs,
-            record.cells === null
-              ? null
-              : JSON.stringify(record.cells),
+            record.cells === null ? null : JSON.stringify(record.cells),
             record.savedAtMs,
           );
         }
@@ -175,9 +164,7 @@ export class RecorderStore {
     if (this.count > 0 || !existsSync(legacyPath)) return false;
 
     const startedAt = performance.now();
-    console.log(
-      `Migrating legacy recorder JSON to SQLite: ${legacyPath}`,
-    );
+    console.log(`Migrating legacy recorder JSON to SQLite: ${legacyPath}`);
 
     let parsed: PersistedRecorderState;
     try {
@@ -266,10 +253,7 @@ function legacyRecords(
         tokenId,
         status: completed.has(tokenId) ? "completed" : "watched",
         recordingSinceMs:
-          validWallClockMs(
-            parsed.recordingSinceMs[tokenId],
-            nowMs,
-          ) ?? null,
+          validWallClockMs(parsed.recordingSinceMs[tokenId], nowMs) ?? null,
         cells,
         savedAtMs: nowMs,
       };
@@ -300,10 +284,7 @@ function legacyRecords(
                 {
                   loVolume: 0,
                   hiVolume: Math.abs(segment.volume),
-                  side:
-                    segment.volume < 0
-                      ? (-1 as const)
-                      : (1 as const),
+                  side: segment.volume < 0 ? (-1 as const) : (1 as const),
                   state: {
                     kind: "ghost" as const,
                     sinceMs:
@@ -320,10 +301,7 @@ function legacyRecords(
       parsed.recordingSinceMs?.[tokenId],
       nowMs,
     );
-    const inferredStart = earliestSnapshotObservationMs(
-      snapshot,
-      nowMs,
-    );
+    const inferredStart = earliestSnapshotObservationMs(snapshot, nowMs);
     const knownStarts = [storedStart, inferredStart].filter(
       (value): value is number => value !== undefined,
     );
@@ -332,9 +310,7 @@ function legacyRecords(
       tokenId,
       status: "watched",
       recordingSinceMs:
-        knownStarts.length > 0
-          ? Math.min(...knownStarts)
-          : null,
+        knownStarts.length > 0 ? Math.min(...knownStarts) : null,
       cells,
       savedAtMs: nowMs,
     };
@@ -360,27 +336,18 @@ function staleLiveBands(
   }));
 }
 
-function parsePersistedRecorderState(
-  value: unknown,
-): PersistedRecorderState {
-  if (!isRecord(value))
-    throw new TypeError("Malformed recorder state");
+function parsePersistedRecorderState(value: unknown): PersistedRecorderState {
+  if (!isRecord(value)) throw new TypeError("Malformed recorder state");
 
   if (value.version === 2) {
     if (!Array.isArray(value.watchedTokenIds))
-      throw new TypeError(
-        "Recorder watchedTokenIds must be an array",
-      );
+      throw new TypeError("Recorder watchedTokenIds must be an array");
     if (!Array.isArray(value.completedTokenIds))
-      throw new TypeError(
-        "Recorder completedTokenIds must be an array",
-      );
+      throw new TypeError("Recorder completedTokenIds must be an array");
     if (!isRecord(value.states))
       throw new TypeError("Recorder states must be an object");
     if (!isRecord(value.recordingSinceMs))
-      throw new TypeError(
-        "Recorder recordingSinceMs must be an object",
-      );
+      throw new TypeError("Recorder recordingSinceMs must be an object");
     if (
       typeof value.savedAtMs !== "number" ||
       !Number.isFinite(value.savedAtMs)
@@ -390,81 +357,49 @@ function parsePersistedRecorderState(
     return {
       version: 2,
       savedAtMs: value.savedAtMs,
-      watchedTokenIds: stringArray(
-        value.watchedTokenIds,
-        "watched token ids",
-      ),
+      watchedTokenIds: stringArray(value.watchedTokenIds, "watched token ids"),
       completedTokenIds: stringArray(
         value.completedTokenIds,
         "completed token ids",
       ),
-      recordingSinceMs:
-        value.recordingSinceMs as Record<string, number>,
-      states:
-        value.states as Record<
-          string,
-          readonly PressureCell[]
-        >,
+      recordingSinceMs: value.recordingSinceMs as Record<string, number>,
+      states: value.states as Record<string, readonly PressureCell[]>,
     };
   }
 
   if (value.version === 1) {
     if (!Array.isArray(value.watchedTokenIds))
-      throw new TypeError(
-        "Recorder watchedTokenIds must be an array",
-      );
+      throw new TypeError("Recorder watchedTokenIds must be an array");
     if (!isRecord(value.states))
       throw new TypeError("Recorder states must be an object");
     if (
       value.recordingSinceMs !== undefined &&
       !isRecord(value.recordingSinceMs)
     )
-      throw new TypeError(
-        "Recorder recordingSinceMs must be an object",
-      );
+      throw new TypeError("Recorder recordingSinceMs must be an object");
 
     return {
       version: 1,
-      watchedTokenIds: stringArray(
-        value.watchedTokenIds,
-        "watched token ids",
-      ),
-      recordingSinceMs:
-        value.recordingSinceMs as
-          | Record<string, number>
-          | undefined,
-      states:
-        value.states as Record<
-          string,
-          StaleSignedVolumeSnapshot
-        >,
+      watchedTokenIds: stringArray(value.watchedTokenIds, "watched token ids"),
+      recordingSinceMs: value.recordingSinceMs as
+        Record<string, number> | undefined,
+      states: value.states as Record<string, StaleSignedVolumeSnapshot>,
     };
   }
 
   throw new TypeError("Unsupported recorder state version");
 }
 
-function stringArray(
-  value: unknown[],
-  label: string,
-): string[] {
+function stringArray(value: unknown[], label: string): string[] {
   return value.map((item) => {
     if (typeof item !== "string")
-      throw new TypeError(
-        `Recorder ${label} must be strings`,
-      );
+      throw new TypeError(`Recorder ${label} must be strings`);
     return item;
   });
 }
 
-function isRecord(
-  value: unknown,
-): value is Record<string, unknown> {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value)
-  );
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function earliestSnapshotObservationMs(
@@ -481,27 +416,17 @@ function earliestSnapshotObservationMs(
     );
     if (observedAt === undefined) continue;
     earliest =
-      earliest === undefined
-        ? observedAt
-        : Math.min(earliest, observedAt);
+      earliest === undefined ? observedAt : Math.min(earliest, observedAt);
   }
 
-  return (
-    earliest ??
-    validWallClockMs(snapshot.lastUpdateMs, nowMs)
-  );
+  return earliest ?? validWallClockMs(snapshot.lastUpdateMs, nowMs);
 }
 
-function validWallClockMs(
-  value: unknown,
-  nowMs: number,
-): number | undefined {
-  return (
-    typeof value === "number" &&
+function validWallClockMs(value: unknown, nowMs: number): number | undefined {
+  return typeof value === "number" &&
     Number.isFinite(value) &&
     value >= 0 &&
     value <= nowMs + MAX_CLOCK_SKEW_MS
-  )
     ? value
     : undefined;
 }

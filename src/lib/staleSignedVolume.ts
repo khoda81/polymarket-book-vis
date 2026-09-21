@@ -1,8 +1,5 @@
 import type { TokenBook } from "./orderBook";
-import {
-  signedVolumeSegments,
-  type SignedVolumeSegment,
-} from "./signedVolume";
+import { signedVolumeSegments, type SignedVolumeSegment } from "./signedVolume";
 
 /** Sentinel observation time for regions that have never been observed. */
 export const UNKNOWN_SINCE_MS = Number.NEGATIVE_INFINITY;
@@ -175,11 +172,7 @@ export class StaleSignedVolume {
         continue;
       }
 
-      if (
-        previous &&
-        previous.volume !== 0 &&
-        previousLiveVolume !== 0
-      ) {
+      if (previous && previous.volume !== 0 && previousLiveVolume !== 0) {
         // Stamp only a genuine live→empty transition. Re-observing a range
         // that was already empty must not make its remembered liquidity young
         // again.
@@ -225,8 +218,7 @@ export class StaleSignedVolume {
       lastUpdateMs: this.lastUpdateMs,
       segments: this.current.map(({ observedAtMs, ...segment }) => ({
         ...segment,
-        observedAtMs:
-          observedAtMs === UNKNOWN_SINCE_MS ? null : observedAtMs,
+        observedAtMs: observedAtMs === UNKNOWN_SINCE_MS ? null : observedAtMs,
       })),
     };
   }
@@ -263,8 +255,7 @@ export class StaleSignedVolume {
       lo: segment.lo,
       hi: segment.hi,
       volume: segment.volume,
-      sweepCost:
-        snapshot.version === 4 ? (segment.sweepCost ?? null) : null,
+      sweepCost: snapshot.version === 4 ? (segment.sweepCost ?? null) : null,
       observedAtMs: StaleSignedVolume.snapshotObservedAt(
         segment,
         snapshot.version,
@@ -307,8 +298,7 @@ export class StaleSignedVolume {
         hi,
         volume,
         sweepCost,
-        observedAtMs:
-          ageMs === Infinity ? UNKNOWN_SINCE_MS : nowMs - ageMs,
+        observedAtMs: ageMs === Infinity ? UNKNOWN_SINCE_MS : nowMs - ageMs,
       })),
     );
     this.previousLive = [];
@@ -333,8 +323,7 @@ export class StaleSignedVolume {
   ): PressureObservationRange[] {
     const sorted = ranges
       .filter(
-        ({ lo, hi }) =>
-          Number.isFinite(lo) && Number.isFinite(hi) && hi > lo,
+        ({ lo, hi }) => Number.isFinite(lo) && Number.isFinite(hi) && hi > lo,
       )
       .map(({ lo, hi }) => ({
         lo: Math.max(0, Math.min(1, lo)),
@@ -403,10 +392,15 @@ export class StaleSignedVolume {
   }
 
   private static validSweepCost(value: unknown): value is number | null {
-    return value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0);
+    return (
+      value === null ||
+      (typeof value === "number" && Number.isFinite(value) && value >= 0)
+    );
   }
 
-  private static validTransportSegment(segment: StaleSignedVolumeSegment): boolean {
+  private static validTransportSegment(
+    segment: StaleSignedVolumeSegment,
+  ): boolean {
     return (
       StaleSignedVolume.validGeometry(segment) &&
       StaleSignedVolume.validSweepCost(segment.sweepCost)
@@ -423,10 +417,14 @@ export class StaleSignedVolume {
       !StaleSignedVolume.validSweepCost(segment.sweepCost ?? null)
     )
       return false;
-    const timestamp = version === 3 || version === 4
-      ? segment.observedAtMs
-      : segment.staleSinceMs;
-    return timestamp === null || (timestamp !== undefined && Number.isFinite(timestamp));
+    const timestamp =
+      version === 3 || version === 4
+        ? segment.observedAtMs
+        : segment.staleSinceMs;
+    return (
+      timestamp === null ||
+      (timestamp !== undefined && Number.isFinite(timestamp))
+    );
   }
 
   private static snapshotObservedAt(
@@ -442,7 +440,7 @@ export class StaleSignedVolume {
     if (segment.staleSinceMs === null)
       return version === 2
         ? UNKNOWN_SINCE_MS
-        : lastUpdateMs ?? UNKNOWN_SINCE_MS;
+        : (lastUpdateMs ?? UNKNOWN_SINCE_MS);
     return segment.staleSinceMs!;
   }
 

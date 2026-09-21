@@ -2,11 +2,7 @@
   import { onMount } from "svelte";
   import { fmtVol } from "../lib/math";
   import { findSeriesBySlug } from "../lib/seriesTimeline";
-  import {
-    errorMessage,
-    type EventSlug,
-    toEventSlug,
-  } from "./model";
+  import { errorMessage, type EventSlug, toEventSlug } from "./model";
   import {
     createPublicClient,
     type Event,
@@ -18,8 +14,7 @@
   export let client: PublicClient;
   export let status: string;
   export let onchoose: (event: Event) => void;
-  export let onchooseseries: (series: Series) => void =
-    () => undefined;
+  export let onchooseseries: (series: Series) => void = () => undefined;
   export let onstatus: (message: string) => void;
 
   let root: HTMLDivElement;
@@ -62,7 +57,10 @@
     onchooseseries(series);
   }
 
-  async function searchNow(value: string, searchGeneration: number): Promise<void> {
+  async function searchNow(
+    value: string,
+    searchGeneration: number,
+  ): Promise<void> {
     try {
       const search = client.search({ q: value, pageSize: 12 });
       const page = await search.firstPage();

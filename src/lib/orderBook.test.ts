@@ -20,7 +20,6 @@ test("canonicalSpread extracts bid/ask prices and their fallbacks", () => {
   expect(canonicalSpread(book)).toEqual({ bid: 0.4, ask: 0.6 });
 });
 
-
 test("HalfBook owns inserted orders and does not expose mutable storage", () => {
   const book = new HalfBook<string>();
   const inserted = { price: 0.4, take: 10 };

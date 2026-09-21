@@ -32,22 +32,15 @@ export function ageLabelGutterWidth(
 
   let widest = 0;
   for (const label of labels) {
-    const titleWidth = measureAgeLabelTextWidth(
-      label.dataset.ageLabel ?? "",
-    );
+    const titleWidth = measureAgeLabelTextWidth(label.dataset.ageLabel ?? "");
     const status = label.dataset.ageStatus ?? "";
-    const statusWidth = status
-      ? measureAgeLabelTextWidth(status) + 8
-      : 0;
+    const statusWidth = status ? measureAgeLabelTextWidth(status) + 8 : 0;
     widest = Math.max(widest, titleWidth + statusWidth);
   }
 
   return Math.ceil(
     clamp(
-      widest +
-        iconExtra +
-        AGE_LABEL_HORIZONTAL_INSET_PX * 2 +
-        1,
+      widest + iconExtra + AGE_LABEL_HORIZONTAL_INSET_PX * 2 + 1,
       AGE_LABEL_MIN_GUTTER_PX,
       AGE_LABEL_MAX_GUTTER_PX,
     ),
@@ -109,18 +102,12 @@ export interface AgeStripGeometry {
   readonly canvasHeight: number;
 }
 
-
 export function ageStripRowAtY(
   geometry: AgeStripGeometry,
   y: number,
 ): AgeStripGeometry["rows"][number] | null {
   const { viewport: vp, rows } = geometry;
-  if (
-    rows.length === 0 ||
-    y < vp.t ||
-    y >= vp.t + vp.height
-  )
-    return null;
+  if (rows.length === 0 || y < vp.t || y >= vp.t + vp.height) return null;
 
   const hasExplicitGeometry = rows.some(
     (row) =>
@@ -141,18 +128,13 @@ export function ageStripRowAtY(
           ? row.centerY + AGE_ROW_BAND_PX / 2
           : undefined);
       return (
-        top !== undefined &&
-        bottom !== undefined &&
-        y >= top &&
-        y < bottom
+        top !== undefined && bottom !== undefined && y >= top && y < bottom
       );
     });
     return explicit ?? null;
   }
 
-  const rowIndex = Math.floor(
-    ((y - vp.t) / vp.height) * rows.length,
-  );
+  const rowIndex = Math.floor(((y - vp.t) / vp.height) * rows.length);
   return rows[rowIndex] ?? null;
 }
 
@@ -166,10 +148,7 @@ export function ageStripRowCenterY(
   if (index < 0) return geometry.viewport.t;
 
   const { viewport: vp } = geometry;
-  return (
-    vp.t +
-    ((index + 0.5) / geometry.rows.length) * vp.height
-  );
+  return vp.t + ((index + 0.5) / geometry.rows.length) * vp.height;
 }
 
 export interface RowRasterGeometry {
@@ -184,9 +163,7 @@ export function rowRasterGeometry(
   dpr: number,
 ): RowRasterGeometry {
   const deviceHeight = Math.max(1, Math.round(AGE_ROW_BAND_PX * dpr));
-  const topDevice = Math.round(
-    desiredCenterCss * dpr - deviceHeight / 2,
-  );
+  const topDevice = Math.round(desiredCenterCss * dpr - deviceHeight / 2);
   const topCss = topDevice / dpr;
   const heightCss = deviceHeight / dpr;
   return {
@@ -213,23 +190,15 @@ function getAgeLabelMeasureContext(): CanvasRenderingContext2D | null {
   if (ageLabelMeasureCtx !== undefined) return ageLabelMeasureCtx;
   const canvas = document.createElement("canvas");
   ageLabelMeasureCtx =
-    typeof canvas.getContext === "function"
-      ? canvas.getContext("2d")
-      : null;
+    typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
   return ageLabelMeasureCtx;
 }
 
 function normalizeDisplayTitle(value: string): string {
-  return value
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
+  return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-function asRecord(
-  value: unknown,
-): Record<string, unknown> | undefined {
+function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object"
     ? (value as Record<string, unknown>)
     : undefined;

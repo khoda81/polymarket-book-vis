@@ -62,7 +62,6 @@ describe("signedVolumeColor", () => {
   });
 });
 
-
 test("signedVolumeColor supports side-specific luminance and chroma", () => {
   const scale = {
     luminance: 0.7,

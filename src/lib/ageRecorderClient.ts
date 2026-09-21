@@ -25,13 +25,7 @@ export interface RecorderHydration {
 const RECORDER_FETCH_TIMEOUT_MS = 5_000;
 const MAX_CONCURRENT_RECORDER_REQUESTS = 4;
 const HYDRATION_RETRY_DELAYS_MS = [
-  100,
-  250,
-  500,
-  1_000,
-  2_000,
-  4_000,
-  8_000,
+  100, 250, 500, 1_000, 2_000, 4_000, 8_000,
 ] as const;
 
 let activeRecorderRequests = 0;
@@ -52,22 +46,15 @@ export async function fetchRecorderHydration(
   tokenIds: readonly string[],
 ): Promise<RecorderHydration> {
   const requested = [...new Set(tokenIds.filter(Boolean))];
-  if (requested.length === 0)
-    return emptyHydration();
+  if (requested.length === 0) return emptyHydration();
 
   const recordingSinceMsByToken: Record<string, number> = {};
-  const pressureCellsByToken: Record<
-    string,
-    readonly PressureCell[]
-  > = {};
+  const pressureCellsByToken: Record<string, readonly PressureCell[]> = {};
 
   let remaining = requested;
   let lastError: unknown = null;
 
-  recorderDebug(
-    "hydrate-start",
-    requested.map(shortToken),
-  );
+  recorderDebug("hydrate-start", requested.map(shortToken));
 
   for (let attempt = 0; ; attempt++) {
     try {
@@ -120,14 +107,10 @@ export async function fetchRecorderHydration(
     await delay(delayMs);
   }
 
-  if (lastError)
-    console.warn("Age recorder unavailable", lastError);
+  if (lastError) console.warn("Age recorder unavailable", lastError);
 
   if (remaining.length > 0)
-    recorderDebug(
-      "hydrate-gave-up",
-      remaining.map(shortToken),
-    );
+    recorderDebug("hydrate-gave-up", remaining.map(shortToken));
   else
     recorderDebug("hydrate-complete", {
       coverage: Object.keys(recordingSinceMsByToken).length,
@@ -159,10 +142,8 @@ async function fetchRecorderState(
       const response = await fetch(`/api/recorder/state?${params}`, {
         signal: controller.signal,
       });
-      if (!response.ok)
-        throw new Error(`recorder returned ${response.status}`);
-      const body =
-        (await response.json()) as RecorderStateResponse;
+      if (!response.ok) throw new Error(`recorder returned ${response.status}`);
+      const body = (await response.json()) as RecorderStateResponse;
       recorderDebug("state-http", {
         requested: tokenIds.length,
         ms: Math.round(performance.now() - startedAt),
@@ -195,8 +176,7 @@ function mergeRecorderResponse(
   }
 
   const sourceNowMs =
-    typeof body.serverNowMs === "number" &&
-    Number.isFinite(body.serverNowMs)
+    typeof body.serverNowMs === "number" && Number.isFinite(body.serverNowMs)
       ? body.serverNowMs
       : Date.now();
   const targetNowMs = Date.now();
@@ -224,13 +204,8 @@ function emptyHydration(): RecorderHydration {
   };
 }
 
-async function withRecorderRequestSlot<T>(
-  task: () => Promise<T>,
-): Promise<T> {
-  if (
-    activeRecorderRequests >=
-    MAX_CONCURRENT_RECORDER_REQUESTS
-  ) {
+async function withRecorderRequestSlot<T>(task: () => Promise<T>): Promise<T> {
+  if (activeRecorderRequests >= MAX_CONCURRENT_RECORDER_REQUESTS) {
     await new Promise<void>((resolve) => {
       recorderRequestWaiters.push(resolve);
     });
@@ -256,8 +231,7 @@ function debugError(error: unknown): unknown {
 }
 
 function recorderDebug(...args: unknown[]): void {
-  if (RECORDER_DEBUG)
-    console.debug("[recorder:frontend]", ...args);
+  if (RECORDER_DEBUG) console.debug("[recorder:frontend]", ...args);
 }
 
 function shortToken(tokenId: string): string {

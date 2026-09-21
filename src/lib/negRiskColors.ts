@@ -45,12 +45,16 @@ export function buildNegRiskPalette(event: Event): NegRiskPalette | null {
       };
     });
 
-  if (candidates.length < 2 || candidates.some((candidate) => candidate === null))
+  if (
+    candidates.length < 2 ||
+    candidates.some((candidate) => candidate === null)
+  )
     return null;
 
   const slots = candidates
-    .filter((candidate): candidate is NonNullable<typeof candidate> =>
-      candidate !== null,
+    .filter(
+      (candidate): candidate is NonNullable<typeof candidate> =>
+        candidate !== null,
     )
     .sort((a, b) => compareStableIds(a.marketId, b.marketId));
 
@@ -59,8 +63,7 @@ export function buildNegRiskPalette(event: Event): NegRiskPalette | null {
   if (new Set(slots.map((slot) => slot.yesTokenId)).size !== slots.length)
     return null;
 
-  const groupId =
-    event.trading.negRiskMarketId?.trim() || String(event.id);
+  const groupId = event.trading.negRiskMarketId?.trim() || String(event.id);
   const phase = stableHue(groupId);
   const count = slots.length;
   const complementMagnitude = 1 / (count - 1);
@@ -86,7 +89,9 @@ export function buildNegRiskPalette(event: Event): NegRiskPalette | null {
   return {
     groupId,
     outcomes,
-    byYesTokenId: new Map(outcomes.map((outcome) => [outcome.yesTokenId, outcome])),
+    byYesTokenId: new Map(
+      outcomes.map((outcome) => [outcome.yesTokenId, outcome]),
+    ),
   };
 }
 

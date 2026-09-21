@@ -114,7 +114,9 @@ export function buildThresholdPalette(
         ? rangeInclusive(0, row.thresholdIndex)
         : rangeInclusive(0, atomCount - row.thresholdIndex - 2);
     const yesAtoms = new Set(yesAtomIndices);
-    const noAtomIndices = allAtomIndices.filter((index) => !yesAtoms.has(index));
+    const noAtomIndices = allAtomIndices.filter(
+      (index) => !yesAtoms.has(index),
+    );
 
     const yesVector = meanVector(yesAtomIndices.map((index) => atoms[index]!));
     const noVector = meanVector(noAtomIndices.map((index) => atoms[index]!));
@@ -141,14 +143,16 @@ export function buildThresholdPalette(
   return {
     direction,
     outcomes,
-    byYesTokenId: new Map(outcomes.map((outcome) => [outcome.yesTokenId, outcome])),
-    byNoTokenId: new Map(outcomes.map((outcome) => [outcome.noTokenId, outcome])),
+    byYesTokenId: new Map(
+      outcomes.map((outcome) => [outcome.yesTokenId, outcome]),
+    ),
+    byNoTokenId: new Map(
+      outcomes.map((outcome) => [outcome.noTokenId, outcome]),
+    ),
   };
 }
 
-export function semanticYesNeutralNoScale(
-  hue: number,
-): SignedVolumeColorScale {
+export function semanticYesNeutralNoScale(hue: number): SignedVolumeColorScale {
   return {
     luminance: SEMANTIC_LUMINANCE,
     chroma: SEMANTIC_CHROMA,
@@ -183,7 +187,10 @@ function vectorHue(vector: { readonly x: number; readonly y: number }): number {
   return normalizeHue(radiansToDegrees(Math.atan2(vector.y, vector.x)));
 }
 
-function vectorMagnitude(vector: { readonly x: number; readonly y: number }): number {
+function vectorMagnitude(vector: {
+  readonly x: number;
+  readonly y: number;
+}): number {
   return clamp01(Math.hypot(vector.x, vector.y));
 }
 
@@ -202,17 +209,9 @@ function monotoneDirection(
   }
 
   const totalChange = prices.at(-1)! - prices[0]!;
-  if (
-    nonDecreasing &&
-    !nonIncreasing &&
-    totalChange >= MIN_TOTAL_PRICE_TREND
-  )
+  if (nonDecreasing && !nonIncreasing && totalChange >= MIN_TOTAL_PRICE_TREND)
     return "prefix";
-  if (
-    nonIncreasing &&
-    !nonDecreasing &&
-    totalChange <= -MIN_TOTAL_PRICE_TREND
-  )
+  if (nonIncreasing && !nonDecreasing && totalChange <= -MIN_TOTAL_PRICE_TREND)
     return "suffix";
   return null;
 }

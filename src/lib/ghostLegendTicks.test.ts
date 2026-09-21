@@ -17,9 +17,7 @@ test("ghost age transform is invertible", () => {
 test("duration ticks use human unit families and fade by local spacing", () => {
   const ticks = ghostLegendTicks(60 * 60 * 1_000, 430);
   expect(ticks.length).toBeGreaterThan(2);
-  expect(
-    ticks.some((tick) => /h$/.test(tick.label)),
-  ).toBe(true);
+  expect(ticks.some((tick) => /h$/.test(tick.label))).toBe(true);
   expect(
     ticks.every(
       (tick) =>

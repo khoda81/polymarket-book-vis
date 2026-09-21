@@ -21,12 +21,8 @@ export interface AgeStripTooltipHost {
   readonly getViewMode: () => ViewMode;
   readonly getBook: (tokenId: string) => TokenBook<string> | undefined;
   readonly getTokenName: (tokenId: string) => string | undefined;
-  readonly getOppositeTokenName: (
-    tokenId: string,
-  ) => string | undefined;
-  readonly getPressureColorScale: (
-    tokenId: string,
-  ) => SignedVolumeColorScale;
+  readonly getOppositeTokenName: (tokenId: string) => string | undefined;
+  readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
 }
 
 interface HoverPointer {
@@ -43,14 +39,8 @@ export class AgeStripTooltip {
   private pointer: HoverPointer | null = null;
 
   constructor(private readonly host: AgeStripTooltipHost) {
-    host.canvas.addEventListener(
-      "pointermove",
-      this.handlePointerMove,
-    );
-    host.canvas.addEventListener(
-      "pointerleave",
-      this.handlePointerLeave,
-    );
+    host.canvas.addEventListener("pointermove", this.handlePointerMove);
+    host.canvas.addEventListener("pointerleave", this.handlePointerLeave);
   }
 
   setGeometry(geometry: AgeStripGeometry | null): void {
@@ -66,10 +56,7 @@ export class AgeStripTooltip {
   }
 
   destroy(): void {
-    this.host.canvas.removeEventListener(
-      "pointermove",
-      this.handlePointerMove,
-    );
+    this.host.canvas.removeEventListener("pointermove", this.handlePointerMove);
     this.host.canvas.removeEventListener(
       "pointerleave",
       this.handlePointerLeave,
@@ -122,8 +109,7 @@ export class AgeStripTooltip {
       return;
     }
 
-    const rowCenterY =
-      pointer.canvasTop + ageStripRowCenterY(geometry, row);
+    const rowCenterY = pointer.canvasTop + ageStripRowCenterY(geometry, row);
     const anchorX = pointer.canvasLeft + sx;
 
     if (row.resolution) {
@@ -203,9 +189,7 @@ export function tooltipSignature(
     hover.effectivePrice === null
       ? ""
       : formatProbability(
-          isBid
-            ? hover.effectivePrice
-            : 1 - hover.effectivePrice,
+          isBid ? hover.effectivePrice : 1 - hover.effectivePrice,
         );
 
   return [
@@ -236,23 +220,14 @@ export function renderAgeTooltip(
 
   const title = document.createElement("div");
   title.className = "cpv-ov-label";
-  title.textContent =
-    `${tokenName}@${formatProbability(tokenPrice)}`;
-  title.style.color = signedVolumeColor(
-    isBid ? 1 : -1,
-    colorScale,
-  );
+  title.textContent = `${tokenName}@${formatProbability(tokenPrice)}`;
+  title.style.color = signedVolumeColor(isBid ? 1 : -1, colorScale);
   overlay.appendChild(title);
-  overlay.appendChild(
-    tooltipRow("Shares", formatShares(hover.shares)),
-  );
+  overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
 
   if (effectivePrice !== null)
     overlay.appendChild(
-      tooltipRow(
-        "Effective",
-        formatProbability(effectivePrice),
-      ),
+      tooltipRow("Effective", formatProbability(effectivePrice)),
     );
 }
 
@@ -274,9 +249,7 @@ export function renderResolutionTooltip(
   );
   overlay.appendChild(title);
 
-  overlay.appendChild(
-    tooltipRow("Winner", outcome || "(unknown)"),
-  );
+  overlay.appendChild(tooltipRow("Winner", outcome || "(unknown)"));
 
   if (marketEndMs !== null && Number.isFinite(marketEndMs))
     overlay.appendChild(
@@ -295,10 +268,7 @@ function formatResolutionTime(timestampMs: number): string {
   return RESOLUTION_TIME_FORMATTER.format(new Date(timestampMs));
 }
 
-function tooltipRow(
-  name: string,
-  value: string,
-): HTMLDivElement {
+function tooltipRow(name: string, value: string): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "cpv-ov-row";
 

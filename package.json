@@ -6,12 +6,16 @@
   "scripts": {
     "dev": "vite",
     "recorder": "bun backend/recorder.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@types/bun": "^1.4.2",
+    "prettier": "3.9.8",
+    "prettier-plugin-svelte": "4.1.1",
     "svelte": "^5.57.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"

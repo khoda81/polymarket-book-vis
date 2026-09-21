@@ -12,11 +12,19 @@ function eventWithPrices(sortBy: string | undefined, prices: unknown[]): Event {
   } as unknown as Event;
 }
 
-const ids = (markets: Event["markets"]): string[] => markets.map((market) => market.id);
+const ids = (markets: Event["markets"]): string[] =>
+  markets.map((market) => market.id);
 
 test("price mode orders by Yes price descending, not threshold, without mutating input", () => {
   // No Head of State, Mojtaba, Reza, Ahmadinejad, Rouhani, Arafi.
-  const event = eventWithPrices("price", ["0.047", "0.834", "0.025", "0.0135", "0.008", "0.007"]);
+  const event = eventWithPrices("price", [
+    "0.047",
+    "0.834",
+    "0.025",
+    "0.0135",
+    "0.008",
+    "0.007",
+  ]);
   const original = [...event.markets];
   const raw = event.markets.map((market, index) => ({
     id: market.id,
@@ -30,8 +38,26 @@ test("price mode orders by Yes price descending, not threshold, without mutating
 });
 
 test("price ties stay stable and missing or invalid prices follow zero", () => {
-  const event = eventWithPrices("price", [null, "0", "0.5", "0.5", undefined, "", "bad", Infinity]);
-  expect(ids(orderMarkets(event, []))).toEqual(["2", "3", "1", "0", "4", "5", "6", "7"]);
+  const event = eventWithPrices("price", [
+    null,
+    "0",
+    "0.5",
+    "0.5",
+    undefined,
+    "",
+    "bad",
+    Infinity,
+  ]);
+  expect(ids(orderMarkets(event, []))).toEqual([
+    "2",
+    "3",
+    "1",
+    "0",
+    "4",
+    "5",
+    "6",
+    "7",
+  ]);
 });
 
 test("threshold modes retain direction, stable ties, and put missing values last", () => {

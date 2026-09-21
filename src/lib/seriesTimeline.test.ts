@@ -9,11 +9,7 @@ import {
   timedSeriesEvent,
 } from "./seriesTimeline";
 
-function event(
-  id: string,
-  start: string,
-  end: string,
-): Event {
+function event(id: string, start: string, end: string): Event {
   return {
     id,
     schedule: {
@@ -45,11 +41,7 @@ test("infers cadence from event start timestamps before recurrence metadata", ()
 test("timed rows use explicit event interval and merge stably by time", () => {
   const a = event("a", "2026-09-19T10:05:00Z", "2026-09-19T10:10:00Z");
   const b = event("b", "2026-09-19T10:00:00Z", "2026-09-19T10:05:00Z");
-  const duplicateB = event(
-    "b",
-    "2026-09-19T10:00:00Z",
-    "2026-09-19T10:05:00Z",
-  );
+  const duplicateB = event("b", "2026-09-19T10:00:00Z", "2026-09-19T10:05:00Z");
 
   expect(eventStartMs(b)).toBe(Date.parse("2026-09-19T10:00:00Z"));
   expect(eventEndMs(b)).toBe(Date.parse("2026-09-19T10:05:00Z"));
@@ -57,6 +49,7 @@ test("timed rows use explicit event interval and merge stably by time", () => {
   const timed = timedSeriesEvent(b, 60_000);
   expect(timed?.centerMs).toBe(Date.parse("2026-09-19T10:02:30Z"));
 
-  expect(mergeSeriesEvents([a], [b, duplicateB]).map((row) => String(row.id)))
-    .toEqual(["b", "a"]);
+  expect(
+    mergeSeriesEvents([a], [b, duplicateB]).map((row) => String(row.id)),
+  ).toEqual(["b", "a"]);
 });

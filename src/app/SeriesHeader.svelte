@@ -61,8 +61,8 @@
           type="button"
           class="cpv-event-slug"
           title="Copy series slug"
-          onclick={copySlug}
-        >{series.slug}</button>
+          onclick={copySlug}>{series.slug}</button
+        >
       {/if}
     </div>
   </div>

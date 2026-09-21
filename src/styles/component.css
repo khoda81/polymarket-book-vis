@@ -1,512 +1,518 @@
 .cpv-wrap {
-    padding: 1rem;
-    font-family: var(--font-sans, sans-serif);
-    color: var(--color-text-primary, #333);
+  padding: 1rem;
+  font-family: var(--font-sans, sans-serif);
+  color: var(--color-text-primary, #333);
 }
 
 .cpv-sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
 
 .cpv-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    margin-bottom: 0.75rem;
-    min-height: 28px;
-    flex-wrap: nowrap;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 0.75rem;
+  min-height: 28px;
+  flex-wrap: nowrap;
 }
 
 .cpv-heading {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    flex: 1;
-    min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
 }
 
 .cpv-heading-copy {
-    flex: 1;
-    min-width: 0;
-    height: 28px;
-    overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  overflow: hidden;
 }
 
 .cpv-event-icon {
-    width: 28px;
-    height: 28px;
-    flex: 0 0 28px;
-    border-radius: 7px;
-    object-fit: cover;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 7px;
+  object-fit: cover;
 }
 
 .cpv-title-line {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    height: 16px;
-    line-height: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 16px;
+  line-height: 16px;
 }
 
 .cpv-title {
-    font-size: 14px;
-    font-weight: 600;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cpv-event-link {
-    flex: 0 0 auto;
-    color: var(--color-text-secondary, #666);
-    font-size: 14px;
-    line-height: 1;
-    text-decoration: none;
-    opacity: 0.72;
+  flex: 0 0 auto;
+  color: var(--color-text-secondary, #666);
+  font-size: 14px;
+  line-height: 1;
+  text-decoration: none;
+  opacity: 0.72;
 }
 
 .cpv-event-link:hover {
-    color: var(--color-text-primary, #222);
-    opacity: 1;
+  color: var(--color-text-primary, #222);
+  opacity: 1;
 }
 
 .cpv-event-slug {
-    display: block;
-    max-width: min(100%, 520px);
-    height: 12px;
-    margin-top: 0;
-    padding: 0;
-    overflow: hidden;
-    border: 0;
-    background: transparent;
-    color: var(--color-text-secondary, #666);
-    cursor: copy;
-    font: inherit;
-    font-size: 10px;
-    line-height: 12px;
-    text-align: left;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    opacity: 0.68;
+  display: block;
+  max-width: min(100%, 520px);
+  height: 12px;
+  margin-top: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary, #666);
+  cursor: copy;
+  font: inherit;
+  font-size: 10px;
+  line-height: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.68;
 }
 
 .cpv-event-slug:hover {
-    opacity: 1;
-    text-decoration: underline dotted;
+  opacity: 1;
+  text-decoration: underline dotted;
 }
 
 .cpv-event-description {
-    margin: -0.25rem 0 0.75rem;
-    color: var(--color-text-secondary, #666);
-    font-size: 11px;
+  margin: -0.25rem 0 0.75rem;
+  color: var(--color-text-secondary, #666);
+  font-size: 11px;
 }
 
 .cpv-event-description > summary {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    min-width: 0;
-    max-width: 100%;
-    cursor: pointer;
-    user-select: none;
-    list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
 }
 
 .cpv-event-description > summary::-webkit-details-marker {
-    display: none;
+  display: none;
 }
 
 .cpv-event-description > summary::before {
-    content: "▸";
-    flex: 0 0 auto;
-    opacity: 0.8;
+  content: "▸";
+  flex: 0 0 auto;
+  opacity: 0.8;
 }
 
 .cpv-event-description[open] > summary::before {
-    content: "▾";
+  content: "▾";
 }
 
 .cpv-event-description-preview {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cpv-event-description-label {
-    display: none;
+  display: none;
 }
 
 .cpv-event-description[open] .cpv-event-description-preview {
-    display: none;
+  display: none;
 }
 
 .cpv-event-description[open] .cpv-event-description-label {
-    display: inline;
+  display: inline;
 }
 
 .cpv-event-description-body {
-    max-width: 90ch;
-    margin-top: 7px;
-    padding: 8px 10px;
-    border-left: 2px solid var(--color-border-secondary, #ccc);
-    line-height: 1.45;
-    white-space: pre-wrap;
+  max-width: 90ch;
+  margin-top: 7px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--color-border-secondary, #ccc);
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .cpv-market-rules {
-    margin: -0.25rem 0 0.75rem;
-    color: var(--color-text-secondary, #666);
-    font-size: 11px;
+  margin: -0.25rem 0 0.75rem;
+  color: var(--color-text-secondary, #666);
+  font-size: 11px;
 }
 
 .cpv-market-rules > summary,
 .cpv-market-rule > summary {
-    width: fit-content;
-    cursor: pointer;
-    user-select: none;
+  width: fit-content;
+  cursor: pointer;
+  user-select: none;
 }
 
 .cpv-market-rules-list {
-    max-width: 90ch;
-    margin-top: 6px;
-    padding-left: 10px;
-    border-left: 2px solid var(--color-border-secondary, #ccc);
+  max-width: 90ch;
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--color-border-secondary, #ccc);
 }
 
 .cpv-market-rule + .cpv-market-rule {
-    margin-top: 4px;
+  margin-top: 4px;
 }
 
 .cpv-market-rule > summary {
-    color: var(--color-text-primary, #222);
+  color: var(--color-text-primary, #222);
 }
 
 .cpv-market-rule-body {
-    margin: 5px 0 9px;
-    padding-left: 10px;
-    line-height: 1.45;
-    white-space: pre-wrap;
+  margin: 5px 0 9px;
+  padding-left: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .cpv-status {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: 28px;
-    flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  flex: 0 0 auto;
 }
 
 .cpv-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #888;
-    flex: 0 0 8px;
-    transition: background 0.3s;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #888;
+  flex: 0 0 8px;
+  transition: background 0.3s;
 }
 .cpv-dot--live,
 .cpv-dot--resolved {
-    background: #1d9e75;
+  background: #1d9e75;
 }
 .cpv-dot--err {
-    background: #e24b4a;
+  background: #e24b4a;
 }
 .cpv-dot--conn {
-    background: #ba7517;
+  background: #ba7517;
 }
 
 .cpv-stxt {
-    font-size: 12px;
-    line-height: 1;
-    color: var(--color-text-secondary, #666);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--color-text-secondary, #666);
 }
 
 /* ── Controls ────────────────────────────────────────────────────────────── */
 
 .cpv-toggles {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    font-size: 12px;
-    margin-top: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  margin-top: 1rem;
 }
 .cpv-toggles label {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
 }
 
 .cpv-market-label-text {
-    min-width: 0;
+  min-width: 0;
 }
 
 .cpv-market-resolution-hidden {
-    display: none;
+  display: none;
 }
 
 .cpv-market-awaiting {
-    flex: 0 0 auto;
-    font-size: 10px;
-    line-height: 1;
-    white-space: nowrap;
-    color: var(--color-text-secondary, #666);
-    opacity: 0.72;
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--color-text-secondary, #666);
+  opacity: 0.72;
 }
 
 .cpv-market-icon {
-    width: 16px;
-    height: 16px;
-    flex: 0 0 auto;
-    border-radius: 4px;
-    object-fit: cover;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  object-fit: cover;
 }
 
 /* In age mode the existing market toggles become the y-axis labels. */
 .cpv-clock-canvas {
-    position: absolute;
-    inset: 0;
-    z-index: 5;
-    pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
 }
 
 .cpv-toggles--age-axis {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    left: auto;
-    display: block;
-    margin: 0;
-    z-index: 6;
-    pointer-events: none;
-    font-size: 11px;
-    text-align: left;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  display: block;
+  margin: 0;
+  z-index: 6;
+  pointer-events: none;
+  font-size: 11px;
+  text-align: left;
 }
 
 .cpv-toggles--age-axis label {
-    position: absolute;
-    left: 8px;
-    right: 8px;
-    height: 28px;
-    margin: 0;
-    transform: translateY(-50%);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    overflow: hidden;
-    white-space: nowrap;
-    pointer-events: auto;
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 28px;
+  margin: 0;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: auto;
 }
 
 .cpv-toggles--age-axis label:hover {
-    opacity: 0.75;
+  opacity: 0.75;
 }
 
 .cpv-toggles--age-axis input[type="checkbox"],
 .cpv-hidden-markets input[type="checkbox"] {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-    border: 0;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .cpv-toggles--age-axis label:has(input[type="checkbox"]:focus-visible),
 .cpv-hidden-markets label:has(input[type="checkbox"]:focus-visible) {
-    outline: 2px solid currentColor;
-    outline-offset: 2px;
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 
 .cpv-toggles--age-axis .cpv-market-label-text {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    color: inherit;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    user-select: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
 }
 
 .cpv-toggles--age-axis .cpv-market-icon {
-    position: static;
-    width: 16px;
-    height: 16px;
-    flex: 0 0 16px;
-    align-self: center;
+  position: static;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-self: center;
 }
 
 /* If only some markets have distinct artwork, reserve the same icon column
    for every row so all titles begin at one readable x-position. */
 .cpv-toggles--age-axis:has(.cpv-market-icon)
-    label:not([data-age-suppress-market-identity="true"]):not(:has(.cpv-market-icon))::before {
-    content: "";
-    width: 16px;
-    height: 16px;
-    flex: 0 0 16px;
+  label:not([data-age-suppress-market-identity="true"]):not(
+    :has(.cpv-market-icon)
+  )::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
-.cpv-toggles--age-axis label[data-age-suppress-market-identity="true"] .cpv-market-icon,
-.cpv-toggles--age-axis label[data-age-suppress-market-identity="true"] .cpv-market-label-text {
-    display: none;
+.cpv-toggles--age-axis
+  label[data-age-suppress-market-identity="true"]
+  .cpv-market-icon,
+.cpv-toggles--age-axis
+  label[data-age-suppress-market-identity="true"]
+  .cpv-market-label-text {
+  display: none;
 }
 
 .cpv-hidden-markets {
-    display: flex;
-    align-items: center;
-    flex-wrap: nowrap;
-    gap: 6px;
-    margin-top: 8px;
-    padding-bottom: 4px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: thin;
-    overscroll-behavior-x: contain;
-    -webkit-overflow-scrolling: touch;
-    font-size: 11px;
-    color: var(--color-text-secondary, #666);
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  font-size: 11px;
+  color: var(--color-text-secondary, #666);
 }
 
 .cpv-hidden-markets[hidden] {
-    display: none;
+  display: none;
 }
 
 .cpv-hidden-markets label {
-    display: inline-flex;
-    align-items: center;
-    flex: 0 0 auto;
-    gap: 5px;
-    max-width: 180px;
-    padding: 3px 7px;
-    border: 1px solid var(--color-border-tertiary, #ddd);
-    border-radius: 999px;
-    cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 5px;
+  max-width: 180px;
+  padding: 3px 7px;
+  border: 1px solid var(--color-border-tertiary, #ddd);
+  border-radius: 999px;
+  cursor: pointer;
 }
 
 .cpv-hidden-markets label:hover {
-    background: var(--color-background-secondary, #eee);
+  background: var(--color-background-secondary, #eee);
 }
 
 .cpv-hidden-markets .cpv-market-resolution-hidden {
-    display: inline;
-    flex: 0 0 auto;
-    color: var(--cpv-resolution-color, currentColor);
-    font-weight: 600;
-    white-space: nowrap;
+  display: inline;
+  flex: 0 0 auto;
+  color: var(--cpv-resolution-color, currentColor);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .cpv-hidden-markets .cpv-market-label-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cpv-market-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
 }
 
 .cpv-toggles--age-axis .cpv-market-dot,
 .cpv-hidden-markets .cpv-market-dot {
-    /* Override the inline display used by volume-mode dots. */
-    display: none !important;
+  /* Override the inline display used by volume-mode dots. */
+  display: none !important;
 }
 
 /* ── Canvas ──────────────────────────────────────────────────────────────── */
 
 .cpv-chart-stage {
-    position: relative;
+  position: relative;
 }
 
 .cpv-canvas-wrap {
-    position: relative;
-    width: 100%;
-    height: 420px;
-    border: 0.5px solid var(--color-border-tertiary, #ddd);
-    border-radius: 8px;
-    overflow: hidden;
-    background: transparent;
-    cursor: crosshair;
+  position: relative;
+  width: 100%;
+  height: 420px;
+  border: 0.5px solid var(--color-border-tertiary, #ddd);
+  border-radius: 8px;
+  overflow: hidden;
+  background: transparent;
+  cursor: crosshair;
 }
 
 .cpv-canvas-wrap canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-    touch-action: none;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
 }
 
 /* ── Hover overlay panel ─────────────────────────────────────────────────── */
 
 .cpv-overlay {
-    position: fixed;
-    pointer-events: none;
-    background: var(--color-background-primary, #fff);
-    border: 0.5px solid var(--color-border-secondary, #ccc);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 12px;
-    line-height: 1.6;
-    display: none;
-    z-index: 10000;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-    min-width: 170px;
-    max-width: min(260px, calc(100vw - 16px));
-    max-height: calc(100vh - 16px);
+  position: fixed;
+  pointer-events: none;
+  background: var(--color-background-primary, #fff);
+  border: 0.5px solid var(--color-border-secondary, #ccc);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  display: none;
+  z-index: 10000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  min-width: 170px;
+  max-width: min(260px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
 }
 
 .cpv-ov-label {
-    font-weight: 600;
-    font-size: 11px;
-    margin-bottom: 6px;
-    color: var(--color-text-primary, #111);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 220px;
+  font-weight: 600;
+  font-size: 11px;
+  margin-bottom: 6px;
+  color: var(--color-text-primary, #111);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
 }
 
 .cpv-ov-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    color: var(--color-text-secondary, #555);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--color-text-secondary, #555);
 }
 
 .cpv-ov-row b {
-    color: var(--color-text-primary, #111);
+  color: var(--color-text-primary, #111);
 }
 
 .cpv-ov-green {
-    color: #1d9e75 !important;
+  color: #1d9e75 !important;
 }
 
 /* ── Dark mode ───────────────────────────────────────────────────────────── */
 
 @media (prefers-color-scheme: dark) {
-    .cpv-wrap {
-        --color-text-primary: #eee;
-        --color-text-secondary: #aaa;
-        --color-background-primary: #121212;
-        --color-background-secondary: #222;
-        --color-border-secondary: #444;
-        --color-border-tertiary: #333;
-    }
+  .cpv-wrap {
+    --color-text-primary: #eee;
+    --color-text-secondary: #aaa;
+    --color-background-primary: #121212;
+    --color-background-secondary: #222;
+    --color-border-secondary: #444;
+    --color-border-tertiary: #333;
+  }
 }

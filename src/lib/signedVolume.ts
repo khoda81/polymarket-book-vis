@@ -87,7 +87,8 @@ export function signedVolumeSegments(
   const result: SignedVolumeSegment[] = [];
   let cursor = 0;
   for (const [price, delta] of [...changes].sort(([a], [b]) => a - b)) {
-    if (price > cursor) result.push({ lo: cursor, hi: price, volume, sweepCost });
+    if (price > cursor)
+      result.push({ lo: cursor, hi: price, volume, sweepCost });
     volume += delta.volume;
     sweepCost += delta.sweepCost;
 

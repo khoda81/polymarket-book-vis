@@ -1,9 +1,5 @@
 import { AGE_ROW_BAND_PX } from "./ageStripTuning";
-import type {
-  Event,
-  PublicClient,
-  Series,
-} from "@polymarket/client";
+import type { Event, PublicClient, Series } from "@polymarket/client";
 
 export const SERIES_ROW_HEIGHT_PX = AGE_ROW_BAND_PX;
 export const SERIES_VISIBLE_ROWS = 7;
@@ -128,9 +124,7 @@ export function inferSeriesCadenceMs(
     .map((event) => {
       const start = eventStartMs(event);
       const end = eventEndMs(event);
-      return start !== null && end !== null && end > start
-        ? end - start
-        : null;
+      return start !== null && end !== null && end > start ? end - start : null;
     })
     .filter((value): value is number => value !== null);
   if (durations.length > 0) return median(durations);
@@ -165,7 +159,7 @@ export async function loadSeriesEventsAround(
   const cadenceMs =
     Number.isFinite(cadenceHintMs) && cadenceHintMs > 0
       ? cadenceHintMs
-      : recurrenceDurationMs(series.recurrence) ?? DEFAULT_CADENCE_MS;
+      : (recurrenceDurationMs(series.recurrence) ?? DEFAULT_CADENCE_MS);
   const halfWindowMs = SERIES_WINDOW_ROWS * cadenceMs;
   const endDateMin = new Date(centerMs - halfWindowMs).toISOString();
   const endDateMax = new Date(
@@ -212,9 +206,8 @@ export async function findSeriesBySlug(
     .listSeries({ slug: [slug], pageSize: 10 })
     .firstPage();
   return (
-    page.items.find(
-      (candidate) => candidate.slug?.trim() === slug.trim(),
-    ) ?? null
+    page.items.find((candidate) => candidate.slug?.trim() === slug.trim()) ??
+    null
   );
 }
 
@@ -230,8 +223,7 @@ async function collectEvents(
   for await (const page of pages) {
     result.push(...page.items);
     pageCount++;
-    if (pageCount >= 4 || result.length >= 400 || page.hasMore === false)
-      break;
+    if (pageCount >= 4 || result.length >= 400 || page.hasMore === false) break;
   }
   return result;
 }
@@ -255,9 +247,7 @@ function median(values: readonly number[]): number {
   return (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
-function asRecord(
-  value: unknown,
-): Record<string, unknown> | undefined {
+function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object"
     ? (value as Record<string, unknown>)
     : undefined;

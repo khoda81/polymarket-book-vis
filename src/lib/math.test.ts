@@ -21,7 +21,6 @@ test("fmtRelativeTime uses compact significant digits", () => {
   expect(fmtRelativeTime(104 * 86_400)).toBe("3.4mo");
 });
 
-
 test("relativeTimeDisplay exposes semantic redraw deadlines", () => {
   const milliseconds = relativeTimeDisplay(0.023, "elapsed");
   expect(milliseconds.text).toBe("23ms");
@@ -44,7 +43,6 @@ test("relativeTimeDisplay exposes semantic redraw deadlines", () => {
     nextChangeMs: null,
   });
 });
-
 
 test("fmtSI keeps useful decimals before switching to SI prefixes", () => {
   expect(fmtSI(0.1)).toBe("0.1");
