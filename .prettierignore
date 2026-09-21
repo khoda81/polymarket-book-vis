@@ -5,3 +5,6 @@ src/lib/monotoneFrontier.ts
 src/lib/monotoneFrontier.test.ts
 src/lib/pressureFrontierMemory.ts
 src/chart/ageStripPressureState.ts
+src/chart/ageStripRendering.ts
+src/chart/pressureFieldRaster.ts
+src/chart/pressureFieldRaster.test.ts
