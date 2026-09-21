@@ -312,3 +312,16 @@ test("overwritten historical liquidity never resurrects", () => {
     },
   ]);
 });
+
+
+test("ghost visibility is reversible when the display half-life changes", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels("bid", [{ price: 0.5, shares: 100 }], 1_000);
+  memory.updateLevels("bid", [{ price: 0.5, shares: 0 }], 2_000);
+
+  const history = memory.shellsAtPrice(0.4);
+  expect(memory.hasVisibleGhosts(20_000, 1_000)).toBe(false);
+  expect(memory.hasVisibleGhosts(20_000, 100_000)).toBe(true);
+  expect(memory.shellsAtPrice(0.4)).toEqual(history);
+});
