@@ -38,13 +38,7 @@ export function rasterizeNestedBands(
 ): Uint8ClampedArray {
   const height = Math.max(0, Math.floor(heightDevice));
   const result = new Uint8ClampedArray(height * 4);
-  rasterizeNestedBandsInto(
-    layers,
-    centerDevice,
-    topDevice,
-    height,
-    result,
-  );
+  rasterizeNestedBandsInto(layers, centerDevice, topDevice, height, result);
   return result;
 }
 
@@ -103,7 +97,6 @@ export function rasterizeNestedBandsInto(
     result[offset + 2] = Math.round(255 * clamp01(b / a));
     result[offset + 3] = Math.round(255 * clamp01(a));
   }
-
 }
 
 function buildShells(layers: readonly NestedRasterLayer[]): RasterShell[] {
