@@ -338,6 +338,14 @@ body {
     opacity: 0.62;
 }
 
+.grid--dragging {
+    user-select: none;
+}
+
+.grid--dragging .grid-item:not(.grid-item--dragging) {
+    pointer-events: none;
+}
+
 .card {
     position: relative;
     display: block;
