@@ -22,9 +22,28 @@ type FeedState =
   | { readonly kind: "ended" }
   | { readonly kind: "destroyed" };
 
+export type LiveBookUpdate =
+  | {
+      readonly kind: "snapshot";
+      readonly observedAtMs: number;
+    }
+  | {
+      readonly kind: "levels";
+      readonly observedAtMs: number;
+      readonly changes: readonly {
+        readonly side: "bid" | "ask";
+        readonly price: number;
+        readonly shares: number;
+      }[];
+    };
+
 export interface LiveBookFeedCallbacks {
   readonly onConnectionStatus: (status: ConnectionStatus) => void;
-  readonly onBookUpdated: (tokenId: TokenId, book: TokenBook<string>) => void;
+  readonly onBookUpdated: (
+    tokenId: TokenId,
+    book: TokenBook<string>,
+    update: LiveBookUpdate,
+  ) => void;
   readonly onMarketResolved: (resolution: MarketResolutionUpdate) => void;
 }
 
@@ -125,12 +144,23 @@ export class LiveBookFeed {
           const tokenId = event.payload.tokenId as TokenId;
           const book = bookFromSnapshot(event.payload.bids, event.payload.asks);
           this.books.set(String(tokenId), book);
-          this.callbacks.onBookUpdated(tokenId, book);
+          this.callbacks.onBookUpdated(tokenId, book, {
+            kind: "snapshot",
+            observedAtMs: eventTimeMs(event.payload),
+          });
           continue;
         }
 
         if (event.type === "price_change") {
-          const touched = new Set<TokenId>();
+          const changesByToken = new Map<
+            TokenId,
+            Array<{
+              side: "bid" | "ask";
+              price: number;
+              shares: number;
+            }>
+          >();
+
           for (const change of event.payload.priceChanges) {
             const tokenId = change.tokenId as TokenId;
             const book = this.books.get(String(tokenId));
@@ -149,11 +179,25 @@ export class LiveBookFeed {
                 take: size * price,
               });
             }
-            touched.add(tokenId);
+
+            const changes = changesByToken.get(tokenId) ?? [];
+            changes.push({
+              side: change.side === OrderSide.BUY ? "bid" : "ask",
+              price,
+              shares: size,
+            });
+            changesByToken.set(tokenId, changes);
           }
-          for (const tokenId of touched) {
+
+          const observedAtMs = eventTimeMs(event.payload);
+          for (const [tokenId, changes] of changesByToken) {
             const book = this.books.get(String(tokenId));
-            if (book) this.callbacks.onBookUpdated(tokenId, book);
+            if (!book) continue;
+            this.callbacks.onBookUpdated(tokenId, book, {
+              kind: "levels",
+              observedAtMs,
+              changes,
+            });
           }
           continue;
         }
@@ -212,4 +256,26 @@ function bookFromSnapshot(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+
+function eventTimeMs(payload: unknown): number {
+  if (
+    payload !== null &&
+    typeof payload === "object" &&
+    "timestamp" in payload
+  ) {
+    const raw = (payload as { timestamp?: unknown }).timestamp;
+    const parsed =
+      typeof raw === "number"
+        ? raw
+        : typeof raw === "string"
+          ? Number(raw)
+          : NaN;
+    if (Number.isFinite(parsed)) {
+      // Polymarket timestamps have appeared in both seconds and milliseconds.
+      return parsed < 100_000_000_000 ? parsed * 1_000 : parsed;
+    }
+  }
+  return Date.now();
 }
