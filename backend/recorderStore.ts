@@ -330,10 +330,7 @@ function loadStoredPressure(
   if (Array.isArray(value))
     return legacyCellsToSnapshot(parsePressureCells(value), staleSinceMs);
 
-  return staleLiveFrontiers(
-    parsePressureFrontierSnapshot(value),
-    staleSinceMs,
-  );
+  return staleLiveFrontiers(parsePressureFrontierSnapshot(value), staleSinceMs);
 }
 
 function legacyCellsToSnapshot(
