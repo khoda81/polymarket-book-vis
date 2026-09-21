@@ -49,7 +49,7 @@ test("left and right halves map to fixed before and after regions", () => {
 
 test("pointer below a target inserts after it", () => {
   expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 170, y: 260 }),
+    dashboardOrderForPointer(snapshot, "a", { x: 170, y: 280 }),
   ).toEqual(["b", "c", "d", "a"]);
 });
 
