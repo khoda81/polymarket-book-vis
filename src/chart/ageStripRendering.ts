@@ -7,7 +7,7 @@ import {
 } from "@/lib/pressureMemory";
 import type { Frame } from "@/lib/renderer";
 import {
-  rasterizeNestedBands,
+  rasterizeNestedBandsInto,
   type NestedRasterLayer,
   type RgbColor,
 } from "./nestedBandRaster";
@@ -184,16 +184,15 @@ function drawMemoryBands(
   }
 
   if (layers.length === 0) return;
-  const pixels = rasterizeNestedBands(
+  const raster = pressureRasterCanvas(rowHeightDevice);
+  rasterizeNestedBandsInto(
     layers,
     centerDevice,
     rowTopDevice,
     rowHeightDevice,
+    raster.image.data,
   );
-  const raster = pressureRasterCanvas(rowHeightDevice);
-  const image = raster.ctx.createImageData(1, rowHeightDevice);
-  image.data.set(pixels);
-  raster.ctx.putImageData(image, 0, 0);
+  raster.ctx.putImageData(raster.image, 0, 0);
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(
     raster.canvas,
@@ -269,19 +268,25 @@ function pressureRgbColors(
 let pressureRaster: {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
+  image: ImageData;
 } | null = null;
 
 function pressureRasterCanvas(height: number) {
   if (!pressureRaster) {
     const canvas = document.createElement("canvas");
     canvas.width = 1;
+    canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D canvas context is not available");
-    pressureRaster = { canvas, ctx };
-  }
-  if (pressureRaster.canvas.height !== height) {
+    pressureRaster = {
+      canvas,
+      ctx,
+      image: ctx.createImageData(1, height),
+    };
+  } else if (pressureRaster.canvas.height !== height) {
     pressureRaster.canvas.width = 1;
     pressureRaster.canvas.height = height;
+    pressureRaster.image = pressureRaster.ctx.createImageData(1, height);
   }
   return pressureRaster;
 }
