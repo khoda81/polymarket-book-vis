@@ -5,6 +5,11 @@ import {
   parsePressureCells,
   type PressureCell,
 } from "../src/lib/pressureMemory";
+import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
+import {
+  parsePressureFrontierSnapshot,
+  type PressureFrontierSnapshot,
+} from "../src/lib/pressureFrontierSnapshot";
 import {
   StaleSignedVolume,
   type StaleSignedVolumeSnapshot,
@@ -18,7 +23,7 @@ export interface RecorderStoreRecord {
   readonly tokenId: string;
   readonly status: RecorderTokenStatus;
   readonly recordingSinceMs: number | null;
-  readonly cells: readonly PressureCell[] | null;
+  readonly pressure: PressureFrontierSnapshot | null;
   readonly savedAtMs: number;
 }
 
@@ -52,7 +57,7 @@ type PersistedRecorderState =
 /**
  * Durable recorder storage.
  *
- * One SQLite row owns one token's complete compressed PressureMemory snapshot.
+ * One SQLite row owns one token's complete compressed pressure-frontier snapshot.
  * Checkpoints therefore serialize and write only tokens that changed instead
  * of rebuilding the recorder's entire history on every flush.
  */
@@ -111,11 +116,11 @@ export class RecorderStore {
       status: row.status,
       recordingSinceMs:
         row.recording_since_ms === null ? null : Number(row.recording_since_ms),
-      cells:
+      pressure:
         row.cells_json === null
           ? null
-          : staleLiveBands(
-              parsePressureCells(JSON.parse(row.cells_json)),
+          : loadStoredPressure(
+              JSON.parse(row.cells_json),
               Math.min(Number(row.saved_at_ms), nowMs),
             ),
       savedAtMs: Number(row.saved_at_ms),
@@ -147,7 +152,7 @@ export class RecorderStore {
             record.tokenId,
             record.status,
             record.recordingSinceMs,
-            record.cells === null ? null : JSON.stringify(record.cells),
+            record.pressure === null ? null : JSON.stringify(record.pressure),
             record.savedAtMs,
           );
         }
