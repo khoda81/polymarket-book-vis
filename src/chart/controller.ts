@@ -163,7 +163,7 @@ export class ChartController {
       void fetchRecorderHydration(tokenIds).then((hydration) => {
         if (this.lifecycle === "destroyed") return;
         this.ageView.setRecordingCoverage(hydration.recordingSinceMsByToken);
-        this.ageView.hydratePressureMemory(hydration.pressureCellsByToken);
+        this.ageView.hydratePressureMemory(hydration.pressureSnapshotsByToken);
         this.reqDraw();
       });
 
