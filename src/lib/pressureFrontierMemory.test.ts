@@ -229,7 +229,6 @@ test("render runs merge adjacent price intervals with identical shell stacks", (
   expect(memory.renderRuns()).toBe(runs);
 });
 
-
 test("out-of-order external timestamps preserve observation order", () => {
   const memory = new PressureFrontierMemory();
 
