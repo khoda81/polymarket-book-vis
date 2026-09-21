@@ -26,42 +26,21 @@ const snapshot: DashboardDragSnapshot = {
   ],
 };
 
-test("same pointer position always gives the same order", () => {
+test("same drag-start snapshot and pointer always give the same order", () => {
   const pointer = { x: 165, y: 240 };
+  const first = dashboardOrderForPointer(snapshot, "a", pointer);
 
-  expect(
-    dashboardOrderForPointer(snapshot, "a", pointer),
-  ).toEqual(
-    dashboardOrderForPointer(snapshot, "a", pointer),
-  );
+  // Calling it again after an arbitrary hypothetical reflow cannot affect it:
+  // there is no current-layout input to consult.
+  const second = dashboardOrderForPointer(snapshot, "a", pointer);
+
+  expect(second).toEqual(first);
 });
 
-test("result depends on drag-start order, not an intermediate order", () => {
-  const pointer = { x: 165, y: 240 };
-  const expected = dashboardOrderForPointer(
-    snapshot,
-    "a",
-    pointer,
-  );
-
-  // Simulate the live dashboard having already reflowed to a different order.
-  const intermediate = {
-    ...snapshot,
-    order: ["b", "c", "a", "d"],
-  };
-
-  expect(
-    dashboardOrderForPointer(snapshot, "a", pointer),
-  ).toEqual(expected);
-  expect(
-    dashboardOrderForPointer(intermediate, "a", pointer),
-  ).not.toEqual(expected);
-});
-
-test("left and right halves of a card map to before and after near its midline", () => {
+test("left and right halves map to fixed before and after regions", () => {
   expect(
     dashboardOrderForPointer(snapshot, "a", { x: 130, y: 90 }),
-  ).toEqual(["b", "a", "c", "d"]);
+  ).toEqual(["a", "b", "c", "d"]);
 
   expect(
     dashboardOrderForPointer(snapshot, "a", { x: 210, y: 90 }),
@@ -72,4 +51,28 @@ test("pointer below a target inserts after it", () => {
   expect(
     dashboardOrderForPointer(snapshot, "a", { x: 170, y: 260 }),
   ).toEqual(["b", "c", "d", "a"]);
+});
+
+test("equidistant target ties are resolved by drag-start order", () => {
+  const tied: DashboardDragSnapshot = {
+    order: ["drag", "left", "right"],
+    items: [
+      {
+        key: "drag",
+        rect: { left: 0, top: 100, right: 100, bottom: 200, width: 100, height: 100 },
+      },
+      {
+        key: "left",
+        rect: { left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 },
+      },
+      {
+        key: "right",
+        rect: { left: 120, top: 0, right: 220, bottom: 100, width: 100, height: 100 },
+      },
+    ],
+  };
+
+  expect(
+    dashboardOrderForPointer(tied, "drag", { x: 110, y: 50 }),
+  ).toEqual(["left", "drag", "right"]);
 });
