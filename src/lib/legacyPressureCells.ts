@@ -1,7 +1,4 @@
-import {
-  type PressureBand,
-  type PressureBandState,
-} from "./pressureField";
+import { type PressureBand, type PressureBandState } from "./pressureField";
 
 export interface PressureCell {
   readonly lo: number;
@@ -96,9 +93,7 @@ export function rebasePressureCells(
   }));
 }
 
-function mergeAdjacentBands(
-  bands: readonly PressureBand[],
-): PressureBand[] {
+function mergeAdjacentBands(bands: readonly PressureBand[]): PressureBand[] {
   const result: PressureBand[] = [];
   for (const band of bands) {
     const previous = result[result.length - 1];
