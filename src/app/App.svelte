@@ -5,6 +5,7 @@
   import PressureLegend from "./PressureLegend.svelte";
   import SeriesCard from "./SeriesCard.svelte";
   import { findSeriesBySlug } from "../lib/seriesTimeline";
+  import { setSharedTooltipSuppressed } from "../lib/sharedTooltip";
   import {
     dashboardOrderForPointer,
     type DashboardDragSnapshot,
@@ -166,55 +167,120 @@
     const grid = document.querySelector<HTMLElement>(".grid");
     if (!grid) return;
 
-    const items = Array.from(
+    const nodes = Array.from(
       grid.querySelectorAll<HTMLElement>(
         ".grid-item[data-layout-key]",
       ),
-    ).flatMap((node) => {
+    );
+    const draggedNode = nodes.find(
+      (node) => node.dataset.layoutKey === key,
+    );
+    if (!draggedNode) return;
+
+    const gridStyles = getComputedStyle(grid);
+    const gridRect = grid.getBoundingClientRect();
+    const draggedRect = draggedNode.getBoundingClientRect();
+    const rowHeight = Number.parseFloat(gridStyles.gridAutoRows);
+    const rowGap = Number.parseFloat(gridStyles.rowGap);
+    const columnGap = Number.parseFloat(gridStyles.columnGap);
+    const paddingLeft = Number.parseFloat(gridStyles.paddingLeft);
+    const paddingTop = Number.parseFloat(gridStyles.paddingTop);
+    if (
+      !Number.isFinite(rowHeight) ||
+      !Number.isFinite(rowGap) ||
+      !Number.isFinite(columnGap) ||
+      !Number.isFinite(paddingLeft) ||
+      !Number.isFinite(paddingTop)
+    )
+      return;
+
+    const items = nodes.flatMap((node) => {
       const itemKey = node.dataset.layoutKey;
       if (!itemKey) return [];
 
       const rect = node.getBoundingClientRect();
       return [{
         key: itemKey,
-        rect: {
-          left: rect.left,
-          top: rect.top,
-          right: rect.right,
-          bottom: rect.bottom,
-          width: rect.width,
-          height: rect.height,
-        },
+        height: rect.height,
+        rowSpan: Math.max(
+          1,
+          Math.ceil((rect.height + rowGap) / (rowHeight + rowGap)),
+        ),
       }];
     });
+    const visibleKeys = new Set(items.map((item) => item.key));
+    const visibleOrder = [
+      ...layoutOrder.filter((itemKey) => visibleKeys.has(itemKey)),
+      ...items
+        .map((item) => item.key)
+        .filter((itemKey) => !layoutOrder.includes(itemKey)),
+    ];
 
     draggingKey = key;
     dragSnapshot = {
-      order: [...layoutOrder],
+      order: visibleOrder,
       items,
+      grid: {
+        left: gridRect.left + paddingLeft,
+        top: gridRect.top + paddingTop,
+        columnWidth: draggedRect.width,
+        columnGap,
+        rowHeight,
+        rowGap,
+        columnCount,
+      },
+      grabOffset: {
+        x: event.clientX - draggedRect.left,
+        y: event.clientY - draggedRect.top,
+      },
     };
 
+    const handle = event.currentTarget;
+    if (handle instanceof HTMLElement) {
+      try {
+        handle.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture can fail if the pointer ended synchronously.
+      }
+    }
+
+    setSharedTooltipSuppressed(true);
     window.addEventListener("pointermove", moveReorder, {
+      capture: true,
       passive: false,
     });
-    window.addEventListener("pointerup", finishReorder, { once: true });
+    window.addEventListener("pointerup", finishReorder, {
+      capture: true,
+      once: true,
+    });
     window.addEventListener("pointercancel", finishReorder, {
+      capture: true,
       once: true,
     });
   }
 
   function moveReorder(event: PointerEvent): void {
     if (!draggingKey || !dragSnapshot) return;
-    event.preventDefault();
 
-    const next = dashboardOrderForPointer(
+    event.preventDefault();
+    event.stopPropagation();
+
+    const nextVisible = dashboardOrderForPointer(
       dragSnapshot,
       draggingKey,
       { x: event.clientX, y: event.clientY },
     );
+    const visible = new Set(dragSnapshot.order);
+    let nextIndex = 0;
+    const next = layoutOrder.map((itemKey) =>
+      visible.has(itemKey)
+        ? nextVisible[nextIndex++] ?? itemKey
+        : itemKey
+    );
+
     if (
       next.length === layoutOrder.length &&
-      next.every((key, index) => key === layoutOrder[index])
+      next.every((itemKey, index) => itemKey === layoutOrder[index])
     )
       return;
 
@@ -222,12 +288,13 @@
   }
 
   function finishReorder(): void {
-    window.removeEventListener("pointermove", moveReorder);
-    window.removeEventListener("pointerup", finishReorder);
-    window.removeEventListener("pointercancel", finishReorder);
+    window.removeEventListener("pointermove", moveReorder, true);
+    window.removeEventListener("pointerup", finishReorder, true);
+    window.removeEventListener("pointercancel", finishReorder, true);
     if (draggingKey) persistLayoutOrder();
     draggingKey = null;
     dragSnapshot = null;
+    setSharedTooltipSuppressed(false);
   }
 
   function masonryItem(node: HTMLElement): { destroy(): void } {
@@ -588,6 +655,7 @@
 
 <div
   class="grid"
+  class:grid--dragging={draggingKey !== null}
   style={`--dashboard-columns: ${columnCount}`}
 >
   {#each orderedEntries as entry (itemKey(entry))}
