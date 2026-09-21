@@ -710,7 +710,7 @@ export class SeriesTimelineView {
 
     this.pressure.setRecordingCoverage(hydration.recordingSinceMsByToken);
     this.pressure.hydrate(
-      hydration.pressureCellsByToken,
+      hydration.pressureSnapshotsByToken,
       (tokenId) => this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId),
     );
     this.ageClock.refresh();
