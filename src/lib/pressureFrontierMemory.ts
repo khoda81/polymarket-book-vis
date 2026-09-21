@@ -15,6 +15,12 @@ import {
   type PressureCell,
   type PressureSide,
 } from "./pressureMemory";
+import {
+  parsePressureFrontierSnapshot,
+  restoreSnapshotSide,
+  snapshotSide,
+  type PressureFrontierSnapshot,
+} from "./pressureFrontierSnapshot";
 
 export type PressureBookSide = "bid" | "ask";
 
@@ -115,6 +121,53 @@ export class PressureFrontierMemory {
       this.invalidateCells();
     }
     this.lastUpdateMs = nowMs;
+  }
+
+  snapshot(): PressureFrontierSnapshot {
+    return {
+      version: 1,
+      bid: snapshotSide(
+        this.bid.updatedAtMs,
+        this.bid.current,
+        this.bid.history,
+      ),
+      ask: snapshotSide(
+        this.ask.updatedAtMs,
+        this.ask.current,
+        this.ask.history,
+      ),
+    };
+  }
+
+  restore(snapshot: PressureFrontierSnapshot | unknown): void {
+    const parsed = parsePressureFrontierSnapshot(snapshot);
+    const bid = restoreSnapshotSide(parsed.bid);
+    const ask = restoreSnapshotSide(parsed.ask);
+
+    this.bid.current = bid.current;
+    this.bid.updatedAtMs = bid.updatedAtMs;
+    this.bid.history = [...bid.history];
+    this.ask.current = ask.current;
+    this.ask.updatedAtMs = ask.updatedAtMs;
+    this.ask.history = [...ask.history];
+
+    this.priceKeys.clear();
+    this.priceKeys.add(0);
+    this.priceKeys.add(1);
+    this.rememberSidePrices(this.bid, "bid");
+    this.rememberSidePrices(this.ask, "ask");
+
+    const newestHistoryMs = Math.max(
+      this.bid.history[0]?.sinceMs ?? Number.NEGATIVE_INFINITY,
+      this.ask.history[0]?.sinceMs ?? Number.NEGATIVE_INFINITY,
+    );
+    this.lastUpdateMs = Math.max(
+      this.bid.updatedAtMs,
+      this.ask.updatedAtMs,
+      newestHistoryMs,
+    );
+    if (!Number.isFinite(this.lastUpdateMs)) this.lastUpdateMs = undefined;
+    this.invalidateCells();
   }
 
   /**
@@ -354,6 +407,18 @@ export class PressureFrontierMemory {
 
     state.current = next;
     state.updatedAtMs = nowMs;
+  }
+
+  private rememberSidePrices(
+    state: SideFrontierState,
+    side: PressureBookSide,
+  ): void {
+    const rememberRoot = (root: FrontierRoot) => {
+      for (const level of frontierLevels(root))
+        this.rememberPrice(side === "bid" ? level.key : 1 - level.key);
+    };
+    rememberRoot(state.current);
+    for (const layer of state.history) rememberRoot(layer.root);
   }
 
   private rememberPrice(price: number): void {
