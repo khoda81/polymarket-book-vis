@@ -1,5 +1,5 @@
 import { pressureInkThicknessCss } from "@/lib/pressureInk";
-import { ghostAlpha, type PressureBand } from "@/lib/pressureMemory";
+import { ghostAlpha, type PressureBand } from "@/lib/pressureField";
 
 export interface RgbColor {
   readonly r: number;
