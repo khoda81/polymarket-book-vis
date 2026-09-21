@@ -6,73 +6,75 @@ import {
 
 const snapshot: DashboardDragSnapshot = {
   order: ["a", "b", "c", "d"],
+  grid: {
+    left: 0,
+    top: 0,
+    columnWidth: 100,
+    columnGap: 20,
+    rowHeight: 4,
+    rowGap: 16,
+    columnCount: 2,
+  },
+  grabOffset: { x: 80, y: 20 },
   items: [
-    {
-      key: "a",
-      rect: { left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 },
-    },
-    {
-      key: "b",
-      rect: { left: 120, top: 0, right: 220, bottom: 180, width: 100, height: 180 },
-    },
-    {
-      key: "c",
-      rect: { left: 0, top: 120, right: 100, bottom: 220, width: 100, height: 100 },
-    },
-    {
-      key: "d",
-      rect: { left: 120, top: 200, right: 220, bottom: 300, width: 100, height: 100 },
-    },
+    { key: "a", height: 100, rowSpan: 6 },
+    { key: "b", height: 180, rowSpan: 10 },
+    { key: "c", height: 100, rowSpan: 6 },
+    { key: "d", height: 100, rowSpan: 6 },
   ],
 };
 
 test("same drag-start snapshot and pointer always give the same order", () => {
-  const pointer = { x: 165, y: 240 };
+  const pointer = { x: 200, y: 220 };
   const first = dashboardOrderForPointer(snapshot, "a", pointer);
-
-  // Calling it again after an arbitrary hypothetical reflow cannot affect it:
-  // there is no current-layout input to consult.
   const second = dashboardOrderForPointer(snapshot, "a", pointer);
 
   expect(second).toEqual(first);
 });
 
-test("left and right halves map to fixed before and after regions", () => {
+test("chooses the insertion whose dragged grab point is nearest the cursor", () => {
+  // Inserting a after b places it in column 0 at y=120, so its original
+  // grab point lands at (80, 140).
   expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 130, y: 90 }),
-  ).toEqual(["a", "b", "c", "d"]);
-
-  expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 210, y: 90 }),
+    dashboardOrderForPointer(snapshot, "a", { x: 82, y: 142 }),
   ).toEqual(["b", "a", "c", "d"]);
-});
 
-test("pointer below a target inserts after it", () => {
+  // Leaving it first keeps the grab point at (80, 20).
   expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 170, y: 280 }),
-  ).toEqual(["b", "c", "d", "a"]);
+    dashboardOrderForPointer(snapshot, "a", { x: 78, y: 18 }),
+  ).toEqual(["a", "b", "c", "d"]);
 });
 
-test("equidistant target ties are resolved by drag-start order", () => {
+test("different card heights are accounted for by masonry simulation", () => {
+  // With b much taller than c, putting a late in the order lands it in the
+  // shorter left lane, rather than simply after whichever old rectangle is
+  // nearest to the pointer.
+  expect(
+    dashboardOrderForPointer(snapshot, "a", { x: 80, y: 260 }),
+  ).toEqual(["b", "c", "a", "d"]);
+});
+
+test("exact ties prefer the drag-start insertion index", () => {
   const tied: DashboardDragSnapshot = {
-    order: ["drag", "left", "right"],
+    order: ["a", "b"],
+    grid: {
+      left: 0,
+      top: 0,
+      columnWidth: 100,
+      columnGap: 0,
+      rowHeight: 4,
+      rowGap: 16,
+      columnCount: 1,
+    },
+    grabOffset: { x: 50, y: 50 },
     items: [
-      {
-        key: "drag",
-        rect: { left: 0, top: 100, right: 100, bottom: 200, width: 100, height: 100 },
-      },
-      {
-        key: "left",
-        rect: { left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 },
-      },
-      {
-        key: "right",
-        rect: { left: 120, top: 0, right: 220, bottom: 100, width: 100, height: 100 },
-      },
+      { key: "a", height: 100, rowSpan: 6 },
+      { key: "b", height: 100, rowSpan: 6 },
     ],
   };
 
+  // Midway between a's grab point at y=50 and its candidate point at y=170.
   expect(
-    dashboardOrderForPointer(tied, "drag", { x: 110, y: 50 }),
-  ).toEqual(["left", "drag", "right"]);
+    dashboardOrderForPointer(tied, "a", { x: 50, y: 110 }),
+  ).toEqual(["a", "b"]);
 });
