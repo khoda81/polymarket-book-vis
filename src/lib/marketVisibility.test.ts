@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   initialMarketVisibility,
   isMarketVisible,
+  mergeUserHiddenMarketIds,
   partitionMarketVisibility,
   setUserMarketVisible,
 } from "./marketVisibility";
@@ -71,4 +72,21 @@ test("user visibility update replaces state without a second source of truth", (
     kind: "hidden",
     reason: "empty-book",
   });
+});
+
+
+test("persisting one event preserves user-hidden markets from other events", () => {
+  const persisted = new Set(["country-fr", "country-de", "other-event-market"]);
+  const currentEvent = new Map<
+    string,
+    import("./marketVisibility").MarketVisibility
+  >([
+    ["country-fr", { kind: "hidden", reason: "user" }],
+    ["country-de", { kind: "visible" }],
+    ["country-jp", { kind: "hidden", reason: "user" }],
+  ]);
+
+  expect([...mergeUserHiddenMarketIds(persisted, currentEvent)].sort()).toEqual(
+    ["country-fr", "country-jp", "other-event-market"].sort(),
+  );
 });
