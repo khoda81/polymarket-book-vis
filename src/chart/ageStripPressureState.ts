@@ -137,10 +137,6 @@ export class AgeStripPressureState {
     this.states.get(tokenId)?.memory.clear();
   }
 
-  cells(tokenId: string): readonly PressureCell[] {
-    return this.states.get(tokenId)?.memory.cells() ?? [];
-  }
-
   memory(tokenId: string): PressureFrontierMemory | undefined {
     return this.states.get(tokenId)?.memory;
   }
