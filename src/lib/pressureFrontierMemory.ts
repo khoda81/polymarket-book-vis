@@ -132,7 +132,7 @@ export class PressureFrontierMemory {
       this.bid.current = restoreCurrentSide(parsed.bid);
       this.ask.current = restoreCurrentSide(parsed.ask);
       this.field.restore(parsed.field);
-      this.validateFieldAgainstFrontiers();
+      this.validateFieldAgainstFrontiers(parsed.field.runs);
       this.lastUpdateMs = newestGhostTime(parsed.field.runs);
       return;
     }
@@ -296,21 +296,16 @@ export class PressureFrontierMemory {
     if (!Number.isFinite(this.lastUpdateMs)) this.lastUpdateMs = undefined;
   }
 
-  private validateFieldAgainstFrontiers(): void {
-    for (const run of this.field.renderRuns()) {
+  private validateFieldAgainstFrontiers(
+    runs: readonly PressureFieldRunSnapshot[],
+  ): void {
+    for (const run of runs) {
       const price = (run.lo + run.hi) / 2;
-      const snapshot = this.field
-        .snapshot()
-        .runs.find(
-          (candidate) => candidate.lo === run.lo && candidate.hi === run.hi,
-        );
-      if (!snapshot) continue;
-
       const bidVolume = frontierVolumeAt(this.bid.current, price);
       const askVolume = frontierVolumeAt(this.ask.current, 1 - price);
       if (
-        Math.abs(snapshot.bidVolume - bidVolume) > 1e-8 ||
-        Math.abs(snapshot.askVolume - askVolume) > 1e-8
+        Math.abs(run.bidVolume - bidVolume) > 1e-8 ||
+        Math.abs(run.askVolume - askVolume) > 1e-8
       )
         throw new RangeError(
           "materialized pressure field does not match current frontiers",
