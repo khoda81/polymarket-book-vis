@@ -156,3 +156,76 @@ test("same-timestamp batch uses final absolute level sizes", () => {
   expect(memory.historyDepth("bid")).toBe(0);
   expect(memory.shellsAtPrice(0.4)[0]?.hiVolume).toBe(120);
 });
+
+
+test("render runs are stable between draws and invalidate only on mutation", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels(
+    "bid",
+    [
+      { price: 0.4, shares: 10 },
+      { price: 0.6, shares: 20 },
+    ],
+    1_000,
+  );
+
+  const first = memory.renderRuns();
+  const second = memory.renderRuns();
+  expect(second).toBe(first);
+
+  memory.updateLevels("bid", [{ price: 0.6, shares: 15 }], 2_000);
+  const third = memory.renderRuns();
+
+  expect(third).not.toBe(first);
+  expect(third).toEqual([
+    {
+      lo: 0,
+      hi: 0.4,
+      bands: [
+        {
+          loVolume: 0,
+          hiVolume: 25,
+          side: 1,
+          state: { kind: "live" },
+        },
+        {
+          loVolume: 25,
+          hiVolume: 30,
+          side: 1,
+          state: { kind: "ghost", sinceMs: 2_000 },
+        },
+      ],
+    },
+    {
+      lo: 0.4,
+      hi: 0.6,
+      bands: [
+        {
+          loVolume: 0,
+          hiVolume: 15,
+          side: 1,
+          state: { kind: "live" },
+        },
+        {
+          loVolume: 15,
+          hiVolume: 20,
+          side: 1,
+          state: { kind: "ghost", sinceMs: 2_000 },
+        },
+      ],
+    },
+  ]);
+});
+
+test("render runs merge adjacent price intervals with identical shell stacks", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels("bid", [{ price: 0.8, shares: 20 }], 1_000);
+  memory.updateLevels("ask", [{ price: 0.2, shares: 10 }], 2_000);
+  memory.updateLevels("ask", [{ price: 0.2, shares: 0 }], 3_000);
+
+  const runs = memory.renderRuns();
+  expect(runs.every((run) => run.hi > run.lo)).toBe(true);
+  expect(memory.renderRuns()).toBe(runs);
+});
