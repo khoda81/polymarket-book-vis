@@ -33,11 +33,11 @@ test("same drag-start snapshot and pointer always give the same order", () => {
 });
 
 test("chooses the insertion whose dragged grab point is nearest the cursor", () => {
-  // Inserting a after b places it in column 0 at y=120, so its original
-  // grab point lands at (80, 140).
+  // Inserting a after b and c puts it in the shorter second lane at y=120,
+  // so its original grab point lands at (200, 140).
   expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 82, y: 142 }),
-  ).toEqual(["b", "a", "c", "d"]);
+    dashboardOrderForPointer(snapshot, "a", { x: 202, y: 142 }),
+  ).toEqual(["b", "c", "a", "d"]);
 
   // Leaving it first keeps the grab point at (80, 20).
   expect(
@@ -50,8 +50,8 @@ test("different card heights are accounted for by masonry simulation", () => {
   // shorter left lane, rather than simply after whichever old rectangle is
   // nearest to the pointer.
   expect(
-    dashboardOrderForPointer(snapshot, "a", { x: 80, y: 260 }),
-  ).toEqual(["b", "c", "a", "d"]);
+    dashboardOrderForPointer(snapshot, "a", { x: 80, y: 220 }),
+  ).toEqual(["b", "c", "d", "a"]);
 });
 
 test("exact ties prefer the drag-start insertion index", () => {
