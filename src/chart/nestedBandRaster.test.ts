@@ -1,8 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  rasterizeNestedBands,
-  rasterizeNestedBandsInto,
-} from "./nestedBandRaster";
+import { rasterizeNestedBands, rasterizeNestedBandsInto } from "./nestedBandRaster";
 
 const cyan = { r: 0, g: 1, b: 1 };
 
@@ -44,7 +41,6 @@ test("a full device pixel remains fully opaque", () => {
 
   expect(pixels[3]).toBe(255);
 });
-
 
 test("reused raster buffer clears pixels from the previous cell", () => {
   const buffer = new Uint8ClampedArray(8);
