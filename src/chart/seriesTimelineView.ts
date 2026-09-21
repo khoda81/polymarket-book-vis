@@ -450,7 +450,6 @@ export class SeriesTimelineView {
       const memory = this.pressure.memory(key);
       if (!memory) continue;
 
-      memory.prune(nowMs, tuning.ghostHalfLifeMs, 1 / 255);
       drawPressureMemoryStrip(
         frame,
         row.centerMs,
