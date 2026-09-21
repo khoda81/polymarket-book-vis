@@ -51,7 +51,7 @@ export async function fetchRecorderHydration(
   if (requested.length === 0) return emptyHydration();
 
   const recordingSinceMsByToken: Record<string, number> = {};
-  const pressureSnapshotsByToken: Record<string, readonly PressureCell[]> = {};
+  const pressureSnapshotsByToken: Record<string, PressureFrontierSnapshot> = {};
 
   let remaining = requested;
   let lastError: unknown = null;
@@ -168,7 +168,7 @@ async function fetchRecorderState(
 function mergeRecorderResponse(
   body: RecorderStateResponse,
   recordingSinceMsByToken: Record<string, number>,
-  pressureSnapshotsByToken: Record<string, readonly PressureCell[]>,
+  pressureSnapshotsByToken: Record<string, PressureFrontierSnapshot>,
 ): void {
   for (const [tokenId, since] of Object.entries(
     body.recordingSinceMsByToken ?? {},
