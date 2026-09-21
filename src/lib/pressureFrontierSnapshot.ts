@@ -132,10 +132,7 @@ function parseSide(
         rawLayer.sinceMs,
         `${label} history[${index}].sinceMs`,
       ),
-      levels: parseLevels(
-        rawLayer.levels,
-        `${label} history[${index}].levels`,
-      ),
+      levels: parseLevels(rawLayer.levels, `${label} history[${index}].levels`),
     };
   });
 
@@ -148,7 +145,10 @@ function parseSide(
   return { updatedAtMs, current, history };
 }
 
-function parseLevels(value: readonly unknown[], label: string): FrontierLevel[] {
+function parseLevels(
+  value: readonly unknown[],
+  label: string,
+): FrontierLevel[] {
   const levels = value.map((raw, index) => {
     if (!isRecord(raw))
       throw new TypeError(`${label}[${index}] must be an object`);
