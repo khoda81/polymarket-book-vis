@@ -1,8 +1,5 @@
 import { pressureInkThicknessCss } from "@/lib/pressureInk";
-import {
-  ghostAlpha,
-  type PressureBand,
-} from "@/lib/pressureMemory";
+import { ghostAlpha, type PressureBand } from "@/lib/pressureMemory";
 
 export interface RgbColor {
   readonly r: number;
@@ -134,8 +131,7 @@ function buildRasterShells(
       innerRadius,
       outerRadius,
       alpha,
-      color:
-        band.side < 0 ? options.negativeColor : options.positiveColor,
+      color: band.side < 0 ? options.negativeColor : options.positiveColor,
     });
   }
 
@@ -160,10 +156,7 @@ function intervalOverlap(
   intervalLo: number,
   intervalHi: number,
 ): number {
-  return Math.max(
-    0,
-    Math.min(hi, intervalHi) - Math.max(lo, intervalLo),
-  );
+  return Math.max(0, Math.min(hi, intervalHi) - Math.max(lo, intervalLo));
 }
 
 function clamp01(value: number): number {
