@@ -309,19 +309,13 @@ export class PressureFrontierMemory {
 
   prune(nowMs: number, halfLifeMs: number, minAlpha = 0.01): void {
     const cutoff = ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha);
-    const bidLength = this.bid.history.length;
-    const askLength = this.ask.history.length;
     this.bid.history = this.bid.history.filter(
       (layer) => layer.sinceMs > cutoff,
     );
     this.ask.history = this.ask.history.filter(
       (layer) => layer.sinceMs > cutoff,
     );
-    if (
-      bidLength !== this.bid.history.length ||
-      askLength !== this.ask.history.length
-    )
-    }
+  }
 
   clear(): void {
     this.bid.current = null;
