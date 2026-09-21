@@ -6,6 +6,10 @@
   import SeriesCard from "./SeriesCard.svelte";
   import { findSeriesBySlug } from "../lib/seriesTimeline";
   import {
+    dashboardOrderForPointer,
+    type DashboardDragSnapshot,
+  } from "./dashboardReorder";
+  import {
     eventLabel,
     eventSlug,
     isSeriesEntry,
@@ -44,6 +48,7 @@
   let layoutOrder = loadLayoutOrder(pinnedSlugs, pinnedSeriesIds);
   let columnCount = loadColumnCount();
   let draggingKey: string | null = null;
+  let dragSnapshot: DashboardDragSnapshot | null = null;
   let status = "";
 
   $: orderedEntries = orderDashboardItems(entries, layoutOrder);
@@ -158,7 +163,37 @@
     event.preventDefault();
     finishReorder();
 
+    const grid = document.querySelector<HTMLElement>(".grid");
+    if (!grid) return;
+
+    const items = Array.from(
+      grid.querySelectorAll<HTMLElement>(
+        ".grid-item[data-layout-key]",
+      ),
+    ).flatMap((node) => {
+      const itemKey = node.dataset.layoutKey;
+      if (!itemKey) return [];
+
+      const rect = node.getBoundingClientRect();
+      return [{
+        key: itemKey,
+        rect: {
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+        },
+      }];
+    });
+
     draggingKey = key;
+    dragSnapshot = {
+      order: [...layoutOrder],
+      items,
+    };
+
     window.addEventListener("pointermove", moveReorder, {
       passive: false,
     });
@@ -169,33 +204,14 @@
   }
 
   function moveReorder(event: PointerEvent): void {
-    if (!draggingKey) return;
+    if (!draggingKey || !dragSnapshot) return;
     event.preventDefault();
 
-    const target = reorderTargetAt(event.clientX, event.clientY);
-    const targetKey = target?.dataset.layoutKey;
-    if (!targetKey || targetKey === draggingKey) return;
-
-    const rect = target.getBoundingClientRect();
-    const nearMiddle =
-      Math.abs(event.clientY - (rect.top + rect.height / 2)) <
-      rect.height * 0.2;
-    const insertAfter =
-      event.clientY > rect.top + rect.height / 2 ||
-      (nearMiddle && event.clientX > rect.left + rect.width / 2);
-
-    const without = layoutOrder.filter(
-      (candidate) => candidate !== draggingKey,
-    );
-    const targetIndex = without.indexOf(targetKey);
-    if (targetIndex < 0) return;
-
-    const insertAt = targetIndex + (insertAfter ? 1 : 0);
-    const next = [
-      ...without.slice(0, insertAt),
+    const next = dashboardOrderForPointer(
+      dragSnapshot,
       draggingKey,
-      ...without.slice(insertAt),
-    ];
+      { x: event.clientX, y: event.clientY },
+    );
     if (
       next.length === layoutOrder.length &&
       next.every((key, index) => key === layoutOrder[index])
@@ -205,65 +221,13 @@
     layoutOrder = next;
   }
 
-  function reorderTargetAt(
-    clientX: number,
-    clientY: number,
-  ): HTMLElement | null {
-    const grid = document.querySelector<HTMLElement>(".grid");
-    if (!grid) return null;
-
-    const gridRect = grid.getBoundingClientRect();
-    if (
-      clientX < gridRect.left ||
-      clientX > gridRect.right ||
-      clientY < gridRect.top ||
-      clientY > gridRect.bottom
-    )
-      return null;
-
-    const direct = document
-      .elementFromPoint(clientX, clientY)
-      ?.closest<HTMLElement>(".grid-item[data-layout-key]");
-    if (
-      direct &&
-      direct.dataset.layoutKey !== draggingKey
-    )
-      return direct;
-
-    let nearest: HTMLElement | null = null;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    for (const candidate of grid.querySelectorAll<HTMLElement>(
-      ".grid-item[data-layout-key]",
-    )) {
-      if (candidate.dataset.layoutKey === draggingKey) continue;
-      const rect = candidate.getBoundingClientRect();
-      const dx =
-        clientX < rect.left
-          ? rect.left - clientX
-          : clientX > rect.right
-            ? clientX - rect.right
-            : 0;
-      const dy =
-        clientY < rect.top
-          ? rect.top - clientY
-          : clientY > rect.bottom
-            ? clientY - rect.bottom
-            : 0;
-      const distance = dx * dx + dy * dy;
-      if (distance < nearestDistance) {
-        nearest = candidate;
-        nearestDistance = distance;
-      }
-    }
-    return nearest;
-  }
-
   function finishReorder(): void {
     window.removeEventListener("pointermove", moveReorder);
     window.removeEventListener("pointerup", finishReorder);
     window.removeEventListener("pointercancel", finishReorder);
     if (draggingKey) persistLayoutOrder();
     draggingKey = null;
+    dragSnapshot = null;
   }
 
   function masonryItem(node: HTMLElement): { destroy(): void } {
