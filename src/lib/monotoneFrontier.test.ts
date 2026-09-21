@@ -60,5 +60,7 @@ test("zero weight removes a level without changing other levels", () => {
 test("invalid atoms cannot enter the frontier", () => {
   expect(() => setFrontierLevel(null, -0.1, 1)).toThrow();
   expect(() => setFrontierLevel(null, 0.5, -1)).toThrow();
-  expect(() => setFrontierLevel(null, 0.5, Number.POSITIVE_INFINITY)).toThrow();
+  expect(() =>
+    setFrontierLevel(null, 0.5, Number.POSITIVE_INFINITY),
+  ).toThrow();
 });
