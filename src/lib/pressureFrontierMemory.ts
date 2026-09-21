@@ -1,5 +1,12 @@
 import type { TokenBook } from "./orderBook";
 import {
+  MaterializedPressureField,
+  type PressureBookSide,
+  type PressureFieldRunSnapshot,
+  type PressureRenderRun,
+  type PressureSideDelta,
+} from "./materializedPressureField";
+import {
   buildFrontier,
   frontierLevel,
   frontierLevels,
@@ -8,68 +15,48 @@ import {
   type FrontierLevel,
   type FrontierRoot,
 } from "./monotoneFrontier";
-import {
-  ghostVisibleSinceMs,
-  type PressureBand,
-  type PressureSide,
-} from "./pressureField";
+import { ghostVisibleSinceMs, type PressureBand } from "./pressureField";
 import { parsePressureCells, type PressureCell } from "./legacyPressureCells";
 import {
   parsePressureFrontierSnapshot,
-  restoreSnapshotSide,
-  snapshotSide,
+  restoreCurrentSide,
+  restoreSnapshotSideV1,
+  snapshotCurrentSide,
   type PressureFrontierSnapshot,
+  type PressureFrontierSnapshotV1,
 } from "./pressureFrontierSnapshot";
 
-export type PressureBookSide = "bid" | "ask";
+export type { PressureBookSide, PressureRenderRun };
 
 export interface PressureLevelChange {
   readonly price: number;
   readonly shares: number;
 }
 
-export interface PressureRenderRun {
-  readonly lo: number;
-  readonly hi: number;
-  readonly bands: readonly PressureBand[];
-}
-
-interface HistoricalFrontier {
-  readonly sinceMs: number;
-  readonly root: FrontierRoot;
-}
-
 interface SideFrontierState {
   current: FrontierRoot;
-  updatedAtMs: number;
-  history: HistoricalFrontier[];
 }
 
 /**
- * Pressure history represented as two side-local monotone frontier processes.
+ * Current liquidity is stored as two immutable monotone cumulative frontiers.
+ * Historical display state is maintained separately as an incrementally
+ * materialized price × cumulative-volume field.
  *
- * For bids, u = price. For asks, u = 1 - price. On either side, a non-negative
- * price-level atom contributes to Q(u) for every u <= atom.key, therefore the
- * live pressure frontier Q is non-increasing by construction.
- *
- * A decrease stores the previous persistent frontier as one historical layer.
- * Rendering/querying walks historical frontiers newest-to-oldest and exposes
- * only radial extent not already covered by newer state. This is exactly the
- * "latest occupancy wins" rule, without overlapping semantic bands in storage.
+ * A level mutation updates the atom tree in O(log n), derives the constant
+ * cumulative delta induced over one canonical price prefix/suffix, and applies
+ * that delta directly to the materialized runs. Rendering therefore never
+ * reconstructs historical state from frontier snapshots.
  */
 export class PressureFrontierMemory {
-  private readonly bid: SideFrontierState = emptySideState();
-  private readonly ask: SideFrontierState = emptySideState();
+  private readonly bid: SideFrontierState = { current: null };
+  private readonly ask: SideFrontierState = { current: null };
+  private readonly field = new MaterializedPressureField();
   private lastUpdateMs: number | undefined;
-  private readonly priceKeys = new Set<number>([0, 1]);
-  private cachedPriceBoundaries: readonly number[] | null = null;
-  private cachedRenderRuns: readonly PressureRenderRun[] | null = null;
 
   observeBook(book: TokenBook<unknown>, nowMs: number): void {
     nowMs = this.normalizeTime(nowMs);
 
     this.replaceSide(
-      this.bid,
       "bid",
       [...book.usdToYes.asOrders()]
         .filter(validBookOrder)
@@ -77,7 +64,6 @@ export class PressureFrontierMemory {
       nowMs,
     );
     this.replaceSide(
-      this.ask,
       "ask",
       [...book.yesToUsd.asSellOrders()]
         .filter(validBookOrder)
@@ -103,234 +89,114 @@ export class PressureFrontierMemory {
       if (!Number.isFinite(change.shares) || change.shares < 0) continue;
       finalByKey.set(key, change.shares);
     }
+
     if (finalByKey.size === 0) {
       this.lastUpdateMs = nowMs;
       return;
     }
 
-    const previous = state.current;
-    let next = previous;
-    let decreased = false;
+    let next = state.current;
+    const deltas: PressureSideDelta[] = [];
     for (const [key, shares] of finalByKey) {
-      if (shares < frontierLevel(previous, key)) decreased = true;
+      const previousShares = frontierLevel(next, key);
+      if (shares === previousShares) continue;
+
       next = setFrontierLevel(next, key, shares);
+      deltas.push({
+        price: side === "bid" ? key : 1 - key,
+        delta: shares - previousShares,
+      });
     }
 
-    if (next !== previous) {
-      if (decreased && previous)
-        state.history.unshift({ sinceMs: nowMs, root: previous });
+    if (deltas.length > 0) {
+      this.field.applySideDeltas(side, deltas, nowMs);
       state.current = next;
-      state.updatedAtMs = nowMs;
-      for (const [key, shares] of finalByKey)
-        if (shares > 0) this.rememberPrice(side === "bid" ? key : 1 - key);
-      this.invalidateRenderPlan();
     }
     this.lastUpdateMs = nowMs;
   }
 
   snapshot(): PressureFrontierSnapshot {
     return {
-      version: 1,
-      bid: snapshotSide(
-        this.bid.updatedAtMs,
-        this.bid.current,
-        this.bid.history,
-      ),
-      ask: snapshotSide(
-        this.ask.updatedAtMs,
-        this.ask.current,
-        this.ask.history,
-      ),
+      version: 2,
+      bid: snapshotCurrentSide(this.bid.current),
+      ask: snapshotCurrentSide(this.ask.current),
+      field: this.field.snapshot(),
     };
   }
 
   restore(snapshot: PressureFrontierSnapshot | unknown): void {
     const parsed = parsePressureFrontierSnapshot(snapshot);
-    const bid = restoreSnapshotSide(parsed.bid);
-    const ask = restoreSnapshotSide(parsed.ask);
+    this.clear();
 
-    this.bid.current = bid.current;
-    this.bid.updatedAtMs = bid.updatedAtMs;
-    this.bid.history = [...bid.history];
-    this.ask.current = ask.current;
-    this.ask.updatedAtMs = ask.updatedAtMs;
-    this.ask.history = [...ask.history];
+    if (parsed.version === 2) {
+      this.bid.current = restoreCurrentSide(parsed.bid);
+      this.ask.current = restoreCurrentSide(parsed.ask);
+      this.field.restore(parsed.field);
+      this.validateFieldAgainstFrontiers();
+      this.lastUpdateMs = newestGhostTime(parsed.field.runs);
+      return;
+    }
 
-    this.priceKeys.clear();
-    this.priceKeys.add(0);
-    this.priceKeys.add(1);
-    this.cachedPriceBoundaries = null;
-    this.rememberSidePrices(this.bid, "bid");
-    this.rememberSidePrices(this.ask, "ask");
-
-    const newestHistoryMs = Math.max(
-      this.bid.history[0]?.sinceMs ?? Number.NEGATIVE_INFINITY,
-      this.ask.history[0]?.sinceMs ?? Number.NEGATIVE_INFINITY,
-    );
-    this.lastUpdateMs = Math.max(
-      this.bid.updatedAtMs,
-      this.ask.updatedAtMs,
-      newestHistoryMs,
-    );
-    if (!Number.isFinite(this.lastUpdateMs)) this.lastUpdateMs = undefined;
-    this.cachedRenderRuns = null;
+    this.restoreV1(parsed);
   }
 
-  /**
-   * Restore the legacy persisted cell format into monotone side frontiers.
-   *
-   * Hidden portions of a historical frontier were intentionally discarded by
-   * the old representation. The minimal monotone majorant reconstructs only
-   * the hidden extent required by the frontier invariant; newer layers already
-   * cover those points, so this does not change the visible semantic field.
-   */
   restoreLegacyCells(value: unknown): void {
     const cells = parsePressureCells(value);
     this.clear();
 
+    this.bid.current = frontierFromLegacyCells(cells, 1, "live");
+    this.ask.current = frontierFromLegacyCells(cells, -1, "live");
+
+    const boundaries = new Set<number>([0, 1]);
     for (const cell of cells) {
-      this.rememberPrice(cell.lo);
-      this.rememberPrice(cell.hi);
+      boundaries.add(cell.lo);
+      boundaries.add(cell.hi);
+    }
+    const sorted = [...boundaries].sort((a, b) => a - b);
+    const runs: PressureFieldRunSnapshot[] = [];
+
+    for (let index = 0; index + 1 < sorted.length; index++) {
+      const lo = sorted[index]!;
+      const hi = sorted[index + 1]!;
+      if (!(hi > lo)) continue;
+      const midpoint = (lo + hi) / 2;
+      const cell = cells.find(
+        (candidate) => candidate.lo <= midpoint && midpoint < candidate.hi,
+      );
+      const bands = cell?.bands.map(cloneBand) ?? [];
+      const bidVolume = liveExtent(bands, 1);
+      const askVolume = liveExtent(bands, -1);
+      const innerLive = bands.find((band) => band.state.kind === "live");
+
+      runs.push({
+        lo,
+        hi,
+        bidVolume,
+        askVolume,
+        bidRevision: bidVolume > 0 ? (innerLive?.side === 1 ? 2 : 1) : 0,
+        askRevision: askVolume > 0 ? (innerLive?.side === -1 ? 2 : 1) : 0,
+        bands,
+      });
     }
 
-    const bidCurrent = frontierFromLegacyCells(cells, 1, "live");
-    const askCurrent = frontierFromLegacyCells(cells, -1, "live");
-    this.bid.current = bidCurrent;
-    this.ask.current = askCurrent;
-
-    const ghostTimes = new Set<number>();
-    for (const cell of cells)
-      for (const band of cell.bands)
-        if (band.state.kind === "ghost") ghostTimes.add(band.state.sinceMs);
-
-    const newestFirst = [...ghostTimes].sort((a, b) => b - a);
-    for (const sinceMs of newestFirst) {
-      const bid = frontierFromLegacyCells(cells, 1, sinceMs);
-      if (bid) this.bid.history.push({ sinceMs, root: bid });
-      const ask = frontierFromLegacyCells(cells, -1, sinceMs);
-      if (ask) this.ask.history.push({ sinceMs, root: ask });
-    }
-
-    this.lastUpdateMs = newestFirst[0];
-    this.cachedRenderRuns = null;
+    this.field.restoreRuns(runs.length > 0 ? runs : [emptyFieldRun()], 2);
+    this.lastUpdateMs = newestGhostTime(runs);
   }
 
   priceBoundaries(): readonly number[] {
-    if (this.cachedPriceBoundaries) return this.cachedPriceBoundaries;
-
-    this.cachedPriceBoundaries = [...this.priceKeys].sort((a, b) => a - b);
-    return this.cachedPriceBoundaries;
+    return this.field.priceBoundaries();
   }
 
   renderRuns(): readonly PressureRenderRun[] {
-    if (this.cachedRenderRuns) return this.cachedRenderRuns;
-
-    const boundaries = this.priceBoundaries();
-    const runs: PressureRenderRun[] = [];
-    for (let index = 0; index + 1 < boundaries.length; index++) {
-      const lo = boundaries[index]!;
-      const hi = boundaries[index + 1]!;
-      if (!(hi > lo)) continue;
-
-      const bands = this.shellsAtPrice((lo + hi) / 2);
-      if (bands.length === 0) continue;
-
-      const previous = runs[runs.length - 1];
-      if (previous && previous.hi === lo && bandsEqual(previous.bands, bands)) {
-        runs[runs.length - 1] = {
-          lo: previous.lo,
-          hi,
-          bands: previous.bands,
-        };
-      } else {
-        runs.push({ lo, hi, bands });
-      }
-    }
-
-    this.cachedRenderRuns = runs;
-    return runs;
+    return this.field.renderRuns();
   }
 
-  /**
-   * Exact semantic shells at one canonical YES price.
-   *
-   * The result is a contiguous radial prefix. Every point belongs to exactly
-   * one newest state, so callers never need to composite overlapping history.
-   */
-  shellsAtPrice(
-    price: number,
-    visibleGhostSinceMs = Number.NEGATIVE_INFINITY,
-  ): readonly PressureBand[] {
-    if (!Number.isFinite(price)) return [];
-    const p = clamp01(price);
-
-    const bidLive = frontierVolumeAt(this.bid.current, p);
-    const askLive = frontierVolumeAt(this.ask.current, 1 - p);
-    const shells: PressureBand[] = [];
-
-    let covered = 0;
-    if (bidLive > 0 || askLive > 0) {
-      const useBid =
-        bidLive > 0 &&
-        (!(askLive > 0) || this.bid.updatedAtMs >= this.ask.updatedAtMs);
-      const liveVolume = useBid ? bidLive : askLive;
-      shells.push({
-        loVolume: 0,
-        hiVolume: liveVolume,
-        side: useBid ? 1 : -1,
-        state: { kind: "live" },
-      });
-      covered = liveVolume;
-    }
-
-    let bidIndex = 0;
-    let askIndex = 0;
-    while (
-      bidIndex < this.bid.history.length ||
-      askIndex < this.ask.history.length
-    ) {
-      const bid = this.bid.history[bidIndex];
-      const ask = this.ask.history[askIndex];
-      if (
-        (bid?.sinceMs ?? Number.NEGATIVE_INFINITY) <= visibleGhostSinceMs &&
-        (ask?.sinceMs ?? Number.NEGATIVE_INFINITY) <= visibleGhostSinceMs
-      )
-        break;
-
-      const takeBid =
-        !!bid &&
-        (!ask ||
-          bid.sinceMs > ask.sinceMs ||
-          (bid.sinceMs === ask.sinceMs && bidIndex <= askIndex));
-      const layer = takeBid ? bid! : ask!;
-      if (layer.sinceMs <= visibleGhostSinceMs) {
-        if (takeBid) bidIndex++;
-        else askIndex++;
-        continue;
-      }
-      const side: PressureSide = takeBid ? 1 : -1;
-      const u = takeBid ? p : 1 - p;
-      const volume = frontierVolumeAt(layer.root, u);
-
-      if (volume > covered) {
-        appendBand(shells, {
-          loVolume: covered,
-          hiVolume: volume,
-          side,
-          state: { kind: "ghost", sinceMs: layer.sinceMs },
-        });
-        covered = volume;
-      }
-
-      if (takeBid) bidIndex++;
-      else askIndex++;
-    }
-
-    return shells;
+  shellsAtPrice(price: number): readonly PressureBand[] {
+    return this.field.shellsAtPrice(price);
   }
 
   hasGhosts(): boolean {
-    return this.bid.history.length > 0 || this.ask.history.length > 0;
+    return this.field.hasGhosts();
   }
 
   hasVisibleGhosts(
@@ -338,108 +204,122 @@ export class PressureFrontierMemory {
     halfLifeMs: number,
     minAlpha = 1 / 255,
   ): boolean {
-    const cutoff = ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha);
-    return (
-      (this.bid.history[0]?.sinceMs ?? Number.NEGATIVE_INFINITY) > cutoff ||
-      (this.ask.history[0]?.sinceMs ?? Number.NEGATIVE_INFINITY) > cutoff
+    return this.field.hasVisibleGhosts(
+      ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha),
     );
   }
 
   prune(nowMs: number, halfLifeMs: number, minAlpha = 0.01): void {
-    const cutoff = ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha);
-    const bidHistory = this.bid.history.filter(
-      (layer) => layer.sinceMs > cutoff,
+    this.field.pruneGhosts(
+      ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha),
     );
-    const askHistory = this.ask.history.filter(
-      (layer) => layer.sinceMs > cutoff,
-    );
-    if (
-      bidHistory.length === this.bid.history.length &&
-      askHistory.length === this.ask.history.length
-    )
-      return;
-
-    this.bid.history = bidHistory;
-    this.ask.history = askHistory;
-    this.rebuildPriceKeys();
-    this.invalidateRenderPlan();
   }
 
   clear(): void {
     this.bid.current = null;
-    this.bid.updatedAtMs = Number.NEGATIVE_INFINITY;
-    this.bid.history = [];
     this.ask.current = null;
-    this.ask.updatedAtMs = Number.NEGATIVE_INFINITY;
-    this.ask.history = [];
+    this.field.clear();
     this.lastUpdateMs = undefined;
-    this.priceKeys.clear();
-    this.priceKeys.add(0);
-    this.priceKeys.add(1);
-    this.cachedPriceBoundaries = null;
-    this.cachedRenderRuns = null;
   }
 
-  /** Debug/test view of the current side-local atoms. */
   currentLevels(side: PressureBookSide): readonly FrontierLevel[] {
     return frontierLevels(this.sideState(side).current);
   }
 
   historyDepth(side: PressureBookSide): number {
-    return this.sideState(side).history.length;
+    return this.field.ghostBandCount(side);
   }
 
   private replaceSide(
-    state: SideFrontierState,
     side: PressureBookSide,
     levels: readonly FrontierLevel[],
     nowMs: number,
   ): void {
+    const state = this.sideState(side);
     const normalized = normalizeLevels(levels);
-    for (const level of normalized)
-      this.rememberPrice(side === "bid" ? level.key : 1 - level.key);
     const previousLevels = frontierLevels(state.current);
     if (levelsEqual(previousLevels, normalized)) return;
 
+    const previousByKey = new Map(
+      previousLevels.map((level) => [level.key, level.weight] as const),
+    );
+    const nextByKey = new Map(
+      normalized.map((level) => [level.key, level.weight] as const),
+    );
+    const keys = new Set([...previousByKey.keys(), ...nextByKey.keys()]);
+    const deltas: PressureSideDelta[] = [];
+
+    for (const key of keys) {
+      const delta = (nextByKey.get(key) ?? 0) - (previousByKey.get(key) ?? 0);
+      if (delta === 0) continue;
+      deltas.push({
+        price: side === "bid" ? key : 1 - key,
+        delta,
+      });
+    }
+
     const next = buildFrontier(normalized);
-    if (state.current && frontierLostAtoms(previousLevels, normalized))
-      state.history.unshift({ sinceMs: nowMs, root: state.current });
-
+    this.field.applySideDeltas(side, deltas, nowMs);
     state.current = next;
-    state.updatedAtMs = nowMs;
-    this.invalidateRenderPlan();
   }
 
-  private rememberSidePrices(
-    state: SideFrontierState,
-    side: PressureBookSide,
-  ): void {
-    const rememberRoot = (root: FrontierRoot) => {
-      for (const level of frontierLevels(root))
-        this.rememberPrice(side === "bid" ? level.key : 1 - level.key);
-    };
-    rememberRoot(state.current);
-    for (const layer of state.history) rememberRoot(layer.root);
+  private restoreV1(snapshot: PressureFrontierSnapshotV1): void {
+    const bid = restoreSnapshotSideV1(snapshot.bid);
+    const ask = restoreSnapshotSideV1(snapshot.ask);
+    this.bid.current = bid.current;
+    this.ask.current = ask.current;
+
+    const boundaries = new Set<number>([0, 1]);
+    collectV1Boundaries(boundaries, bid, "bid");
+    collectV1Boundaries(boundaries, ask, "ask");
+    const sorted = [...boundaries].sort((a, b) => a - b);
+    const revisions = legacySideRevisions(bid.updatedAtMs, ask.updatedAtMs);
+    const runs: PressureFieldRunSnapshot[] = [];
+
+    for (let index = 0; index + 1 < sorted.length; index++) {
+      const lo = sorted[index]!;
+      const hi = sorted[index + 1]!;
+      if (!(hi > lo)) continue;
+      const price = (lo + hi) / 2;
+      runs.push({
+        lo,
+        hi,
+        bidVolume: frontierVolumeAt(bid.current, price),
+        askVolume: frontierVolumeAt(ask.current, 1 - price),
+        bidRevision: revisions.bid,
+        askRevision: revisions.ask,
+        bands: legacyV1ShellsAtPrice(bid, ask, price),
+      });
+    }
+
+    this.field.restoreRuns(runs.length > 0 ? runs : [emptyFieldRun()], 2);
+    this.lastUpdateMs = Math.max(
+      finiteOrNegativeInfinity(bid.updatedAtMs),
+      finiteOrNegativeInfinity(ask.updatedAtMs),
+      newestLegacyHistoryTime(bid.history),
+      newestLegacyHistoryTime(ask.history),
+    );
+    if (!Number.isFinite(this.lastUpdateMs)) this.lastUpdateMs = undefined;
   }
 
-  private rememberPrice(price: number): void {
-    if (!Number.isFinite(price) || price < 0 || price > 1) return;
-    if (this.priceKeys.has(price)) return;
-    this.priceKeys.add(price);
-    this.cachedPriceBoundaries = null;
-  }
+  private validateFieldAgainstFrontiers(): void {
+    for (const run of this.field.renderRuns()) {
+      const price = (run.lo + run.hi) / 2;
+      const snapshot = this.field.snapshot().runs.find(
+        (candidate) => candidate.lo === run.lo && candidate.hi === run.hi,
+      );
+      if (!snapshot) continue;
 
-  private rebuildPriceKeys(): void {
-    this.priceKeys.clear();
-    this.priceKeys.add(0);
-    this.priceKeys.add(1);
-    this.cachedPriceBoundaries = null;
-    this.rememberSidePrices(this.bid, "bid");
-    this.rememberSidePrices(this.ask, "ask");
-  }
-
-  private invalidateRenderPlan(): void {
-    this.cachedRenderRuns = null;
+      const bidVolume = frontierVolumeAt(this.bid.current, price);
+      const askVolume = frontierVolumeAt(this.ask.current, 1 - price);
+      if (
+        Math.abs(snapshot.bidVolume - bidVolume) > 1e-8 ||
+        Math.abs(snapshot.askVolume - askVolume) > 1e-8
+      )
+        throw new RangeError(
+          "materialized pressure field does not match current frontiers",
+        );
+    }
   }
 
   private sideState(side: PressureBookSide): SideFrontierState {
@@ -450,21 +330,99 @@ export class PressureFrontierMemory {
     if (!Number.isFinite(nowMs))
       throw new RangeError("pressure frontier timestamp must be finite");
 
-    // External clocks and transports are not guaranteed to be ordered.
-    // Pressure state itself is applied sequentially, so retain that observation
-    // order by clamping time rather than letting clock skew tear down the feed.
     return this.lastUpdateMs === undefined
       ? nowMs
       : Math.max(nowMs, this.lastUpdateMs);
   }
 }
 
-function emptySideState(): SideFrontierState {
-  return {
-    current: null,
-    updatedAtMs: Number.NEGATIVE_INFINITY,
-    history: [],
+interface RestoredV1Side {
+  readonly updatedAtMs: number;
+  readonly current: FrontierRoot;
+  readonly history: readonly {
+    readonly sinceMs: number;
+    readonly root: FrontierRoot;
+  }[];
+}
+
+function collectV1Boundaries(
+  boundaries: Set<number>,
+  side: RestoredV1Side,
+  kind: PressureBookSide,
+): void {
+  const collect = (root: FrontierRoot) => {
+    for (const { key } of frontierLevels(root))
+      boundaries.add(kind === "bid" ? key : 1 - key);
   };
+  collect(side.current);
+  for (const layer of side.history) collect(layer.root);
+}
+
+function legacyV1ShellsAtPrice(
+  bid: RestoredV1Side,
+  ask: RestoredV1Side,
+  price: number,
+): PressureBand[] {
+  const shells: PressureBand[] = [];
+  const bidLive = frontierVolumeAt(bid.current, price);
+  const askLive = frontierVolumeAt(ask.current, 1 - price);
+
+  let covered = 0;
+  if (bidLive > 0 || askLive > 0) {
+    const useBid =
+      bidLive > 0 &&
+      (!(askLive > 0) || bid.updatedAtMs >= ask.updatedAtMs);
+    const liveVolume = useBid ? bidLive : askLive;
+    appendBand(shells, {
+      loVolume: 0,
+      hiVolume: liveVolume,
+      side: useBid ? 1 : -1,
+      state: { kind: "live" },
+    });
+    covered = liveVolume;
+  }
+
+  let bidIndex = 0;
+  let askIndex = 0;
+  while (bidIndex < bid.history.length || askIndex < ask.history.length) {
+    const bidLayer = bid.history[bidIndex];
+    const askLayer = ask.history[askIndex];
+    const takeBid =
+      !!bidLayer &&
+      (!askLayer ||
+        bidLayer.sinceMs > askLayer.sinceMs ||
+        (bidLayer.sinceMs === askLayer.sinceMs && bidIndex <= askIndex));
+    const layer = takeBid ? bidLayer! : askLayer!;
+    const volume = frontierVolumeAt(layer.root, takeBid ? price : 1 - price);
+
+    if (volume > covered) {
+      appendBand(shells, {
+        loVolume: covered,
+        hiVolume: volume,
+        side: takeBid ? 1 : -1,
+        state: { kind: "ghost", sinceMs: layer.sinceMs },
+      });
+      covered = volume;
+    }
+
+    if (takeBid) bidIndex++;
+    else askIndex++;
+  }
+
+  return shells;
+}
+
+function legacySideRevisions(
+  bidUpdatedAtMs: number,
+  askUpdatedAtMs: number,
+): { bid: number; ask: number } {
+  const bidFinite = Number.isFinite(bidUpdatedAtMs);
+  const askFinite = Number.isFinite(askUpdatedAtMs);
+  if (!bidFinite && !askFinite) return { bid: 0, ask: 0 };
+  if (bidFinite && !askFinite) return { bid: 1, ask: 0 };
+  if (!bidFinite && askFinite) return { bid: 0, ask: 1 };
+  if (bidUpdatedAtMs >= askUpdatedAtMs) return { bid: 2, ask: 1 };
+  return { bid: 1, ask: 2 };
 }
 
 function validBookOrder(order: {
@@ -524,22 +482,25 @@ function levelsEqual(
   );
 }
 
-function frontierLostAtoms(
-  previous: readonly FrontierLevel[],
-  next: readonly FrontierLevel[],
-): boolean {
-  let i = 0;
-  let j = 0;
+function liveExtent(
+  bands: readonly PressureBand[],
+  side: 1 | -1,
+): number {
+  let extent = 0;
+  for (const band of bands)
+    if (band.side === side && band.state.kind === "live")
+      extent = Math.max(extent, band.hiVolume);
+  return extent;
+}
 
-  while (i < previous.length) {
-    const before = previous[i]!;
-    while (j < next.length && next[j]!.key < before.key) j++;
-    const after =
-      j < next.length && next[j]!.key === before.key ? next[j]!.weight : 0;
-    if (after < before.weight) return true;
-    i++;
-  }
-  return false;
+function cloneBand(band: PressureBand): PressureBand {
+  return {
+    ...band,
+    state:
+      band.state.kind === "live"
+        ? { kind: "live" }
+        : { kind: "ghost", sinceMs: band.state.sinceMs },
+  };
 }
 
 function appendBand(bands: PressureBand[], band: PressureBand): void {
@@ -548,9 +509,7 @@ function appendBand(bands: PressureBand[], band: PressureBand): void {
     previous &&
     previous.hiVolume === band.loVolume &&
     previous.side === band.side &&
-    previous.state.kind === "ghost" &&
-    band.state.kind === "ghost" &&
-    previous.state.sinceMs === band.state.sinceMs
+    statesEqual(previous, band)
   ) {
     bands[bands.length - 1] = {
       ...previous,
@@ -561,47 +520,24 @@ function appendBand(bands: PressureBand[], band: PressureBand): void {
   bands.push(band);
 }
 
-function bandsEqual(
-  a: readonly PressureBand[],
-  b: readonly PressureBand[],
-): boolean {
-  if (a === b) return true;
+function statesEqual(a: PressureBand, b: PressureBand): boolean {
   return (
-    a.length === b.length &&
-    a.every((band, index) => {
-      const other = b[index]!;
-      return (
-        band.loVolume === other.loVolume &&
-        band.hiVolume === other.hiVolume &&
-        band.side === other.side &&
-        band.state.kind === other.state.kind &&
-        (band.state.kind === "live" ||
-          (other.state.kind === "ghost" &&
-            band.state.sinceMs === other.state.sinceMs))
-      );
-    })
+    a.state.kind === b.state.kind &&
+    (a.state.kind === "live" ||
+      (b.state.kind === "ghost" &&
+        a.state.sinceMs === b.state.sinceMs))
   );
 }
 
-function clamp01(value: number): number {
-  return Math.max(0, Math.min(1, value));
-}
-
-type LegacyState = "live" | number;
-
 function frontierFromLegacyCells(
   cells: readonly PressureCell[],
-  side: PressureSide,
-  state: LegacyState,
+  side: 1 | -1,
+  state: "live",
 ): FrontierRoot {
   const localSamples = cells.map((cell) => {
     const band = cell.bands.find(
       (candidate) =>
-        candidate.side === side &&
-        (state === "live"
-          ? candidate.state.kind === "live"
-          : candidate.state.kind === "ghost" &&
-            candidate.state.sinceMs === state),
+        candidate.side === side && candidate.state.kind === state,
     );
     const lo = side > 0 ? cell.lo : 1 - cell.hi;
     const hi = side > 0 ? cell.hi : 1 - cell.lo;
@@ -628,8 +564,6 @@ function frontierFromLegacyCells(
     values[index] = sample?.lowerBound ?? 0;
   }
 
-  // Minimal non-increasing majorant: hidden history is reconstructed only
-  // where monotonicity proves it must have existed.
   for (let index = values.length - 2; index >= 0; index--)
     values[index] = Math.max(values[index]!, values[index + 1]!);
 
@@ -645,4 +579,37 @@ function frontierFromLegacyCells(
     outer = value;
   }
   return buildFrontier(levels);
+}
+
+function newestGhostTime(
+  runs: readonly { readonly bands: readonly PressureBand[] }[],
+): number | undefined {
+  let newest = Number.NEGATIVE_INFINITY;
+  for (const run of runs)
+    for (const band of run.bands)
+      if (band.state.kind === "ghost")
+        newest = Math.max(newest, band.state.sinceMs);
+  return Number.isFinite(newest) ? newest : undefined;
+}
+
+function newestLegacyHistoryTime(
+  history: readonly { readonly sinceMs: number }[],
+): number {
+  return history[0]?.sinceMs ?? Number.NEGATIVE_INFINITY;
+}
+
+function finiteOrNegativeInfinity(value: number): number {
+  return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+}
+
+function emptyFieldRun(): PressureFieldRunSnapshot {
+  return {
+    lo: 0,
+    hi: 1,
+    bidVolume: 0,
+    askVolume: 0,
+    bidRevision: 0,
+    askRevision: 0,
+    bands: [],
+  };
 }
