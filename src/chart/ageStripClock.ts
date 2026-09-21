@@ -16,11 +16,18 @@ export interface AgeStripClockHost {
   readonly getViewMode: () => ViewMode;
   readonly getTheme: () => ChartTheme;
   readonly getTiming: (tokenId: string) => AgeStripTiming | undefined;
+  /**
+   * "scheduled" lets the clock canvas refresh itself when label text changes.
+   * "frame" redraws only when its host supplies fresh geometry, keeping moving
+   * timelines and their gutter on the exact same render cadence.
+   */
+  readonly refreshMode?: "scheduled" | "frame";
 }
 
 export class AgeStripClock {
   private readonly canvas: HTMLCanvasElement;
-  private readonly intersectionObserver: IntersectionObserver;
+  private readonly intersectionObserver: IntersectionObserver | null;
+  private readonly scheduledRefresh: boolean;
   private geometry: AgeStripGeometry | null = null;
   private viewportVisible = true;
   private enabled = true;
@@ -33,21 +40,26 @@ export class AgeStripClock {
     this.canvas.setAttribute("aria-hidden", "true");
     host.canvasWrap.appendChild(this.canvas);
 
-    this.intersectionObserver = new IntersectionObserver(
-      ([entry]) => {
-        const visible = entry?.isIntersecting ?? false;
-        if (visible === this.viewportVisible) return;
-        this.viewportVisible = visible;
+    this.scheduledRefresh = host.refreshMode !== "frame";
+    if (this.scheduledRefresh) {
+      this.intersectionObserver = new IntersectionObserver(
+        ([entry]) => {
+          const visible = entry?.isIntersecting ?? false;
+          if (visible === this.viewportVisible) return;
+          this.viewportVisible = visible;
 
-        if (!visible) {
-          this.cancelRefresh();
-          return;
-        }
-        this.refresh();
-      },
-      { root: null, rootMargin: "160px 0px" },
-    );
-    this.intersectionObserver.observe(host.canvasWrap);
+          if (!visible) {
+            this.cancelRefresh();
+            return;
+          }
+          this.refresh();
+        },
+        { root: null, rootMargin: "160px 0px" },
+      );
+      this.intersectionObserver.observe(host.canvasWrap);
+    } else {
+      this.intersectionObserver = null;
+    }
   }
 
   setGeometry(geometry: AgeStripGeometry | null): void {
@@ -74,7 +86,7 @@ export class AgeStripClock {
       !this.enabled ||
       !geometry ||
       geometry.rows.length === 0 ||
-      !this.viewportVisible ||
+      (this.scheduledRefresh && !this.viewportVisible) ||
       this.host.getViewMode() !== "age"
     )
       return;
@@ -139,7 +151,8 @@ export class AgeStripClock {
     }
 
     ctx.globalAlpha = 1;
-    if (Number.isFinite(nextChangeMs)) this.scheduleRefresh(nextChangeMs);
+    if (this.scheduledRefresh && Number.isFinite(nextChangeMs))
+      this.scheduleRefresh(nextChangeMs);
   }
 
   clear(): void {
@@ -156,7 +169,7 @@ export class AgeStripClock {
 
   destroy(): void {
     this.cancelRefresh();
-    this.intersectionObserver.disconnect();
+    this.intersectionObserver?.disconnect();
     this.canvas.remove();
   }
 
