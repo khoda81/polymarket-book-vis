@@ -620,37 +620,41 @@
 </script>
 
 <header class="dashboard-toolbar">
-  <EventSearch
-    {client}
-    {status}
-    onchoose={(event) => void addManualEvent(event)}
-    onchooseseries={addManualSeries}
-    onstatus={(message) => (status = message)}
-  />
-
-  <div class="dashboard-meta">
-    <div class="layout-columns" aria-label="Dashboard columns">
-      <button
-        type="button"
-        onclick={() => setColumnCount(columnCount - 1)}
-        disabled={columnCount <= MIN_COLUMNS}
-        aria-label="Use fewer columns"
-      >−</button>
-      <input
-        type="number"
-        value={columnCount}
-        aria-label="Dashboard column count"
-        oninput={(event) =>
-          setColumnCount(Number(event.currentTarget.value))}
-      />
-      <button
-        type="button"
-        onclick={() => setColumnCount(columnCount + 1)}
-        aria-label="Use more columns"
-      >+</button>
+  <div class="dashboard-primary">
+    <EventSearch
+      {client}
+      {status}
+      onchoose={(event) => void addManualEvent(event)}
+      onchooseseries={addManualSeries}
+      onstatus={(message) => (status = message)}
+    />
+    <div class="layout-columns" role="group" aria-label="Dashboard columns">
+      <label for="dashboard-columns">Columns</label>
+      <div class="layout-columns-controls">
+        <button
+          type="button"
+          onclick={() => setColumnCount(columnCount - 1)}
+          disabled={columnCount <= MIN_COLUMNS}
+          aria-label="Use fewer columns"
+        >−</button>
+        <input
+          id="dashboard-columns"
+          type="number"
+          min={MIN_COLUMNS}
+          value={columnCount}
+          aria-label="Dashboard column count"
+          oninput={(event) =>
+            setColumnCount(Number(event.currentTarget.value))}
+        />
+        <button
+          type="button"
+          onclick={() => setColumnCount(columnCount + 1)}
+          aria-label="Use more columns"
+        >+</button>
+      </div>
     </div>
-    <PressureLegend />
   </div>
+  <PressureLegend />
 </header>
 
 <div

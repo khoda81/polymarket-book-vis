@@ -175,7 +175,12 @@
     void submit();
   }}
 >
-  <label for="event-search">Add event</label>
+  <div class="dashboard-add-heading">
+    <label for="event-search">Add event</label>
+    <span class="dashboard-add-status" aria-live="polite" title={status}>
+      {status}
+    </span>
+  </div>
   <div class="dashboard-search" bind:this={root}>
     <input
       id="event-search"
@@ -226,5 +231,4 @@
       {/each}
     </div>
   </div>
-  <span class="dashboard-add-status" aria-live="polite">{status}</span>
 </form>
