@@ -209,10 +209,6 @@ export class PressureFrontierMemory {
     );
   }
 
-  prune(nowMs: number, halfLifeMs: number, minAlpha = 0.01): void {
-    this.field.pruneGhosts(ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha));
-  }
-
   clear(): void {
     this.bid.current = null;
     this.ask.current = null;
