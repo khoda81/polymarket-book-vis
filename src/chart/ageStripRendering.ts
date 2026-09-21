@@ -1,16 +1,10 @@
-import { pressureInkThicknessCss } from "@/lib/pressureInk";
-import {
-  ghostAlpha,
-  ghostVisibleSinceMs,
-  type PressureBand,
-  type PressureCell,
-} from "@/lib/pressureMemory";
+import { ghostVisibleSinceMs } from "@/lib/pressureMemory";
+import type { PressureFrontierMemory } from "@/lib/pressureFrontierMemory";
 import type { Frame } from "@/lib/renderer";
 import {
-  rasterizeNestedBandsInto,
-  type NestedRasterLayer,
+  rasterizePressureBandsInto,
   type RgbColor,
-} from "./nestedBandRaster";
+} from "./pressureFieldRaster";
 import {
   signedVolumeColor,
   type SignedVolumeColorScale,
@@ -68,14 +62,16 @@ export function drawAgeRowRails(
 export function drawPressureMemoryStrip(
   frame: Frame,
   y: number,
-  cells: readonly PressureCell[],
+  memory: PressureFrontierMemory,
   colorScale: SignedVolumeColorScale,
   volumePerCssPixel: number,
   ghostHalfLifeMs: number,
   nowMs: number,
   rowOffsetCss = 0,
 ): void {
-  if (cells.length === 0) return;
+  const boundaries = memory.priceBoundaries();
+  if (boundaries.length < 2) return;
+
   const { ctx, viewport: vp } = frame;
   const dpr = window.devicePixelRatio || 1;
   const geometry = offsetRowGeometry(
@@ -87,121 +83,99 @@ export function drawPressureMemoryStrip(
   const rgbColors = pressureRgbColors(colorScale, colors);
   const visibleGhostSinceMs = ghostVisibleSinceMs(nowMs, ghostHalfLifeMs);
 
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(vp.l, geometry.topCss, vp.width, geometry.heightCss);
-  ctx.clip();
+  const rowTopDevice = Math.floor(
+    (geometry.centerCss - geometry.heightCss / 2) * dpr,
+  );
+  const rowBottomDevice = Math.ceil(
+    (geometry.centerCss + geometry.heightCss / 2) * dpr,
+  );
+  const rowHeightDevice = Math.max(1, rowBottomDevice - rowTopDevice);
+  const centerDevice = geometry.centerCss * dpr;
 
-  for (const cell of cells) {
-    const displayLo = 1 - clamp(cell.hi, 0, 1);
-    const displayHi = 1 - clamp(cell.lo, 0, 1);
-    const x0 = snapToDevicePixel(vp.l + displayLo * vp.width, dpr);
-    const x1 = snapToDevicePixel(vp.l + displayHi * vp.width, dpr);
-    if (!(x1 > x0)) continue;
+  const rowLeftDevice = Math.round(vp.l * dpr);
+  const rowRightDevice = Math.round((vp.l + vp.width) * dpr);
+  const rowWidthDevice = Math.max(1, rowRightDevice - rowLeftDevice);
+  const raster = pressureRowRasterCanvas(rowWidthDevice, rowHeightDevice);
+  raster.image.data.fill(0);
 
-    drawMemoryBands(
-      ctx,
-      geometry.centerCss,
-      x0,
-      x1,
-      cell.bands,
-      rgbColors.positive,
-      rgbColors.negative,
-      reserveShares,
-      geometry.heightCss,
-      ghostHalfLifeMs,
-      nowMs,
+  const packed = new Uint32Array(
+    raster.image.data.buffer,
+    raster.image.data.byteOffset,
+    raster.image.data.byteLength / 4,
+  );
+
+  for (let index = 0; index + 1 < boundaries.length; index++) {
+    const lo = boundaries[index]!;
+    const hi = boundaries[index + 1]!;
+    if (!(hi > lo)) continue;
+
+    const bands = memory.shellsAtPrice(
+      (lo + hi) / 2,
       visibleGhostSinceMs,
     );
-  }
+    if (bands.length === 0) continue;
 
-  ctx.restore();
-}
-
-function drawMemoryBands(
-  ctx: CanvasRenderingContext2D,
-  centerY: number,
-  x0: number,
-  x1: number,
-  bands: readonly PressureBand[],
-  positiveColor: RgbColor,
-  negativeColor: RgbColor,
-  reserveShares: number,
-  rowHeightCss: number,
-  ghostHalfLifeMs: number,
-  nowMs: number,
-  visibleGhostSinceMs: number,
-): void {
-  const dpr = window.devicePixelRatio || 1;
-  const rowTopDevice = Math.floor((centerY - rowHeightCss / 2) * dpr);
-  const rowHeightDevice =
-    Math.ceil((centerY + rowHeightCss / 2) * dpr) - rowTopDevice;
-  const centerDevice = centerY * dpr;
-
-  // Build the exact nested layer stack first. Opacity belongs to temporal
-  // state; subpixel coverage belongs to geometry and is applied later by the
-  // rasterizer. Keeping those two concepts separate prevents overlapping
-  // anti-aliased rectangles from charging the same device pixel twice.
-  const layers: NestedRasterLayer[] = [];
-  let coveredAlpha = 0;
-
-  for (let index = bands.length - 1; index >= 0; index--) {
-    const band = bands[index]!;
-    if (
-      band.state.kind === "ghost" &&
-      band.state.sinceMs <= visibleGhostSinceMs
-    )
-      continue;
-
-    const targetAlpha =
-      band.state.kind === "live"
-        ? 1
-        : ghostAlpha(band.state.sinceMs, nowMs, ghostHalfLifeMs);
-    if (!(targetAlpha > 1 / 255)) continue;
-
-    const sourceAlpha =
-      coveredAlpha >= 1
-        ? 0
-        : Math.max(
-            0,
-            Math.min(1, (targetAlpha - coveredAlpha) / (1 - coveredAlpha)),
-          );
-    coveredAlpha = Math.max(coveredAlpha, targetAlpha);
-    if (!(sourceAlpha > 1 / 255)) continue;
-
-    const thickness = pressureInkThicknessCss(
-      band.hiVolume,
-      reserveShares,
-      rowHeightCss,
+    rasterizePressureBandsInto(
+      bands,
+      {
+        positiveColor: rgbColors.positive,
+        negativeColor: rgbColors.negative,
+        reserveShares,
+        rowHeightCss: geometry.heightCss,
+        dpr,
+        ghostHalfLifeMs,
+        nowMs,
+        visibleGhostSinceMs,
+        centerDevice,
+        topDevice: rowTopDevice,
+        heightDevice: rowHeightDevice,
+      },
+      raster.column,
     );
-    if (!(thickness > 0)) continue;
 
-    layers.push({
-      halfThickness: (thickness * dpr) / 2,
-      alpha: sourceAlpha,
-      color: band.side < 0 ? negativeColor : positiveColor,
-    });
+    // Age view mirrors canonical YES price horizontally.
+    const x0Device = Math.round(
+      (vp.l + (1 - hi) * vp.width) * dpr,
+    );
+    const x1Device = Math.round(
+      (vp.l + (1 - lo) * vp.width) * dpr,
+    );
+    const x0 = clamp(x0Device - rowLeftDevice, 0, rowWidthDevice);
+    const x1 = clamp(x1Device - rowLeftDevice, 0, rowWidthDevice);
+    if (!(x1 > x0)) continue;
+
+    for (let row = 0; row < rowHeightDevice; row++) {
+      const offset = row * 4;
+      const rgba = packRgba(
+        raster.column[offset]!,
+        raster.column[offset + 1]!,
+        raster.column[offset + 2]!,
+        raster.column[offset + 3]!,
+      );
+      if ((rgba >>> 24) === 0 && LITTLE_ENDIAN) continue;
+      if (!LITTLE_ENDIAN && (rgba & 0xff) === 0) continue;
+      packed.fill(
+        rgba,
+        row * rowWidthDevice + x0,
+        row * rowWidthDevice + x1,
+      );
+    }
   }
 
-  if (layers.length === 0) return;
-  const raster = pressureRasterCanvas(rowHeightDevice);
-  rasterizeNestedBandsInto(
-    layers,
-    centerDevice,
-    rowTopDevice,
-    rowHeightDevice,
-    raster.image.data,
-  );
   raster.ctx.putImageData(raster.image, 0, 0);
+  ctx.save();
+  ctx.globalAlpha = 1;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(
     raster.canvas,
-    x0,
+    rowLeftDevice / dpr,
     rowTopDevice / dpr,
-    x1 - x0,
+    rowWidthDevice / dpr,
     rowHeightDevice / dpr,
   );
+  ctx.restore();
 }
+
 
 interface PressureColors {
   readonly positive: string;
@@ -265,34 +239,53 @@ function pressureRgbColors(
   return rgb;
 }
 
-let pressureRaster: {
+let pressureRowRaster: {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   image: ImageData;
+  column: Uint8ClampedArray;
 } | null = null;
 
-function pressureRasterCanvas(height: number) {
-  if (!pressureRaster) {
+function pressureRowRasterCanvas(width: number, height: number) {
+  if (!pressureRowRaster) {
     const canvas = document.createElement("canvas");
-    canvas.width = 1;
+    canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2D canvas context is not available");
-    pressureRaster = {
+    pressureRowRaster = {
       canvas,
       ctx,
-      image: ctx.createImageData(1, height),
+      image: ctx.createImageData(width, height),
+      column: new Uint8ClampedArray(height * 4),
     };
-  } else if (pressureRaster.canvas.height !== height) {
-    pressureRaster.canvas.width = 1;
-    pressureRaster.canvas.height = height;
-    pressureRaster.image = pressureRaster.ctx.createImageData(1, height);
+  } else if (
+    pressureRowRaster.canvas.width !== width ||
+    pressureRowRaster.canvas.height !== height
+  ) {
+    pressureRowRaster.canvas.width = width;
+    pressureRowRaster.canvas.height = height;
+    pressureRowRaster.image = pressureRowRaster.ctx.createImageData(
+      width,
+      height,
+    );
+    pressureRowRaster.column = new Uint8ClampedArray(height * 4);
   }
-  return pressureRaster;
+  return pressureRowRaster;
 }
 
-function snapToDevicePixel(value: number, dpr: number): number {
-  return Math.round(value * dpr) / dpr;
+const LITTLE_ENDIAN =
+  new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
+
+function packRgba(
+  r: number,
+  g: number,
+  b: number,
+  a: number,
+): number {
+  return LITTLE_ENDIAN
+    ? (r | (g << 8) | (b << 16) | (a << 24)) >>> 0
+    : ((r << 24) | (g << 16) | (b << 8) | a) >>> 0;
 }
 
 function clamp(value: number, min: number, max: number): number {
