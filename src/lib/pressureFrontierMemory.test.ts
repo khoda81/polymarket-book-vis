@@ -313,7 +313,6 @@ test("overwritten historical liquidity never resurrects", () => {
   ]);
 });
 
-
 test("ghost visibility is reversible when the display half-life changes", () => {
   const memory = new PressureFrontierMemory();
 
