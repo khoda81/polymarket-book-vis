@@ -4,3 +4,4 @@ src/chart/liveBookFeed.ts
 src/lib/monotoneFrontier.ts
 src/lib/monotoneFrontier.test.ts
 src/lib/pressureFrontierMemory.ts
+src/chart/ageStripPressureState.ts
