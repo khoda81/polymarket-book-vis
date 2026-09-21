@@ -66,7 +66,7 @@ export class PressureFrontierMemory {
   private cachedRenderRuns: readonly PressureRenderRun[] | null = null;
 
   observeBook(book: TokenBook<unknown>, nowMs: number): void {
-    this.validateTime(nowMs);
+    nowMs = this.normalizeTime(nowMs);
 
     this.replaceSide(
       this.bid,
@@ -93,7 +93,7 @@ export class PressureFrontierMemory {
     changes: readonly PressureLevelChange[],
     nowMs: number,
   ): void {
-    this.validateTime(nowMs);
+    nowMs = this.normalizeTime(nowMs);
     const state = this.sideState(side);
 
     const finalByKey = new Map<number, number>();
@@ -446,11 +446,16 @@ export class PressureFrontierMemory {
     return side === "bid" ? this.bid : this.ask;
   }
 
-  private validateTime(nowMs: number): void {
+  private normalizeTime(nowMs: number): number {
     if (!Number.isFinite(nowMs))
       throw new RangeError("pressure frontier timestamp must be finite");
-    if (this.lastUpdateMs !== undefined && nowMs < this.lastUpdateMs)
-      throw new RangeError("pressure frontier timestamps must be monotonic");
+
+    // External clocks and transports are not guaranteed to be ordered.
+    // Pressure state itself is applied sequentially, so retain that observation
+    // order by clamping time rather than letting clock skew tear down the feed.
+    return this.lastUpdateMs === undefined
+      ? nowMs
+      : Math.max(nowMs, this.lastUpdateMs);
   }
 }
 
