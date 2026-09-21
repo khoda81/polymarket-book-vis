@@ -32,9 +32,9 @@ export interface DashboardDragSnapshot {
  * Compute the candidate order from one immutable pointer-down snapshot.
  *
  * For every possible insertion slot we simulate the same shortest-column
- * masonry placement used by the dashboard. We then ask where *the dragged
- * card's original grab point* would land for that ordering and choose the slot
- * that puts that point closest to the real pointer.
+ * masonry placement used by the dashboard. Prefer the insertion that places
+ * the card in the pointer's column, then match the original grab point's
+ * vertical position to the pointer.
  *
  * So placement is:
  *
@@ -61,9 +61,11 @@ export function dashboardOrderForPointer(
   if (withoutDragged.length === 0) return [draggedKey];
 
   let bestOrder = [...snapshot.order];
-  let bestDistance = Number.POSITIVE_INFINITY;
+  let bestColumnDistance = Number.POSITIVE_INFINITY;
+  let bestVerticalDistance = Number.POSITIVE_INFINITY;
   let bestIndexDistance = Number.POSITIVE_INFINITY;
   let bestInsertionIndex = Number.POSITIVE_INFINITY;
+  const pointerColumn = columnForX(pointer.x, snapshot.grid);
 
   for (
     let insertionIndex = 0;
@@ -83,26 +85,26 @@ export function dashboardOrderForPointer(
     );
     if (!rect) continue;
 
-    const anchor = {
-      x: rect.left + snapshot.grabOffset.x,
-      y: rect.top + snapshot.grabOffset.y,
-    };
-    const distance =
-      squared(pointer.x - anchor.x) +
-      squared(pointer.y - anchor.y);
+    const columnDistance = Math.abs(rect.column - pointerColumn);
+    const verticalDistance = squared(
+      pointer.y - (rect.top + snapshot.grabOffset.y),
+    );
     const indexDistance = Math.abs(
       insertionIndex - originalIndex,
     );
 
     if (
-      distance < bestDistance ||
-      (distance === bestDistance &&
-        (indexDistance < bestIndexDistance ||
-          (indexDistance === bestIndexDistance &&
-            insertionIndex < bestInsertionIndex)))
+      columnDistance < bestColumnDistance ||
+      (columnDistance === bestColumnDistance &&
+        (verticalDistance < bestVerticalDistance ||
+          (verticalDistance === bestVerticalDistance &&
+            (indexDistance < bestIndexDistance ||
+              (indexDistance === bestIndexDistance &&
+                insertionIndex < bestInsertionIndex)))))
     ) {
       bestOrder = candidate;
-      bestDistance = distance;
+      bestColumnDistance = columnDistance;
+      bestVerticalDistance = verticalDistance;
       bestIndexDistance = indexDistance;
       bestInsertionIndex = insertionIndex;
     }
@@ -112,10 +114,8 @@ export function dashboardOrderForPointer(
 }
 
 interface SimulatedRect {
-  readonly left: number;
+  readonly column: number;
   readonly top: number;
-  readonly width: number;
-  readonly height: number;
 }
 
 function simulatedRectForKey(
@@ -135,14 +135,10 @@ function simulatedRectForKey(
     const row = nextRow[column]!;
     if (key === targetKey) {
       return {
-        left:
-          grid.left +
-          column * (grid.columnWidth + grid.columnGap),
+        column,
         top:
           grid.top +
           row * (grid.rowHeight + grid.rowGap),
-        width: grid.columnWidth,
-        height: item.height,
       };
     }
 
@@ -150,6 +146,18 @@ function simulatedRectForKey(
   }
 
   return null;
+}
+
+function columnForX(x: number, grid: DashboardGridSnapshot): number {
+  const columnCount = Math.max(1, Math.floor(grid.columnCount));
+  const pitch = grid.columnWidth + grid.columnGap;
+  if (pitch <= 0) return 0;
+
+  const firstCenter = grid.left + grid.columnWidth / 2;
+  return Math.max(
+    0,
+    Math.min(columnCount - 1, Math.round((x - firstCenter) / pitch)),
+  );
 }
 
 function shortestColumn(nextRow: readonly number[]): number {

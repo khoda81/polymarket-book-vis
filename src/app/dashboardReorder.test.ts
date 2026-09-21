@@ -32,7 +32,7 @@ test("same drag-start snapshot and pointer always give the same order", () => {
   expect(second).toEqual(first);
 });
 
-test("chooses the insertion whose dragged grab point is nearest the cursor", () => {
+test("matches the cursor column, then the dragged grab point's height", () => {
   // Inserting a after b and c puts it in the shorter second lane at y=120,
   // so its original grab point lands at (200, 140).
   expect(
@@ -43,6 +43,20 @@ test("chooses the insertion whose dragged grab point is nearest the cursor", () 
   expect(
     dashboardOrderForPointer(snapshot, "a", { x: 78, y: 18 }),
   ).toEqual(["a", "b", "c", "d"]);
+});
+
+test("keeps a card in the column under the cursor across the track", () => {
+  // The left track spans x=0..100. A closer vertical match in the right
+  // track must not pull the card across when the pointer is at x=90.
+  expect(
+    dashboardOrderForPointer(snapshot, "a", { x: 90, y: 140 }),
+  ).toEqual(["b", "c", "d", "a"]);
+
+  // Conversely, the right track starts at x=120, even though the left
+  // candidate has a perfect vertical match at y=220.
+  expect(
+    dashboardOrderForPointer(snapshot, "a", { x: 130, y: 220 }),
+  ).toEqual(["b", "c", "a", "d"]);
 });
 
 test("different card heights are accounted for by masonry simulation", () => {
