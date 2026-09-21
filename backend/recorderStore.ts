@@ -8,6 +8,7 @@ import {
 import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
 import {
   parsePressureFrontierSnapshot,
+  stalePressureFrontierSnapshot,
   type PressureFrontierSnapshot,
 } from "../src/lib/pressureFrontierSnapshot";
 import {
@@ -330,7 +331,10 @@ function loadStoredPressure(
   if (Array.isArray(value))
     return legacyCellsToSnapshot(parsePressureCells(value), staleSinceMs);
 
-  return staleLiveFrontiers(parsePressureFrontierSnapshot(value), staleSinceMs);
+  return stalePressureFrontierSnapshot(
+    parsePressureFrontierSnapshot(value),
+    staleSinceMs,
+  );
 }
 
 function legacyCellsToSnapshot(
@@ -340,34 +344,6 @@ function legacyCellsToSnapshot(
   const memory = new PressureFrontierMemory();
   memory.restoreLegacyCells(staleLiveBands(cells, staleSinceMs));
   return memory.snapshot();
-}
-
-function staleLiveFrontiers(
-  snapshot: PressureFrontierSnapshot,
-  staleSinceMs: number,
-): PressureFrontierSnapshot {
-  const staleSide = (
-    side: PressureFrontierSnapshot["bid"],
-  ): PressureFrontierSnapshot["bid"] => ({
-    updatedAtMs: null,
-    current: [],
-    history:
-      side.current.length === 0
-        ? side.history
-        : [
-            {
-              sinceMs: staleSinceMs,
-              levels: side.current,
-            },
-            ...side.history,
-          ],
-  });
-
-  return {
-    version: 1,
-    bid: staleSide(snapshot.bid),
-    ask: staleSide(snapshot.ask),
-  };
 }
 
 function staleLiveBands(
