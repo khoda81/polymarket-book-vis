@@ -193,7 +193,8 @@ export class AgeStripView {
     for (const [index, label] of activeControls.entries()) {
       const tokenId = label.dataset.tokenId;
       if (!tokenId) continue;
-      const cells = this.pressure.cells(tokenId);
+      const memory = this.pressure.memory(tokenId);
+      if (!memory) continue;
 
       const resolutionSide = label.dataset.ageResolutionSide;
       if (resolutionSide === "primary" || resolutionSide === "opposite") {
@@ -211,7 +212,7 @@ export class AgeStripView {
       drawPressureMemoryStrip(
         frame,
         y,
-        cells,
+        memory,
         this.host.getPressureColorScale(tokenId),
         tuning.volumePerCssPixel,
         tuning.ghostHalfLifeMs,
