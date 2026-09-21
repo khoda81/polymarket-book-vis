@@ -115,27 +115,6 @@ export class MaterializedPressureField {
     this.mergeAdjacentRuns();
   }
 
-  pruneGhosts(visibleSinceMs: number): void {
-    let changed = false;
-
-    for (const run of this.runs) {
-      const next: PressureBand[] = [];
-      for (const band of run.bands) {
-        if (
-          band.state.kind === "ghost" &&
-          band.state.sinceMs <= visibleSinceMs
-        ) {
-          changed = true;
-          break;
-        }
-        next.push(band);
-      }
-      if (next.length !== run.bands.length) run.bands = next;
-    }
-
-    if (changed) this.mergeAdjacentRuns();
-  }
-
   hasGhosts(): boolean {
     return this.runs.some((run) =>
       run.bands.some((band) => band.state.kind === "ghost"),
