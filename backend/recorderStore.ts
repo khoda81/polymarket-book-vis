@@ -247,10 +247,10 @@ function legacyRecords(
 
     return [...tokenIds].map((tokenId) => {
       const rawCells = parsed.states[tokenId];
-      const cells =
+      const pressure =
         rawCells === undefined
           ? null
-          : staleLiveBands(
+          : legacyCellsToSnapshot(
               parsePressureCells(rawCells),
               Math.min(parsed.savedAtMs, nowMs),
             );
@@ -259,7 +259,7 @@ function legacyRecords(
         status: completed.has(tokenId) ? "completed" : "watched",
         recordingSinceMs:
           validWallClockMs(parsed.recordingSinceMs[tokenId], nowMs) ?? null,
-        cells,
+        pressure,
         savedAtMs: nowMs,
       };
     });
@@ -274,12 +274,12 @@ function legacyRecords(
 
   return [...tokenIds].map((tokenId) => {
     const snapshot = parsed.states[tokenId];
-    let cells: readonly PressureCell[] | null = null;
+    let pressure: PressureFrontierSnapshot | null = null;
 
     if (snapshot !== undefined) {
       const legacy = new StaleSignedVolume();
       legacy.restore(snapshot);
-      cells = legacy.segments(nowMs).map((segment) => ({
+      const cells: PressureCell[] = legacy.segments(nowMs).map((segment) => ({
         lo: segment.lo,
         hi: segment.hi,
         bands:
@@ -300,6 +300,7 @@ function legacyRecords(
                 },
               ],
       }));
+      pressure = legacyCellsToSnapshot(cells, nowMs);
     }
 
     const storedStart = validWallClockMs(
@@ -316,10 +317,60 @@ function legacyRecords(
       status: "watched",
       recordingSinceMs:
         knownStarts.length > 0 ? Math.min(...knownStarts) : null,
-      cells,
+      pressure,
       savedAtMs: nowMs,
     };
   });
+}
+
+function loadStoredPressure(
+  value: unknown,
+  staleSinceMs: number,
+): PressureFrontierSnapshot {
+  if (Array.isArray(value))
+    return legacyCellsToSnapshot(parsePressureCells(value), staleSinceMs);
+
+  return staleLiveFrontiers(
+    parsePressureFrontierSnapshot(value),
+    staleSinceMs,
+  );
+}
+
+function legacyCellsToSnapshot(
+  cells: readonly PressureCell[],
+  staleSinceMs: number,
+): PressureFrontierSnapshot {
+  const memory = new PressureFrontierMemory();
+  memory.restoreLegacyCells(staleLiveBands(cells, staleSinceMs));
+  return memory.snapshot();
+}
+
+function staleLiveFrontiers(
+  snapshot: PressureFrontierSnapshot,
+  staleSinceMs: number,
+): PressureFrontierSnapshot {
+  const staleSide = (
+    side: PressureFrontierSnapshot["bid"],
+  ): PressureFrontierSnapshot["bid"] => ({
+    updatedAtMs: null,
+    current: [],
+    history:
+      side.current.length === 0
+        ? side.history
+        : [
+            {
+              sinceMs: staleSinceMs,
+              levels: side.current,
+            },
+            ...side.history,
+          ],
+  });
+
+  return {
+    version: 1,
+    bid: staleSide(snapshot.bid),
+    ask: staleSide(snapshot.ask),
+  };
 }
 
 function staleLiveBands(
