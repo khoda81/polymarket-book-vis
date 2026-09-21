@@ -105,7 +105,6 @@ export function drawPressureMemoryStrip(
   );
 
   for (const { lo, hi, bands } of runs) {
-
     rasterizePressureBandsInto(
       bands,
       {
