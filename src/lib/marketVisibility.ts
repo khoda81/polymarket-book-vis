@@ -139,9 +139,6 @@ export function persistUserVisibility(
   visibilityByMarketId: ReadonlyMap<string, MarketVisibility>,
 ): void {
   persistUserHiddenMarketIds(
-    mergeUserHiddenMarketIds(
-      loadUserHiddenMarketIds(),
-      visibilityByMarketId,
-    ),
+    mergeUserHiddenMarketIds(loadUserHiddenMarketIds(), visibilityByMarketId),
   );
 }
