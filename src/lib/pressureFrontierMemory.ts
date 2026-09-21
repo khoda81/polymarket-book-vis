@@ -10,7 +10,9 @@ import {
 } from "./monotoneFrontier";
 import {
   ghostVisibleSinceMs,
+  parsePressureCells,
   type PressureBand,
+  type PressureCell,
   type PressureSide,
 } from "./pressureMemory";
 
@@ -48,6 +50,7 @@ export class PressureFrontierMemory {
   private readonly bid: SideFrontierState = emptySideState();
   private readonly ask: SideFrontierState = emptySideState();
   private lastUpdateMs: number | undefined;
+  private cachedCells: readonly PressureCell[] | null = null;
 
   observeBook(book: TokenBook<unknown>, nowMs: number): void {
     this.validateTime(nowMs);
@@ -70,6 +73,7 @@ export class PressureFrontierMemory {
     );
 
     this.lastUpdateMs = nowMs;
+    this.cachedCells = null;
   }
 
   updateLevels(
@@ -105,8 +109,81 @@ export class PressureFrontierMemory {
         state.history.unshift({ sinceMs: nowMs, root: previous });
       state.current = next;
       state.updatedAtMs = nowMs;
+      this.cachedCells = null;
     }
     this.lastUpdateMs = nowMs;
+  }
+
+  /**
+   * Restore the legacy persisted cell format into monotone side frontiers.
+   *
+   * Hidden portions of a historical frontier were intentionally discarded by
+   * the old representation. The minimal monotone majorant reconstructs only
+   * the hidden extent required by the frontier invariant; newer layers already
+   * cover those points, so this does not change the visible semantic field.
+   */
+  restoreLegacyCells(value: unknown): void {
+    const cells = parsePressureCells(value);
+    this.clear();
+
+    const bidCurrent = frontierFromLegacyCells(cells, 1, "live");
+    const askCurrent = frontierFromLegacyCells(cells, -1, "live");
+    this.bid.current = bidCurrent;
+    this.ask.current = askCurrent;
+
+    const ghostTimes = new Set<number>();
+    for (const cell of cells)
+      for (const band of cell.bands)
+        if (band.state.kind === "ghost")
+          ghostTimes.add(band.state.sinceMs);
+
+    const newestFirst = [...ghostTimes].sort((a, b) => b - a);
+    for (const sinceMs of newestFirst) {
+      const bid = frontierFromLegacyCells(cells, 1, sinceMs);
+      if (bid) this.bid.history.push({ sinceMs, root: bid });
+      const ask = frontierFromLegacyCells(cells, -1, sinceMs);
+      if (ask) this.ask.history.push({ sinceMs, root: ask });
+    }
+
+    this.lastUpdateMs = newestFirst[0];
+    this.cachedCells = null;
+  }
+
+  /**
+   * Cached compatibility projection for the existing cell renderer.
+   *
+   * This is deliberately a migration seam. The framebuffer renderer should
+   * consume frontier history directly and delete this projection.
+   */
+  cells(): readonly PressureCell[] {
+    if (this.cachedCells) return this.cachedCells;
+
+    const boundaries = new Set<number>([0, 1]);
+    collectCanonicalBoundaries(boundaries, this.bid, "bid");
+    collectCanonicalBoundaries(boundaries, this.ask, "ask");
+    const sorted = [...boundaries].sort((a, b) => a - b);
+    const cells: PressureCell[] = [];
+
+    for (let index = 0; index + 1 < sorted.length; index++) {
+      const lo = sorted[index]!;
+      const hi = sorted[index + 1]!;
+      if (!(hi > lo)) continue;
+      const bands = this.shellsAtPrice((lo + hi) / 2);
+      const previous = cells[cells.length - 1];
+
+      if (previous && bandsEqual(previous.bands, bands)) {
+        cells[cells.length - 1] = {
+          lo: previous.lo,
+          hi,
+          bands: previous.bands,
+        };
+      } else {
+        cells.push({ lo, hi, bands });
+      }
+    }
+
+    this.cachedCells = cells;
+    return cells;
   }
 
   /**
@@ -191,12 +268,19 @@ export class PressureFrontierMemory {
 
   prune(nowMs: number, halfLifeMs: number, minAlpha = 0.01): void {
     const cutoff = ghostVisibleSinceMs(nowMs, halfLifeMs, minAlpha);
+    const bidLength = this.bid.history.length;
+    const askLength = this.ask.history.length;
     this.bid.history = this.bid.history.filter(
       (layer) => layer.sinceMs > cutoff,
     );
     this.ask.history = this.ask.history.filter(
       (layer) => layer.sinceMs > cutoff,
     );
+    if (
+      bidLength !== this.bid.history.length ||
+      askLength !== this.ask.history.length
+    )
+      this.cachedCells = null;
   }
 
   clear(): void {
@@ -207,6 +291,7 @@ export class PressureFrontierMemory {
     this.ask.updatedAtMs = Number.NEGATIVE_INFINITY;
     this.ask.history = [];
     this.lastUpdateMs = undefined;
+    this.cachedCells = null;
   }
 
   /** Debug/test view of the current side-local atoms. */
@@ -359,4 +444,100 @@ function appendBand(bands: PressureBand[], band: PressureBand): void {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+
+type LegacyState = "live" | number;
+
+function frontierFromLegacyCells(
+  cells: readonly PressureCell[],
+  side: PressureSide,
+  state: LegacyState,
+): FrontierRoot {
+  const localSamples = cells.map((cell) => {
+    const band = cell.bands.find(
+      (candidate) =>
+        candidate.side === side &&
+        (state === "live"
+          ? candidate.state.kind === "live"
+          : candidate.state.kind === "ghost" &&
+            candidate.state.sinceMs === state),
+    );
+    const lo = side > 0 ? cell.lo : 1 - cell.hi;
+    const hi = side > 0 ? cell.hi : 1 - cell.lo;
+    return {
+      lo,
+      hi,
+      lowerBound: band?.hiVolume ?? 0,
+    };
+  });
+
+  const boundaries = new Set<number>([0, 1]);
+  for (const sample of localSamples) {
+    boundaries.add(sample.lo);
+    boundaries.add(sample.hi);
+  }
+  const sorted = [...boundaries].sort((a, b) => a - b);
+  const values = new Array<number>(Math.max(0, sorted.length - 1)).fill(0);
+
+  for (let index = 0; index < values.length; index++) {
+    const midpoint = (sorted[index]! + sorted[index + 1]!) / 2;
+    const sample = localSamples.find(
+      (candidate) => candidate.lo <= midpoint && midpoint < candidate.hi,
+    );
+    values[index] = sample?.lowerBound ?? 0;
+  }
+
+  // Minimal non-increasing majorant: hidden history is reconstructed only
+  // where monotonicity proves it must have existed.
+  for (let index = values.length - 2; index >= 0; index--)
+    values[index] = Math.max(values[index]!, values[index + 1]!);
+
+  const levels: FrontierLevel[] = [];
+  let outer = 0;
+  for (let index = values.length - 1; index >= 0; index--) {
+    const value = values[index]!;
+    if (value > outer)
+      levels.push({
+        key: sorted[index + 1]!,
+        weight: value - outer,
+      });
+    outer = value;
+  }
+  return buildFrontier(levels);
+}
+
+function collectCanonicalBoundaries(
+  boundaries: Set<number>,
+  state: SideFrontierState,
+  side: PressureBookSide,
+): void {
+  const collect = (root: FrontierRoot) => {
+    for (const { key } of frontierLevels(root))
+      boundaries.add(side === "bid" ? key : 1 - key);
+  };
+  collect(state.current);
+  for (const layer of state.history) collect(layer.root);
+}
+
+function bandsEqual(
+  a: readonly PressureBand[],
+  b: readonly PressureBand[],
+): boolean {
+  if (a === b) return true;
+  return (
+    a.length === b.length &&
+    a.every((band, index) => {
+      const other = b[index]!;
+      return (
+        band.loVolume === other.loVolume &&
+        band.hiVolume === other.hiVolume &&
+        band.side === other.side &&
+        band.state.kind === other.state.kind &&
+        (band.state.kind === "live" ||
+          (other.state.kind === "ghost" &&
+            band.state.sinceMs === other.state.sinceMs))
+      );
+    })
+  );
 }
