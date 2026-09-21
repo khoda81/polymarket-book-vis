@@ -2,13 +2,17 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
 import { RecorderStore } from "./recorderStore";
 
-test("RecorderStore persists only token rows and restores live bands as ghosts", () => {
+test("RecorderStore persists frontier state and restores live pressure as ghost history", () => {
   const dir = mkdtempSync(join(tmpdir(), "recorder-store-"));
   const dbPath = join(dir, "recorder.sqlite");
 
   try {
+    const memory = new PressureFrontierMemory();
+    memory.updateLevels("bid", [{ price: 0.5, shares: 42 }], 500);
+
     const store = new RecorderStore(dbPath);
     store.write([
       {
@@ -16,20 +20,7 @@ test("RecorderStore persists only token rows and restores live bands as ghosts",
         status: "watched",
         recordingSinceMs: 100,
         savedAtMs: 1_000,
-        cells: [
-          {
-            lo: 0,
-            hi: 1,
-            bands: [
-              {
-                loVolume: 0,
-                hiVolume: 42,
-                side: 1,
-                state: { kind: "live" },
-              },
-            ],
-          },
-        ],
+        pressure: memory.snapshot(),
       },
     ]);
     store.close();
@@ -41,10 +32,17 @@ test("RecorderStore persists only token rows and restores live bands as ghosts",
     expect(rows).toHaveLength(1);
     expect(rows[0]?.tokenId).toBe("token-a");
     expect(rows[0]?.recordingSinceMs).toBe(100);
-    expect(rows[0]?.cells?.[0]?.bands[0]?.state).toEqual({
-      kind: "ghost",
-      sinceMs: 1_000,
-    });
+
+    const restored = new PressureFrontierMemory();
+    restored.restore(rows[0]!.pressure!);
+    expect(restored.shellsAtPrice(0.4)).toEqual([
+      {
+        loVolume: 0,
+        hiVolume: 42,
+        side: 1,
+        state: { kind: "ghost", sinceMs: 1_000 },
+      },
+    ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
