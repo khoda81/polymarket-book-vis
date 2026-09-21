@@ -1,28 +1,48 @@
 import {
+  type PressureFieldRunSnapshot,
+  type PressureFieldSnapshot,
+} from "./materializedPressureField";
+import {
   buildFrontier,
   frontierLevels,
   type FrontierLevel,
   type FrontierRoot,
 } from "./monotoneFrontier";
+import { type PressureBand } from "./pressureField";
 
-export interface PressureFrontierLayerSnapshot {
+export interface PressureFrontierLayerSnapshotV1 {
   readonly sinceMs: number;
   readonly levels: readonly FrontierLevel[];
 }
 
-export interface PressureFrontierSideSnapshot {
+export interface PressureFrontierSideSnapshotV1 {
   readonly updatedAtMs: number | null;
   readonly current: readonly FrontierLevel[];
-  readonly history: readonly PressureFrontierLayerSnapshot[];
+  readonly history: readonly PressureFrontierLayerSnapshotV1[];
 }
 
-export interface PressureFrontierSnapshot {
+export interface PressureFrontierSnapshotV1 {
   readonly version: 1;
-  readonly bid: PressureFrontierSideSnapshot;
-  readonly ask: PressureFrontierSideSnapshot;
+  readonly bid: PressureFrontierSideSnapshotV1;
+  readonly ask: PressureFrontierSideSnapshotV1;
 }
 
-export interface RestoredPressureFrontierSide {
+export interface PressureFrontierCurrentSideSnapshot {
+  readonly current: readonly FrontierLevel[];
+}
+
+export interface PressureFrontierSnapshotV2 {
+  readonly version: 2;
+  readonly bid: PressureFrontierCurrentSideSnapshot;
+  readonly ask: PressureFrontierCurrentSideSnapshot;
+  readonly field: PressureFieldSnapshot;
+}
+
+export type PressureFrontierSnapshot =
+  | PressureFrontierSnapshotV1
+  | PressureFrontierSnapshotV2;
+
+export interface RestoredPressureFrontierSideV1 {
   readonly updatedAtMs: number;
   readonly current: FrontierRoot;
   readonly history: readonly {
@@ -34,14 +54,27 @@ export interface RestoredPressureFrontierSide {
 export function parsePressureFrontierSnapshot(
   value: unknown,
 ): PressureFrontierSnapshot {
-  if (!isRecord(value) || value.version !== 1)
-    throw new TypeError("unsupported pressure frontier snapshot");
+  if (!isRecord(value))
+    throw new TypeError("pressure frontier snapshot must be an object");
 
-  return {
-    version: 1,
-    bid: parseSide(value.bid, "bid"),
-    ask: parseSide(value.ask, "ask"),
-  };
+  if (value.version === 1) {
+    return {
+      version: 1,
+      bid: parseSideV1(value.bid, "bid"),
+      ask: parseSideV1(value.ask, "ask"),
+    };
+  }
+
+  if (value.version === 2) {
+    return {
+      version: 2,
+      bid: parseCurrentSide(value.bid, "bid"),
+      ask: parseCurrentSide(value.ask, "ask"),
+      field: parseField(value.field),
+    };
+  }
+
+  throw new TypeError("unsupported pressure frontier snapshot");
 }
 
 export function rebasePressureFrontierSnapshot(
@@ -55,46 +88,64 @@ export function rebasePressureFrontierSnapshot(
   const rebaseTime = (time: number): number =>
     targetNowMs - Math.max(0, sourceNowMs - time);
 
-  const rebaseSide = (
-    side: PressureFrontierSideSnapshot,
-  ): PressureFrontierSideSnapshot => ({
-    updatedAtMs:
-      side.updatedAtMs === null ? null : rebaseTime(side.updatedAtMs),
-    current: side.current,
-    history: side.history.map((layer) => ({
-      sinceMs: rebaseTime(layer.sinceMs),
-      levels: layer.levels,
-    })),
-  });
+  if (snapshot.version === 1) {
+    const rebaseSide = (
+      side: PressureFrontierSideSnapshotV1,
+    ): PressureFrontierSideSnapshotV1 => ({
+      updatedAtMs:
+        side.updatedAtMs === null ? null : rebaseTime(side.updatedAtMs),
+      current: side.current,
+      history: side.history.map((layer) => ({
+        sinceMs: rebaseTime(layer.sinceMs),
+        levels: layer.levels,
+      })),
+    });
+
+    return {
+      version: 1,
+      bid: rebaseSide(snapshot.bid),
+      ask: rebaseSide(snapshot.ask),
+    };
+  }
 
   return {
-    version: 1,
-    bid: rebaseSide(snapshot.bid),
-    ask: rebaseSide(snapshot.ask),
+    version: 2,
+    bid: snapshot.bid,
+    ask: snapshot.ask,
+    field: {
+      revision: snapshot.field.revision,
+      runs: snapshot.field.runs.map((run) => ({
+        ...run,
+        bands: run.bands.map((band) => ({
+          ...band,
+          state:
+            band.state.kind === "live"
+              ? band.state
+              : {
+                  kind: "ghost" as const,
+                  sinceMs: rebaseTime(band.state.sinceMs),
+                },
+        })),
+      })),
+    },
   };
 }
 
-export function snapshotSide(
-  updatedAtMs: number,
+export function snapshotCurrentSide(
   current: FrontierRoot,
-  history: readonly {
-    readonly sinceMs: number;
-    readonly root: FrontierRoot;
-  }[],
-): PressureFrontierSideSnapshot {
-  return {
-    updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : null,
-    current: frontierLevels(current),
-    history: history.map((layer) => ({
-      sinceMs: layer.sinceMs,
-      levels: frontierLevels(layer.root),
-    })),
-  };
+): PressureFrontierCurrentSideSnapshot {
+  return { current: frontierLevels(current) };
 }
 
-export function restoreSnapshotSide(
-  side: PressureFrontierSideSnapshot,
-): RestoredPressureFrontierSide {
+export function restoreCurrentSide(
+  side: PressureFrontierCurrentSideSnapshot,
+): FrontierRoot {
+  return buildFrontier(side.current);
+}
+
+export function restoreSnapshotSideV1(
+  side: PressureFrontierSideSnapshotV1,
+): RestoredPressureFrontierSideV1 {
   return {
     updatedAtMs: side.updatedAtMs ?? Number.NEGATIVE_INFINITY,
     current: buildFrontier(side.current),
@@ -105,10 +156,24 @@ export function restoreSnapshotSide(
   };
 }
 
-function parseSide(
+function parseCurrentSide(
   value: unknown,
   label: string,
-): PressureFrontierSideSnapshot {
+): PressureFrontierCurrentSideSnapshot {
+  if (!isRecord(value))
+    throw new TypeError(`pressure frontier ${label} side must be an object`);
+  if (!Array.isArray(value.current))
+    throw new TypeError(`pressure frontier ${label} current must be an array`);
+
+  return {
+    current: parseLevels(value.current, `${label} current`),
+  };
+}
+
+function parseSideV1(
+  value: unknown,
+  label: string,
+): PressureFrontierSideSnapshotV1 {
   if (!isRecord(value))
     throw new TypeError(`pressure frontier ${label} side must be an object`);
 
@@ -132,7 +197,10 @@ function parseSide(
         rawLayer.sinceMs,
         `${label} history[${index}].sinceMs`,
       ),
-      levels: parseLevels(rawLayer.levels, `${label} history[${index}].levels`),
+      levels: parseLevels(
+        rawLayer.levels,
+        `${label} history[${index}].levels`,
+      ),
     };
   });
 
@@ -143,6 +211,74 @@ function parseSide(
       );
 
   return { updatedAtMs, current, history };
+}
+
+function parseField(value: unknown): PressureFieldSnapshot {
+  if (!isRecord(value))
+    throw new TypeError("pressure field snapshot must be an object");
+  const revision = finiteNumber(value.revision, "pressure field revision");
+  if (revision < 0)
+    throw new RangeError("pressure field revision must be non-negative");
+  if (!Array.isArray(value.runs))
+    throw new TypeError("pressure field runs must be an array");
+
+  return {
+    revision,
+    runs: value.runs.map(parseRun),
+  };
+}
+
+function parseRun(value: unknown, index: number): PressureFieldRunSnapshot {
+  if (!isRecord(value))
+    throw new TypeError(`pressure field run[${index}] must be an object`);
+  if (!Array.isArray(value.bands))
+    throw new TypeError(`pressure field run[${index}].bands must be an array`);
+
+  return {
+    lo: finiteNumber(value.lo, `run[${index}].lo`),
+    hi: finiteNumber(value.hi, `run[${index}].hi`),
+    bidVolume: finiteNumber(value.bidVolume, `run[${index}].bidVolume`),
+    askVolume: finiteNumber(value.askVolume, `run[${index}].askVolume`),
+    bidRevision: finiteNumber(
+      value.bidRevision,
+      `run[${index}].bidRevision`,
+    ),
+    askRevision: finiteNumber(
+      value.askRevision,
+      `run[${index}].askRevision`,
+    ),
+    bands: value.bands.map((band, bandIndex) =>
+      parseBand(band, `run[${index}].bands[${bandIndex}]`),
+    ),
+  };
+}
+
+function parseBand(value: unknown, label: string): PressureBand {
+  if (!isRecord(value))
+    throw new TypeError(`${label} must be an object`);
+  if (value.side !== -1 && value.side !== 1)
+    throw new RangeError(`${label}.side must be -1 or 1`);
+  if (!isRecord(value.state))
+    throw new TypeError(`${label}.state must be an object`);
+
+  const state =
+    value.state.kind === "live"
+      ? ({ kind: "live" } as const)
+      : value.state.kind === "ghost"
+        ? ({
+            kind: "ghost",
+            sinceMs: finiteNumber(value.state.sinceMs, `${label}.sinceMs`),
+          } as const)
+        : (() => {
+            throw new RangeError(`${label}.state kind is invalid`);
+          })();
+
+  return {
+    loVolume: finiteNumber(value.loVolume, `${label}.loVolume`),
+    hiVolume: finiteNumber(value.hiVolume, `${label}.hiVolume`),
+    side: value.side,
+    state,
+  };
 }
 
 function parseLevels(
