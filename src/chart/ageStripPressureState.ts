@@ -3,7 +3,7 @@ import {
   PressureFrontierMemory,
   type PressureBookSide,
 } from "@/lib/pressureFrontierMemory";
-import type { PressureCell } from "@/lib/pressureMemory";
+import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
 import type { LiveBookUpdate } from "./liveBookFeed";
 
 export interface AgeStripPressureTiming {
@@ -80,13 +80,13 @@ export class AgeStripPressureState {
   }
 
   hydrate(
-    cellsByToken: Readonly<Record<string, readonly PressureCell[]>>,
+    snapshotsByToken: Readonly<Record<string, PressureFrontierSnapshot>>,
     getBook: (tokenId: string) => TokenBook<string> | undefined,
     nowMs = Date.now(),
   ): void {
-    for (const [tokenId, cells] of Object.entries(cellsByToken)) {
+    for (const [tokenId, snapshot] of Object.entries(snapshotsByToken)) {
       const state = this.ensure(tokenId);
-      state.memory.restoreLegacyCells(cells);
+      state.memory.restore(snapshot);
 
       // A websocket snapshot may have arrived before recorder hydration.
       // Paint the current book last so live pressure wins over persisted ghosts.
