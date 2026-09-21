@@ -122,8 +122,7 @@ export class PressureFrontierMemory {
       state.current = next;
       state.updatedAtMs = nowMs;
       for (const [key, shares] of finalByKey)
-        if (shares > 0)
-          this.rememberPrice(side === "bid" ? key : 1 - key);
+        if (shares > 0) this.rememberPrice(side === "bid" ? key : 1 - key);
       this.invalidateRenderPlan();
     }
     this.lastUpdateMs = nowMs;
@@ -237,11 +236,7 @@ export class PressureFrontierMemory {
       if (bands.length === 0) continue;
 
       const previous = runs[runs.length - 1];
-      if (
-        previous &&
-        previous.hi === lo &&
-        bandsEqual(previous.bands, bands)
-      ) {
+      if (previous && previous.hi === lo && bandsEqual(previous.bands, bands)) {
         runs[runs.length - 1] = {
           lo: previous.lo,
           hi,
