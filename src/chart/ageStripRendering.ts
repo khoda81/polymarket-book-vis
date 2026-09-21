@@ -69,8 +69,8 @@ export function drawPressureMemoryStrip(
   nowMs: number,
   rowOffsetCss = 0,
 ): void {
-  const boundaries = memory.priceBoundaries();
-  if (boundaries.length < 2) return;
+  const runs = memory.renderRuns();
+  if (runs.length === 0) return;
 
   const { ctx, viewport: vp } = frame;
   const dpr = window.devicePixelRatio || 1;
@@ -104,13 +104,7 @@ export function drawPressureMemoryStrip(
     raster.image.data.byteLength / 4,
   );
 
-  for (let index = 0; index + 1 < boundaries.length; index++) {
-    const lo = boundaries[index]!;
-    const hi = boundaries[index + 1]!;
-    if (!(hi > lo)) continue;
-
-    const bands = memory.shellsAtPrice((lo + hi) / 2, visibleGhostSinceMs);
-    if (bands.length === 0) continue;
+  for (const { lo, hi, bands } of runs) {
 
     rasterizePressureBandsInto(
       bands,
