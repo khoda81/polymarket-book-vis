@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import {
   parsePressureCells,
   type PressureCell,
-} from "../src/lib/pressureMemory";
+} from "../src/lib/legacyPressureCells";
 import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
 import {
   parsePressureFrontierSnapshot,
