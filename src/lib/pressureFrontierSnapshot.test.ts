@@ -19,9 +19,7 @@ test("frontier snapshot round trip preserves visible shells", () => {
   restored.restore(parsed);
 
   for (const price of [0.1, 0.49, 0.55, 0.59, 0.8])
-    expect(restored.shellsAtPrice(price)).toEqual(
-      source.shellsAtPrice(price),
-    );
+    expect(restored.shellsAtPrice(price)).toEqual(source.shellsAtPrice(price));
 });
 
 test("rebasing preserves ghost ages across clocks", () => {
