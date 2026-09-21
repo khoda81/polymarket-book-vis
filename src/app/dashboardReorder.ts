@@ -3,122 +3,162 @@ export interface DashboardDragPoint {
   readonly y: number;
 }
 
-export interface DashboardDragRect {
+export interface DashboardGridSnapshot {
+  /** Viewport-space origin of the first grid track. */
   readonly left: number;
   readonly top: number;
-  readonly right: number;
-  readonly bottom: number;
-  readonly width: number;
-  readonly height: number;
+  readonly columnWidth: number;
+  readonly columnGap: number;
+  readonly rowHeight: number;
+  readonly rowGap: number;
+  readonly columnCount: number;
 }
 
 export interface DashboardDragItem {
   readonly key: string;
-  readonly rect: DashboardDragRect;
+  readonly height: number;
+  readonly rowSpan: number;
 }
 
 export interface DashboardDragSnapshot {
   readonly order: readonly string[];
   readonly items: readonly DashboardDragItem[];
+  readonly grid: DashboardGridSnapshot;
+  /** Pointer position inside the dragged card at pointer-down. */
+  readonly grabOffset: DashboardDragPoint;
 }
 
 /**
- * Compute the entire candidate order from immutable pointer-down geometry.
+ * Compute the candidate order from one immutable pointer-down snapshot.
  *
- * Nothing from the currently reflowed dashboard is consulted here. That makes
- * dragging path-independent: revisiting the same pointer coordinate during one
- * drag always produces the same order.
+ * For every possible insertion slot we simulate the same shortest-column
+ * masonry placement used by the dashboard. We then ask where *the dragged
+ * card's original grab point* would land for that ordering and choose the slot
+ * that puts that point closest to the real pointer.
+ *
+ * So placement is:
+ *
+ *   order = f(dragged card, pointer, drag-start layout)
+ *
+ * It never depends on an intermediate reflow.
  */
 export function dashboardOrderForPointer(
   snapshot: DashboardDragSnapshot,
   draggedKey: string,
   pointer: DashboardDragPoint,
 ): string[] {
-  if (!snapshot.order.includes(draggedKey))
-    return [...snapshot.order];
+  const originalIndex = snapshot.order.indexOf(draggedKey);
+  if (originalIndex < 0) return [...snapshot.order];
+
+  const itemByKey = new Map(
+    snapshot.items.map((item) => [item.key, item]),
+  );
+  if (!itemByKey.has(draggedKey)) return [...snapshot.order];
 
   const withoutDragged = snapshot.order.filter(
     (key) => key !== draggedKey,
   );
   if (withoutDragged.length === 0) return [draggedKey];
 
-  const rank = new Map(
-    withoutDragged.map((key, index) => [key, index]),
-  );
-  const candidates = snapshot.items.filter(
-    (item) =>
-      item.key !== draggedKey &&
-      rank.has(item.key),
-  );
-  if (candidates.length === 0) return [...snapshot.order];
+  let bestOrder = [...snapshot.order];
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let bestIndexDistance = Number.POSITIVE_INFINITY;
+  let bestInsertionIndex = Number.POSITIVE_INFINITY;
 
-  let target = candidates[0]!;
-  let bestDistance = distanceSquaredToRect(pointer, target.rect);
+  for (
+    let insertionIndex = 0;
+    insertionIndex <= withoutDragged.length;
+    insertionIndex++
+  ) {
+    const candidate = [
+      ...withoutDragged.slice(0, insertionIndex),
+      draggedKey,
+      ...withoutDragged.slice(insertionIndex),
+    ];
+    const rect = simulatedRectForKey(
+      candidate,
+      draggedKey,
+      itemByKey,
+      snapshot.grid,
+    );
+    if (!rect) continue;
 
-  for (let index = 1; index < candidates.length; index++) {
-    const candidate = candidates[index]!;
-    const distance = distanceSquaredToRect(pointer, candidate.rect);
+    const anchor = {
+      x: rect.left + snapshot.grabOffset.x,
+      y: rect.top + snapshot.grabOffset.y,
+    };
+    const distance =
+      squared(pointer.x - anchor.x) +
+      squared(pointer.y - anchor.y);
+    const indexDistance = Math.abs(
+      insertionIndex - originalIndex,
+    );
+
     if (
       distance < bestDistance ||
       (distance === bestDistance &&
-        (rank.get(candidate.key) ?? Number.POSITIVE_INFINITY) <
-          (rank.get(target.key) ?? Number.POSITIVE_INFINITY))
+        (indexDistance < bestIndexDistance ||
+          (indexDistance === bestIndexDistance &&
+            insertionIndex < bestInsertionIndex)))
     ) {
-      target = candidate;
+      bestOrder = candidate;
       bestDistance = distance;
+      bestIndexDistance = indexDistance;
+      bestInsertionIndex = insertionIndex;
     }
   }
 
-  const targetIndex = rank.get(target.key);
-  if (targetIndex === undefined) return [...snapshot.order];
-
-  const insertAfter = pointerFallsAfterCard(pointer, target.rect);
-  const insertionIndex = targetIndex + (insertAfter ? 1 : 0);
-
-  return [
-    ...withoutDragged.slice(0, insertionIndex),
-    draggedKey,
-    ...withoutDragged.slice(insertionIndex),
-  ];
+  return bestOrder;
 }
 
-function distanceSquaredToRect(
-  point: DashboardDragPoint,
-  rect: DashboardDragRect,
-): number {
-  const dx =
-    point.x < rect.left
-      ? rect.left - point.x
-      : point.x > rect.right
-        ? point.x - rect.right
-        : 0;
-  const dy =
-    point.y < rect.top
-      ? rect.top - point.y
-      : point.y > rect.bottom
-        ? point.y - rect.bottom
-        : 0;
-  return dx * dx + dy * dy;
+interface SimulatedRect {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
 }
 
-/**
- * Split a target card into stable before/after regions.
- *
- * Vertical motion is the primary ordering signal. Around the card's horizontal
- * midline, horizontal motion breaks the tie so moving across a row feels
- * natural. The boundary depends only on the pointer-down rectangle.
- */
-function pointerFallsAfterCard(
-  point: DashboardDragPoint,
-  rect: DashboardDragRect,
-): boolean {
-  const centerX = rect.left + rect.width / 2;
-  const centerY = rect.top + rect.height / 2;
-  const normalizedY =
-    (point.y - centerY) / Math.max(1, rect.height);
+function simulatedRectForKey(
+  order: readonly string[],
+  targetKey: string,
+  itemByKey: ReadonlyMap<string, DashboardDragItem>,
+  grid: DashboardGridSnapshot,
+): SimulatedRect | null {
+  const columnCount = Math.max(1, Math.floor(grid.columnCount));
+  const nextRow = new Array<number>(columnCount).fill(0);
 
-  if (Math.abs(normalizedY) <= 0.2)
-    return point.x > centerX;
+  for (const key of order) {
+    const item = itemByKey.get(key);
+    if (!item) continue;
 
-  return point.y > centerY;
+    const column = shortestColumn(nextRow);
+    const row = nextRow[column]!;
+    if (key === targetKey) {
+      return {
+        left:
+          grid.left +
+          column * (grid.columnWidth + grid.columnGap),
+        top:
+          grid.top +
+          row * (grid.rowHeight + grid.rowGap),
+        width: grid.columnWidth,
+        height: item.height,
+      };
+    }
+
+    nextRow[column] = row + Math.max(1, item.rowSpan);
+  }
+
+  return null;
+}
+
+function shortestColumn(nextRow: readonly number[]): number {
+  let best = 0;
+  for (let index = 1; index < nextRow.length; index++)
+    if (nextRow[index]! < nextRow[best]!) best = index;
+  return best;
+}
+
+function squared(value: number): number {
+  return value * value;
 }
