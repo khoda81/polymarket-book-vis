@@ -1,14 +1,19 @@
 import {
   parsePressureCells,
   rebasePressureCells,
-  type PressureCell,
 } from "./pressureMemory";
+import { PressureFrontierMemory } from "./pressureFrontierMemory";
+import {
+  parsePressureFrontierSnapshot,
+  rebasePressureFrontierSnapshot,
+  type PressureFrontierSnapshot,
+} from "./pressureFrontierSnapshot";
 
 interface RecorderStateResponse {
   serverNowMs?: number;
   connected?: boolean;
   recordingSinceMsByToken?: Record<string, number>;
-  states?: Record<string, { cells?: unknown }>;
+  states?: Record<string, { pressure?: unknown; cells?: unknown }>;
   pendingTokenIds?: string[];
   debug?: unknown;
 }
@@ -16,9 +21,9 @@ interface RecorderStateResponse {
 export interface RecorderHydration {
   /** Individual recorder coverage starts, keyed by token id. */
   readonly recordingSinceMsByToken: Readonly<Record<string, number>>;
-  /** Layered pressure memory rebased onto the browser clock. */
-  readonly pressureCellsByToken: Readonly<
-    Record<string, readonly PressureCell[]>
+  /** Monotone pressure memory rebased onto the browser clock. */
+  readonly pressureSnapshotsByToken: Readonly<
+    Record<string, PressureFrontierSnapshot>
   >;
 }
 
@@ -49,7 +54,7 @@ export async function fetchRecorderHydration(
   if (requested.length === 0) return emptyHydration();
 
   const recordingSinceMsByToken: Record<string, number> = {};
-  const pressureCellsByToken: Record<string, readonly PressureCell[]> = {};
+  const pressureSnapshotsByToken: Record<string, readonly PressureCell[]> = {};
 
   let remaining = requested;
   let lastError: unknown = null;
@@ -73,7 +78,7 @@ export async function fetchRecorderHydration(
       mergeRecorderResponse(
         body,
         recordingSinceMsByToken,
-        pressureCellsByToken,
+        pressureSnapshotsByToken,
       );
 
       const explicitPending = new Set(
@@ -83,7 +88,7 @@ export async function fetchRecorderHydration(
       );
 
       remaining = remaining.filter((tokenId) => {
-        if (pressureCellsByToken[tokenId]) return false;
+        if (pressureSnapshotsByToken[tokenId]) return false;
         if (explicitPending.has(tokenId)) return true;
 
         // Backward compatibility with an older recorder: a token with claimed
@@ -114,12 +119,12 @@ export async function fetchRecorderHydration(
   else
     recorderDebug("hydrate-complete", {
       coverage: Object.keys(recordingSinceMsByToken).length,
-      states: Object.keys(pressureCellsByToken).length,
+      states: Object.keys(pressureSnapshotsByToken).length,
     });
 
   return {
     recordingSinceMsByToken,
-    pressureCellsByToken,
+    pressureSnapshotsByToken,
   };
 }
 
@@ -166,7 +171,7 @@ async function fetchRecorderState(
 function mergeRecorderResponse(
   body: RecorderStateResponse,
   recordingSinceMsByToken: Record<string, number>,
-  pressureCellsByToken: Record<string, readonly PressureCell[]>,
+  pressureSnapshotsByToken: Record<string, readonly PressureCell[]>,
 ): void {
   for (const [tokenId, since] of Object.entries(
     body.recordingSinceMsByToken ?? {},
@@ -183,11 +188,25 @@ function mergeRecorderResponse(
 
   for (const [tokenId, state] of Object.entries(body.states ?? {})) {
     try {
-      pressureCellsByToken[tokenId] = rebasePressureCells(
+      if (state.pressure !== undefined) {
+        pressureSnapshotsByToken[tokenId] = rebasePressureFrontierSnapshot(
+          parsePressureFrontierSnapshot(state.pressure),
+          sourceNowMs,
+          targetNowMs,
+        );
+        continue;
+      }
+
+      // Legacy recorder compatibility. Convert old cells exactly once at the
+      // transport boundary so the rest of the app only sees frontier state.
+      const legacy = rebasePressureCells(
         parsePressureCells(state.cells),
         sourceNowMs,
         targetNowMs,
       );
+      const memory = new PressureFrontierMemory();
+      memory.restoreLegacyCells(legacy);
+      pressureSnapshotsByToken[tokenId] = memory.snapshot();
     } catch (error) {
       console.warn(
         `Ignoring malformed recorder pressure state for ${tokenId}`,
@@ -200,7 +219,7 @@ function mergeRecorderResponse(
 function emptyHydration(): RecorderHydration {
   return {
     recordingSinceMsByToken: {},
-    pressureCellsByToken: {},
+    pressureSnapshotsByToken: {},
   };
 }
 
