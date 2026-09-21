@@ -1,6 +1,10 @@
 import type { TokenBook } from "@/lib/orderBook";
-import { PressureMemory, type PressureCell } from "@/lib/pressureMemory";
-import { signedVolumeSegments } from "@/lib/signedVolume";
+import {
+  PressureFrontierMemory,
+  type PressureBookSide,
+} from "@/lib/pressureFrontierMemory";
+import type { PressureCell } from "@/lib/pressureMemory";
+import type { LiveBookUpdate } from "./liveBookFeed";
 
 export interface AgeStripPressureTiming {
   readonly recordingSinceMs: number | null;
@@ -8,15 +12,15 @@ export interface AgeStripPressureTiming {
 }
 
 interface PressureState extends AgeStripPressureTiming {
-  readonly memory: PressureMemory;
+  readonly memory: PressureFrontierMemory;
 }
 
 /**
  * Shared pressure/history state for age-strip rows.
  *
- * Both ordinary event cards and recurring-series rows use this store so live
- * book updates, recorder hydration, resolution clearing, and ghost history
- * have exactly the same semantics.
+ * The live state is a pair of monotone side-local cumulative frontiers. Normal
+ * websocket level changes update those frontiers directly; the old PressureCell
+ * format survives only as recorder hydration and renderer compatibility seams.
  */
 export class AgeStripPressureState {
   private readonly states = new Map<string, PressureState>();
@@ -31,7 +35,7 @@ export class AgeStripPressureState {
       state = {
         recordingSinceMs: null,
         resolutionMs,
-        memory: new PressureMemory(),
+        memory: new PressureFrontierMemory(),
       };
       this.states.set(tokenId, state);
     } else if (
@@ -82,12 +86,12 @@ export class AgeStripPressureState {
   ): void {
     for (const [tokenId, cells] of Object.entries(cellsByToken)) {
       const state = this.ensure(tokenId);
-      state.memory.restore(cells);
+      state.memory.restoreLegacyCells(cells);
 
       // A websocket snapshot may have arrived before recorder hydration.
       // Paint the current book last so live pressure wins over persisted ghosts.
       const book = getBook(tokenId);
-      if (book) state.memory.observe(signedVolumeSegments(book), nowMs);
+      if (book) state.memory.observeBook(book, nowMs);
     }
   }
 
@@ -96,21 +100,45 @@ export class AgeStripPressureState {
     book: TokenBook<string>,
     nowMs = Date.now(),
   ): void {
-    this.ensure(tokenId).memory.observe(signedVolumeSegments(book), nowMs);
+    this.ensure(tokenId).memory.observeBook(book, nowMs);
+  }
+
+  applyBookUpdate(
+    tokenId: string,
+    book: TokenBook<string>,
+    update: LiveBookUpdate,
+  ): void {
+    const memory = this.ensure(tokenId).memory;
+    if (update.kind === "snapshot") {
+      memory.observeBook(book, update.observedAtMs);
+      return;
+    }
+
+    const bySide: Record<
+      PressureBookSide,
+      Array<{ price: number; shares: number }>
+    > = {
+      bid: [],
+      ask: [],
+    };
+    for (const change of update.changes)
+      bySide[change.side].push({
+        price: change.price,
+        shares: change.shares,
+      });
+
+    if (bySide.bid.length > 0)
+      memory.updateLevels("bid", bySide.bid, update.observedAtMs);
+    if (bySide.ask.length > 0)
+      memory.updateLevels("ask", bySide.ask, update.observedAtMs);
   }
 
   resolve(tokenId: string): void {
-    const state = this.states.get(tokenId);
-    if (!state) return;
-
-    // Resolution has its own semantic rendering. Keeping the former live book
-    // as a fading ghost both obscures that result and makes resolved rows keep
-    // participating in the ghost animation loop.
-    state.memory.restore([]);
+    this.states.get(tokenId)?.memory.clear();
   }
 
   cells(tokenId: string): readonly PressureCell[] {
-    return this.states.get(tokenId)?.memory.snapshot() ?? [];
+    return this.states.get(tokenId)?.memory.cells() ?? [];
   }
 
   timing(tokenId: string): AgeStripPressureTiming | undefined {
@@ -123,8 +151,9 @@ export class AgeStripPressureState {
     halfLifeMs: number,
   ): boolean {
     return (
-      this.states.get(tokenId)?.memory.hasVisibleGhosts(nowMs, halfLifeMs) ??
-      false
+      this.states
+        .get(tokenId)
+        ?.memory.hasVisibleGhosts(nowMs, halfLifeMs) ?? false
     );
   }
 }
