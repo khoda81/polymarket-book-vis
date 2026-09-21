@@ -78,8 +78,8 @@ export class ChartController {
 
     this.feed = new LiveBookFeed(polyMarketClient, {
       onConnectionStatus: options.onConnectionStatus ?? (() => undefined),
-      onBookUpdated: (tokenId) => {
-        this.ageView.onBookUpdate(tokenId);
+      onBookUpdated: (tokenId, _book, update) => {
+        this.ageView.onBookUpdate(tokenId, update);
         this.reqDraw();
       },
       onMarketResolved: (resolution) => {
