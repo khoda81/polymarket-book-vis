@@ -452,8 +452,8 @@ body {
   z-index: 21;
   display: grid;
   place-items: center;
-  width: 0.75rem;
-  height: 2rem;
+  width: 2rem;
+  height: 1rem;
   padding: 0;
   color: var(--color-text-secondary, #666);
   background: transparent;
@@ -484,8 +484,8 @@ body {
 
 .card-drag svg {
   display: block;
-  width: 0.75rem;
-  height: 1.25rem;
+  width: 1.125rem;
+  height: 0.75rem;
 }
 
 .card-drag svg circle {

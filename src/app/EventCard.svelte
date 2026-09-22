@@ -119,13 +119,13 @@
     onclick={(event) => reorderHandleClick(event, onreorderstep)}
     onkeydown={(event) => reorderHandleKeydown(event, onreorderstep)}
   >
-    <svg viewBox="0 0 18 18" aria-hidden="true">
-      <circle cx="5" cy="4" r="1.25" />
-      <circle cx="13" cy="4" r="1.25" />
-      <circle cx="5" cy="9" r="1.25" />
-      <circle cx="13" cy="9" r="1.25" />
-      <circle cx="5" cy="14" r="1.25" />
-      <circle cx="13" cy="14" r="1.25" />
+    <svg viewBox="0 0 18 12" aria-hidden="true">
+      <circle cx="4" cy="3.5" r="1.25" />
+      <circle cx="9" cy="3.5" r="1.25" />
+      <circle cx="14" cy="3.5" r="1.25" />
+      <circle cx="4" cy="8.5" r="1.25" />
+      <circle cx="9" cy="8.5" r="1.25" />
+      <circle cx="14" cy="8.5" r="1.25" />
     </svg>
   </button>
   <div class="card-actions">

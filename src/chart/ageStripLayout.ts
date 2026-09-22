@@ -8,11 +8,11 @@ const AGE_MARKET_ICON_SIZE_PX = 16;
 const AGE_MARKET_ICON_GAP_PX = 8;
 
 export const AGE_LABEL_HORIZONTAL_INSET_PX = 8;
-const AGE_TIME_META_WIDTH_PX = 52;
+const AGE_TIME_META_WIDTH_PX = 36;
 export const AGE_TIME_GUTTER_PX =
   AGE_TIME_META_WIDTH_PX + AGE_LABEL_HORIZONTAL_INSET_PX * 2 + 1;
 
-export const VOLUME_LEFT_PADDING_PX = 60;
+export const VOLUME_LEFT_PADDING_PX = 48;
 export const VOLUME_RIGHT_PADDING_PX = 16;
 
 let ageLabelMeasureCtx: CanvasRenderingContext2D | null | undefined;
