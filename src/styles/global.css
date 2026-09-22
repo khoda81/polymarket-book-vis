@@ -386,11 +386,7 @@ body {
   min-height: 0;
 }
 
-.grid-item
-  > .card
-  > .cpv-wrap
-  > .cpv-chart-stage
-  > .cpv-canvas-wrap {
+.grid-item > .card > .cpv-wrap > .cpv-chart-stage > .cpv-canvas-wrap {
   flex: 1 1 auto;
 }
 
