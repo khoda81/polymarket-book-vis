@@ -157,6 +157,22 @@ test("same-timestamp batch uses final absolute level sizes", () => {
   expect(memory.shellsAtPrice(0.4)[0]?.hiVolume).toBe(120);
 });
 
+test("removing large fractional ask levels cannot leave negative cumulative pressure", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels("ask", [{ price: 0.19, shares: 26_383_410.511 }], 1);
+  memory.updateLevels("ask", [{ price: 0.11, shares: 70_175_917.679 }], 2);
+  memory.updateLevels("ask", [{ price: 0.19, shares: 0 }], 3);
+  memory.updateLevels("ask", [{ price: 0.11, shares: 0 }], 4);
+
+  expect(memory.currentLevels("ask")).toEqual([]);
+  expect(
+    memory
+      .renderRuns()
+      .every((run) => run.bands.every((band) => band.state.kind === "ghost")),
+  ).toBe(true);
+});
+
 test("render runs are stable between draws and invalidate only on mutation", () => {
   const memory = new PressureFrontierMemory();
 

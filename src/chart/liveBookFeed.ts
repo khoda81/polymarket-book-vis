@@ -168,23 +168,32 @@ export class LiveBookFeed {
 
             const price = parseFloat(change.price);
             const size = parseFloat(change.size);
+            let canonicalPrice = price;
+            let canonicalShares = size;
             if (change.side === OrderSide.BUY) {
               book.usdToYes.setLevel(change.price, {
                 price,
                 take: size,
               });
             } else {
+              const inversePrice = 1 / price;
+              const inverseTake = size * price;
               book.yesToUsd.setLevel(change.price, {
-                price: 1 / price,
-                take: size * price,
+                price: inversePrice,
+                take: inverseTake,
               });
+              // Match the canonical price and shares produced by asSellOrders
+              // for snapshots. A double inversion can move a float by one ULP,
+              // which otherwise leaves the old ask level at a different key.
+              canonicalPrice = 1 / inversePrice;
+              canonicalShares = inversePrice * inverseTake;
             }
 
             const changes = changesByToken.get(tokenId) ?? [];
             changes.push({
               side: change.side === OrderSide.BUY ? "bid" : "ask",
-              price,
-              shares: size,
+              price: canonicalPrice,
+              shares: canonicalShares,
             });
             changesByToken.set(tokenId, changes);
           }

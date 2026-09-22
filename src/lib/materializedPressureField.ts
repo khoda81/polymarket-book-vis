@@ -3,6 +3,7 @@ import {
   type PressureBandState,
   type PressureSide,
 } from "./pressureField";
+import { frontierVolumeAt, type FrontierRoot } from "./monotoneFrontier";
 
 export type PressureBookSide = "bid" | "ask";
 
@@ -84,6 +85,7 @@ export class MaterializedPressureField {
     side: PressureBookSide,
     deltas: readonly PressureSideDelta[],
     nowMs: number,
+    nextFrontier: FrontierRoot,
   ): void {
     const actual = deltas.filter(
       ({ price, delta }) =>
@@ -100,16 +102,22 @@ export class MaterializedPressureField {
 
     for (const run of this.runs) {
       const midpoint = (run.lo + run.hi) / 2;
-      let delta = 0;
-      for (const change of actual) {
-        if (
+      const affected = actual.some(
+        (change) =>
           (side === "bid" && midpoint <= change.price) ||
-          (side === "ask" && midpoint >= change.price)
-        )
-          delta += change.delta;
-      }
-      if (delta === 0) continue;
-      transitionRun(run, side, delta, nowMs, revision);
+          (side === "ask" && midpoint >= change.price),
+      );
+      if (!affected) continue;
+
+      // Absolute frontier volume is the source of truth. Adding signed deltas
+      // to a rounded cumulative float can drift below zero after removals.
+      const nextVolume = frontierVolumeAt(
+        nextFrontier,
+        side === "bid" ? midpoint : 1 - midpoint,
+      );
+      if (nextVolume === (side === "bid" ? run.bidVolume : run.askVolume))
+        continue;
+      transitionRun(run, side, nextVolume, nowMs, revision);
     }
 
     this.mergeAdjacentRuns();
@@ -225,7 +233,7 @@ export class MaterializedPressureField {
 function transitionRun(
   run: MutableRun,
   side: PressureBookSide,
-  delta: number,
+  nextVolume: number,
   nowMs: number,
   revision: number,
 ): void {
@@ -235,10 +243,10 @@ function transitionRun(
   const oldAskRevision = run.askRevision;
 
   if (side === "bid") {
-    run.bidVolume = normalizedVolume(run.bidVolume + delta);
+    run.bidVolume = nextVolume;
     run.bidRevision = revision;
   } else {
-    run.askVolume = normalizedVolume(run.askVolume + delta);
+    run.askVolume = nextVolume;
     run.askRevision = revision;
   }
 
@@ -465,12 +473,6 @@ function cloneBand(band: PressureBand): PressureBand {
         ? { kind: "live" }
         : { kind: "ghost", sinceMs: band.state.sinceMs },
   };
-}
-
-function normalizedVolume(value: number): number {
-  if (value >= 0) return value;
-  if (value > -1e-9) return 0;
-  throw new RangeError("pressure cumulative volume became negative");
 }
 
 function nonNegative(value: number, label: string): number {

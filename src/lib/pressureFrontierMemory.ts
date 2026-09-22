@@ -109,7 +109,7 @@ export class PressureFrontierMemory {
     }
 
     if (deltas.length > 0) {
-      this.field.applySideDeltas(side, deltas, nowMs);
+      this.field.applySideDeltas(side, deltas, nowMs, next);
       state.current = next;
     }
     this.lastUpdateMs = nowMs;
@@ -253,7 +253,7 @@ export class PressureFrontierMemory {
     }
 
     const next = buildFrontier(normalized);
-    this.field.applySideDeltas(side, deltas, nowMs);
+    this.field.applySideDeltas(side, deltas, nowMs, next);
     state.current = next;
   }
 

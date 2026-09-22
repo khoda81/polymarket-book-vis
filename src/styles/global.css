@@ -365,29 +365,8 @@ body {
 
 .grid-item {
   min-width: 0;
-  align-self: stretch;
+  align-self: start;
   transition: opacity 90ms ease;
-}
-
-.grid-item > .card {
-  height: 100%;
-}
-
-.grid-item > .card > .cpv-wrap {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.grid-item > .card > .cpv-wrap > .cpv-chart-stage {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.grid-item > .card > .cpv-wrap > .cpv-chart-stage > .cpv-canvas-wrap {
-  flex: 1 1 auto;
 }
 
 .grid-item--dragging {

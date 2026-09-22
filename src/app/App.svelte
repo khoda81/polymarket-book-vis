@@ -307,8 +307,6 @@
 
   function masonryItem(node: HTMLElement): { destroy(): void } {
     let frame = 0;
-    const card = node.querySelector<HTMLElement>(":scope > .card");
-    const content = card?.querySelector<HTMLElement>(":scope > .cpv-wrap");
 
     const measure = (): void => {
       const grid = node.parentElement;
@@ -319,20 +317,13 @@
       const rowGap = Number.parseFloat(styles.rowGap);
       if (!Number.isFinite(rowHeight) || !Number.isFinite(rowGap)) return;
 
-      // Measure the in-flow card content, not the already-stretched grid item.
-      // This keeps span calculation based on intrinsic content height while the
-      // card itself is free to fill the rounded masonry allocation.
-      const borderHeight =
-        card === null ? 0 : card.offsetHeight - card.clientHeight;
-      const height =
-        content?.getBoundingClientRect().height ??
-        Math.max(0, node.scrollHeight - borderHeight);
-      const naturalCardHeight = height + borderHeight;
+      const naturalCardHeight = node.getBoundingClientRect().height;
       const span = Math.max(
         1,
         Math.ceil((naturalCardHeight + rowGap) / (rowHeight + rowGap)),
       );
-      node.style.gridRowEnd = `span ${span}`;
+      if (node.style.gridRowEnd !== `span ${span}`)
+        node.style.gridRowEnd = `span ${span}`;
     };
 
     const scheduleMeasure = (): void => {
@@ -341,7 +332,7 @@
     };
 
     const observer = new ResizeObserver(scheduleMeasure);
-    observer.observe(content ?? card ?? node);
+    observer.observe(node);
     scheduleMeasure();
 
     return {
