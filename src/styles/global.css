@@ -477,8 +477,8 @@ body {
   z-index: 21;
   display: grid;
   place-items: center;
-  width: 2rem;
-  height: 0.75rem;
+  width: 0.75rem;
+  height: 2rem;
   padding: 0;
   color: var(--color-text-secondary, #666);
   background: transparent;
