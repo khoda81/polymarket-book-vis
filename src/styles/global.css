@@ -373,6 +373,27 @@ body {
   height: 100%;
 }
 
+.grid-item > .card > .cpv-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.grid-item > .card > .cpv-wrap > .cpv-chart-stage {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.grid-item
+  > .card
+  > .cpv-wrap
+  > .cpv-chart-stage
+  > .cpv-canvas-wrap {
+  flex: 1 1 auto;
+}
+
 .grid-item--dragging {
   opacity: 0.62;
 }
@@ -451,13 +472,13 @@ body {
 
 .card-drag {
   position: absolute;
-  top: 0.75rem;
-  left: 0.125rem;
+  top: 0.125rem;
+  left: 50%;
   z-index: 21;
   display: grid;
   place-items: center;
-  width: 0.75rem;
-  height: 2rem;
+  width: 2rem;
+  height: 0.75rem;
   padding: 0;
   color: var(--color-text-secondary, #666);
   background: transparent;
@@ -466,6 +487,7 @@ body {
   opacity: 0;
   pointer-events: none;
   touch-action: none;
+  transform: translateX(-50%);
   transition: opacity 100ms ease;
 }
 
