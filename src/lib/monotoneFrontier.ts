@@ -61,6 +61,37 @@ export function frontierVolumeAt(root: FrontierRoot, u: number): number {
   return sum;
 }
 
+/**
+ * Constant pressure inside a canonical price interval bounded by book levels.
+ * Use its edges: two adjacent floats need not have a representable midpoint.
+ * Compare asks in canonical coordinates so 1 - (1 - price) cannot move a
+ * query onto the other side of an ask boundary.
+ */
+export function frontierVolumeOnInterval(
+  root: FrontierRoot,
+  side: "bid" | "ask",
+  lo: number,
+  hi: number,
+): number {
+  let node = root;
+  let sum = 0;
+  while (node) {
+    const included = side === "bid" ? node.key >= hi : 1 - node.key <= lo;
+    if (included) {
+      sum += node.weight + (node.right?.sum ?? 0);
+      node = node.left;
+    } else {
+      node = node.right;
+    }
+  }
+  return sum;
+}
+
+/** Allow only floating-point summation-order noise when checking totals. */
+export function sameFrontierVolume(a: number, b: number): boolean {
+  return Math.abs(a - b) <= 32 * Number.EPSILON * Math.max(1, a, b);
+}
+
 export function frontierLevels(root: FrontierRoot): FrontierLevel[] {
   const result: FrontierLevel[] = [];
   const stack: FrontierNode[] = [];

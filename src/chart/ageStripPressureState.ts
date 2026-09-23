@@ -86,7 +86,14 @@ export class AgeStripPressureState {
   ): void {
     for (const [tokenId, snapshot] of Object.entries(snapshotsByToken)) {
       const state = this.ensure(tokenId);
-      state.memory.restore(snapshot);
+      try {
+        state.memory.restore(snapshot);
+      } catch (error) {
+        console.warn(
+          `Ignoring invalid recorder pressure for token ${tokenId}; preserving live pressure`,
+          error,
+        );
+      }
 
       // A websocket snapshot may have arrived before recorder hydration.
       // Paint the current book last so live pressure wins over persisted ghosts.

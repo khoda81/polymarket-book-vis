@@ -10,7 +10,8 @@ import {
   buildFrontier,
   frontierLevel,
   frontierLevels,
-  frontierVolumeAt,
+  frontierVolumeOnInterval,
+  sameFrontierVolume,
   setFrontierLevel,
   type FrontierLevel,
   type FrontierRoot,
@@ -24,6 +25,7 @@ import {
   snapshotCurrentSide,
   type PressureFrontierSnapshot,
   type PressureFrontierSnapshotV1,
+  type PressureFrontierSnapshotV2,
 } from "./pressureFrontierSnapshot";
 
 export type { PressureBookSide, PressureRenderRun };
@@ -50,7 +52,7 @@ interface SideFrontierState {
 export class PressureFrontierMemory {
   private readonly bid: SideFrontierState = { current: null };
   private readonly ask: SideFrontierState = { current: null };
-  private readonly field = new MaterializedPressureField();
+  private field = new MaterializedPressureField();
   private lastUpdateMs: number | undefined;
 
   observeBook(book: TokenBook<unknown>, nowMs: number): void {
@@ -115,7 +117,7 @@ export class PressureFrontierMemory {
     this.lastUpdateMs = nowMs;
   }
 
-  snapshot(): PressureFrontierSnapshot {
+  snapshot(): PressureFrontierSnapshotV2 {
     return {
       version: 2,
       bid: snapshotCurrentSide(this.bid.current),
@@ -126,24 +128,38 @@ export class PressureFrontierMemory {
 
   restore(snapshot: PressureFrontierSnapshot | unknown): void {
     const parsed = parsePressureFrontierSnapshot(snapshot);
-    this.clear();
+    const restored = new PressureFrontierMemory();
 
     if (parsed.version === 2) {
-      this.bid.current = restoreCurrentSide(parsed.bid);
-      this.ask.current = restoreCurrentSide(parsed.ask);
-      this.field.restore(parsed.field);
-      this.validateFieldAgainstFrontiers(parsed.field.runs);
-      this.lastUpdateMs = newestGhostTime(parsed.field.runs);
-      return;
+      restored.bid.current = restoreCurrentSide(parsed.bid);
+      restored.ask.current = restoreCurrentSide(parsed.ask);
+      restored.field.restore(parsed.field);
+      restored.validateFieldAgainstFrontiers(parsed.field.runs);
+      restored.lastUpdateMs = newestGhostTime(parsed.field.runs);
+    } else {
+      restored.restoreV1(parsed);
     }
 
-    this.restoreV1(parsed);
+    // Commit only a fully validated snapshot. Failed hydration must leave the
+    // live frontiers, historical bands, and observation clock intact.
+    this.replaceWith(restored);
   }
 
   restoreLegacyCells(value: unknown): void {
     const cells = parsePressureCells(value);
-    this.clear();
+    const restored = new PressureFrontierMemory();
+    restored.restoreCells(cells);
+    this.replaceWith(restored);
+  }
 
+  private replaceWith(restored: PressureFrontierMemory): void {
+    this.bid.current = restored.bid.current;
+    this.ask.current = restored.ask.current;
+    this.field = restored.field;
+    this.lastUpdateMs = restored.lastUpdateMs;
+  }
+
+  private restoreCells(cells: readonly PressureCell[]): void {
     this.bid.current = frontierFromLegacyCells(cells, 1, "live");
     this.ask.current = frontierFromLegacyCells(cells, -1, "live");
 
@@ -159,9 +175,8 @@ export class PressureFrontierMemory {
       const lo = sorted[index]!;
       const hi = sorted[index + 1]!;
       if (!(hi > lo)) continue;
-      const midpoint = (lo + hi) / 2;
       const cell = cells.find(
-        (candidate) => candidate.lo <= midpoint && midpoint < candidate.hi,
+        (candidate) => candidate.lo <= lo && hi <= candidate.hi,
       );
       const bands = cell?.bands.map(cloneBand) ?? [];
       const bidVolume = liveExtent(bands, 1);
@@ -274,15 +289,14 @@ export class PressureFrontierMemory {
       const lo = sorted[index]!;
       const hi = sorted[index + 1]!;
       if (!(hi > lo)) continue;
-      const price = (lo + hi) / 2;
       runs.push({
         lo,
         hi,
-        bidVolume: frontierVolumeAt(bid.current, price),
-        askVolume: frontierVolumeAt(ask.current, 1 - price),
+        bidVolume: frontierVolumeOnInterval(bid.current, "bid", lo, hi),
+        askVolume: frontierVolumeOnInterval(ask.current, "ask", lo, hi),
         bidRevision: revisions.bid,
         askRevision: revisions.ask,
-        bands: legacyV1ShellsAtPrice(bid, ask, price),
+        bands: legacyV1ShellsOnInterval(bid, ask, lo, hi),
       });
     }
 
@@ -300,12 +314,21 @@ export class PressureFrontierMemory {
     runs: readonly PressureFieldRunSnapshot[],
   ): void {
     for (const run of runs) {
-      const price = (run.lo + run.hi) / 2;
-      const bidVolume = frontierVolumeAt(this.bid.current, price);
-      const askVolume = frontierVolumeAt(this.ask.current, 1 - price);
+      const bidVolume = frontierVolumeOnInterval(
+        this.bid.current,
+        "bid",
+        run.lo,
+        run.hi,
+      );
+      const askVolume = frontierVolumeOnInterval(
+        this.ask.current,
+        "ask",
+        run.lo,
+        run.hi,
+      );
       if (
-        Math.abs(run.bidVolume - bidVolume) > 1e-8 ||
-        Math.abs(run.askVolume - askVolume) > 1e-8
+        !sameFrontierVolume(run.bidVolume, bidVolume) ||
+        !sameFrontierVolume(run.askVolume, askVolume)
       )
         throw new RangeError(
           "materialized pressure field does not match current frontiers",
@@ -349,14 +372,15 @@ function collectV1Boundaries(
   for (const layer of side.history) collect(layer.root);
 }
 
-function legacyV1ShellsAtPrice(
+function legacyV1ShellsOnInterval(
   bid: RestoredV1Side,
   ask: RestoredV1Side,
-  price: number,
+  lo: number,
+  hi: number,
 ): PressureBand[] {
   const shells: PressureBand[] = [];
-  const bidLive = frontierVolumeAt(bid.current, price);
-  const askLive = frontierVolumeAt(ask.current, 1 - price);
+  const bidLive = frontierVolumeOnInterval(bid.current, "bid", lo, hi);
+  const askLive = frontierVolumeOnInterval(ask.current, "ask", lo, hi);
 
   let covered = 0;
   if (bidLive > 0 || askLive > 0) {
@@ -383,7 +407,12 @@ function legacyV1ShellsAtPrice(
         bidLayer.sinceMs > askLayer.sinceMs ||
         (bidLayer.sinceMs === askLayer.sinceMs && bidIndex <= askIndex));
     const layer = takeBid ? bidLayer! : askLayer!;
-    const volume = frontierVolumeAt(layer.root, takeBid ? price : 1 - price);
+    const volume = frontierVolumeOnInterval(
+      layer.root,
+      takeBid ? "bid" : "ask",
+      lo,
+      hi,
+    );
 
     if (volume > covered) {
       appendBand(shells, {

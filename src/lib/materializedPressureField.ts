@@ -3,7 +3,11 @@ import {
   type PressureBandState,
   type PressureSide,
 } from "./pressureField";
-import { frontierVolumeAt, type FrontierRoot } from "./monotoneFrontier";
+import {
+  frontierVolumeOnInterval,
+  sameFrontierVolume,
+  type FrontierRoot,
+} from "./monotoneFrontier";
 
 export type PressureBookSide = "bid" | "ask";
 
@@ -101,19 +105,20 @@ export class MaterializedPressureField {
     const revision = ++this.revision;
 
     for (const run of this.runs) {
-      const midpoint = (run.lo + run.hi) / 2;
       const affected = actual.some(
         (change) =>
-          (side === "bid" && midpoint <= change.price) ||
-          (side === "ask" && midpoint >= change.price),
+          (side === "bid" && run.hi <= change.price) ||
+          (side === "ask" && run.lo >= change.price),
       );
       if (!affected) continue;
 
       // Absolute frontier volume is the source of truth. Adding signed deltas
       // to a rounded cumulative float can drift below zero after removals.
-      const nextVolume = frontierVolumeAt(
+      const nextVolume = frontierVolumeOnInterval(
         nextFrontier,
-        side === "bid" ? midpoint : 1 - midpoint,
+        side,
+        run.lo,
+        run.hi,
       );
       if (nextVolume === (side === "bid" ? run.bidVolume : run.askVolume))
         continue;
@@ -271,7 +276,9 @@ function transitionRun(
     const hi = sorted[index + 1]!;
     if (!(hi > lo)) continue;
 
-    const radius = (lo + hi) / 2;
+    // Every ownership boundary is in sorted. The lower edge belongs to this
+    // half-open shell even when lo and hi are adjacent floating-point values.
+    const radius = lo;
     const oldOwner = liveOwner(
       oldBidVolume,
       oldAskVolume,
@@ -405,9 +412,15 @@ function validateRuns(runs: readonly MutableRun[]): void {
     if (index > 0 && runs[index - 1]!.hi !== run.lo)
       throw new RangeError("pressure runs must be contiguous");
 
-    if (run.bidVolume > previousBid)
+    if (
+      run.bidVolume > previousBid &&
+      !sameFrontierVolume(run.bidVolume, previousBid)
+    )
       throw new RangeError("bid pressure must be non-increasing in price");
-    if (run.askVolume < previousAsk)
+    if (
+      run.askVolume < previousAsk &&
+      !sameFrontierVolume(run.askVolume, previousAsk)
+    )
       throw new RangeError("ask pressure must be non-decreasing in price");
     previousBid = run.bidVolume;
     previousAsk = run.askVolume;
@@ -429,7 +442,7 @@ function validateBands(run: MutableRun): void {
     throw new RangeError("pressure bands must contain all live pressure");
 
   for (const band of run.bands) {
-    const radius = (band.loVolume + band.hiVolume) / 2;
+    const radius = band.loVolume;
     const owner = liveOwner(
       run.bidVolume,
       run.askVolume,
