@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
 import {
   parsePressureCells,
   type PressureCell,
@@ -32,9 +33,13 @@ interface DatabaseRow {
   token_id: string;
   status: RecorderTokenStatus;
   recording_since_ms: number | null;
-  cells_json: string | null;
+  cells_json: string | Uint8Array | null;
   saved_at_ms: number;
 }
+
+export type RecorderStoreIndexRecord = Omit<RecorderStoreRecord, "pressure"> & {
+  readonly hasPressure: boolean;
+};
 
 interface PersistedRecorderStateV2 {
   version: 2;
@@ -60,7 +65,8 @@ type PersistedRecorderState =
  *
  * One SQLite row owns one token's complete compressed pressure-frontier snapshot.
  * Checkpoints therefore serialize and write only tokens that changed instead
- * of rebuilding the recorder's entire history on every flush.
+ * of rebuilding the recorder's entire history on every flush. Older rows may
+ * still contain plain JSON; new rows use a lossless gzip BLOB in the same column.
  */
 export class RecorderStore {
   private readonly db: Database;
@@ -112,20 +118,38 @@ export class RecorderStore {
       )
       .all();
 
-    return rows.map((row) => ({
-      tokenId: row.token_id,
-      status: row.status,
-      recordingSinceMs:
-        row.recording_since_ms === null ? null : Number(row.recording_since_ms),
-      pressure:
-        row.cells_json === null
-          ? null
-          : loadStoredPressure(
-              JSON.parse(row.cells_json),
-              Math.min(Number(row.saved_at_ms), nowMs),
-            ),
-      savedAtMs: Number(row.saved_at_ms),
-    }));
+    return rows.map((row) => decodeRow(row, nowMs));
+  }
+
+  /** Read only metadata, without visiting the large snapshot overflow pages. */
+  loadIndex(): RecorderStoreIndexRecord[] {
+    return this.db
+      .query<Omit<DatabaseRow, "cells_json"> & { has_pressure: number }, []>(
+        `SELECT token_id, status, recording_since_ms,
+                cells_json IS NOT NULL AS has_pressure, saved_at_ms
+         FROM token_state`,
+      )
+      .all()
+      .map((row) => ({
+        tokenId: row.token_id,
+        status: row.status,
+        recordingSinceMs:
+          row.recording_since_ms === null
+            ? null
+            : Number(row.recording_since_ms),
+        savedAtMs: Number(row.saved_at_ms),
+        hasPressure: Boolean(row.has_pressure),
+      }));
+  }
+
+  load(tokenId: string, nowMs = Date.now()): RecorderStoreRecord | null {
+    const row = this.db
+      .query<DatabaseRow, [string]>(
+        `SELECT token_id, status, recording_since_ms, cells_json, saved_at_ms
+         FROM token_state WHERE token_id = ?`,
+      )
+      .get(tokenId);
+    return row === null ? null : decodeRow(row, nowMs);
   }
 
   write(records: readonly RecorderStoreRecord[]): void {
@@ -153,7 +177,9 @@ export class RecorderStore {
             record.tokenId,
             record.status,
             record.recordingSinceMs,
-            record.pressure === null ? null : JSON.stringify(record.pressure),
+            record.pressure === null
+              ? null
+              : gzipSync(JSON.stringify(record.pressure), { level: 1 }),
             record.savedAtMs,
           );
         }
@@ -322,6 +348,28 @@ function legacyRecords(
       savedAtMs: nowMs,
     };
   });
+}
+
+function decodeRow(row: DatabaseRow, nowMs: number): RecorderStoreRecord {
+  const json = row.cells_json;
+  return {
+    tokenId: row.token_id,
+    status: row.status,
+    recordingSinceMs:
+      row.recording_since_ms === null ? null : Number(row.recording_since_ms),
+    pressure:
+      json === null
+        ? null
+        : loadStoredPressure(
+            JSON.parse(
+              typeof json === "string"
+                ? json
+                : gunzipSync(json).toString("utf8"),
+            ),
+            Math.min(Number(row.saved_at_ms), nowMs),
+          ),
+    savedAtMs: Number(row.saved_at_ms),
+  };
 }
 
 function loadStoredPressure(

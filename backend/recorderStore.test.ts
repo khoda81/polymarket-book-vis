@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,27 @@ test("RecorderStore persists frontier state and restores live pressure as ghost 
     ]);
     store.close();
 
+    const raw = new Database(dbPath, { readonly: true });
+    expect(
+      raw
+        .query<{ type: string }, []>(
+          "SELECT typeof(cells_json) AS type FROM token_state",
+        )
+        .get()?.type,
+    ).toBe("blob");
+    raw.close();
+
     const reopened = new RecorderStore(dbPath);
+    expect(reopened.loadIndex()).toEqual([
+      {
+        tokenId: "token-a",
+        status: "watched",
+        recordingSinceMs: 100,
+        savedAtMs: 1_000,
+        hasPressure: true,
+      },
+    ]);
+    expect(reopened.load("missing")).toBeNull();
     const rows = reopened.loadAll(2_000);
     reopened.close();
 
@@ -43,6 +64,40 @@ test("RecorderStore persists frontier state and restores live pressure as ghost 
         state: { kind: "ghost", sinceMs: 1_000 },
       },
     ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RecorderStore reads uncompressed legacy SQLite rows on demand", () => {
+  const dir = mkdtempSync(join(tmpdir(), "recorder-plain-sqlite-"));
+  const dbPath = join(dir, "recorder.sqlite");
+
+  try {
+    const store = new RecorderStore(dbPath);
+    store.close();
+
+    const memory = new PressureFrontierMemory();
+    memory.updateLevels("bid", [{ price: 0.5, shares: 42 }], 500);
+    const db = new Database(dbPath);
+    db.query(
+      `INSERT INTO token_state
+       (token_id, status, recording_since_ms, cells_json, saved_at_ms)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run("plain", "watched", 100, JSON.stringify(memory.snapshot()), 1_000);
+    db.close();
+
+    const reopened = new RecorderStore(dbPath);
+    expect(reopened.loadIndex()[0]?.hasPressure).toBe(true);
+    const record = reopened.load("plain", 2_000);
+    reopened.close();
+
+    const restored = new PressureFrontierMemory();
+    restored.restore(record?.pressure);
+    expect(restored.shellsAtPrice(0.4)[0]?.state).toEqual({
+      kind: "ghost",
+      sinceMs: 1_000,
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

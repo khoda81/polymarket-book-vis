@@ -81,6 +81,7 @@ class AgeRecorder {
   private readonly snapshotClient = createPublicClient();
   private readonly books = new Map<string, TokenBook<string>>();
   private readonly memories = new Map<string, PressureFrontierMemory>();
+  private readonly storedPressureTokens = new Set<string>();
   private readonly pendingPriceChanges = new Map<
     string,
     BufferedPriceChangeEvent[]
@@ -153,6 +154,7 @@ class AgeRecorder {
         this.watched.has(tokenId) &&
         !this.completed.has(tokenId) &&
         !this.memories.has(tokenId) &&
+        !this.storedPressureTokens.has(tokenId) &&
         !this.seedInFlight.has(tokenId) &&
         (this.seedRetryAfterMs.get(tokenId) ?? 0) <= nowMs,
     );
@@ -179,7 +181,7 @@ class AgeRecorder {
 
     if (includeStates) {
       for (const tokenId of requested) {
-        const memory = this.memories.get(tokenId);
+        const memory = this.ensureMemory(tokenId);
         if (!memory) continue;
         states[tokenId] = {
           pressure: memory.snapshot(),
@@ -203,7 +205,10 @@ class AgeRecorder {
     );
 
     const pendingTokenIds = requested.filter(
-      (tokenId) => this.watched.has(tokenId) && !this.memories.has(tokenId),
+      (tokenId) =>
+        this.watched.has(tokenId) &&
+        !this.memories.has(tokenId) &&
+        !this.storedPressureTokens.has(tokenId),
     );
 
     const result: StateResponse = {
@@ -326,7 +331,7 @@ class AgeRecorder {
 
       for (const tokenIdValue of stream.payload.assetIds ?? []) {
         const tokenId = String(tokenIdValue);
-        const memory = this.memories.get(tokenId);
+        const memory = this.ensureMemory(tokenId);
         memory?.clear();
 
         if (this.watched.delete(tokenId)) resolvedTokenIds.push(tokenId);
@@ -409,7 +414,7 @@ class AgeRecorder {
       size: string;
     }[],
   ): void {
-    const memory = this.memories.get(tokenId) ?? new PressureFrontierMemory();
+    const memory = this.ensureMemory(tokenId) ?? new PressureFrontierMemory();
 
     if (changes === undefined) {
       memory.observeBook(book, observedAtMs);
@@ -491,7 +496,7 @@ class AgeRecorder {
               ? ("completed" as const)
               : ("watched" as const),
             recordingSinceMs: this.recordingSince.get(tokenId) ?? null,
-            pressure: this.memories.get(tokenId)?.snapshot() ?? null,
+            pressure: this.ensureMemory(tokenId)?.snapshot() ?? null,
             savedAtMs,
           })),
         );
@@ -519,25 +524,43 @@ class AgeRecorder {
   private restoreFromStore(): void {
     const startedAt = performance.now();
 
-    for (const record of this.store.loadAll()) {
+    for (const record of this.store.loadIndex()) {
       if (record.status === "completed") this.completed.add(record.tokenId);
       else this.watched.add(record.tokenId);
 
-      if (record.recordingSinceMs !== null && record.pressure !== null)
+      if (record.recordingSinceMs !== null && record.hasPressure)
         this.recordingSince.set(record.tokenId, record.recordingSinceMs);
-
-      if (record.pressure !== null) {
-        const memory = new PressureFrontierMemory();
-        memory.restore(record.pressure);
-        this.memories.set(record.tokenId, memory);
-      }
+      if (record.hasPressure) this.storedPressureTokens.add(record.tokenId);
     }
 
     debugLog(
-      "sqlite-load",
+      "sqlite-index-load",
       `tokens=${this.watched.size + this.completed.size}`,
       `ms=${Math.round(performance.now() - startedAt)}`,
     );
+  }
+
+  private ensureMemory(tokenId: string): PressureFrontierMemory | undefined {
+    const existing = this.memories.get(tokenId);
+    if (existing || !this.storedPressureTokens.has(tokenId)) return existing;
+
+    const startedAt = performance.now();
+    const record = this.store.load(tokenId);
+    if (!record || record.pressure === null) {
+      this.storedPressureTokens.delete(tokenId);
+      return undefined;
+    }
+
+    const memory = new PressureFrontierMemory();
+    memory.restore(record.pressure);
+    this.memories.set(tokenId, memory);
+    this.storedPressureTokens.delete(tokenId);
+    debugLog(
+      "sqlite-hydrate",
+      shortToken(tokenId),
+      `ms=${Math.round(performance.now() - startedAt)}`,
+    );
+    return memory;
   }
 }
 

@@ -441,6 +441,11 @@
   position: relative;
 }
 
+.cpv-canvas-wrap[hidden],
+.cpv-toggles[hidden] {
+  display: none;
+}
+
 .cpv-canvas-wrap {
   position: relative;
   width: 100%;

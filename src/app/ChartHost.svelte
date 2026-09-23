@@ -149,13 +149,18 @@
 </script>
 
 <div class="cpv-chart-stage">
-  <div class="cpv-canvas-wrap" bind:this={canvasWrap}>
+  <div
+    class="cpv-canvas-wrap"
+    hidden={visibleControls.length === 0}
+    bind:this={canvasWrap}
+  >
     <canvas bind:this={canvas}></canvas>
   </div>
 
   <div
     class="cpv-toggles"
     class:cpv-toggles--age-axis={viewMode === "age"}
+    hidden={viewMode === "age" && visibleControls.length === 0}
     bind:this={toggles}
   >
     {#each toggledControls as control (control.marketId)}
