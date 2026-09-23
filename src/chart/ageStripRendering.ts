@@ -10,6 +10,7 @@ import {
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
 import { rowRasterGeometry, type RowRasterGeometry } from "./ageStripLayout";
+import { priceToNumber } from "@/lib/price";
 
 /** Draw per-row probability rails using each market's semantic token colors. */
 export function drawAgeAxes(
@@ -105,6 +106,8 @@ export function drawPressureMemoryStrip(
   );
 
   for (const { lo, hi, bands } of runs) {
+    const loNumber = priceToNumber(lo);
+    const hiNumber = priceToNumber(hi);
     rasterizePressureBandsInto(
       bands,
       {
@@ -124,8 +127,8 @@ export function drawPressureMemoryStrip(
     );
 
     // Age view mirrors canonical YES price horizontally.
-    const x0Device = Math.round((vp.l + (1 - hi) * vp.width) * dpr);
-    const x1Device = Math.round((vp.l + (1 - lo) * vp.width) * dpr);
+    const x0Device = Math.round((vp.l + (1 - hiNumber) * vp.width) * dpr);
+    const x1Device = Math.round((vp.l + (1 - loNumber) * vp.width) * dpr);
     const x0 = clamp(x0Device - rowLeftDevice, 0, rowWidthDevice);
     const x1 = clamp(x1Device - rowLeftDevice, 0, rowWidthDevice);
     if (!(x1 > x0)) continue;

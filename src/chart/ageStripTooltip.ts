@@ -19,7 +19,7 @@ import {
 export interface AgeStripTooltipHost {
   readonly canvas: HTMLCanvasElement;
   readonly getViewMode: () => ViewMode;
-  readonly getBook: (tokenId: string) => TokenBook<string> | undefined;
+  readonly getBook: (tokenId: string) => TokenBook | undefined;
   readonly getTokenName: (tokenId: string) => string | undefined;
   readonly getOppositeTokenName: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;

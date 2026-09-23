@@ -8,18 +8,19 @@ import {
   sameFrontierVolume,
   type FrontierRoot,
 } from "./monotoneFrontier";
+import { PRICE_ONE, PRICE_ZERO, type Price, priceFromTicks } from "./price";
 
 export type PressureBookSide = "bid" | "ask";
 
 export interface PressureRenderRun {
-  readonly lo: number;
-  readonly hi: number;
+  readonly lo: Price;
+  readonly hi: Price;
   readonly bands: readonly PressureBand[];
 }
 
 export interface PressureFieldRunSnapshot {
-  readonly lo: number;
-  readonly hi: number;
+  readonly lo: Price;
+  readonly hi: Price;
   readonly bidVolume: number;
   readonly askVolume: number;
   readonly bidRevision: number;
@@ -33,13 +34,13 @@ export interface PressureFieldSnapshot {
 }
 
 export interface PressureSideDelta {
-  readonly price: number;
+  readonly price: Price;
   readonly delta: number;
 }
 
 interface MutableRun {
-  lo: number;
-  hi: number;
+  lo: Price;
+  hi: Price;
   bidVolume: number;
   askVolume: number;
   bidRevision: number;
@@ -63,15 +64,14 @@ export class MaterializedPressureField {
     return this.runs;
   }
 
-  priceBoundaries(): readonly number[] {
+  priceBoundaries(): readonly Price[] {
     const result = this.runs.map((run) => run.lo);
-    result.push(this.runs[this.runs.length - 1]?.hi ?? 1);
+    result.push(this.runs[this.runs.length - 1]?.hi ?? PRICE_ONE);
     return result;
   }
 
-  shellsAtPrice(price: number): readonly PressureBand[] {
-    if (!Number.isFinite(price)) return [];
-    const p = clamp01(price);
+  shellsAtPrice(price: Price): readonly PressureBand[] {
+    const p = price;
     let lo = 0;
     let hi = this.runs.length;
 
@@ -93,9 +93,9 @@ export class MaterializedPressureField {
   ): void {
     const actual = deltas.filter(
       ({ price, delta }) =>
-        Number.isFinite(price) &&
-        price >= 0 &&
-        price <= 1 &&
+        Number.isSafeInteger(price) &&
+        price >= PRICE_ZERO &&
+        price <= PRICE_ONE &&
         Number.isFinite(delta) &&
         delta !== 0,
     );
@@ -184,8 +184,8 @@ export class MaterializedPressureField {
       throw new RangeError("pressure field must contain at least one run");
 
     const runs = snapshot.runs.map((run) => ({
-      lo: finite(run.lo, "run lo"),
-      hi: finite(run.hi, "run hi"),
+      lo: priceFromTicks(run.lo),
+      hi: priceFromTicks(run.hi),
       bidVolume: nonNegative(run.bidVolume, "bid volume"),
       askVolume: nonNegative(run.askVolume, "ask volume"),
       bidRevision: nonNegative(run.bidRevision, "bid revision"),
@@ -203,8 +203,8 @@ export class MaterializedPressureField {
     this.restore({ revision, runs });
   }
 
-  private splitAt(price: number): void {
-    if (!(price > 0 && price < 1)) return;
+  private splitAt(price: Price): void {
+    if (!(price > PRICE_ZERO && price < PRICE_ONE)) return;
 
     for (let index = 0; index < this.runs.length; index++) {
       const run = this.runs[index]!;
@@ -400,7 +400,7 @@ function bandsEqual(
 }
 
 function validateRuns(runs: readonly MutableRun[]): void {
-  if (runs[0]!.lo !== 0 || runs[runs.length - 1]!.hi !== 1)
+  if (runs[0]!.lo !== PRICE_ZERO || runs[runs.length - 1]!.hi !== PRICE_ONE)
     throw new RangeError("pressure runs must cover [0, 1]");
 
   let previousBid = Number.POSITIVE_INFINITY;
@@ -461,8 +461,8 @@ function validateBands(run: MutableRun): void {
 
 function emptyRun(): MutableRun {
   return {
-    lo: 0,
-    hi: 1,
+    lo: PRICE_ZERO,
+    hi: PRICE_ONE,
     bidVolume: 0,
     askVolume: 0,
     bidRevision: 0,
@@ -497,8 +497,4 @@ function nonNegative(value: number, label: string): number {
 function finite(value: number, label: string): number {
   if (!Number.isFinite(value)) throw new RangeError(`${label} must be finite`);
   return value;
-}
-
-function clamp01(value: number): number {
-  return Math.max(0, Math.min(1, value));
 }

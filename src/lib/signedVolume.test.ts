@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyTokenBook } from "./orderBook";
+import { priceFromLegacyNumber as p } from "./price";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   signedVolumeColor,
@@ -9,17 +10,16 @@ import {
 describe("signedVolumeSegments", () => {
   test("tracks signed shares and the capital needed to sweep each side", () => {
     const book = emptyTokenBook();
-    book.usdToYes.setLevel("bid-1", { price: 0.4, take: 10 });
-    book.usdToYes.setLevel("bid-2", { price: 0.3, take: 5 });
-    book.yesToUsd.setLevel("ask", { price: 1 / 0.6, take: 6 });
+    book.usdToYes.setLevel(p(0.4), 10);
+    book.usdToYes.setLevel(p(0.3), 5);
+    book.yesToUsd.setLevel(p(0.6), 10);
 
     expect(signedVolumeSegments(book)).toEqual([
       // Wiping bids is equivalent to buying NO: 10×0.6 + 5×0.7 = 9.5.
-      { lo: 0, hi: 0.3, volume: 15, sweepCost: 9.5 },
-      { lo: 0.3, hi: 0.4, volume: 10, sweepCost: 6 },
-      { lo: 0.4, hi: 0.6, volume: 0, sweepCost: 0 },
-      // The inverse book level represents 10 YES at a 0.6 ask.
-      { lo: 0.6, hi: 1, volume: -10, sweepCost: 6 },
+      { lo: p(0), hi: p(0.3), volume: 15, sweepCost: 9.5 },
+      { lo: p(0.3), hi: p(0.4), volume: 10, sweepCost: 6 },
+      { lo: p(0.4), hi: p(0.6), volume: 0, sweepCost: 0 },
+      { lo: p(0.6), hi: p(1), volume: -10, sweepCost: 6 },
     ]);
   });
 
@@ -28,16 +28,16 @@ describe("signedVolumeSegments", () => {
     for (let i = 0; i < 40; i++) {
       const price = 0.4 - i * 0.001;
       const take = 0.1 + i * 0.037;
-      book.usdToYes.setLevel(`bid-${i}`, { price, take });
+      book.usdToYes.setLevel(p(price), take);
     }
-    book.yesToUsd.setLevel("ask", { price: 1 / 0.6, take: 6 });
+    book.yesToUsd.setLevel(p(0.6), 10);
 
     const spread = signedVolumeSegments(book).find(
-      (segment) => segment.lo === 0.4 && segment.hi === 0.6,
+      (segment) => segment.lo === p(0.4) && segment.hi === p(0.6),
     );
     expect(spread).toEqual({
-      lo: 0.4,
-      hi: 0.6,
+      lo: p(0.4),
+      hi: p(0.6),
       volume: 0,
       sweepCost: 0,
     });

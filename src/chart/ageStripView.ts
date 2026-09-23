@@ -35,7 +35,7 @@ export interface AgeStripHost {
   readonly toggles: HTMLElement;
   readonly plotter: OrderBookPlotter;
   readonly activeTokens: Set<string>;
-  readonly getBook: (tokenId: string) => TokenBook<string> | undefined;
+  readonly getBook: (tokenId: string) => TokenBook | undefined;
   readonly getTokenName: (tokenId: string) => string | undefined;
   readonly getOppositeTokenName: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;

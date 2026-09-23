@@ -1,42 +1,41 @@
 import { expect, test } from "bun:test";
 import { HalfBook, canonicalSpread, emptyTokenBook } from "./orderBook";
+import { PRICE_ONE, PRICE_ZERO, parsePrice, type Price } from "./price";
 
 test("setLevel removes an existing aggregate level when take becomes zero", () => {
-  const book = new HalfBook<string>();
-  book.setLevel("0.50", { price: 0.5, take: 12 });
+  const book = new HalfBook();
+  book.setLevel(parsePrice("0.50"), 12);
 
   expect(book.size).toBe(1);
-  expect(book.setLevel("0.50", { price: 0.5, take: 0 })).toBe(true);
+  expect(book.setLevel(parsePrice("0.5"), 0)).toBe(true);
   expect(book.size).toBe(0);
-  expect(book.bestOrder()).toBeUndefined();
+  expect(book.highestOrder()).toBeUndefined();
+});
+
+test("canonical price keys unify equivalent decimal spellings", () => {
+  const book = new HalfBook();
+  book.setLevel(parsePrice("0.30"), 10);
+  book.setLevel(parsePrice("0.3"), 20);
+  expect([...book.asOrders()]).toEqual([
+    { price: parsePrice("0.3"), take: 20 },
+  ]);
 });
 
 test("canonicalSpread extracts bid/ask prices and their fallbacks", () => {
   const book = emptyTokenBook();
-  expect(canonicalSpread(book)).toEqual({ bid: 0, ask: 1 });
+  expect(canonicalSpread(book)).toEqual({ bid: PRICE_ZERO, ask: PRICE_ONE });
 
-  book.usdToYes.setLevel("bid", { price: 0.4, take: 10 });
-  book.yesToUsd.setLevel("ask", { price: 1 / 0.6, take: 6 });
-  expect(canonicalSpread(book)).toEqual({ bid: 0.4, ask: 0.6 });
+  book.usdToYes.setLevel(parsePrice("0.4"), 10);
+  book.yesToUsd.setLevel(parsePrice("0.6"), 6);
+  expect(canonicalSpread(book)).toEqual({
+    bid: parsePrice("0.4"),
+    ask: parsePrice("0.6"),
+  });
 });
 
-test("HalfBook owns inserted orders and does not expose mutable storage", () => {
-  const book = new HalfBook<string>();
-  const inserted = { price: 0.4, take: 10 };
-  book.setLevel("bid", inserted);
-
-  inserted.price = 0.9;
-  inserted.take = 99;
-  expect(book.bestOrder()).toEqual({ key: "bid", price: 0.4, take: 10 });
-
-  const iterated = [...book.asOrders()][0]!;
-  iterated.price = 0.2;
-  expect(book.bestOrder()?.price).toBe(0.4);
-});
-
-test("HalfBook rejects NaN without corrupting its ordering", () => {
-  const book = new HalfBook<string>();
-  expect(book.setLevel("bad-price", { price: NaN, take: 1 })).toBe(false);
-  expect(book.setLevel("bad-take", { price: 0.5, take: NaN })).toBe(false);
+test("HalfBook rejects invalid values without corrupting ordering", () => {
+  const book = new HalfBook();
+  expect(book.setLevel(Number.NaN as Price, 1)).toBe(false);
+  expect(book.setLevel(parsePrice("0.5"), Number.NaN)).toBe(false);
   expect(book.size).toBe(0);
 });

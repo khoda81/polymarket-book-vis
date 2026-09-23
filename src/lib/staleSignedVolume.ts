@@ -1,5 +1,6 @@
 import type { TokenBook } from "./orderBook";
-import { signedVolumeSegments, type SignedVolumeSegment } from "./signedVolume";
+import { signedVolumeSegments } from "./signedVolume";
+import { priceToNumber } from "./price";
 
 /** Sentinel observation time for regions that have never been observed. */
 export const UNKNOWN_SINCE_MS = Number.NEGATIVE_INFINITY;
@@ -18,6 +19,13 @@ interface HeldVolumeSegment {
   readonly sweepCost: number | null;
   /** Absolute observation timestamp, or UNKNOWN_SINCE_MS if never observed. */
   readonly observedAtMs: number;
+}
+
+interface ComputedVolumeSegment {
+  readonly lo: number;
+  readonly hi: number;
+  readonly volume: number;
+  readonly sweepCost: number;
 }
 
 interface SnapshotVolumeSegment {
@@ -70,17 +78,23 @@ export interface StaleSignedVolumeSnapshot {
 export class StaleSignedVolume {
   private current: HeldVolumeSegment[] = [];
   /** Exact live field from the immediately previous update. */
-  private previousLive: readonly SignedVolumeSegment[] = [];
+  private previousLive: readonly ComputedVolumeSegment[] = [];
   private lastUpdateMs: number | undefined;
 
   update(
-    book: TokenBook<unknown>,
+    book: TokenBook,
     nowMs: number,
     observedRanges?: readonly PressureObservationRange[],
   ): void {
     this.validateTime(nowMs);
 
-    const live = signedVolumeSegments(book);
+    const live: readonly ComputedVolumeSegment[] = signedVolumeSegments(
+      book,
+    ).map((segment) => ({
+      ...segment,
+      lo: priceToNumber(segment.lo),
+      hi: priceToNumber(segment.hi),
+    }));
     const ranges =
       observedRanges === undefined
         ? undefined
@@ -445,10 +459,10 @@ export class StaleSignedVolume {
   }
 
   private static liveAt(
-    segments: readonly SignedVolumeSegment[],
+    segments: readonly ComputedVolumeSegment[],
     index: number,
     point: number,
-  ): SignedVolumeSegment | undefined {
+  ): ComputedVolumeSegment | undefined {
     const segment = segments[index];
     return segment && point >= segment.lo && point < segment.hi
       ? segment

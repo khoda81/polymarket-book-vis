@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
+import { priceFromLegacyNumber as p } from "../src/lib/price";
 import { RecorderStore } from "./recorderStore";
 
 test("RecorderStore persists frontier state and restores live pressure as ghost history", () => {
@@ -12,7 +13,7 @@ test("RecorderStore persists frontier state and restores live pressure as ghost 
 
   try {
     const memory = new PressureFrontierMemory();
-    memory.updateLevels("bid", [{ price: 0.5, shares: 42 }], 500);
+    memory.updateLevels("bid", [{ price: p(0.5), shares: 42 }], 500);
 
     const store = new RecorderStore(dbPath);
     store.write([
@@ -56,7 +57,7 @@ test("RecorderStore persists frontier state and restores live pressure as ghost 
 
     const restored = new PressureFrontierMemory();
     restored.restore(rows[0]!.pressure!);
-    expect(restored.shellsAtPrice(0.4)).toEqual([
+    expect(restored.shellsAtPrice(p(0.4))).toEqual([
       {
         loVolume: 0,
         hiVolume: 42,
@@ -78,7 +79,7 @@ test("RecorderStore reads uncompressed legacy SQLite rows on demand", () => {
     store.close();
 
     const memory = new PressureFrontierMemory();
-    memory.updateLevels("bid", [{ price: 0.5, shares: 42 }], 500);
+    memory.updateLevels("bid", [{ price: p(0.5), shares: 42 }], 500);
     const db = new Database(dbPath);
     db.query(
       `INSERT INTO token_state
@@ -94,7 +95,7 @@ test("RecorderStore reads uncompressed legacy SQLite rows on demand", () => {
 
     const restored = new PressureFrontierMemory();
     restored.restore(record?.pressure);
-    expect(restored.shellsAtPrice(0.4)[0]?.state).toEqual({
+    expect(restored.shellsAtPrice(p(0.4))[0]?.state).toEqual({
       kind: "ghost",
       sinceMs: 1_000,
     });

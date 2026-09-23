@@ -1,8 +1,12 @@
 import type { ConnectionStatus } from "@/lib/chartState";
-import type { MarketResolutionUpdate } from "@/lib/marketLifecycle";
-import { HalfBook, type TokenBook } from "@/lib/orderBook";
 import {
-  OrderSide,
+  applyPriceChange,
+  bookFromSnapshot,
+  type CanonicalBookChange,
+} from "@/lib/bookIngestion";
+import type { MarketResolutionUpdate } from "@/lib/marketLifecycle";
+import type { TokenBook } from "@/lib/orderBook";
+import {
   TransportError,
   type PublicClient,
   type TokenId,
@@ -32,7 +36,7 @@ export type LiveBookUpdate =
       readonly observedAtMs: number;
       readonly changes: readonly {
         readonly side: "bid" | "ask";
-        readonly price: number;
+        readonly price: import("@/lib/price").Price;
         readonly shares: number;
       }[];
     };
@@ -41,14 +45,14 @@ export interface LiveBookFeedCallbacks {
   readonly onConnectionStatus: (status: ConnectionStatus) => void;
   readonly onBookUpdated: (
     tokenId: TokenId,
-    book: TokenBook<string>,
+    book: TokenBook,
     update: LiveBookUpdate,
   ) => void;
   readonly onMarketResolved: (resolution: MarketResolutionUpdate) => void;
 }
 
 export class LiveBookFeed {
-  private readonly books = new Map<string, TokenBook<string>>();
+  private readonly books = new Map<string, TokenBook>();
   private state: FeedState = { kind: "idle" };
   private tokenIds: TokenId[] = [];
 
@@ -57,7 +61,7 @@ export class LiveBookFeed {
     private readonly callbacks: LiveBookFeedCallbacks,
   ) {}
 
-  getBook(tokenId: string): TokenBook<string> | undefined {
+  getBook(tokenId: string): TokenBook | undefined {
     return this.books.get(String(tokenId));
   }
 
@@ -152,49 +156,15 @@ export class LiveBookFeed {
         }
 
         if (event.type === "price_change") {
-          const changesByToken = new Map<
-            TokenId,
-            Array<{
-              side: "bid" | "ask";
-              price: number;
-              shares: number;
-            }>
-          >();
+          const changesByToken = new Map<TokenId, CanonicalBookChange[]>();
 
           for (const change of event.payload.priceChanges) {
             const tokenId = change.tokenId as TokenId;
             const book = this.books.get(String(tokenId));
             if (!book) continue;
 
-            const price = parseFloat(change.price);
-            const size = parseFloat(change.size);
-            let canonicalPrice = price;
-            let canonicalShares = size;
-            if (change.side === OrderSide.BUY) {
-              book.usdToYes.setLevel(change.price, {
-                price,
-                take: size,
-              });
-            } else {
-              const inversePrice = 1 / price;
-              const inverseTake = size * price;
-              book.yesToUsd.setLevel(change.price, {
-                price: inversePrice,
-                take: inverseTake,
-              });
-              // Match the canonical price and shares produced by asSellOrders
-              // for snapshots. A double inversion can move a float by one ULP,
-              // which otherwise leaves the old ask level at a different key.
-              canonicalPrice = 1 / inversePrice;
-              canonicalShares = inversePrice * inverseTake;
-            }
-
             const changes = changesByToken.get(tokenId) ?? [];
-            changes.push({
-              side: change.side === OrderSide.BUY ? "bid" : "ask",
-              price: canonicalPrice,
-              shares: canonicalShares,
-            });
+            changes.push(applyPriceChange(book, change));
             changesByToken.set(tokenId, changes);
           }
 
@@ -236,31 +206,6 @@ export class LiveBookFeed {
       }
     }
   }
-}
-
-function bookFromSnapshot(
-  bids: readonly { readonly price: string; readonly size: string }[],
-  asks: readonly { readonly price: string; readonly size: string }[],
-): TokenBook<string> {
-  const usdToYes = new HalfBook<string>();
-  for (const bid of bids) {
-    usdToYes.setLevel(bid.price, {
-      price: parseFloat(bid.price),
-      take: parseFloat(bid.size),
-    });
-  }
-
-  const yesToUsd = new HalfBook<string>();
-  for (const ask of asks) {
-    const canonicalPrice = parseFloat(ask.price);
-    yesToUsd.setLevel(ask.price, {
-      price: 1 / canonicalPrice,
-      take: parseFloat(ask.size) * canonicalPrice,
-    });
-  }
-  yesToUsd.setLevel("mint", { price: 1, take: Infinity });
-
-  return { usdToYes, yesToUsd };
 }
 
 function delay(ms: number): Promise<void> {

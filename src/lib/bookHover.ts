@@ -1,4 +1,5 @@
 import type { TokenBook } from "./orderBook";
+import { priceToNumber } from "./price";
 
 export type BookHoverSide = "bid" | "ask" | "spread";
 
@@ -22,7 +23,7 @@ export interface BookHoverSnapshot {
  * convention used by the pressure renderer.
  */
 export function bookHoverAtPrice(
-  book: TokenBook<unknown>,
+  book: TokenBook,
   price: number,
 ): BookHoverSnapshot {
   const p = clamp01(price);
@@ -30,15 +31,11 @@ export function bookHoverAtPrice(
   let bidShares = 0;
   let bidCost = 0;
   for (const order of book.usdToYes.asOrders()) {
-    if (
-      !Number.isFinite(order.price) ||
-      !Number.isFinite(order.take) ||
-      order.take <= 0
-    )
-      continue;
-    if (order.price < p) break;
+    if (!Number.isFinite(order.take) || order.take <= 0) continue;
+    const orderPrice = priceToNumber(order.price);
+    if (orderPrice < p) break;
     bidShares += order.take;
-    bidCost += order.price * order.take;
+    bidCost += orderPrice * order.take;
   }
   if (bidShares > 0)
     return {
@@ -51,15 +48,11 @@ export function bookHoverAtPrice(
   let askShares = 0;
   let askCost = 0;
   for (const order of book.yesToUsd.asSellOrders()) {
-    if (
-      !Number.isFinite(order.price) ||
-      !Number.isFinite(order.take) ||
-      order.take <= 0
-    )
-      continue;
-    if (order.price > p) break;
+    if (!Number.isFinite(order.take) || order.take <= 0) continue;
+    const orderPrice = priceToNumber(order.price);
+    if (orderPrice > p) break;
     askShares += order.take;
-    askCost += order.price * order.take;
+    askCost += orderPrice * order.take;
   }
   if (askShares > 0)
     return {

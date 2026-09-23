@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { bookHoverAtPrice } from "./bookHover";
 import { HalfBook, type TokenBook } from "./orderBook";
+import { parsePrice } from "./price";
 
-function makeBook(): TokenBook<string> {
-  const usdToYes = new HalfBook<string>();
-  usdToYes.setLevel("0.40", { price: 0.4, take: 100 });
-  usdToYes.setLevel("0.30", { price: 0.3, take: 50 });
+function makeBook(): TokenBook {
+  const usdToYes = new HalfBook();
+  usdToYes.setLevel(parsePrice("0.40"), 100);
+  usdToYes.setLevel(parsePrice("0.30"), 50);
 
-  const yesToUsd = new HalfBook<string>();
-  yesToUsd.setLevel("0.60", { price: 1 / 0.6, take: 60 });
-  yesToUsd.setLevel("0.80", { price: 1 / 0.8, take: 80 });
-  yesToUsd.setLevel("mint", { price: 1, take: Infinity });
+  const yesToUsd = new HalfBook();
+  yesToUsd.setLevel(parsePrice("0.60"), 100);
+  yesToUsd.setLevel(parsePrice("0.80"), 100);
   return { usdToYes, yesToUsd };
 }
 

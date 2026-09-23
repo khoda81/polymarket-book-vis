@@ -3,7 +3,12 @@ import { createPublicClient, OrderSide } from "@polymarket/client";
 import type { MarketEvent } from "@polymarket/client/actions";
 import { RecorderStore } from "./recorderStore";
 import { RecorderSubscriptionPool } from "./recorderSubscriptionPool";
-import { HalfBook, type TokenBook } from "../src/lib/orderBook";
+import {
+  applyPriceChange,
+  bookFromSnapshot,
+  type CanonicalBookChange,
+} from "../src/lib/bookIngestion";
+import type { TokenBook } from "../src/lib/orderBook";
 import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
 import type { PressureFrontierSnapshot } from "../src/lib/pressureFrontierSnapshot";
 
@@ -79,7 +84,7 @@ class AgeRecorder {
   private readonly completed = new Set<string>();
   private readonly recordingSince = new Map<string, number>();
   private readonly snapshotClient = createPublicClient();
-  private readonly books = new Map<string, TokenBook<string>>();
+  private readonly books = new Map<string, TokenBook>();
   private readonly memories = new Map<string, PressureFrontierMemory>();
   private readonly storedPressureTokens = new Set<string>();
   private readonly pendingPriceChanges = new Map<
@@ -275,7 +280,7 @@ class AgeRecorder {
       const tokenId = String(stream.payload.tokenId);
       if (!this.watched.has(tokenId)) return;
 
-      const book = bookFromSnapshot(stream.payload);
+      const book = bookFromSnapshot(stream.payload.bids, stream.payload.asks);
       this.books.set(tokenId, book);
       this.pendingPriceChanges.delete(tokenId);
       this.updateMemory(
@@ -319,8 +324,10 @@ class AgeRecorder {
           continue;
         }
 
-        for (const change of changes) applyPriceChange(book, change);
-        this.updateMemory(tokenId, book, timestampMs, changes);
+        const canonicalChanges = changes.map((change) =>
+          applyPriceChange(book, change),
+        );
+        this.updateMemory(tokenId, book, timestampMs, canonicalChanges);
       }
       return;
     }
@@ -366,15 +373,17 @@ class AgeRecorder {
           continue;
 
         const snapshotMs = eventTimestampMs(snapshot.timestamp);
-        const book = bookFromSnapshot(snapshot);
+        const book = bookFromSnapshot(snapshot.bids, snapshot.asks);
         this.books.set(tokenId, book);
         this.updateMemory(tokenId, book, snapshotMs);
 
         const buffered = this.pendingPriceChanges.get(tokenId) ?? [];
         for (const event of buffered) {
           if (event.timestampMs <= snapshotMs) continue;
-          for (const change of event.changes) applyPriceChange(book, change);
-          this.updateMemory(tokenId, book, event.timestampMs, event.changes);
+          const canonicalChanges = event.changes.map((change) =>
+            applyPriceChange(book, change),
+          );
+          this.updateMemory(tokenId, book, event.timestampMs, canonicalChanges);
         }
         this.pendingPriceChanges.delete(tokenId);
 
@@ -406,27 +415,20 @@ class AgeRecorder {
 
   private updateMemory(
     tokenId: string,
-    book: TokenBook<string>,
+    book: TokenBook,
     observedAtMs = Date.now(),
-    changes?: readonly {
-      side: OrderSide;
-      price: string;
-      size: string;
-    }[],
+    changes?: readonly CanonicalBookChange[],
   ): void {
     const memory = this.ensureMemory(tokenId) ?? new PressureFrontierMemory();
 
     if (changes === undefined) {
       memory.observeBook(book, observedAtMs);
     } else {
-      const bids: Array<{ price: number; shares: number }> = [];
-      const asks: Array<{ price: number; shares: number }> = [];
+      const bids: CanonicalBookChange[] = [];
+      const asks: CanonicalBookChange[] = [];
       for (const change of changes) {
-        const target = change.side === OrderSide.BUY ? bids : asks;
-        target.push({
-          price: Number(change.price),
-          shares: Number(change.size),
-        });
+        const target = change.side === "bid" ? bids : asks;
+        target.push(change);
       }
       if (bids.length > 0) memory.updateLevels("bid", bids, observedAtMs);
       if (asks.length > 0) memory.updateLevels("ask", asks, observedAtMs);
@@ -579,64 +581,6 @@ function sqlitePathFor(legacyPath: string): string {
   return legacyPath.endsWith(".json")
     ? `${legacyPath.slice(0, -5)}.sqlite`
     : `${legacyPath}.sqlite`;
-}
-
-function bookFromSnapshot(payload: {
-  bids: readonly {
-    price: string;
-    size: string;
-  }[];
-  asks: readonly {
-    price: string;
-    size: string;
-  }[];
-}): TokenBook<string> {
-  const usdToYes = new HalfBook<string>();
-  for (const bid of payload.bids) {
-    const price = Number(bid.price);
-    usdToYes.setLevel(bid.price, {
-      price,
-      take: Number(bid.size),
-    });
-  }
-
-  const yesToUsd = new HalfBook<string>();
-  for (const ask of payload.asks) {
-    const canonicalAsk = Number(ask.price);
-    yesToUsd.setLevel(ask.price, {
-      price: 1 / canonicalAsk,
-      take: Number(ask.size) * canonicalAsk,
-    });
-  }
-
-  // Synthetic Polymarket mint route; never
-  // contributes inside [0, 1).
-  yesToUsd.setLevel("mint", {
-    price: 1,
-    take: Infinity,
-  });
-  return { usdToYes, yesToUsd };
-}
-
-function applyPriceChange(
-  book: TokenBook<string>,
-  change: {
-    side: OrderSide;
-    price: string;
-    size: string;
-  },
-): void {
-  const price = Number(change.price);
-  const size = Number(change.size);
-
-  if (change.side === OrderSide.BUY) {
-    book.usdToYes.setLevel(change.price, { price, take: size });
-  } else {
-    book.yesToUsd.setLevel(change.price, {
-      price: 1 / price,
-      take: size * price,
-    });
-  }
 }
 
 const recorder = new AgeRecorder();

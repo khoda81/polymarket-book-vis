@@ -19,19 +19,29 @@ import {
 import { ghostVisibleSinceMs, type PressureBand } from "./pressureField";
 import { parsePressureCells, type PressureCell } from "./legacyPressureCells";
 import {
+  PRICE_ONE,
+  PRICE_ZERO,
+  complementPrice,
+  type Price,
+  priceFromLegacyNumber,
+  priceFromTicks,
+} from "./price";
+import {
   parsePressureFrontierSnapshot,
+  migrateLegacyCurrentSide,
+  migrateLegacyField,
   restoreCurrentSide,
   restoreSnapshotSideV1,
   snapshotCurrentSide,
   type PressureFrontierSnapshot,
   type PressureFrontierSnapshotV1,
-  type PressureFrontierSnapshotV2,
+  type PressureFrontierSnapshotV3,
 } from "./pressureFrontierSnapshot";
 
 export type { PressureBookSide, PressureRenderRun };
 
 export interface PressureLevelChange {
-  readonly price: number;
+  readonly price: Price;
   readonly shares: number;
 }
 
@@ -55,7 +65,7 @@ export class PressureFrontierMemory {
   private field = new MaterializedPressureField();
   private lastUpdateMs: number | undefined;
 
-  observeBook(book: TokenBook<unknown>, nowMs: number): void {
+  observeBook(book: TokenBook, nowMs: number): void {
     nowMs = this.normalizeTime(nowMs);
 
     this.replaceSide(
@@ -67,9 +77,10 @@ export class PressureFrontierMemory {
     );
     this.replaceSide(
       "ask",
-      [...book.yesToUsd.asSellOrders()]
-        .filter(validBookOrder)
-        .map((order) => ({ key: 1 - order.price, weight: order.take })),
+      [...book.yesToUsd.asSellOrders()].filter(validBookOrder).map((order) => ({
+        key: complementPrice(order.price),
+        weight: order.take,
+      })),
       nowMs,
     );
 
@@ -84,7 +95,7 @@ export class PressureFrontierMemory {
     nowMs = this.normalizeTime(nowMs);
     const state = this.sideState(side);
 
-    const finalByKey = new Map<number, number>();
+    const finalByKey = new Map<Price, number>();
     for (const change of changes) {
       const key = localKey(side, change.price);
       if (key === null) continue;
@@ -105,7 +116,7 @@ export class PressureFrontierMemory {
 
       next = setFrontierLevel(next, key, shares);
       deltas.push({
-        price: side === "bid" ? key : 1 - key,
+        price: side === "bid" ? key : complementPrice(key),
         delta: shares - previousShares,
       });
     }
@@ -117,9 +128,9 @@ export class PressureFrontierMemory {
     this.lastUpdateMs = nowMs;
   }
 
-  snapshot(): PressureFrontierSnapshotV2 {
+  snapshot(): PressureFrontierSnapshotV3 {
     return {
-      version: 2,
+      version: 3,
       bid: snapshotCurrentSide(this.bid.current),
       ask: snapshotCurrentSide(this.ask.current),
       field: this.field.snapshot(),
@@ -130,12 +141,21 @@ export class PressureFrontierMemory {
     const parsed = parsePressureFrontierSnapshot(snapshot);
     const restored = new PressureFrontierMemory();
 
-    if (parsed.version === 2) {
+    if (parsed.version === 3) {
       restored.bid.current = restoreCurrentSide(parsed.bid);
       restored.ask.current = restoreCurrentSide(parsed.ask);
       restored.field.restore(parsed.field);
       restored.validateFieldAgainstFrontiers(parsed.field.runs);
       restored.lastUpdateMs = newestGhostTime(parsed.field.runs);
+    } else if (parsed.version === 2) {
+      const bid = migrateLegacyCurrentSide(parsed.bid);
+      const ask = migrateLegacyCurrentSide(parsed.ask);
+      const field = migrateLegacyField(parsed.field);
+      restored.bid.current = restoreCurrentSide(bid);
+      restored.ask.current = restoreCurrentSide(ask);
+      restored.field.restore(field);
+      restored.validateFieldAgainstFrontiers(field.runs);
+      restored.lastUpdateMs = newestGhostTime(field.runs);
     } else {
       restored.restoreV1(parsed);
     }
@@ -163,10 +183,10 @@ export class PressureFrontierMemory {
     this.bid.current = frontierFromLegacyCells(cells, 1, "live");
     this.ask.current = frontierFromLegacyCells(cells, -1, "live");
 
-    const boundaries = new Set<number>([0, 1]);
+    const boundaries = new Set<Price>([PRICE_ZERO, PRICE_ONE]);
     for (const cell of cells) {
-      boundaries.add(cell.lo);
-      boundaries.add(cell.hi);
+      boundaries.add(priceFromLegacyNumber(cell.lo));
+      boundaries.add(priceFromLegacyNumber(cell.hi));
     }
     const sorted = [...boundaries].sort((a, b) => a - b);
     const runs: PressureFieldRunSnapshot[] = [];
@@ -176,7 +196,9 @@ export class PressureFrontierMemory {
       const hi = sorted[index + 1]!;
       if (!(hi > lo)) continue;
       const cell = cells.find(
-        (candidate) => candidate.lo <= lo && hi <= candidate.hi,
+        (candidate) =>
+          priceFromLegacyNumber(candidate.lo) <= lo &&
+          hi <= priceFromLegacyNumber(candidate.hi),
       );
       const bands = cell?.bands.map(cloneBand) ?? [];
       const bidVolume = liveExtent(bands, 1);
@@ -198,7 +220,7 @@ export class PressureFrontierMemory {
     this.lastUpdateMs = newestGhostTime(runs);
   }
 
-  priceBoundaries(): readonly number[] {
+  priceBoundaries(): readonly Price[] {
     return this.field.priceBoundaries();
   }
 
@@ -206,7 +228,7 @@ export class PressureFrontierMemory {
     return this.field.renderRuns();
   }
 
-  shellsAtPrice(price: number): readonly PressureBand[] {
+  shellsAtPrice(price: Price): readonly PressureBand[] {
     return this.field.shellsAtPrice(price);
   }
 
@@ -262,7 +284,7 @@ export class PressureFrontierMemory {
       const delta = (nextByKey.get(key) ?? 0) - (previousByKey.get(key) ?? 0);
       if (delta === 0) continue;
       deltas.push({
-        price: side === "bid" ? key : 1 - key,
+        price: side === "bid" ? key : complementPrice(key),
         delta,
       });
     }
@@ -278,7 +300,7 @@ export class PressureFrontierMemory {
     this.bid.current = bid.current;
     this.ask.current = ask.current;
 
-    const boundaries = new Set<number>([0, 1]);
+    const boundaries = new Set<Price>([PRICE_ZERO, PRICE_ONE]);
     collectV1Boundaries(boundaries, bid, "bid");
     collectV1Boundaries(boundaries, ask, "ask");
     const sorted = [...boundaries].sort((a, b) => a - b);
@@ -313,6 +335,22 @@ export class PressureFrontierMemory {
   private validateFieldAgainstFrontiers(
     runs: readonly PressureFieldRunSnapshot[],
   ): void {
+    const boundaries = new Set<Price>();
+    for (const run of runs) {
+      boundaries.add(run.lo);
+      boundaries.add(run.hi);
+    }
+    for (const { key } of frontierLevels(this.bid.current))
+      if (!boundaries.has(key))
+        throw new RangeError(
+          "materialized pressure field is missing a bid frontier boundary",
+        );
+    for (const { key } of frontierLevels(this.ask.current))
+      if (!boundaries.has(complementPrice(key)))
+        throw new RangeError(
+          "materialized pressure field is missing an ask frontier boundary",
+        );
+
     for (const run of runs) {
       const bidVolume = frontierVolumeOnInterval(
         this.bid.current,
@@ -360,13 +398,13 @@ interface RestoredV1Side {
 }
 
 function collectV1Boundaries(
-  boundaries: Set<number>,
+  boundaries: Set<Price>,
   side: RestoredV1Side,
   kind: PressureBookSide,
 ): void {
   const collect = (root: FrontierRoot) => {
     for (const { key } of frontierLevels(root))
-      boundaries.add(kind === "bid" ? key : 1 - key);
+      boundaries.add(kind === "bid" ? key : complementPrice(key));
   };
   collect(side.current);
   for (const layer of side.history) collect(layer.root);
@@ -375,8 +413,8 @@ function collectV1Boundaries(
 function legacyV1ShellsOnInterval(
   bid: RestoredV1Side,
   ask: RestoredV1Side,
-  lo: number,
-  hi: number,
+  lo: Price,
+  hi: Price,
 ): PressureBand[] {
   const shells: PressureBand[] = [];
   const bidLive = frontierVolumeOnInterval(bid.current, "bid", lo, hi);
@@ -445,38 +483,34 @@ function legacySideRevisions(
 }
 
 function validBookOrder(order: {
-  readonly price: number;
+  readonly price: Price;
   readonly take: number;
 }): boolean {
   return (
-    Number.isFinite(order.price) &&
-    order.price >= 0 &&
-    order.price <= 1 &&
+    Number.isSafeInteger(order.price) &&
+    order.price >= PRICE_ZERO &&
+    order.price <= PRICE_ONE &&
     Number.isFinite(order.take) &&
     order.take > 0
   );
 }
 
-function localKey(
-  side: PressureBookSide,
-  canonicalPrice: number,
-): number | null {
-  if (
-    !Number.isFinite(canonicalPrice) ||
-    canonicalPrice < 0 ||
-    canonicalPrice > 1
-  )
+function localKey(side: PressureBookSide, canonicalPrice: Price): Price | null {
+  try {
+    priceFromTicks(canonicalPrice);
+  } catch {
     return null;
-  return side === "bid" ? canonicalPrice : 1 - canonicalPrice;
+  }
+  return side === "bid" ? canonicalPrice : complementPrice(canonicalPrice);
 }
 
 function normalizeLevels(levels: readonly FrontierLevel[]): FrontierLevel[] {
-  const byKey = new Map<number, number>();
+  const byKey = new Map<Price, number>();
   for (const { key, weight } of levels) {
     if (
-      !Number.isFinite(key) ||
-      key < 0 ||
-      key > 1 ||
+      !Number.isSafeInteger(key) ||
+      key < PRICE_ZERO ||
+      key > PRICE_ONE ||
       !Number.isFinite(weight) ||
       !(weight > 0)
     )
@@ -553,8 +587,10 @@ function frontierFromLegacyCells(
     const band = cell.bands.find(
       (candidate) => candidate.side === side && candidate.state.kind === state,
     );
-    const lo = side > 0 ? cell.lo : 1 - cell.hi;
-    const hi = side > 0 ? cell.hi : 1 - cell.lo;
+    const canonicalLo = priceFromLegacyNumber(cell.lo);
+    const canonicalHi = priceFromLegacyNumber(cell.hi);
+    const lo = side > 0 ? canonicalLo : complementPrice(canonicalHi);
+    const hi = side > 0 ? canonicalHi : complementPrice(canonicalLo);
     return {
       lo,
       hi,
@@ -562,7 +598,7 @@ function frontierFromLegacyCells(
     };
   });
 
-  const boundaries = new Set<number>([0, 1]);
+  const boundaries = new Set<Price>([PRICE_ZERO, PRICE_ONE]);
   for (const sample of localSamples) {
     boundaries.add(sample.lo);
     boundaries.add(sample.hi);
@@ -571,9 +607,10 @@ function frontierFromLegacyCells(
   const values = new Array<number>(Math.max(0, sorted.length - 1)).fill(0);
 
   for (let index = 0; index < values.length; index++) {
-    const midpoint = (sorted[index]! + sorted[index + 1]!) / 2;
+    const lo = sorted[index]!;
+    const hi = sorted[index + 1]!;
     const sample = localSamples.find(
-      (candidate) => candidate.lo <= midpoint && midpoint < candidate.hi,
+      (candidate) => candidate.lo <= lo && hi <= candidate.hi,
     );
     values[index] = sample?.lowerBound ?? 0;
   }
@@ -618,8 +655,8 @@ function finiteOrNegativeInfinity(value: number): number {
 
 function emptyFieldRun(): PressureFieldRunSnapshot {
   return {
-    lo: 0,
-    hi: 1,
+    lo: PRICE_ZERO,
+    hi: PRICE_ONE,
     bidVolume: 0,
     askVolume: 0,
     bidRevision: 0,

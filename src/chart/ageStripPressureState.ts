@@ -4,6 +4,7 @@ import {
   type PressureBookSide,
 } from "@/lib/pressureFrontierMemory";
 import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
+import type { Price } from "@/lib/price";
 import type { LiveBookUpdate } from "./liveBookFeed";
 
 export interface AgeStripPressureTiming {
@@ -81,7 +82,7 @@ export class AgeStripPressureState {
 
   hydrate(
     snapshotsByToken: Readonly<Record<string, PressureFrontierSnapshot>>,
-    getBook: (tokenId: string) => TokenBook<string> | undefined,
+    getBook: (tokenId: string) => TokenBook | undefined,
     nowMs = Date.now(),
   ): void {
     for (const [tokenId, snapshot] of Object.entries(snapshotsByToken)) {
@@ -102,17 +103,13 @@ export class AgeStripPressureState {
     }
   }
 
-  observeBook(
-    tokenId: string,
-    book: TokenBook<string>,
-    nowMs = Date.now(),
-  ): void {
+  observeBook(tokenId: string, book: TokenBook, nowMs = Date.now()): void {
     this.ensure(tokenId).memory.observeBook(book, nowMs);
   }
 
   applyBookUpdate(
     tokenId: string,
-    book: TokenBook<string>,
+    book: TokenBook,
     update: LiveBookUpdate,
   ): void {
     const memory = this.ensure(tokenId).memory;
@@ -123,7 +120,7 @@ export class AgeStripPressureState {
 
     const bySide: Record<
       PressureBookSide,
-      Array<{ price: number; shares: number }>
+      Array<{ price: Price; shares: number }>
     > = {
       bid: [],
       ask: [],

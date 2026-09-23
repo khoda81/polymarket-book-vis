@@ -89,7 +89,7 @@ export class SeriesTimelineView {
     string,
     MarketResolutionUpdate
   >();
-  private readonly bookCache = new Map<string, TokenBook<string>>();
+  private readonly bookCache = new Map<string, TokenBook>();
   private readonly scaleByToken = new Map<string, SignedVolumeColorScale>();
   private readonly tokenNameByToken = new Map<string, string>();
   private readonly oppositeTokenNameByToken = new Map<string, string>();

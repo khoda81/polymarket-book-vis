@@ -1,3 +1,5 @@
+import { PRICE_SCALE, type Price, priceFromTicks } from "./price";
+
 /**
  * Immutable weighted AVL tree for one side of the order book in side-local
  * price coordinates.
@@ -7,7 +9,7 @@
  * coordinates >= u. Consequently Q is non-increasing by construction.
  */
 export interface FrontierNode {
-  readonly key: number;
+  readonly key: Price;
   readonly weight: number;
   readonly sum: number;
   readonly height: number;
@@ -18,11 +20,11 @@ export interface FrontierNode {
 export type FrontierRoot = FrontierNode | null;
 
 export interface FrontierLevel {
-  readonly key: number;
+  readonly key: Price;
   readonly weight: number;
 }
 
-export function frontierLevel(root: FrontierRoot, key: number): number {
+export function frontierLevel(root: FrontierRoot, key: Price): number {
   validateKey(key);
   let node = root;
   while (node) {
@@ -34,7 +36,7 @@ export function frontierLevel(root: FrontierRoot, key: number): number {
 
 export function setFrontierLevel(
   root: FrontierRoot,
-  key: number,
+  key: Price,
   weight: number,
 ): FrontierRoot {
   validateKey(key);
@@ -43,10 +45,8 @@ export function setFrontierLevel(
 }
 
 /** Cumulative shares at side-local coordinate u. */
-export function frontierVolumeAt(root: FrontierRoot, u: number): number {
-  if (!Number.isFinite(u)) return 0;
+export function frontierVolumeAt(root: FrontierRoot, u: Price): number {
   if (u <= 0) return root?.sum ?? 0;
-  if (u > 1) return 0;
 
   let node = root;
   let sum = 0;
@@ -70,13 +70,14 @@ export function frontierVolumeAt(root: FrontierRoot, u: number): number {
 export function frontierVolumeOnInterval(
   root: FrontierRoot,
   side: "bid" | "ask",
-  lo: number,
-  hi: number,
+  lo: Price,
+  hi: Price,
 ): number {
   let node = root;
   let sum = 0;
   while (node) {
-    const included = side === "bid" ? node.key >= hi : 1 - node.key <= lo;
+    const included =
+      side === "bid" ? node.key >= hi : node.key >= PRICE_SCALE - lo;
     if (included) {
       sum += node.weight + (node.right?.sum ?? 0);
       node = node.left;
@@ -116,11 +117,7 @@ export function buildFrontier(levels: readonly FrontierLevel[]): FrontierRoot {
   return root;
 }
 
-function setNode(
-  node: FrontierRoot,
-  key: number,
-  weight: number,
-): FrontierRoot {
+function setNode(node: FrontierRoot, key: Price, weight: number): FrontierRoot {
   if (!node) return weight > 0 ? makeNode(key, weight, null, null) : null;
 
   if (key === node.key) {
@@ -213,7 +210,7 @@ function rotateRight(node: FrontierNode): FrontierNode {
 }
 
 function makeNode(
-  key: number,
+  key: Price,
   weight: number,
   left: FrontierRoot,
   right: FrontierRoot,
@@ -232,9 +229,8 @@ function height(node: FrontierRoot): number {
   return node?.height ?? 0;
 }
 
-function validateKey(key: number): void {
-  if (!Number.isFinite(key) || key < 0 || key > 1)
-    throw new RangeError("frontier key must be finite and in [0, 1]");
+function validateKey(key: Price): void {
+  priceFromTicks(key);
 }
 
 function validateWeight(weight: number): void {

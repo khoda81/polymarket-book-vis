@@ -1,6 +1,7 @@
 import type { ChartDefinition } from "@/lib/chartDefinition";
 import { marketColor } from "@/lib/math";
 import { emptyTokenBook, type BookOrder } from "@/lib/orderBook";
+import { priceToNumber } from "@/lib/price";
 import type {
   ChartTheme,
   Frame,
@@ -125,13 +126,13 @@ function drawBookView(frame: Frame, view: BookBoxView): void {
 
     const filledHeight = Math.min(rowHeight, fillRemaining);
     if (filledHeight > 0) {
-      commitBoxRow(pen, level.price, filledHeight, filledStyle);
+      commitBoxRow(pen, priceToNumber(level.price), filledHeight, filledStyle);
       fillRemaining -= filledHeight;
     }
 
     const emptyHeight = rowHeight - filledHeight;
     if (emptyHeight > 0)
-      commitBoxRow(pen, level.price, emptyHeight, emptyStyle);
+      commitBoxRow(pen, priceToNumber(level.price), emptyHeight, emptyStyle);
 
     remainingHeight -= rowHeight;
     if (remainingHeight <= 0) break;

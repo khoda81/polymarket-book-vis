@@ -1,22 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { HalfBook, emptyTokenBook, type TokenBook } from "./orderBook";
+import { priceFromLegacyNumber as p } from "./price";
 import { StaleSignedVolume } from "./staleSignedVolume";
 
 function makeBook(
   bids: readonly [price: number, yes: number][],
   asks: readonly [price: number, yes: number][],
-): TokenBook<string> {
-  const usdToYes = new HalfBook<string>();
-  for (const [price, yes] of bids)
-    usdToYes.setLevel(`b:${price}`, { price, take: yes });
+): TokenBook {
+  const usdToYes = new HalfBook();
+  for (const [price, yes] of bids) usdToYes.setLevel(p(price), yes);
 
-  const yesToUsd = new HalfBook<string>();
-  for (const [price, yes] of asks)
-    yesToUsd.setLevel(`a:${price}`, {
-      price: 1 / price,
-      take: yes * price,
-    });
-  yesToUsd.setLevel("mint", { price: 1, take: Infinity });
+  const yesToUsd = new HalfBook();
+  for (const [price, yes] of asks) yesToUsd.setLevel(p(price), yes);
 
   return { usdToYes, yesToUsd };
 }
@@ -212,12 +207,12 @@ describe("StaleSignedVolume", () => {
 
 test("repeated empty observations do not refresh stale liquidity", () => {
   const book = emptyTokenBook();
-  book.usdToYes.setLevel("bid", { price: 0.4, take: 10 });
+  book.usdToYes.setLevel(p(0.4), 10);
 
   const memory = new StaleSignedVolume();
   memory.update(book, 0);
 
-  book.usdToYes.setLevel("bid", { price: 0.4, take: 0 });
+  book.usdToYes.setLevel(p(0.4), 0);
   memory.update(book, 1_000, [{ lo: 0, hi: 0.4 }]);
   const firstStale = memory
     .segments(1_000)

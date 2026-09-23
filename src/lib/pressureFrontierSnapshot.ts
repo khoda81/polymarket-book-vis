@@ -9,15 +9,36 @@ import {
   type FrontierRoot,
 } from "./monotoneFrontier";
 import { type PressureBand } from "./pressureField";
+import { type Price, priceFromLegacyNumber, priceFromTicks } from "./price";
+
+export interface LegacyFrontierLevel {
+  readonly key: number;
+  readonly weight: number;
+}
+
+export interface LegacyPressureFieldRunSnapshot {
+  readonly lo: number;
+  readonly hi: number;
+  readonly bidVolume: number;
+  readonly askVolume: number;
+  readonly bidRevision: number;
+  readonly askRevision: number;
+  readonly bands: readonly PressureBand[];
+}
+
+export interface LegacyPressureFieldSnapshot {
+  readonly revision: number;
+  readonly runs: readonly LegacyPressureFieldRunSnapshot[];
+}
 
 export interface PressureFrontierLayerSnapshotV1 {
   readonly sinceMs: number;
-  readonly levels: readonly FrontierLevel[];
+  readonly levels: readonly LegacyFrontierLevel[];
 }
 
 export interface PressureFrontierSideSnapshotV1 {
   readonly updatedAtMs: number | null;
-  readonly current: readonly FrontierLevel[];
+  readonly current: readonly LegacyFrontierLevel[];
   readonly history: readonly PressureFrontierLayerSnapshotV1[];
 }
 
@@ -27,19 +48,32 @@ export interface PressureFrontierSnapshotV1 {
   readonly ask: PressureFrontierSideSnapshotV1;
 }
 
+export interface LegacyPressureFrontierCurrentSideSnapshot {
+  readonly current: readonly LegacyFrontierLevel[];
+}
+
 export interface PressureFrontierCurrentSideSnapshot {
   readonly current: readonly FrontierLevel[];
 }
 
 export interface PressureFrontierSnapshotV2 {
   readonly version: 2;
+  readonly bid: LegacyPressureFrontierCurrentSideSnapshot;
+  readonly ask: LegacyPressureFrontierCurrentSideSnapshot;
+  readonly field: LegacyPressureFieldSnapshot;
+}
+
+export interface PressureFrontierSnapshotV3 {
+  readonly version: 3;
   readonly bid: PressureFrontierCurrentSideSnapshot;
   readonly ask: PressureFrontierCurrentSideSnapshot;
   readonly field: PressureFieldSnapshot;
 }
 
 export type PressureFrontierSnapshot =
-  PressureFrontierSnapshotV1 | PressureFrontierSnapshotV2;
+  | PressureFrontierSnapshotV1
+  | PressureFrontierSnapshotV2
+  | PressureFrontierSnapshotV3;
 
 export interface RestoredPressureFrontierSideV1 {
   readonly updatedAtMs: number;
@@ -67,6 +101,15 @@ export function parsePressureFrontierSnapshot(
   if (value.version === 2) {
     return {
       version: 2,
+      bid: parseLegacyCurrentSide(value.bid, "bid"),
+      ask: parseLegacyCurrentSide(value.ask, "ask"),
+      field: parseLegacyField(value.field),
+    };
+  }
+
+  if (value.version === 3) {
+    return {
+      version: 3,
       bid: parseCurrentSide(value.bid, "bid"),
       ask: parseCurrentSide(value.ask, "ask"),
       field: parseField(value.field),
@@ -108,7 +151,7 @@ export function rebasePressureFrontierSnapshot(
   }
 
   return {
-    version: 2,
+    version: snapshot.version,
     bid: snapshot.bid,
     ask: snapshot.ask,
     field: {
@@ -127,7 +170,7 @@ export function rebasePressureFrontierSnapshot(
         })),
       })),
     },
-  };
+  } as PressureFrontierSnapshot;
 }
 
 export function stalePressureFrontierSnapshot(
@@ -163,7 +206,7 @@ export function stalePressureFrontierSnapshot(
   }
 
   return {
-    version: 2,
+    version: snapshot.version,
     bid: { current: [] },
     ask: { current: [] },
     field: {
@@ -186,7 +229,7 @@ export function stalePressureFrontierSnapshot(
         })),
       })),
     },
-  };
+  } as PressureFrontierSnapshot;
 }
 
 export function snapshotCurrentSide(
@@ -206,10 +249,10 @@ export function restoreSnapshotSideV1(
 ): RestoredPressureFrontierSideV1 {
   return {
     updatedAtMs: side.updatedAtMs ?? Number.NEGATIVE_INFINITY,
-    current: buildFrontier(side.current),
+    current: buildFrontier(migrateLegacyLevels(side.current)),
     history: side.history.map((layer) => ({
       sinceMs: layer.sinceMs,
-      root: buildFrontier(layer.levels),
+      root: buildFrontier(migrateLegacyLevels(layer.levels)),
     })),
   };
 }
@@ -224,7 +267,20 @@ function parseCurrentSide(
     throw new TypeError(`pressure frontier ${label} current must be an array`);
 
   return {
-    current: parseLevels(value.current, `${label} current`),
+    current: parseLevels(value.current, `${label} current`, false),
+  };
+}
+
+function parseLegacyCurrentSide(
+  value: unknown,
+  label: string,
+): LegacyPressureFrontierCurrentSideSnapshot {
+  if (!isRecord(value))
+    throw new TypeError(`pressure frontier ${label} side must be an object`);
+  if (!Array.isArray(value.current))
+    throw new TypeError(`pressure frontier ${label} current must be an array`);
+  return {
+    current: parseLevels(value.current, `${label} current`, true),
   };
 }
 
@@ -244,7 +300,7 @@ function parseSideV1(
   if (!Array.isArray(value.history))
     throw new TypeError(`pressure frontier ${label} history must be an array`);
 
-  const current = parseLevels(value.current, `${label} current`);
+  const current = parseLevels(value.current, `${label} current`, true);
   const history = value.history.map((rawLayer, index) => {
     if (!isRecord(rawLayer))
       throw new TypeError(`${label} history[${index}] must be an object`);
@@ -255,7 +311,11 @@ function parseSideV1(
         rawLayer.sinceMs,
         `${label} history[${index}].sinceMs`,
       ),
-      levels: parseLevels(rawLayer.levels, `${label} history[${index}].levels`),
+      levels: parseLevels(
+        rawLayer.levels,
+        `${label} history[${index}].levels`,
+        true,
+      ),
     };
   });
 
@@ -279,19 +339,47 @@ function parseField(value: unknown): PressureFieldSnapshot {
 
   return {
     revision,
-    runs: value.runs.map(parseRun),
+    runs: value.runs.map(parseExactRun),
   };
 }
 
-function parseRun(value: unknown, index: number): PressureFieldRunSnapshot {
+function parseLegacyField(value: unknown): LegacyPressureFieldSnapshot {
+  if (!isRecord(value))
+    throw new TypeError("pressure field snapshot must be an object");
+  const revision = finiteNumber(value.revision, "pressure field revision");
+  if (revision < 0)
+    throw new RangeError("pressure field revision must be non-negative");
+  if (!Array.isArray(value.runs))
+    throw new TypeError("pressure field runs must be an array");
+  return {
+    revision,
+    runs: value.runs.map(parseLegacyRun),
+  };
+}
+
+function parseExactRun(
+  value: unknown,
+  index: number,
+): PressureFieldRunSnapshot {
+  return parseRun(value, index, false) as PressureFieldRunSnapshot;
+}
+
+function parseLegacyRun(
+  value: unknown,
+  index: number,
+): LegacyPressureFieldRunSnapshot {
+  return parseRun(value, index, true) as LegacyPressureFieldRunSnapshot;
+}
+
+function parseRun(value: unknown, index: number, legacy: boolean) {
   if (!isRecord(value))
     throw new TypeError(`pressure field run[${index}] must be an object`);
   if (!Array.isArray(value.bands))
     throw new TypeError(`pressure field run[${index}].bands must be an array`);
 
   return {
-    lo: finiteNumber(value.lo, `run[${index}].lo`),
-    hi: finiteNumber(value.hi, `run[${index}].hi`),
+    lo: parseSnapshotPrice(value.lo, `run[${index}].lo`, legacy),
+    hi: parseSnapshotPrice(value.hi, `run[${index}].hi`, legacy),
     bidVolume: finiteNumber(value.bidVolume, `run[${index}].bidVolume`),
     askVolume: finiteNumber(value.askVolume, `run[${index}].askVolume`),
     bidRevision: finiteNumber(value.bidRevision, `run[${index}].bidRevision`),
@@ -332,14 +420,23 @@ function parseBand(value: unknown, label: string): PressureBand {
 function parseLevels(
   value: readonly unknown[],
   label: string,
-): FrontierLevel[] {
+  legacy: false,
+): FrontierLevel[];
+function parseLevels(
+  value: readonly unknown[],
+  label: string,
+  legacy: true,
+): LegacyFrontierLevel[];
+function parseLevels(
+  value: readonly unknown[],
+  label: string,
+  legacy: boolean,
+) {
   const levels = value.map((raw, index) => {
     if (!isRecord(raw))
       throw new TypeError(`${label}[${index}] must be an object`);
-    const key = finiteNumber(raw.key, `${label}[${index}].key`);
+    const key = parseSnapshotPrice(raw.key, `${label}[${index}].key`, legacy);
     const weight = finiteNumber(raw.weight, `${label}[${index}].weight`);
-    if (key < 0 || key > 1)
-      throw new RangeError(`${label}[${index}].key must be in [0, 1]`);
     if (!(weight > 0))
       throw new RangeError(`${label}[${index}].weight must be positive`);
     return { key, weight };
@@ -349,6 +446,48 @@ function parseLevels(
     if (!(levels[index]!.key > levels[index - 1]!.key))
       throw new RangeError(`${label} keys must be strictly increasing`);
   return levels;
+}
+
+export function migrateLegacyField(
+  field: LegacyPressureFieldSnapshot,
+): PressureFieldSnapshot {
+  const runs: PressureFieldRunSnapshot[] = [];
+  for (const run of field.runs) {
+    const lo = priceFromLegacyNumber(run.lo);
+    const hi = priceFromLegacyNumber(run.hi);
+    if (lo === hi) continue;
+    runs.push({ ...run, lo, hi });
+  }
+  return { revision: field.revision, runs };
+}
+
+export function migrateLegacyCurrentSide(
+  side: LegacyPressureFrontierCurrentSideSnapshot,
+): PressureFrontierCurrentSideSnapshot {
+  return { current: migrateLegacyLevels(side.current) };
+}
+
+function migrateLegacyLevels(
+  levels: readonly LegacyFrontierLevel[],
+): FrontierLevel[] {
+  return levels.map(({ key, weight }) => ({
+    key: priceFromLegacyNumber(key),
+    weight,
+  }));
+}
+
+function parseSnapshotPrice(
+  value: unknown,
+  label: string,
+  legacy: boolean,
+): number | Price {
+  const number = finiteNumber(value, label);
+  if (legacy) {
+    if (number < 0 || number > 1)
+      throw new RangeError(`${label} must be in [0, 1]`);
+    return number;
+  }
+  return priceFromTicks(number);
 }
 
 function finiteNumber(value: unknown, label: string): number {

@@ -1,8 +1,9 @@
 import { canonicalSpread, type TokenBook } from "./orderBook";
+import { PRICE_ONE, PRICE_ZERO, type Price, priceToNumber } from "./price";
 
 export interface SignedVolumeSegment {
-  readonly lo: number;
-  readonly hi: number;
+  readonly lo: Price;
+  readonly hi: Price;
   /** Signed cumulative shares: bids are positive, asks are negative. */
   readonly volume: number;
   /**
@@ -54,15 +55,15 @@ export const DEFAULT_SIGNED_VOLUME_COLOR_SCALE: SignedVolumeColorScale = {
  * than choosing an arbitrary volume transfer function.
  */
 export function signedVolumeSegments(
-  book: TokenBook<unknown>,
+  book: TokenBook,
 ): readonly SignedVolumeSegment[] {
-  const changes = new Map<number, { volume: number; sweepCost: number }>();
+  const changes = new Map<Price, { volume: number; sweepCost: number }>();
   const spread = canonicalSpread(book);
   const hasOpenSpread = spread.bid < spread.ask;
   let volume = 0;
   let sweepCost = 0;
 
-  const addChange = (price: number, volumeDelta: number, costDelta: number) => {
+  const addChange = (price: Price, volumeDelta: number, costDelta: number) => {
     const previous = changes.get(price) ?? { volume: 0, sweepCost: 0 };
     changes.set(price, {
       volume: previous.volume + volumeDelta,
@@ -71,21 +72,21 @@ export function signedVolumeSegments(
   };
 
   for (const order of book.usdToYes.asOrders()) {
-    if (order.price < 0 || order.price > 1 || order.take <= 0) continue;
-    const noCost = (1 - order.price) * order.take;
+    if (order.take <= 0) continue;
+    const noCost = (1 - priceToNumber(order.price)) * order.take;
     volume += order.take;
     sweepCost += noCost;
     addChange(order.price, -order.take, -noCost);
   }
 
   for (const order of book.yesToUsd.asSellOrders()) {
-    if (order.price < 0 || order.price > 1 || order.take <= 0) continue;
-    const yesCost = order.price * order.take;
+    if (order.take <= 0) continue;
+    const yesCost = priceToNumber(order.price) * order.take;
     addChange(order.price, -order.take, yesCost);
   }
 
   const result: SignedVolumeSegment[] = [];
-  let cursor = 0;
+  let cursor = PRICE_ZERO;
   for (const [price, delta] of [...changes].sort(([a], [b]) => a - b)) {
     if (price > cursor)
       result.push({ lo: cursor, hi: price, volume, sweepCost });
@@ -100,9 +101,15 @@ export function signedVolumeSegments(
     }
     cursor = price;
   }
-  if (cursor < 1) result.push({ lo: cursor, hi: 1, volume, sweepCost });
+  if (cursor < PRICE_ONE)
+    result.push({ lo: cursor, hi: PRICE_ONE, volume, sweepCost });
   if (result.length === 0)
-    result.push({ lo: 0, hi: 1, volume: 0, sweepCost: 0 });
+    result.push({
+      lo: PRICE_ZERO,
+      hi: PRICE_ONE,
+      volume: 0,
+      sweepCost: 0,
+    });
   return result;
 }
 

@@ -174,9 +174,8 @@ export function rowRasterGeometry(
   };
 }
 
-export function hasRealOrders(book: TokenBook<string>): boolean {
-  // yesToUsd always includes the synthetic mint level.
-  return book.usdToYes.size > 0 || book.yesToUsd.size > 1;
+export function hasRealOrders(book: TokenBook): boolean {
+  return book.usdToYes.size > 0 || book.yesToUsd.size > 0;
 }
 
 export function normalizedWheelDelta(event: WheelEvent): number {
