@@ -1,4 +1,9 @@
-import type { ClobAssetId, ConditionId, Market, TokenId } from "@polymarket/client";
+import type {
+  ClobAssetId,
+  ConditionId,
+  Market,
+  TokenId,
+} from "@polymarket/client";
 
 export type MarketLifecycle =
   | { readonly kind: "live" }

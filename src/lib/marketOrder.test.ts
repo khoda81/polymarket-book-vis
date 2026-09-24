@@ -39,10 +39,7 @@ test("price mode orders by Yes price descending, not threshold, without mutating
     "0.007",
   ]);
   const original = [...event.markets];
-  const ordered = orderMarkets(
-    event,
-    thresholdMap(event, [0, 1, 2, 3, 4, 5]),
-  );
+  const ordered = orderMarkets(event, thresholdMap(event, [0, 1, 2, 3, 4, 5]));
   expect(ids(ordered)).toEqual(["1", "0", "2", "3", "4", "5"]);
   expect(event.markets).toEqual(original);
   expect(ordered).not.toBe(event.markets);
@@ -87,8 +84,8 @@ test("threshold modes retain direction, stable ties, and put missing values last
 test("empty and singleton events retain their markets", () => {
   for (const mode of ["price", "ascending", "descending"]) {
     expect(orderMarkets(eventWithPrices(mode, []), new Map())).toEqual([]);
-    expect(
-      ids(orderMarkets(eventWithPrices(mode, [null]), new Map())),
-    ).toEqual(["0"]);
+    expect(ids(orderMarkets(eventWithPrices(mode, [null]), new Map()))).toEqual(
+      ["0"],
+    );
   }
 });

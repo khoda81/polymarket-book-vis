@@ -480,7 +480,9 @@ export class SeriesTimelineView {
     this.refreshWindowIfNeeded(centerMs, minMs, maxMs, nowMs);
 
     if (hasVisiblePressure)
-      this.scheduleStalenessRefresh(ghostRefreshDelayMs(tuning.ghostHalfLifeMs));
+      this.scheduleStalenessRefresh(
+        ghostRefreshDelayMs(tuning.ghostHalfLifeMs),
+      );
   }
 
   private drawTimeline(
@@ -713,16 +715,13 @@ export class SeriesTimelineView {
     if (this.destroyed) return;
 
     this.pressure.setRecordingCoverage(hydration.recordingSinceMsByToken);
-    this.pressure.hydrate(
-      hydration.pressureSnapshotsByToken,
-      (tokenId) => {
-        const canonical = this.marketByToken.get(tokenId)?.outcomes.yes.tokenId;
-        return (
-          this.bookCache.get(tokenId) ??
-          (canonical ? this.feed?.getBook(canonical) : undefined)
-        );
-      },
-    );
+    this.pressure.hydrate(hydration.pressureSnapshotsByToken, (tokenId) => {
+      const canonical = this.marketByToken.get(tokenId)?.outcomes.yes.tokenId;
+      return (
+        this.bookCache.get(tokenId) ??
+        (canonical ? this.feed?.getBook(canonical) : undefined)
+      );
+    });
     this.ageClock.refresh();
     this.requestDraw();
   }

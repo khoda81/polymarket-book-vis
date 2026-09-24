@@ -74,7 +74,9 @@ describe("negative-risk color geometry", () => {
     const forward = buildNegRiskPalette(negRiskEvent(["100", "2", "30"]))!;
     const shuffled = buildNegRiskPalette(negRiskEvent(["30", "100", "2"]))!;
 
-    for (const tokenId of forward.outcomes.map((outcome) => outcome.yesTokenId)) {
+    for (const tokenId of forward.outcomes.map(
+      (outcome) => outcome.yesTokenId,
+    )) {
       expect(forward.byYesTokenId.get(tokenId)?.hue).toBe(
         shuffled.byYesTokenId.get(tokenId)?.hue,
       );

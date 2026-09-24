@@ -15,12 +15,7 @@ import {
   type SignedVolumeColorScale,
 } from "./signedVolume";
 import type { EventDetails } from "./eventDetails";
-import type {
-  Event,
-  Market,
-  MarketId,
-  TokenId,
-} from "@polymarket/client";
+import type { Event, Market, MarketId, TokenId } from "@polymarket/client";
 
 export interface ChartMarketControl {
   readonly market: Market;
@@ -45,14 +40,8 @@ export interface ChartDefinition {
 
 export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
   const { event } = bundle;
-  const pressureScales = buildPressureScales(
-    event,
-    bundle.thresholdByMarketId,
-  );
-  const orderByToken = resolutionOrder(
-    event,
-    bundle.resolutionMsByMarketId,
-  );
+  const pressureScales = buildPressureScales(event, bundle.thresholdByMarketId);
+  const orderByToken = resolutionOrder(event, bundle.resolutionMsByMarketId);
 
   const controls = event.markets.flatMap((market, index) => {
     const tokenId = market.outcomes.yes.tokenId;
@@ -63,8 +52,7 @@ export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
       ? signedVolumeColor(1, scale)
       : marketColor(event.id, index);
     const oppositeColor = scale ? signedVolumeColor(-1, scale) : primaryColor;
-    const title =
-      market.groupItemTitle ?? market.question ?? "(untitled)";
+    const title = market.groupItemTitle ?? market.question ?? "(untitled)";
     const suppressAgeIdentity =
       event.markets.length === 1 && sameDisplayTitle(title, event.title);
 
@@ -123,8 +111,7 @@ export function pressureScaleForToken(
   tokenId: TokenId,
 ): SignedVolumeColorScale {
   return (
-    definition.pressureScales.get(tokenId) ??
-    DEFAULT_SIGNED_VOLUME_COLOR_SCALE
+    definition.pressureScales.get(tokenId) ?? DEFAULT_SIGNED_VOLUME_COLOR_SCALE
   );
 }
 

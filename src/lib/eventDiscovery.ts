@@ -120,9 +120,7 @@ export async function discoverEvents(
       const id = event.id;
       if (seenIds.has(id)) continue;
       seenIds.add(id);
-      if (
-        event.series.some((series) => excludedSeriesIds.has(series.id))
-      )
+      if (event.series.some((series) => excludedSeriesIds.has(series.id)))
         continue;
       if (!matchesDiscoveryFilters(event, filters, nowMs)) continue;
       found.push(event);

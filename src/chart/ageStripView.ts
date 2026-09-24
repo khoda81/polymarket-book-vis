@@ -230,7 +230,9 @@ export class AgeStripView {
     );
 
     if (hasVisiblePressure)
-      this.scheduleStalenessRefresh(ghostRefreshDelayMs(tuning.ghostHalfLifeMs));
+      this.scheduleStalenessRefresh(
+        ghostRefreshDelayMs(tuning.ghostHalfLifeMs),
+      );
   }
 
   prepareVolumeView(): void {

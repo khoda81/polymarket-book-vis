@@ -195,9 +195,11 @@ test("large fractional removals cannot leave negative cumulative pressure", () =
   memory.updateLevels("ask", [{ price: p(0.11), shares: 0 }], 4);
 
   expect(memory.currentLevels("ask")).toEqual([]);
-  expect(memory.renderRuns().every((run) =>
-    run.bands.every((band) => band.hiVolume > band.loVolume),
-  )).toBe(true);
+  expect(
+    memory
+      .renderRuns()
+      .every((run) => run.bands.every((band) => band.hiVolume > band.loVolume)),
+  ).toBe(true);
 });
 
 test("visibility depends only on timestamp and display half-life", () => {

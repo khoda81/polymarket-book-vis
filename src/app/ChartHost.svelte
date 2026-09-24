@@ -44,7 +44,10 @@
 
   let visibilityByMarketId = loadMarketVisibility(definition.controls);
   let lifecycleByMarketId = new Map<MarketId, MarketLifecycle>(
-    definition.controls.map((control) => [control.market.id, control.lifecycle]),
+    definition.controls.map((control) => [
+      control.market.id,
+      control.lifecycle,
+    ]),
   );
 
   let canvas: HTMLCanvasElement;

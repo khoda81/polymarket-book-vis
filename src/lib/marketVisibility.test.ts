@@ -43,8 +43,13 @@ test("visibility partition reacts to a replaced visibility map", () => {
     markets,
     new Map([[marketId("b"), { kind: "hidden", reason: "empty-book" }]]),
   );
-  expect(first.visible.map((market) => market.market.id)).toEqual([marketId("a"), marketId("c")]);
-  expect(first.hidden.map((market) => market.market.id)).toEqual([marketId("b")]);
+  expect(first.visible.map((market) => market.market.id)).toEqual([
+    marketId("a"),
+    marketId("c"),
+  ]);
+  expect(first.hidden.map((market) => market.market.id)).toEqual([
+    marketId("b"),
+  ]);
 
   const second = partitionMarketVisibility(
     markets,
@@ -53,8 +58,13 @@ test("visibility partition reacts to a replaced visibility map", () => {
       [marketId("c"), { kind: "hidden", reason: "user" }],
     ]),
   );
-  expect(second.visible.map((market) => market.market.id)).toEqual([marketId("b")]);
-  expect(second.hidden.map((market) => market.market.id)).toEqual([marketId("a"), marketId("c")]);
+  expect(second.visible.map((market) => market.market.id)).toEqual([
+    marketId("b"),
+  ]);
+  expect(second.hidden.map((market) => market.market.id)).toEqual([
+    marketId("a"),
+    marketId("c"),
+  ]);
 });
 
 test("user visibility update replaces state without a second source of truth", () => {

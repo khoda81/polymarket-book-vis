@@ -79,27 +79,15 @@ function parseRun(value: unknown, index: number): PressureFieldRunSnapshot {
   if (!isRecord(value))
     throw new TypeError(`pressure field run[${index}] must be an object`);
   if (!Array.isArray(value.bands))
-    throw new TypeError(
-      `pressure field run[${index}].bands must be an array`,
-    );
+    throw new TypeError(`pressure field run[${index}].bands must be an array`);
 
   return {
-    lo: priceFromTicks(
-      finiteNumber(value.lo, `run[${index}].lo`),
-    ),
-    hi: priceFromTicks(
-      finiteNumber(value.hi, `run[${index}].hi`),
-    ),
+    lo: priceFromTicks(finiteNumber(value.lo, `run[${index}].lo`)),
+    hi: priceFromTicks(finiteNumber(value.hi, `run[${index}].hi`)),
     bidVolume: finiteNumber(value.bidVolume, `run[${index}].bidVolume`),
     askVolume: finiteNumber(value.askVolume, `run[${index}].askVolume`),
-    bidRevision: finiteNumber(
-      value.bidRevision,
-      `run[${index}].bidRevision`,
-    ),
-    askRevision: finiteNumber(
-      value.askRevision,
-      `run[${index}].askRevision`,
-    ),
+    bidRevision: finiteNumber(value.bidRevision, `run[${index}].bidRevision`),
+    askRevision: finiteNumber(value.askRevision, `run[${index}].askRevision`),
     bands: value.bands.map((band, bandIndex) =>
       parseBand(band, `run[${index}].bands[${bandIndex}]`),
     ),
@@ -129,9 +117,7 @@ function parseLevels(
   const levels = value.map((raw, index) => {
     if (!isRecord(raw))
       throw new TypeError(`${label}[${index}] must be an object`);
-    const key = priceFromTicks(
-      finiteNumber(raw.key, `${label}[${index}].key`),
-    );
+    const key = priceFromTicks(finiteNumber(raw.key, `${label}[${index}].key`));
     const weight = finiteNumber(raw.weight, `${label}[${index}].weight`);
     if (!(weight > 0))
       throw new RangeError(`${label}[${index}].weight must be positive`);

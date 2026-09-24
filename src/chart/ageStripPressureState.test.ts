@@ -22,9 +22,8 @@ test("invalid recorder data preserves current rows and does not abort later toke
 
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
-    state.hydrate(
-      { "bad-token": invalid, "good-token": valid },
-      (token) => (token === "bad-token" ? currentBook : undefined),
+    state.hydrate({ "bad-token": invalid, "good-token": valid }, (token) =>
+      token === "bad-token" ? currentBook : undefined,
     );
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).toContain("bad-token");

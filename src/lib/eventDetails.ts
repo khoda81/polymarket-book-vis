@@ -1,10 +1,5 @@
 import { orderMarkets } from "./marketOrder";
-import type {
-  Event,
-  Market,
-  MarketId,
-  PublicClient,
-} from "@polymarket/client";
+import type { Event, Market, MarketId, PublicClient } from "@polymarket/client";
 
 export interface EventDescription {
   readonly preview: string;
@@ -95,24 +90,20 @@ export function buildEventDetails(
     usefulDescription === null
       ? null
       : {
-        body: usefulDescription,
-        preview:
-          subtitle || descriptionPreview(usefulDescription) || "Description",
-      };
+          body: usefulDescription,
+          preview:
+            subtitle || descriptionPreview(usefulDescription) || "Description",
+        };
 
   const marketRules = orderedEvent.markets.flatMap((market) => {
     const body = text(market.description);
-    if (
-      !isUsefulDescription(body) ||
-      sameDescription(body, rawDescription)
-    )
+    if (!isUsefulDescription(body) || sameDescription(body, rawDescription))
       return [];
 
     return [
       {
         marketId: market.id,
-        title:
-          market.groupItemTitle ?? market.question ?? "(untitled)",
+        title: market.groupItemTitle ?? market.question ?? "(untitled)",
         body,
       },
     ];

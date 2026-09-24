@@ -33,8 +33,10 @@
     type SeriesId,
   } from "@polymarket/client";
 
-  const PINNED_EVENT_IDS_STORAGE_KEY = "polymarket-book-vis:pinned-event-ids:v1";
-  const PINNED_SERIES_IDS_STORAGE_KEY = "polymarket-book-vis:pinned-series-ids:v1";
+  const PINNED_EVENT_IDS_STORAGE_KEY =
+    "polymarket-book-vis:pinned-event-ids:v1";
+  const PINNED_SERIES_IDS_STORAGE_KEY =
+    "polymarket-book-vis:pinned-series-ids:v1";
   const COLUMN_COUNT_STORAGE_KEY = "polymarket-book-vis:dashboard-columns:v1";
   const LAYOUT_ORDER_STORAGE_KEY = "polymarket-book-vis:dashboard-order:v2";
   // Keep the original storage keys so saved filters and dismissals survive
@@ -472,7 +474,9 @@
           ...dismissedDiscoveryIds,
           ...pinnedEventIds,
           ...entries
-            .filter((entry): entry is EventDashboardItem => entry.kind === "event")
+            .filter(
+              (entry): entry is EventDashboardItem => entry.kind === "event",
+            )
             .map((entry) => entry.event.id),
         ]),
         Date.now(),
@@ -568,7 +572,11 @@
       return false;
     }
 
-    const entry: SeriesDashboardItem = { kind: "series", series, announceReady };
+    const entry: SeriesDashboardItem = {
+      kind: "series",
+      series,
+      announceReady,
+    };
     rememberLayoutKey(itemKey(entry));
     entries = [...entries, entry];
     return true;
@@ -576,8 +584,7 @@
 
   async function addManualEvent(event: Event): Promise<void> {
     status = `Loading ${eventLabel(event)}…`;
-    if (dismissedDiscoveryIds.delete(event.id))
-      persistDismissedDiscoveryIds();
+    if (dismissedDiscoveryIds.delete(event.id)) persistDismissedDiscoveryIds();
 
     const recurring = await recurringSeriesFor(event);
     if (recurring) {
@@ -611,10 +618,7 @@
         });
         if (series.recurrence?.trim()) return series;
       } catch (error) {
-        console.warn(
-          `Could not inspect series ${reference.id}:`,
-          error,
-        );
+        console.warn(`Could not inspect series ${reference.id}:`, error);
       }
     }
     return null;
@@ -658,8 +662,7 @@
       forgetLayoutKey(itemKey(entry));
       entries = entries.filter(
         (candidate) =>
-          candidate.kind === "event" ||
-          candidate.series.id !== seriesId,
+          candidate.kind === "event" || candidate.series.id !== seriesId,
       );
       status = `Could not add ${seriesLabel(entry.series)}: ${message}`;
       return;
@@ -784,8 +787,7 @@
           series={entry.series}
           {client}
           pinned={pinnedSeriesIds.includes(entry.series.id)}
-          onpin={(pinned) =>
-            setSeriesPinned(entry.series.id, pinned, "end")}
+          onpin={(pinned) => setSeriesPinned(entry.series.id, pinned, "end")}
           onremove={() => removeSeries(entry)}
           onready={() => itemReady(entry)}
           onfailure={(message) => itemFailed(entry, message)}
