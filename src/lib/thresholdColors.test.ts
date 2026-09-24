@@ -114,7 +114,7 @@ describe("nested threshold color geometry", () => {
     const a = buildThresholdPalette(event, thresholds)!;
     const b = buildThresholdPalette(shuffled, thresholds)!;
 
-    for (const tokenId of ["yes-0", "yes-1", "yes-2"]) {
+    for (const tokenId of a.outcomes.map((outcome) => outcome.yesTokenId)) {
       expect(a.byYesTokenId.get(tokenId)?.hue).toBe(
         b.byYesTokenId.get(tokenId)?.hue,
       );
