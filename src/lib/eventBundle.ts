@@ -4,7 +4,6 @@ import type {
   Market,
   MarketId,
   PublicClient,
-  TokenId,
 } from "@polymarket/client";
 
 export interface EventDescription {
@@ -29,10 +28,6 @@ export interface EventBundle {
   readonly presentation: EventPresentation;
   readonly thresholdByMarketId: ReadonlyMap<MarketId, number>;
   readonly resolutionMsByMarketId: ReadonlyMap<MarketId, number>;
-  readonly marketTitles: ReadonlyMap<MarketId, string>;
-  readonly marketIcons: ReadonlyMap<MarketId, string>;
-  readonly tokenNames: ReadonlyMap<TokenId, string>;
-  readonly oppositeTokenNames: ReadonlyMap<TokenId, string>;
 }
 
 interface GammaGetResult {
@@ -100,31 +95,6 @@ export function buildEventBundle(
             subtitle || descriptionPreview(usefulDescription) || "Description",
         };
 
-  const marketTitles = new Map<MarketId, string>();
-  const marketIcons = new Map<MarketId, string>();
-  const tokenNames = new Map<TokenId, string>();
-  const oppositeTokenNames = new Map<TokenId, string>();
-
-  for (const market of orderedEvent.markets) {
-    const title = text(market.groupItemTitle);
-    if (title) marketTitles.set(market.id, title);
-
-    const marketIconUrl = artworkUrl(market.icon, market.image);
-    if (marketIconUrl && !sameArtworkUrl(marketIconUrl, iconUrl))
-      marketIcons.set(market.id, marketIconUrl);
-
-    const yesTokenId = market.outcomes.yes.tokenId;
-    const noTokenId = market.outcomes.no.tokenId;
-    if (yesTokenId) {
-      tokenNames.set(yesTokenId, market.outcomes.yes.label);
-      oppositeTokenNames.set(yesTokenId, market.outcomes.no.label);
-    }
-    if (noTokenId) {
-      tokenNames.set(noTokenId, market.outcomes.no.label);
-      oppositeTokenNames.set(noTokenId, market.outcomes.yes.label);
-    }
-  }
-
   const marketRules = orderedEvent.markets.flatMap((market) => {
     const body = text(market.description);
     if (
@@ -137,7 +107,7 @@ export function buildEventBundle(
       {
         marketId: market.id,
         title:
-          marketTitles.get(market.id) ?? market.question ?? "(untitled)",
+          market.groupItemTitle ?? market.question ?? "(untitled)",
         body,
       },
     ];
@@ -152,10 +122,6 @@ export function buildEventBundle(
     },
     thresholdByMarketId,
     resolutionMsByMarketId,
-    marketTitles,
-    marketIcons,
-    tokenNames,
-    oppositeTokenNames,
   };
 }
 
