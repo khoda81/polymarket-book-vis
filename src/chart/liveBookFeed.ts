@@ -1,5 +1,9 @@
 import type { ConnectionStatus } from "@/lib/chartState";
 import {
+  BACKPRESSURE_DEBUG,
+  FeedBackpressureDiagnostics,
+} from "./backpressureDiagnostics";
+import {
   applyPriceChange,
   bookFromSnapshot,
   type CanonicalBookChange,
@@ -56,6 +60,7 @@ export class LiveBookFeed {
   private readonly tokenIdByValue = new Map<string, TokenId>();
   private state: FeedState = { kind: "idle" };
   private tokenIds: TokenId[] = [];
+  private diagnostics = new FeedBackpressureDiagnostics("tokens=0");
 
   constructor(
     private readonly client: PublicClient,
@@ -71,6 +76,9 @@ export class LiveBookFeed {
       throw new Error(`LiveBookFeed cannot start from ${this.state.kind}`);
 
     this.tokenIds = [...tokenIds];
+    this.diagnostics = new FeedBackpressureDiagnostics(
+      `tokens=${tokenIds.length}`,
+    );
     this.tokenIdByValue.clear();
     for (const tokenId of tokenIds) this.tokenIdByValue.set(tokenId, tokenId);
     this.state = { kind: "connecting" };
@@ -148,21 +156,26 @@ export class LiveBookFeed {
       for await (const event of stream) {
         if (this.state.kind !== "live" || this.state.stream !== stream) return;
 
+        const handlerStartedAt = BACKPRESSURE_DEBUG ? performance.now() : 0;
+        const sourceLagMs = eventLagMs(event);
+        let workItems = 1;
+
         if (event.type === "book") {
           const tokenId = this.tokenIdByValue.get(event.payload.assetId);
-          if (!tokenId) continue;
-
-          const book = bookFromSnapshot(event.payload.bids, event.payload.asks);
-          this.books.set(tokenId, book);
-          this.callbacks.onBookUpdated(tokenId, book, {
-            kind: "snapshot",
-            validThroughMs: eventTimeMs(event.payload.timestamp),
-          });
-          continue;
-        }
-
-        if (event.type === "price_change") {
+          if (tokenId) {
+            const book = bookFromSnapshot(
+              event.payload.bids,
+              event.payload.asks,
+            );
+            this.books.set(tokenId, book);
+            this.callbacks.onBookUpdated(tokenId, book, {
+              kind: "snapshot",
+              validThroughMs: eventTimeMs(event.payload.timestamp),
+            });
+          }
+        } else if (event.type === "price_change") {
           const changesByToken = new Map<TokenId, CanonicalBookChange[]>();
+          workItems = event.payload.priceChanges.length;
 
           for (const change of event.payload.priceChanges) {
             const tokenId = this.tokenIdByValue.get(change.assetId);
@@ -186,10 +199,7 @@ export class LiveBookFeed {
               changes,
             });
           }
-          continue;
-        }
-
-        if (event.type === "market_resolved") {
+        } else if (event.type === "market_resolved") {
           const assetIds = event.payload.assetIds ?? [];
           for (const assetId of assetIds) {
             const tokenId = this.tokenIdByValue.get(assetId);
@@ -203,6 +213,13 @@ export class LiveBookFeed {
             winningOutcome: event.payload.winningOutcome ?? null,
           });
         }
+
+        this.diagnostics.observe(
+          event.type,
+          sourceLagMs,
+          BACKPRESSURE_DEBUG ? performance.now() - handlerStartedAt : 0,
+          workItems,
+        );
       }
     } catch (error) {
       if (this.state.kind === "live" && this.state.stream === stream)
@@ -229,4 +246,11 @@ function eventTimeMs(value: unknown): number {
     timestamp <= nowMs + 60_000
     ? timestamp
     : nowMs;
+}
+
+function eventLagMs(event: MarketEvent): number | null {
+  if (!BACKPRESSURE_DEBUG) return null;
+  const timestamp = Number(event.payload.timestamp);
+  if (!Number.isFinite(timestamp) || timestamp < 0) return null;
+  return Math.max(0, Date.now() - timestamp);
 }
