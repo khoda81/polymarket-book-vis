@@ -8,19 +8,21 @@ export type PinState =
   | { readonly kind: "unpinned"; readonly slug: EventSlug }
   | { readonly kind: "pinned"; readonly slug: EventSlug };
 
-export interface DashboardEntry {
-  readonly kind?: "event";
-  readonly event: Event;
+interface DashboardItemBase {
   readonly announceLifecycle: boolean;
 }
 
-export interface SeriesDashboardEntry {
+export interface EventDashboardItem extends DashboardItemBase {
+  readonly kind: "event";
+  readonly event: Event;
+}
+
+export interface SeriesDashboardItem extends DashboardItemBase {
   readonly kind: "series";
   readonly series: Series;
-  readonly announceLifecycle: boolean;
 }
 
-export type DashboardItem = DashboardEntry | SeriesDashboardEntry;
+export type DashboardItem = EventDashboardItem | SeriesDashboardItem;
 
 export function toEventSlug(value: unknown): EventSlug | null {
   if (typeof value !== "string") return null;
@@ -38,12 +40,6 @@ export function eventLabel(event: Event): string {
 
 export function seriesLabel(series: Series): string {
   return series.title?.trim() || series.slug?.trim() || "series";
-}
-
-export function isSeriesEntry(
-  entry: DashboardItem,
-): entry is SeriesDashboardEntry {
-  return entry.kind === "series";
 }
 
 export function pinState(event: Event, pinned: readonly EventSlug[]): PinState {
@@ -80,9 +76,9 @@ export function normalizePinnedSeriesIds(values: readonly unknown[]): string[] {
 }
 
 export function orderEntries(
-  entries: readonly DashboardEntry[],
+  entries: readonly EventDashboardItem[],
   pinned: readonly EventSlug[],
-): DashboardEntry[] {
+): EventDashboardItem[] {
   const rank = new Map<string, number>(
     pinned.map((slug, index) => [slug, index]),
   );
