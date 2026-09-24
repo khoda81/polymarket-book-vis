@@ -52,7 +52,8 @@ export interface LiveBookFeedCallbacks {
 }
 
 export class LiveBookFeed {
-  private readonly books = new Map<string, TokenBook>();
+  private readonly books = new Map<TokenId, TokenBook>();
+  private readonly tokenIdByValue = new Map<string, TokenId>();
   private state: FeedState = { kind: "idle" };
   private tokenIds: TokenId[] = [];
 
@@ -61,8 +62,8 @@ export class LiveBookFeed {
     private readonly callbacks: LiveBookFeedCallbacks,
   ) {}
 
-  getBook(tokenId: string): TokenBook | undefined {
-    return this.books.get(String(tokenId));
+  getBook(tokenId: TokenId): TokenBook | undefined {
+    return this.books.get(tokenId);
   }
 
   async start(tokenIds: readonly TokenId[]): Promise<void> {
@@ -70,6 +71,8 @@ export class LiveBookFeed {
       throw new Error(`LiveBookFeed cannot start from ${this.state.kind}`);
 
     this.tokenIds = [...tokenIds];
+    this.tokenIdByValue.clear();
+    for (const tokenId of tokenIds) this.tokenIdByValue.set(tokenId, tokenId);
     this.state = { kind: "connecting" };
     this.callbacks.onConnectionStatus("connecting");
     await this.connect();
@@ -80,6 +83,7 @@ export class LiveBookFeed {
     if (previous.kind === "destroyed") return;
     this.state = { kind: "destroyed" };
     this.tokenIds = [];
+    this.tokenIdByValue.clear();
     this.books.clear();
 
     if (previous.kind === "live")
@@ -145,9 +149,11 @@ export class LiveBookFeed {
         if (this.state.kind !== "live" || this.state.stream !== stream) return;
 
         if (event.type === "book") {
-          const tokenId = event.payload.tokenId as TokenId;
+          const tokenId = this.tokenIdByValue.get(event.payload.assetId);
+          if (!tokenId) continue;
+
           const book = bookFromSnapshot(event.payload.bids, event.payload.asks);
-          this.books.set(String(tokenId), book);
+          this.books.set(tokenId, book);
           this.callbacks.onBookUpdated(tokenId, book, {
             kind: "snapshot",
             observedAtMs: observationTimeMs(),
@@ -159,8 +165,10 @@ export class LiveBookFeed {
           const changesByToken = new Map<TokenId, CanonicalBookChange[]>();
 
           for (const change of event.payload.priceChanges) {
-            const tokenId = change.tokenId as TokenId;
-            const book = this.books.get(String(tokenId));
+            const tokenId = this.tokenIdByValue.get(change.assetId);
+            if (!tokenId) continue;
+
+            const book = this.books.get(tokenId);
             if (!book) continue;
 
             const changes = changesByToken.get(tokenId) ?? [];
@@ -170,7 +178,7 @@ export class LiveBookFeed {
 
           const observedAtMs = observationTimeMs();
           for (const [tokenId, changes] of changesByToken) {
-            const book = this.books.get(String(tokenId));
+            const book = this.books.get(tokenId);
             if (!book) continue;
             this.callbacks.onBookUpdated(tokenId, book, {
               kind: "levels",
@@ -183,7 +191,10 @@ export class LiveBookFeed {
 
         if (event.type === "market_resolved") {
           const assetIds = event.payload.assetIds ?? [];
-          for (const assetId of assetIds) this.books.delete(assetId);
+          for (const assetId of assetIds) {
+            const tokenId = this.tokenIdByValue.get(assetId);
+            if (tokenId) this.books.delete(tokenId);
+          }
 
           this.callbacks.onMarketResolved({
             conditionId: event.payload.conditionId,
