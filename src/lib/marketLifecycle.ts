@@ -1,4 +1,4 @@
-import type { Market, TokenId } from "@polymarket/client";
+import type { ClobAssetId, ConditionId, Market, TokenId } from "@polymarket/client";
 
 export type MarketLifecycle =
   | { readonly kind: "live" }
@@ -15,9 +15,9 @@ export type EventMarketStatus =
   | { readonly kind: "resolved" };
 
 export interface MarketResolutionUpdate {
-  readonly conditionId: string;
-  readonly assetIds: readonly string[];
-  readonly winningTokenId: string | null;
+  readonly conditionId: ConditionId;
+  readonly assetIds: readonly ClobAssetId[];
+  readonly winningAssetId: ClobAssetId | null;
   readonly winningOutcome: string | null;
 }
 
@@ -43,24 +43,24 @@ export function resolveMarketLifecycle(
   primaryOutcome: string,
   oppositeOutcome: string,
 ): MarketLifecycle {
-  const winningTokenId = update.winningTokenId;
-  if (!winningTokenId) return current;
+  const winningAssetId = update.winningAssetId;
+  if (!winningAssetId) return current;
 
-  if (
-    winningTokenId !== String(primaryTokenId) &&
-    winningTokenId !== String(oppositeTokenId)
-  )
-    return current;
+  const winningTokenId =
+    winningAssetId === primaryTokenId
+      ? primaryTokenId
+      : oppositeTokenId !== null && winningAssetId === oppositeTokenId
+        ? oppositeTokenId
+        : null;
+  if (!winningTokenId) return current;
 
   const winningOutcome =
     update.winningOutcome ??
-    (winningTokenId === String(primaryTokenId)
-      ? primaryOutcome
-      : oppositeOutcome);
+    (winningTokenId === primaryTokenId ? primaryOutcome : oppositeOutcome);
 
   return {
     kind: "resolved",
-    winningTokenId: winningTokenId as TokenId,
+    winningTokenId,
     winningOutcome,
   };
 }
