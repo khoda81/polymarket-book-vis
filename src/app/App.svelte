@@ -614,12 +614,12 @@
     for (const reference of event.series) {
       try {
         const series = await client.fetchSeries({
-          id: String(reference.id),
+          id: reference.id,
         });
         if (series.recurrence?.trim()) return series;
       } catch (error) {
         console.warn(
-          `Could not inspect series ${String(reference.id)}:`,
+          `Could not inspect series ${reference.id}:`,
           error,
         );
       }
