@@ -1,20 +1,14 @@
 export type PressureSide = -1 | 1;
 
-export type PressureBandState =
-  | { readonly kind: "live" }
-  | {
-      readonly kind: "ghost";
-      readonly sinceMs: number;
-    };
-
 export interface PressureBand {
   readonly loVolume: number;
   readonly hiVolume: number;
   readonly side: PressureSide;
-  readonly state: PressureBandState;
+  /** Latest instant through which this observation is known to be valid. */
+  readonly validThroughMs: number;
 }
 
-export function ghostVisibleSinceMs(
+export function visibleSinceMs(
   nowMs: number,
   halfLifeMs: number,
   minAlpha = 1 / 255,
@@ -28,17 +22,17 @@ export function ghostVisibleSinceMs(
   return nowMs - maxVisibleAgeMs;
 }
 
-export function ghostAlpha(
-  sinceMs: number,
+export function stalenessAlpha(
+  validThroughMs: number,
   nowMs: number,
   halfLifeMs: number,
 ): number {
   validateHalfLife(halfLifeMs);
-  const ageMs = Math.max(0, nowMs - sinceMs);
+  const ageMs = Math.max(0, nowMs - validThroughMs);
   return Math.exp((-Math.LN2 * ageMs) / halfLifeMs);
 }
 
 function validateHalfLife(value: number): void {
   if (!(value > 0) || !Number.isFinite(value))
-    throw new RangeError("ghost half-life must be finite and positive");
+    throw new RangeError("half-life must be finite and positive");
 }
