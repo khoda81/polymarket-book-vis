@@ -49,10 +49,16 @@ function fakeBundle(): EventBundle {
       description: null,
       marketRules: [],
     },
-    marketTitles: new Map([["m1", "First label"]]),
-    marketIcons: new Map([["m1", "https://example.com/m1.png"]]),
-    tokenNames: new Map([["yes-1", "Primary"]]),
-    oppositeTokenNames: new Map([["yes-1", "Opposite"]]),
+    marketTitles: new Map([[event.markets[0]!.id, "First label"]]),
+    marketIcons: new Map([
+      [event.markets[0]!.id, "https://example.com/m1.png"],
+    ]),
+    tokenNames: new Map([
+      [event.markets[0]!.outcomes.yes.tokenId!, "Primary"],
+    ]),
+    oppositeTokenNames: new Map([
+      [event.markets[0]!.outcomes.yes.tokenId!, "Opposite"],
+    ]),
   };
 }
 
