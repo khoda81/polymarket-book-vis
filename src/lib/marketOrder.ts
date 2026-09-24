@@ -1,27 +1,18 @@
-import type { Event, Market } from "@polymarket/client";
+import type { Event, Market, MarketId } from "@polymarket/client";
 
 export function orderMarkets(
   event: Event,
-  rawMarkets: readonly unknown[],
+  thresholdByMarketId: ReadonlyMap<MarketId, number>,
 ): Market[] {
   const byPrice = event.display.sortBy === "price";
   const descending = byPrice || event.display.sortBy === "descending";
-  const thresholds = new Map<string, number | undefined>();
-  if (!byPrice) {
-    for (const raw of rawMarkets) {
-      if (raw === null || typeof raw !== "object") continue;
-      const record = raw as Record<string, unknown>;
-      if (typeof record.id === "string")
-        thresholds.set(record.id, numericValue(record.groupItemThreshold));
-    }
-  }
 
   return event.markets
     .map((market) => ({
       market,
       value: byPrice
         ? numericValue(market.outcomes.yes.price)
-        : thresholds.get(market.id),
+        : thresholdByMarketId.get(market.id),
     }))
     .sort((a, b) => {
       // Unknown values sort last in either direction; ties retain Gamma order.
