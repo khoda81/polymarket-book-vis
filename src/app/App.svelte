@@ -9,9 +9,11 @@
   import {
     DEFAULT_MIN_VOLUME,
     DEFAULT_RECENCY_DAYS,
-    discoverRegionalEvents,
-    hasRegionalTag,
-  } from "../lib/regionalDiscovery";
+    discoverEvents,
+    parseDiscoveryTopics,
+    validateDiscoveryFilters,
+    type DiscoveryOrder,
+  } from "../lib/eventDiscovery";
   import { setSharedTooltipSuppressed } from "../lib/sharedTooltip";
   import {
     dashboardOrderForPointer,
@@ -42,10 +44,12 @@
   const PINNED_SERIES_STORAGE_KEY = "polymarket-book-vis:pinned-series-ids:v1";
   const COLUMN_COUNT_STORAGE_KEY = "polymarket-book-vis:dashboard-columns:v1";
   const LAYOUT_ORDER_STORAGE_KEY = "polymarket-book-vis:dashboard-order:v1";
+  // Keep the original storage keys so saved filters and dismissals survive
+  // the move from regional discovery to general event discovery.
   const DISCOVERY_VOLUME_STORAGE_KEY =
     "polymarket-book-vis:regional-min-volume:v1";
   const DISCOVERY_DAYS_STORAGE_KEY = "polymarket-book-vis:regional-days:v1";
-  const DISMISSED_REGIONAL_STORAGE_KEY =
+  const DISMISSED_DISCOVERY_STORAGE_KEY =
     "polymarket-book-vis:dismissed-regional-events:v1";
   const MIN_COLUMNS = 1;
 
@@ -62,6 +66,15 @@
   let discoveryStatus = "";
   let discovering = false;
   let discoveryRun = 0;
+  let discoveryTopics =
+    localStorage.getItem("polymarket-book-vis:discovery-topics:v1") ?? "";
+  let minLiquidity = loadDiscoveryNumber(
+    "polymarket-book-vis:discovery-min-liquidity:v1",
+    0,
+    0,
+    100_000_000,
+  );
+  let discoveryOrder: DiscoveryOrder = "createdAt";
   let minVolume = loadDiscoveryNumber(
     DISCOVERY_VOLUME_STORAGE_KEY,
     DEFAULT_MIN_VOLUME,
@@ -71,10 +84,10 @@
   let recencyDays = loadDiscoveryNumber(
     DISCOVERY_DAYS_STORAGE_KEY,
     DEFAULT_RECENCY_DAYS,
-    1,
+    0,
     365,
   );
-  let dismissedRegionalIds = loadDismissedRegionalIds();
+  let dismissedDiscoveryIds = loadDismissedDiscoveryIds();
 
   $: orderedEntries = orderDashboardItems(entries, layoutOrder);
 
@@ -92,10 +105,10 @@
       : fallback;
   }
 
-  function loadDismissedRegionalIds(): Set<string> {
+  function loadDismissedDiscoveryIds(): Set<string> {
     try {
       const parsed: unknown = JSON.parse(
-        localStorage.getItem(DISMISSED_REGIONAL_STORAGE_KEY) ?? "[]",
+        localStorage.getItem(DISMISSED_DISCOVERY_STORAGE_KEY) ?? "[]",
       );
       return Array.isArray(parsed)
         ? new Set(parsed.filter((id): id is string => typeof id === "string"))
@@ -105,10 +118,10 @@
     }
   }
 
-  function persistDismissedRegionalIds(): void {
+  function persistDismissedDiscoveryIds(): void {
     localStorage.setItem(
-      DISMISSED_REGIONAL_STORAGE_KEY,
-      JSON.stringify([...dismissedRegionalIds]),
+      DISMISSED_DISCOVERY_STORAGE_KEY,
+      JSON.stringify([...dismissedDiscoveryIds]),
     );
   }
 
@@ -454,31 +467,36 @@
     localStorage.setItem(PINNED_SERIES_STORAGE_KEY, JSON.stringify(next));
   }
 
-  async function refreshRegionalEvents(): Promise<void> {
-    if (
-      !Number.isInteger(minVolume) ||
-      minVolume < 0 ||
-      minVolume > 100_000_000 ||
-      !Number.isInteger(recencyDays) ||
-      recencyDays < 1 ||
-      recencyDays > 365
-    ) {
-      discoveryStatus = "Enter a valid volume and recency.";
-      return;
-    }
-
-    localStorage.setItem(DISCOVERY_VOLUME_STORAGE_KEY, String(minVolume));
-    localStorage.setItem(DISCOVERY_DAYS_STORAGE_KEY, String(recencyDays));
+  async function refreshDiscoveryEvents(): Promise<void> {
+    if (discovering) return;
     const run = ++discoveryRun;
     discovering = true;
-    discoveryStatus = "Finding new Iran/Middle East events…";
+    discoveryStatus = "Finding matching events…";
 
     try {
-      const events = await discoverRegionalEvents(
+      const filters = {
+        topics: parseDiscoveryTopics(discoveryTopics),
+        minVolume,
+        minLiquidity,
+        recencyDays,
+        order: discoveryOrder,
+      };
+      validateDiscoveryFilters(filters);
+      localStorage.setItem(DISCOVERY_VOLUME_STORAGE_KEY, String(minVolume));
+      localStorage.setItem(DISCOVERY_DAYS_STORAGE_KEY, String(recencyDays));
+      localStorage.setItem(
+        "polymarket-book-vis:discovery-topics:v1",
+        discoveryTopics,
+      );
+      localStorage.setItem(
+        "polymarket-book-vis:discovery-min-liquidity:v1",
+        String(minLiquidity),
+      );
+      const events = await discoverEvents(
         client,
-        { minVolume, recencyDays },
+        filters,
         new Set([
-          ...dismissedRegionalIds,
+          ...dismissedDiscoveryIds,
           ...entries
             .filter((entry): entry is DashboardEntry => !isSeriesEntry(entry))
             .map((entry) => String(entry.event.id)),
@@ -492,11 +510,11 @@
       let added = 0;
       for (const event of events) if (addEvent(event, false, false)) added++;
       discoveryStatus = added
-        ? `Added ${added} recent regional ${added === 1 ? "event" : "events"}.`
-        : "No new matching regional events.";
+        ? `Added ${added} ${added === 1 ? "event" : "events"}. Pin any you want to keep.`
+        : "No new matches in the first 150 results. Try broader filters or another sort.";
     } catch (error) {
       if (run === discoveryRun)
-        discoveryStatus = `Regional discovery failed: ${
+        discoveryStatus = `Discovery failed: ${
           error instanceof Error ? error.message : String(error)
         }`;
     } finally {
@@ -595,8 +613,8 @@
 
   async function addManualEvent(event: Event): Promise<void> {
     status = `Loading ${eventLabel(event)}…`;
-    if (dismissedRegionalIds.delete(String(event.id)))
-      persistDismissedRegionalIds();
+    if (dismissedDiscoveryIds.delete(String(event.id)))
+      persistDismissedDiscoveryIds();
 
     const recurring = await recurringSeriesFor(event);
     if (recurring) {
@@ -653,10 +671,8 @@
   }
 
   function removeEvent(entry: DashboardEntry): void {
-    if (hasRegionalTag(entry.event)) {
-      dismissedRegionalIds.add(String(entry.event.id));
-      persistDismissedRegionalIds();
-    }
+    dismissedDiscoveryIds.add(String(entry.event.id));
+    persistDismissedDiscoveryIds();
     const slug = eventSlug(entry.event);
     if (slug && pinnedSlugs.includes(slug)) setPinned(slug, false);
     forgetLayoutKey(itemKey(entry));
@@ -738,7 +754,6 @@
   onMount(() => {
     for (const seriesId of pinnedSeriesIds) void loadPinnedSeries(seriesId);
     for (const slug of pinnedSlugs) void loadPinned(slug);
-    void refreshRegionalEvents();
 
     return () => {
       discoveryRun++;
@@ -809,35 +824,6 @@
       </div>
     </div>
   </div>
-  <form
-    class="regional-discovery"
-    onsubmit={(event) => {
-      event.preventDefault();
-      void refreshRegionalEvents();
-    }}
-  >
-    <span class="regional-discovery-title">New Iran / Middle East</span>
-    <label for="regional-min-volume">Min volume $</label>
-    <input
-      id="regional-min-volume"
-      type="number"
-      min="0"
-      max="100000000"
-      step="1000"
-      bind:value={minVolume}
-    />
-    <label for="regional-recency">Created within</label>
-    <select id="regional-recency" bind:value={recencyDays}>
-      <option value={7}>7 days</option>
-      <option value={30}>30 days</option>
-      <option value={90}>90 days</option>
-      <option value={365}>1 year</option>
-    </select>
-    <button type="submit" disabled={discovering}>Load new</button>
-    <span class="regional-discovery-status" aria-live="polite">
-      {discoveryStatus}
-    </span>
-  </form>
   <PressureLegend />
 </header>
 
@@ -882,3 +868,82 @@
     </div>
   {/each}
 </div>
+
+<details class="event-discovery">
+  <summary>Discover events</summary>
+  <p>
+    Not finding what you’re looking for? Browse open, tradable events from any
+    topic.
+  </p>
+  <form
+    onsubmit={(event) => {
+      event.preventDefault();
+      void refreshDiscoveryEvents();
+    }}
+  >
+    <fieldset disabled={discovering}>
+      <label class="discovery-topics">
+        Topics
+        <input
+          type="text"
+          placeholder="All topics"
+          bind:value={discoveryTopics}
+          aria-describedby="discovery-topic-help"
+        />
+        <span id="discovery-topic-help"
+          >Comma-separated topic slugs, e.g. politics, crypto, iran. Matches
+          any; leave blank for all.</span
+        >
+      </label>
+      <label
+        >Min total volume ($)
+        <input
+          type="number"
+          min="0"
+          max="100000000"
+          step="1"
+          required
+          bind:value={minVolume}
+        />
+      </label>
+      <label
+        >Min liquidity ($)
+        <input
+          type="number"
+          min="0"
+          max="100000000"
+          step="1"
+          required
+          bind:value={minLiquidity}
+        />
+      </label>
+      <label
+        >Created within
+        <select bind:value={recencyDays}>
+          <option value={0}>Any time</option>
+          <option value={7}>7 days</option>
+          <option value={30}>30 days</option>
+          <option value={90}>90 days</option>
+          <option value={365}>1 year</option>
+        </select>
+      </label>
+      <label
+        >Sort by
+        <select bind:value={discoveryOrder}>
+          <option value="createdAt">Newest first</option>
+          <option value="volume">Highest total volume</option>
+          <option value="volume24hr">Highest 24h volume</option>
+          <option value="liquidity">Highest liquidity</option>
+        </select>
+      </label>
+      <button type="submit"
+        >{discovering ? "Loading…" : "Load more events"}</button
+      >
+    </fieldset>
+    <p class="discovery-help">
+      Adds up to 8 events per click, scanning up to 150 results. Already loaded
+      or dismissed events are skipped.
+    </p>
+    <p class="discovery-status" role="status">{discoveryStatus}</p>
+  </form>
+</details>
