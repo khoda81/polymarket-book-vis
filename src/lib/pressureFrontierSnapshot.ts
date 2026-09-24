@@ -34,33 +34,6 @@ export function parsePressureFrontierSnapshot(
   };
 }
 
-export function rebasePressureFrontierSnapshot(
-  snapshot: PressureFrontierSnapshot,
-  sourceNowMs: number,
-  targetNowMs: number,
-): PressureFrontierSnapshot {
-  if (!Number.isFinite(sourceNowMs) || !Number.isFinite(targetNowMs))
-    throw new RangeError("pressure frontier clocks must be finite");
-
-  const rebaseTime = (time: number): number =>
-    targetNowMs - Math.max(0, sourceNowMs - time);
-
-  return {
-    bid: snapshot.bid,
-    ask: snapshot.ask,
-    field: {
-      revision: snapshot.field.revision,
-      runs: snapshot.field.runs.map((run) => ({
-        ...run,
-        bands: run.bands.map((band) => ({
-          ...band,
-          validThroughMs: rebaseTime(band.validThroughMs),
-        })),
-      })),
-    },
-  };
-}
-
 export function snapshotCurrentSide(
   current: FrontierRoot,
 ): PressureFrontierCurrentSideSnapshot {
