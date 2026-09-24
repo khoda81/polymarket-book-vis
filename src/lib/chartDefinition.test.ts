@@ -16,6 +16,8 @@ function fakeBundle(): EventBundle {
       {
         id: "m1",
         question: "First?",
+        groupItemTitle: "First label",
+        icon: "https://example.com/m1.png",
         conditionId: null,
         state: { active: true, closed: false },
         resolution: { umaResolutionStatus: null },
@@ -40,7 +42,8 @@ function fakeBundle(): EventBundle {
 
   return {
     event,
-    rawMarkets: [],
+    thresholdByMarketId: new Map(),
+    resolutionMsByMarketId: new Map(),
     presentation: {
       iconUrl: null,
       description: null,
@@ -73,11 +76,12 @@ test("chart definition keeps resolved markets renderable", () => {
     ageLabel: "First label",
     suppressAgeIdentity: false,
   });
+  const tokenId = definition.controls[0]!.tokenId;
   expect(definition.controls[0]?.dotColor).toBe(
-    signedVolumeColor(1, pressureScaleForToken(definition, "yes-1")),
+    signedVolumeColor(1, pressureScaleForToken(definition, tokenId)),
   );
-  expect(definition.tokenNames.get("yes-1")).toBe("Primary");
-  expect(definition.oppositeTokenNames.get("yes-1")).toBe("Opposite");
+  expect(definition.tokenNames.get(tokenId)).toBe("Primary");
+  expect(definition.oppositeTokenNames.get(tokenId)).toBe("Opposite");
 });
 
 test("single-market wrapper metadata survives DOM recreation", () => {
@@ -110,7 +114,8 @@ test("single-market wrapper metadata survives DOM recreation", () => {
   const endDate = "2026-12-31T23:59:00Z";
   const bundle: EventBundle = {
     event,
-    rawMarkets: [{ id: "m1", endDate }],
+    thresholdByMarketId: new Map(),
+    resolutionMsByMarketId: new Map([[event.markets[0]!.id, Date.parse(endDate)]]),
     presentation: {
       iconUrl: null,
       description: null,
