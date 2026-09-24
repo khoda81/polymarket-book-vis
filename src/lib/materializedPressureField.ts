@@ -144,6 +144,7 @@ export class MaterializedPressureField {
                 side: owner,
                 validThroughMs,
               },
+          run,
         );
       }
       run.bands = next;
@@ -287,25 +288,37 @@ function transitionRun(
     const existing = bandAt(run.bands, lo);
 
     if (newOwner !== null) {
-      appendBand(next, {
-        loVolume: lo,
-        hiVolume: hi,
-        side: newOwner,
-        validThroughMs,
-      });
+      appendBand(
+        next,
+        {
+          loVolume: lo,
+          hiVolume: hi,
+          side: newOwner,
+          validThroughMs,
+        },
+        run,
+      );
     } else if (oldOwner !== null) {
-      appendBand(next, {
-        loVolume: lo,
-        hiVolume: hi,
-        side: oldOwner,
-        validThroughMs,
-      });
+      appendBand(
+        next,
+        {
+          loVolume: lo,
+          hiVolume: hi,
+          side: oldOwner,
+          validThroughMs,
+        },
+        run,
+      );
     } else if (existing) {
-      appendBand(next, {
-        ...existing,
-        loVolume: lo,
-        hiVolume: hi,
-      });
+      appendBand(
+        next,
+        {
+          ...existing,
+          loVolume: lo,
+          hiVolume: hi,
+        },
+        run,
+      );
     }
   }
 
@@ -336,18 +349,35 @@ function bandAt(
   );
 }
 
-function appendBand(bands: PressureBand[], band: PressureBand): void {
+function appendBand(
+  bands: PressureBand[],
+  band: PressureBand,
+  run: MutableRun,
+): void {
   const previous = bands[bands.length - 1];
   if (
     previous &&
     previous.hiVolume === band.loVolume &&
     previous.side === band.side &&
-    previous.validThroughMs === band.validThroughMs
+    previous.validThroughMs === band.validThroughMs &&
+    isCurrent(run, previous.loVolume) === isCurrent(run, band.loVolume)
   ) {
     bands[bands.length - 1] = { ...previous, hiVolume: band.hiVolume };
     return;
   }
   bands.push(band);
+}
+
+function isCurrent(run: MutableRun, radius: number): boolean {
+  return (
+    currentOwner(
+      run.bidVolume,
+      run.askVolume,
+      run.bidRevision,
+      run.askRevision,
+      radius,
+    ) !== null
+  );
 }
 
 function runsEquivalent(a: MutableRun, b: MutableRun): boolean {
