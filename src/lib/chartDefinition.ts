@@ -125,10 +125,7 @@ function buildPressureScales(
   const negRisk = buildNegRiskPalette(event);
   if (negRisk)
     return new Map(
-      negRisk.outcomes.map((outcome) => [
-        outcome.yesTokenId as TokenId,
-        outcome.scale,
-      ]),
+      negRisk.outcomes.map((outcome) => [outcome.yesTokenId, outcome.scale]),
     );
 
   const scales = new Map<TokenId, SignedVolumeColorScale>();
