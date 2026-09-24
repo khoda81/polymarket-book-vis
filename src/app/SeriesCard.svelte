@@ -40,7 +40,7 @@
 <article
   class="card series-card"
   class:card--pinned={pinned}
-  data-series-id={String(series.id)}
+  data-series-id={series.id}
   use:cardReorderSurface={onreorderstart}
 >
   <button
