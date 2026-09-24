@@ -1,3 +1,4 @@
+import type { MarketId } from "@polymarket/client";
 import type { MarketLifecycle } from "./marketLifecycle";
 export type HiddenMarketReason = "user" | "empty-book" | "resolved-default";
 
@@ -53,7 +54,7 @@ export function persistUserHiddenMarketIds(
 }
 
 export interface MarketIdentified {
-  readonly marketId: string;
+  readonly marketId: MarketId;
 }
 
 export interface MarketVisibilityPartition<T extends MarketIdentified> {
@@ -63,7 +64,7 @@ export interface MarketVisibilityPartition<T extends MarketIdentified> {
 
 export function partitionMarketVisibility<T extends MarketIdentified>(
   markets: readonly T[],
-  visibilityByMarketId: ReadonlyMap<string, MarketVisibility>,
+  visibilityByMarketId: ReadonlyMap<MarketId, MarketVisibility>,
 ): MarketVisibilityPartition<T> {
   const visible: T[] = [];
   const hidden: T[] = [];
@@ -84,7 +85,7 @@ export interface VisibilityInitializableMarket extends MarketIdentified {
 
 export function loadMarketVisibility(
   markets: readonly VisibilityInitializableMarket[],
-): Map<string, MarketVisibility> {
+): Map<MarketId, MarketVisibility> {
   const userHidden = loadUserHiddenMarketIds();
   return new Map(
     markets.map((market) => [
@@ -98,20 +99,20 @@ export function loadMarketVisibility(
 }
 
 export function setMarketVisibility(
-  current: ReadonlyMap<string, MarketVisibility>,
-  marketId: string,
+  current: ReadonlyMap<MarketId, MarketVisibility>,
+  marketId: MarketId,
   next: MarketVisibility,
-): Map<string, MarketVisibility> {
+): Map<MarketId, MarketVisibility> {
   const updated = new Map(current);
   updated.set(marketId, next);
   return updated;
 }
 
 export function setUserMarketVisible(
-  current: ReadonlyMap<string, MarketVisibility>,
-  marketId: string,
+  current: ReadonlyMap<MarketId, MarketVisibility>,
+  marketId: MarketId,
   visible: boolean,
-): Map<string, MarketVisibility> {
+): Map<MarketId, MarketVisibility> {
   return setMarketVisibility(
     current,
     marketId,
@@ -121,7 +122,7 @@ export function setUserMarketVisible(
 
 export function mergeUserHiddenMarketIds(
   persisted: ReadonlySet<string>,
-  visibilityByMarketId: ReadonlyMap<string, MarketVisibility>,
+  visibilityByMarketId: ReadonlyMap<MarketId, MarketVisibility>,
 ): Set<string> {
   const userHidden = new Set(persisted);
 
@@ -137,7 +138,7 @@ export function mergeUserHiddenMarketIds(
 }
 
 export function persistUserVisibility(
-  visibilityByMarketId: ReadonlyMap<string, MarketVisibility>,
+  visibilityByMarketId: ReadonlyMap<MarketId, MarketVisibility>,
 ): void {
   persistUserHiddenMarketIds(
     mergeUserHiddenMarketIds(loadUserHiddenMarketIds(), visibilityByMarketId),
