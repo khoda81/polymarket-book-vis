@@ -15,17 +15,17 @@
       ? ""
       : lifecycle.winningTokenId === control.tokenId
         ? "primary"
-        : control.oppositeTokenId !== null &&
-            lifecycle.winningTokenId === control.oppositeTokenId
+        : control.market.outcomes.no.tokenId !== null &&
+            lifecycle.winningTokenId === control.market.outcomes.no.tokenId
           ? "opposite"
           : "";
   $: resolutionOutcome =
     lifecycle.kind !== "resolved"
       ? ""
       : resolutionSide === "primary"
-        ? control.primaryOutcome || lifecycle.winningOutcome
+        ? control.market.outcomes.yes.label || lifecycle.winningOutcome
         : resolutionSide === "opposite"
-          ? control.oppositeOutcome || lifecycle.winningOutcome
+          ? control.market.outcomes.no.label || lifecycle.winningOutcome
           : lifecycle.winningOutcome;
   $: resolutionColor =
     resolutionSide === "primary"
@@ -37,7 +37,7 @@
 
 <label
   data-token-id={control.tokenId}
-  data-market-id={control.marketId}
+  data-market-id={control.market.id}
   data-market-order={control.order}
   data-age-label={control.ageLabel}
   data-age-status={ageStatus}
