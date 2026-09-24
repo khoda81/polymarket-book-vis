@@ -197,7 +197,7 @@ export class ChartController {
 
   setMarketVisible(marketId: MarketId, visible: boolean): void {
     const control = this.definition.controls.find(
-      (candidate) => candidate.marketId === marketId,
+      (candidate) => candidate.market.id === marketId,
     );
     if (!control) return;
 
