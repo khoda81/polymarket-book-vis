@@ -13,11 +13,8 @@ import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
 import type { PressureFrontierSnapshot } from "../src/lib/pressureFrontierSnapshot";
 
 const PORT = Number(process.env.RECORDER_PORT ?? 3001);
-const LEGACY_STATE_PATH = resolve(
-  process.env.RECORDER_STATE_PATH ?? ".data/age-recorder.json",
-);
 const DATABASE_PATH = resolve(
-  process.env.RECORDER_DB_PATH ?? sqlitePathFor(LEGACY_STATE_PATH),
+  process.env.RECORDER_DB_PATH ?? ".data/age-recorder.sqlite",
 );
 const PERSIST_DEBOUNCE_MS = Number(process.env.RECORDER_PERSIST_MS ?? 1_000);
 const PERSIST_BATCH_TOKENS = Number(
@@ -41,10 +38,6 @@ interface TransportState {
 }
 
 interface StateResponse {
-  serverNowMs: number;
-  connected: boolean;
-  /** Earliest instant for which all requested tokens have recorder coverage. */
-  recordingSinceMs: number | null;
   /** Recorder coverage start for each requested token. */
   recordingSinceMsByToken: Record<string, number>;
   states: Record<string, TransportState>;
@@ -60,7 +53,6 @@ interface StateResponse {
         completed: boolean;
         hasBook: boolean;
         hasMemory: boolean;
-        historyLayers: number;
         recordingSinceMs: number | null;
         seedInFlight: boolean;
         bufferedPriceChanges: number;
@@ -77,9 +69,7 @@ interface StateResponse {
 }
 
 class AgeRecorder {
-  private readonly store = new RecorderStore(DATABASE_PATH, (...args) =>
-    debugLog(...args),
-  );
+  private readonly store = new RecorderStore(DATABASE_PATH);
   private readonly watched = new Set<string>();
   private readonly completed = new Set<string>();
   private readonly recordingSince = new Map<string, number>();
@@ -103,7 +93,6 @@ class AgeRecorder {
   private persistPromise: Promise<void> | null = null;
 
   async start(): Promise<void> {
-    this.store.migrateLegacyJson(LEGACY_STATE_PATH);
     this.restoreFromStore();
     this.subscriptions.add(this.watched);
   }
@@ -181,7 +170,6 @@ class AgeRecorder {
     includeDebug = false,
   ): StateResponse {
     const requested = [...tokenIds];
-    const nowMs = Date.now();
     const states: Record<string, TransportState> = {};
 
     if (includeStates) {
@@ -193,14 +181,6 @@ class AgeRecorder {
         };
       }
     }
-
-    const coverageStarts = requested
-      .map((tokenId) => this.recordingSince.get(tokenId))
-      .filter((value): value is number => value !== undefined);
-    const recordingSinceMs =
-      requested.length > 0 && coverageStarts.length === requested.length
-        ? Math.max(...coverageStarts)
-        : null;
 
     const recordingSinceMsByToken = Object.fromEntries(
       requested.flatMap((tokenId) => {
@@ -217,9 +197,6 @@ class AgeRecorder {
     );
 
     const result: StateResponse = {
-      serverNowMs: nowMs,
-      connected: this.subscriptions.connected,
-      recordingSinceMs,
       recordingSinceMsByToken,
       states,
       pendingTokenIds,
@@ -232,17 +209,13 @@ class AgeRecorder {
         subscriptionBatches: this.subscriptions.activeBatchCount,
         tokens: Object.fromEntries(
           requested.map((tokenId) => {
-            const memory = this.memories.get(tokenId);
             return [
               tokenId,
               {
                 watched: this.watched.has(tokenId),
                 completed: this.completed.has(tokenId),
                 hasBook: this.books.has(tokenId),
-                hasMemory: memory !== undefined,
-                historyLayers: memory
-                  ? memory.historyDepth("bid") + memory.historyDepth("ask")
-                  : 0,
+                hasMemory: this.memories.has(tokenId),
                 recordingSinceMs: this.recordingSince.get(tokenId) ?? null,
                 seedInFlight: this.seedInFlight.has(tokenId),
                 bufferedPriceChanges:
@@ -265,7 +238,6 @@ class AgeRecorder {
       completedTokens: this.completed.size,
       hydratedTokens: this.memories.size,
       liveBooks: this.books.size,
-      connected: this.subscriptions.connected,
       subscriptionConnections: this.subscriptions.activeConnectionCount,
       subscriptionBatches: this.subscriptions.activeBatchCount,
       dirtyTokens: this.dirtyTokens.size,
@@ -416,13 +388,13 @@ class AgeRecorder {
   private updateMemory(
     tokenId: string,
     book: TokenBook,
-    observedAtMs = Date.now(),
+    validThroughMs = Date.now(),
     changes?: readonly CanonicalBookChange[],
   ): void {
     const memory = this.ensureMemory(tokenId) ?? new PressureFrontierMemory();
 
     if (changes === undefined) {
-      memory.observeBook(book, observedAtMs);
+      memory.observeBook(book, validThroughMs);
     } else {
       const bids: CanonicalBookChange[] = [];
       const asks: CanonicalBookChange[] = [];
@@ -430,14 +402,14 @@ class AgeRecorder {
         const target = change.side === "bid" ? bids : asks;
         target.push(change);
       }
-      if (bids.length > 0) memory.updateLevels("bid", bids, observedAtMs);
-      if (asks.length > 0) memory.updateLevels("ask", asks, observedAtMs);
+      if (bids.length > 0) memory.updateLevels("bid", bids, validThroughMs);
+      if (asks.length > 0) memory.updateLevels("ask", asks, validThroughMs);
     }
 
     this.memories.set(tokenId, memory);
 
     if (!this.recordingSince.has(tokenId)) {
-      this.recordingSince.set(tokenId, observedAtMs);
+      this.recordingSince.set(tokenId, validThroughMs);
       debugLog(
         "first-snapshot",
         shortToken(tokenId),
@@ -489,8 +461,6 @@ class AgeRecorder {
         offset += PERSIST_BATCH_TOKENS
       ) {
         const batch = tokenIds.slice(offset, offset + PERSIST_BATCH_TOKENS);
-        const savedAtMs = Date.now();
-
         this.store.write(
           batch.map((tokenId) => ({
             tokenId,
@@ -499,7 +469,6 @@ class AgeRecorder {
               : ("watched" as const),
             recordingSinceMs: this.recordingSince.get(tokenId) ?? null,
             pressure: this.ensureMemory(tokenId)?.snapshot() ?? null,
-            savedAtMs,
           })),
         );
         written += batch.length;
@@ -577,12 +546,6 @@ function eventTimestampMs(value: unknown, fallbackMs = Date.now()): number {
   return timestamp;
 }
 
-function sqlitePathFor(legacyPath: string): string {
-  return legacyPath.endsWith(".json")
-    ? `${legacyPath.slice(0, -5)}.sqlite`
-    : `${legacyPath}.sqlite`;
-}
-
 const recorder = new AgeRecorder();
 await recorder.start();
 
@@ -611,7 +574,6 @@ const server = Bun.serve({
           `requested=${tokenIds.length}`,
           `states=${Object.keys(body.states).length}`,
           `pending=${body.pendingTokenIds.length}`,
-          `connected=${body.connected}`,
         );
 
       return response(body);
