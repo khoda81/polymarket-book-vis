@@ -9,7 +9,7 @@
     type ChartMarketControl,
   } from "../lib/chartDefinition";
   import type { ConnectionStatus, ViewMode } from "../lib/chartState";
-  import type { EventBundle } from "../lib/eventBundle";
+  import type { EventDetails } from "../lib/eventBundle";
   import {
     summarizeEventMarketStatus,
     type EventMarketStatus,
@@ -30,7 +30,7 @@
 
   type PublicClient = ReturnType<typeof createPublicClient>;
 
-  export let bundle: EventBundle;
+  export let bundle: EventDetails;
   export let client: PublicClient;
   export let viewMode: ViewMode;
   export let onready: () => void = () => undefined;

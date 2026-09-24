@@ -14,7 +14,7 @@ import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "./signedVolume";
-import type { EventBundle } from "./eventBundle";
+import type { EventDetails } from "./eventBundle";
 import type {
   Event,
   Market,
@@ -43,7 +43,7 @@ export interface ChartDefinition {
   readonly pressureScales: ReadonlyMap<TokenId, SignedVolumeColorScale>;
 }
 
-export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
+export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
   const { event } = bundle;
   const pressureScales = buildPressureScales(
     event,

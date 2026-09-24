@@ -11,7 +11,7 @@
     type CardReorderStart,
   } from "./cardReorderSurface";
   import type { ConnectionStatus, ViewMode } from "../lib/chartState";
-  import { loadEventBundle, type EventBundle } from "../lib/eventBundle";
+  import { loadEventBundle, type EventDetails } from "../lib/eventBundle";
   import type { EventMarketStatus } from "../lib/marketLifecycle";
   import { createPublicClient, type Event } from "@polymarket/client";
 
@@ -21,12 +21,12 @@
     | { readonly kind: "metadata-loading" }
     | {
         readonly kind: "chart-loading";
-        readonly bundle: EventBundle;
+        readonly bundle: EventDetails;
         readonly connection: ConnectionStatus;
       }
     | {
         readonly kind: "ready";
-        readonly bundle: EventBundle;
+        readonly bundle: EventDetails;
         readonly connection: ConnectionStatus;
       }
     | { readonly kind: "failed"; readonly message: string };

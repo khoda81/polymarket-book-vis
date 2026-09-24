@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import type { Event } from "@polymarket/client";
-import type { EventBundle } from "./eventBundle";
+import type { EventDetails } from "./eventBundle";
 import { buildChartDefinition, pressureScaleForToken } from "./chartDefinition";
 import { signedVolumeColor } from "./signedVolume";
 
-function fakeBundle(): EventBundle {
+function fakeBundle(): EventDetails {
   const event = {
     id: "event-1",
     title: "Example",
@@ -107,7 +107,7 @@ test("single-market wrapper metadata survives DOM recreation", () => {
     ],
   } as unknown as Event;
   const endDate = "2026-12-31T23:59:00Z";
-  const bundle: EventBundle = {
+  const bundle: EventDetails = {
     event,
     thresholdByMarketId: new Map(),
     resolutionMsByMarketId: new Map([

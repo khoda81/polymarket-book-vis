@@ -28,7 +28,7 @@ export interface EventPresentation {
  * needed to initialize its chart. The Event/Market objects remain the source
  * of truth for identity, outcomes, labels, and lifecycle metadata.
  */
-export interface EventBundle {
+export interface EventDetails {
   readonly event: Event;
   readonly presentation: EventPresentation;
   readonly thresholdByMarketId: ReadonlyMap<MarketId, number>;
@@ -56,7 +56,7 @@ const GENERIC_DESCRIPTION_LABELS = new Set([
 export async function loadEventBundle(
   client: PublicClient,
   event: Event,
-): Promise<EventBundle> {
+): Promise<EventDetails> {
   // Gamma exposes groupItemThreshold and a few legacy date fields that the
   // normalized SDK Market intentionally omits. Keep that raw transport detail
   // isolated here; the rest of the app consumes typed SDK models.
@@ -72,7 +72,7 @@ export async function loadEventBundle(
 export function buildEventBundle(
   event: Event,
   rawEventValue: unknown,
-): EventBundle {
+): EventDetails {
   const rawEvent = asRecord(rawEventValue);
   if (!rawEvent) throw new Error("Gamma event payload is not an object");
 
@@ -95,10 +95,10 @@ export function buildEventBundle(
     usefulDescription === null
       ? null
       : {
-          body: usefulDescription,
-          preview:
-            subtitle || descriptionPreview(usefulDescription) || "Description",
-        };
+        body: usefulDescription,
+        preview:
+          subtitle || descriptionPreview(usefulDescription) || "Description",
+      };
 
   const marketRules = orderedEvent.markets.flatMap((market) => {
     const body = text(market.description);
