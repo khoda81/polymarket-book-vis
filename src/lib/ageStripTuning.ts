@@ -100,7 +100,8 @@ function loadTuning(): AgeStripTuning {
           ? parsed.ghostHalfLifeMs
           : fallback.ghostHalfLifeMs,
     };
-  } catch {
+  } catch (error) {
+    console.warn("Could not restore age-strip tuning:", error);
     return fallback;
   }
 }
@@ -111,8 +112,8 @@ function schedulePersist(): void {
     persistTimer = undefined;
     try {
       window.localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(tuning));
-    } catch {
-      // Preferences are best effort.
+    } catch (error) {
+      console.warn("Could not persist age-strip tuning:", error);
     }
   }, 200);
 }
