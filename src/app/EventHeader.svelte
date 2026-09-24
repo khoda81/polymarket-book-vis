@@ -3,6 +3,7 @@
   import type { EventMarketStatus } from "../lib/marketLifecycle";
   import type { Event } from "@polymarket/client";
   import type { EventSlug } from "./model";
+  import CopySlug from "./CopySlug.svelte";
 
   export let event: Event;
   export let slug: EventSlug | null;
@@ -13,11 +14,6 @@
   let iconFailed = false;
 
   $: if (iconUrl) iconFailed = false;
-
-  function copySlug(): void {
-    if (!slug) return;
-    void navigator.clipboard?.writeText(slug).catch(() => undefined);
-  }
 
   $: statusClass =
     marketStatus.kind === "resolved"
@@ -55,7 +51,9 @@
 
     <div class="cpv-heading-copy">
       <div class="cpv-title-line">
-        <h5 class="cpv-title">{event.title ?? "(untitled)"}</h5>
+        <h5 class="cpv-title" title={event.title ?? "(untitled)"}>
+          {event.title ?? "(untitled)"}
+        </h5>
         {#if slug}
           <a
             class="cpv-event-link"
@@ -69,12 +67,7 @@
       </div>
 
       {#if slug}
-        <button
-          type="button"
-          class="cpv-event-slug"
-          title="Copy event slug"
-          onclick={copySlug}>{slug}</button
-        >
+        <CopySlug {slug} kind="event" />
       {/if}
     </div>
   </div>

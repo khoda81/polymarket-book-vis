@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ConnectionStatus } from "../lib/chartState";
   import type { Event, Series } from "@polymarket/client";
+  import CopySlug from "./CopySlug.svelte";
 
   export let series: Series;
   export let event: Event | null = null;
@@ -15,12 +16,6 @@
     series.image?.trim() ||
     null;
   $: if (iconUrl) iconFailed = false;
-
-  function copySlug(): void {
-    const slug = series.slug?.trim();
-    if (!slug) return;
-    void navigator.clipboard?.writeText(slug).catch(() => undefined);
-  }
 
   $: statusClass =
     connection === "live"
@@ -50,19 +45,16 @@
 
     <div class="cpv-heading-copy">
       <div class="cpv-title-line">
-        <h5 class="cpv-title">{series.title ?? "(untitled series)"}</h5>
+        <h5 class="cpv-title" title={series.title ?? "(untitled series)"}>
+          {series.title ?? "(untitled series)"}
+        </h5>
         {#if series.recurrence}
           <span class="series-recurrence">{series.recurrence}</span>
         {/if}
       </div>
 
       {#if series.slug}
-        <button
-          type="button"
-          class="cpv-event-slug"
-          title="Copy series slug"
-          onclick={copySlug}>{series.slug}</button
-        >
+        <CopySlug slug={series.slug.trim()} kind="series" />
       {/if}
     </div>
   </div>
