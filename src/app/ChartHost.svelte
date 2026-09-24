@@ -44,7 +44,7 @@
 
   let visibilityByMarketId = loadMarketVisibility(definition.controls);
   let lifecycleByMarketId = new Map<MarketId, MarketLifecycle>(
-    definition.controls.map((control) => [control.marketId, control.lifecycle]),
+    definition.controls.map((control) => [control.market.id, control.lifecycle]),
   );
 
   let canvas: HTMLCanvasElement;
@@ -65,11 +65,11 @@
   function userSetVisible(control: ChartMarketControl, visible: boolean): void {
     visibilityByMarketId = setUserMarketVisible(
       visibilityByMarketId,
-      control.marketId,
+      control.market.id,
       visible,
     );
     persistUserVisibility(visibilityByMarketId);
-    chart?.setMarketVisible(control.marketId, visible);
+    chart?.setMarketVisible(control.market.id, visible);
   }
 
   function marketLifecycleChanged(
@@ -103,7 +103,7 @@
       partitionMarketVisibility(
         definition.controls,
         visibilityByMarketId,
-      ).hidden.map((control) => control.marketId),
+      ).hidden.map((control) => control.market.id),
     );
   }
 
@@ -163,13 +163,13 @@
     hidden={viewMode === "age" && visibleControls.length === 0}
     bind:this={toggles}
   >
-    {#each toggledControls as control (control.marketId)}
+    {#each toggledControls as control (control.market.id)}
       <MarketControl
         {control}
         checked={isMarketVisible(
-          visibilityByMarketId.get(control.marketId) ?? VISIBLE_MARKET,
+          visibilityByMarketId.get(control.market.id) ?? VISIBLE_MARKET,
         )}
-        lifecycle={lifecycleByMarketId.get(control.marketId) ??
+        lifecycle={lifecycleByMarketId.get(control.market.id) ??
           control.lifecycle}
         onchange={(checked) => userSetVisible(control, checked)}
       />
@@ -182,11 +182,11 @@
   hidden={viewMode !== "age" || hiddenControls.length === 0}
 >
   {#if viewMode === "age"}
-    {#each hiddenControls as control (control.marketId)}
+    {#each hiddenControls as control (control.market.id)}
       <MarketControl
         {control}
         checked={false}
-        lifecycle={lifecycleByMarketId.get(control.marketId) ??
+        lifecycle={lifecycleByMarketId.get(control.market.id) ??
           control.lifecycle}
         onchange={(checked) => userSetVisible(control, checked)}
       />
