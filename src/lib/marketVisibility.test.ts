@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { MarketId } from "@polymarket/client";
 import {
   initialMarketVisibility,
   isMarketVisible,
@@ -6,6 +7,8 @@ import {
   partitionMarketVisibility,
   setUserMarketVisible,
 } from "./marketVisibility";
+
+const marketId = (value: string): MarketId => value as MarketId;
 
 test("market visibility encodes why a row is hidden", () => {
   expect(initialMarketVisibility(false, { kind: "live" })).toEqual({
@@ -30,11 +33,15 @@ test("market visibility encodes why a row is hidden", () => {
 });
 
 test("visibility partition reacts to a replaced visibility map", () => {
-  const markets = [{ marketId: "a" }, { marketId: "b" }, { marketId: "c" }];
+  const markets = [
+    { marketId: marketId("a") },
+    { marketId: marketId("b") },
+    { marketId: marketId("c") },
+  ];
 
   const first = partitionMarketVisibility(
     markets,
-    new Map([["b", { kind: "hidden", reason: "empty-book" }]]),
+    new Map([[marketId("b"), { kind: "hidden", reason: "empty-book" }]]),
   );
   expect(first.visible.map((market) => market.marketId)).toEqual(["a", "c"]);
   expect(first.hidden.map((market) => market.marketId)).toEqual(["b"]);
@@ -42,8 +49,8 @@ test("visibility partition reacts to a replaced visibility map", () => {
   const second = partitionMarketVisibility(
     markets,
     new Map([
-      ["a", { kind: "hidden", reason: "empty-book" }],
-      ["c", { kind: "hidden", reason: "user" }],
+      [marketId("a"), { kind: "hidden", reason: "empty-book" }],
+      [marketId("c"), { kind: "hidden", reason: "user" }],
     ]),
   );
   expect(second.visible.map((market) => market.marketId)).toEqual(["b"]);
@@ -52,23 +59,23 @@ test("visibility partition reacts to a replaced visibility map", () => {
 
 test("user visibility update replaces state without a second source of truth", () => {
   const initial = new Map<
-    string,
+    MarketId,
     import("./marketVisibility").MarketVisibility
   >([
-    ["a", { kind: "visible" }],
-    ["b", { kind: "hidden", reason: "empty-book" }],
+    [marketId("a"), { kind: "visible" }],
+    [marketId("b"), { kind: "hidden", reason: "empty-book" }],
   ]);
 
-  const hidden = setUserMarketVisible(initial, "a", false);
-  expect(initial.get("a")).toEqual({ kind: "visible" });
-  expect(hidden.get("a")).toEqual({
+  const hidden = setUserMarketVisible(initial, marketId("a"), false);
+  expect(initial.get(marketId("a"))).toEqual({ kind: "visible" });
+  expect(hidden.get(marketId("a"))).toEqual({
     kind: "hidden",
     reason: "user",
   });
 
-  const visible = setUserMarketVisible(hidden, "a", true);
-  expect(visible.get("a")).toEqual({ kind: "visible" });
-  expect(visible.get("b")).toEqual({
+  const visible = setUserMarketVisible(hidden, marketId("a"), true);
+  expect(visible.get(marketId("a"))).toEqual({ kind: "visible" });
+  expect(visible.get(marketId("b"))).toEqual({
     kind: "hidden",
     reason: "empty-book",
   });
@@ -77,12 +84,12 @@ test("user visibility update replaces state without a second source of truth", (
 test("persisting one event preserves user-hidden markets from other events", () => {
   const persisted = new Set(["country-fr", "country-de", "other-event-market"]);
   const currentEvent = new Map<
-    string,
+    MarketId,
     import("./marketVisibility").MarketVisibility
   >([
-    ["country-fr", { kind: "hidden", reason: "user" }],
-    ["country-de", { kind: "visible" }],
-    ["country-jp", { kind: "hidden", reason: "user" }],
+    [marketId("country-fr"), { kind: "hidden", reason: "user" }],
+    [marketId("country-de"), { kind: "visible" }],
+    [marketId("country-jp"), { kind: "hidden", reason: "user" }],
   ]);
 
   expect([...mergeUserHiddenMarketIds(persisted, currentEvent)].sort()).toEqual(
