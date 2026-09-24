@@ -1,8 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { fmtVol } from "../lib/math";
-  import { findSeriesBySlug } from "../lib/seriesTimeline";
-  import { errorMessage, type EventSlug, toEventSlug } from "./model";
+  import { errorMessage } from "./model";
   import {
     createPublicClient,
     type Event,
@@ -31,8 +30,15 @@
     return Number.isFinite(value) ? value : 0;
   }
 
-  function looksLikeExactSlug(value: string): value is EventSlug {
+  function looksLikeExactSlug(value: string): boolean {
     return /^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(value);
+  }
+
+  async function findSeriesBySlug(slug: string): Promise<Series | null> {
+    const page = await client
+      .listSeries({ slug: [slug], pageSize: 10 })
+      .firstPage();
+    return page.items.find((series) => series.slug?.trim() === slug) ?? null;
   }
 
   function clearResults(): void {
@@ -101,39 +107,42 @@
     }
 
     if (looksLikeExactSlug(value)) {
-      try {
-        const series = await findSeriesBySlug(client, value);
-        if (series?.recurrence?.trim()) {
-          acceptSeries(series);
-          return;
-        }
-      } catch {
-        // Series lookup is opportunistic; continue with event resolution.
-      }
+      const [seriesResult, eventResult] = await Promise.allSettled([
+        findSeriesBySlug(value),
+        client.fetchEvent({ slug: value }),
+      ]);
 
-      try {
-        const event = await client.fetchEvent({ slug: value });
-        accept(event);
+      if (
+        seriesResult.status === "fulfilled" &&
+        seriesResult.value?.recurrence?.trim()
+      ) {
+        acceptSeries(seriesResult.value);
         return;
-      } catch {
-        // Slug-shaped text can still be a useful free-text query.
       }
-    }
 
-    const selected = matches[highlighted];
-    if (selected) {
-      accept(selected);
+      if (eventResult.status === "fulfilled") {
+        accept(eventResult.value);
+        return;
+      }
+
+      const selected = matches[highlighted];
+      if (selected) {
+        accept(selected);
+        return;
+      }
+
+      const reason =
+        eventResult.status === "rejected"
+          ? eventResult.reason
+          : seriesResult.status === "rejected"
+            ? seriesResult.reason
+            : "No matching event or recurring series";
+      onstatus(`Could not resolve slug: ${errorMessage(reason)}`);
       return;
     }
 
-    const slug = toEventSlug(value);
-    if (!slug) return;
-    try {
-      const event = await client.fetchEvent({ slug });
-      accept(event);
-    } catch (error) {
-      onstatus(`Could not add event: ${errorMessage(error)}`);
-    }
+    const selected = matches[highlighted];
+    if (selected) accept(selected);
   }
 
   function keydown(event: KeyboardEvent): void {
