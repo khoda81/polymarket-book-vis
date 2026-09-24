@@ -113,7 +113,7 @@ export class SeriesTimelineView {
   private lastEdgeRefreshMs = 0;
   private lastAnchorEventId: string | null = null;
   private clockTimer: number | undefined;
-  private ghostRefreshTimer: number | undefined;
+  private stalenessRefreshTimer: number | undefined;
   private raf: number | null = null;
   private destroyed = false;
 
@@ -236,8 +236,8 @@ export class SeriesTimelineView {
     this.ageClock.destroy();
     this.tooltip.destroy();
     if (this.clockTimer !== undefined) window.clearTimeout(this.clockTimer);
-    if (this.ghostRefreshTimer !== undefined)
-      window.clearTimeout(this.ghostRefreshTimer);
+    if (this.stalenessRefreshTimer !== undefined)
+      window.clearTimeout(this.stalenessRefreshTimer);
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.resizeObserver.disconnect();
     this.plotter.destroy();
@@ -386,9 +386,9 @@ export class SeriesTimelineView {
 
   private draw(): void {
     if (this.destroyed) return;
-    if (this.ghostRefreshTimer !== undefined) {
-      window.clearTimeout(this.ghostRefreshTimer);
-      this.ghostRefreshTimer = undefined;
+    if (this.stalenessRefreshTimer !== undefined) {
+      window.clearTimeout(this.stalenessRefreshTimer);
+      this.stalenessRefreshTimer = undefined;
     }
 
     const nowMs = Date.now();
@@ -428,7 +428,7 @@ export class SeriesTimelineView {
     void this.hydrateTokens(hydratableTokens);
 
     const tuning = getAgeStripTuning();
-    let hasVisibleGhosts = false;
+    let hasVisiblePressure = false;
 
     for (const row of visibleRows) {
       const market = primaryMarket(row.event);
@@ -466,7 +466,7 @@ export class SeriesTimelineView {
         nowMs,
         rowOffsetCss,
       );
-      hasVisibleGhosts ||= this.pressure.hasVisibleGhosts(
+      hasVisiblePressure ||= this.pressure.hasVisiblePressure(
         key,
         nowMs,
         tuning.ghostHalfLifeMs,
@@ -479,8 +479,8 @@ export class SeriesTimelineView {
     this.refreshFeed(bufferedTokens);
     this.refreshWindowIfNeeded(centerMs, minMs, maxMs, nowMs);
 
-    if (hasVisibleGhosts)
-      this.scheduleGhostRefresh(ghostRefreshDelayMs(tuning.ghostHalfLifeMs));
+    if (hasVisiblePressure)
+      this.scheduleStalenessRefresh(ghostRefreshDelayMs(tuning.ghostHalfLifeMs));
   }
 
   private drawTimeline(
@@ -801,11 +801,11 @@ export class SeriesTimelineView {
     }, delayMs);
   }
 
-  private scheduleGhostRefresh(delayMs: number): void {
-    if (this.destroyed || this.ghostRefreshTimer !== undefined) return;
+  private scheduleStalenessRefresh(delayMs: number): void {
+    if (this.destroyed || this.stalenessRefreshTimer !== undefined) return;
 
-    this.ghostRefreshTimer = window.setTimeout(() => {
-      this.ghostRefreshTimer = undefined;
+    this.stalenessRefreshTimer = window.setTimeout(() => {
+      this.stalenessRefreshTimer = undefined;
       this.requestDraw();
     }, delayMs);
   }
