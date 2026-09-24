@@ -128,10 +128,11 @@ export class AgeStripPressureState {
         shares: change.shares,
       });
 
-    if (bySide.bid.length > 0)
-      memory.updateLevels("bid", bySide.bid, update.validThroughMs);
-    if (bySide.ask.length > 0)
-      memory.updateLevels("ask", bySide.ask, update.validThroughMs);
+    memory.updateBookLevels(
+      bySide.bid,
+      bySide.ask,
+      update.validThroughMs,
+    );
   }
 
   resolve(tokenId: string): void {
