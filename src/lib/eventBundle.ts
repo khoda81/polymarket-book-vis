@@ -1,5 +1,11 @@
 import { orderMarkets } from "./marketOrder";
-import type { Event, PublicClient } from "@polymarket/client";
+import type {
+  Event,
+  Market,
+  MarketId,
+  PublicClient,
+  TokenId,
+} from "@polymarket/client";
 
 export interface EventDescription {
   readonly preview: string;
@@ -7,7 +13,7 @@ export interface EventDescription {
 }
 
 export interface MarketRule {
-  readonly marketId: string;
+  readonly marketId: MarketId;
   readonly title: string;
   readonly body: string;
 }
@@ -20,12 +26,13 @@ export interface EventPresentation {
 
 export interface EventBundle {
   readonly event: Event;
-  readonly rawMarkets: readonly unknown[];
   readonly presentation: EventPresentation;
-  readonly marketTitles: ReadonlyMap<string, string>;
-  readonly marketIcons: ReadonlyMap<string, string>;
-  readonly tokenNames: ReadonlyMap<string, string>;
-  readonly oppositeTokenNames: ReadonlyMap<string, string>;
+  readonly thresholdByMarketId: ReadonlyMap<MarketId, number>;
+  readonly resolutionMsByMarketId: ReadonlyMap<MarketId, number>;
+  readonly marketTitles: ReadonlyMap<MarketId, string>;
+  readonly marketIcons: ReadonlyMap<MarketId, string>;
+  readonly tokenNames: ReadonlyMap<TokenId, string>;
+  readonly oppositeTokenNames: ReadonlyMap<TokenId, string>;
 }
 
 interface GammaGetResult {
@@ -50,8 +57,9 @@ export async function loadEventBundle(
   client: PublicClient,
   event: Event,
 ): Promise<EventBundle> {
-  // The SDK's typed Event omits a few Gamma-only fields we intentionally use.
-  // Keep the untyped escape hatch isolated at this transport boundary.
+  // Gamma exposes groupItemThreshold and a few legacy date fields that the
+  // normalized SDK Market intentionally omits. Keep that raw transport detail
+  // isolated here; the rest of the app consumes typed SDK models.
   const gamma = (client as unknown as GammaTransport).gamma;
   const request = await gamma.get(`/events/${event.id}`);
   const response = request.value;
@@ -69,17 +77,20 @@ export function buildEventBundle(
   if (!rawEvent) throw new Error("Gamma event payload is not an object");
 
   const rawMarkets = Array.isArray(rawEvent.markets) ? rawEvent.markets : [];
+  const { thresholdByMarketId, resolutionMsByMarketId } =
+    extractRawMarketAnnotations(event, rawMarkets);
+
   const orderedEvent: Event = {
     ...event,
-    markets: orderMarkets(event, rawMarkets),
+    markets: orderMarkets(event, thresholdByMarketId),
   };
 
-  const iconUrl = artworkUrl(rawEvent.icon, rawEvent.image);
-  const rawDescription = text(rawEvent.description);
+  const iconUrl = artworkUrl(event.icon, event.image);
+  const rawDescription = text(event.description);
   const usefulDescription = isUsefulDescription(rawDescription)
     ? rawDescription
     : null;
-  const subtitle = text(rawEvent.subtitle);
+  const subtitle = text(event.subtitle);
   const description =
     usefulDescription === null
       ? null
@@ -89,63 +100,44 @@ export function buildEventBundle(
             subtitle || descriptionPreview(usefulDescription) || "Description",
         };
 
-  const marketTitles = new Map<string, string>();
-  const marketIcons = new Map<string, string>();
-  const marketDescriptions = new Map<string, string>();
-  const tokenNames = new Map<string, string>();
-  const oppositeTokenNames = new Map<string, string>();
+  const marketTitles = new Map<MarketId, string>();
+  const marketIcons = new Map<MarketId, string>();
+  const tokenNames = new Map<TokenId, string>();
+  const oppositeTokenNames = new Map<TokenId, string>();
 
-  for (const rawMarketValue of rawMarkets) {
-    const rawMarket = asRecord(rawMarketValue);
-    if (!rawMarket) continue;
+  for (const market of orderedEvent.markets) {
+    const title = text(market.groupItemTitle);
+    if (title) marketTitles.set(market.id, title);
 
-    const marketId = idText(rawMarket.id);
-    if (!marketId) continue;
-
-    const title = text(rawMarket.groupItemTitle);
-    if (title) marketTitles.set(marketId, title);
-
-    const marketIconUrl = artworkUrl(rawMarket.icon, rawMarket.image);
+    const marketIconUrl = artworkUrl(market.icon, market.image);
     if (marketIconUrl && !sameArtworkUrl(marketIconUrl, iconUrl))
-      marketIcons.set(marketId, marketIconUrl);
+      marketIcons.set(market.id, marketIconUrl);
 
-    const marketDescription = text(rawMarket.description);
-    if (
-      isUsefulDescription(marketDescription) &&
-      !sameDescription(marketDescription, rawDescription)
-    )
-      marketDescriptions.set(marketId, marketDescription);
-
-    const outcomes = parseStringArray(rawMarket.outcomes, `${marketId}.outcomes`);
-    const tokenIds = parseStringArray(
-      rawMarket.clobTokenIds,
-      `${marketId}.clobTokenIds`,
-    );
-    for (
-      let index = 0;
-      index < Math.min(outcomes.length, tokenIds.length);
-      index++
-    ) {
-      const tokenId = tokenIds[index];
-      const outcome = outcomes[index];
-      if (!tokenId || !outcome) continue;
-
-      tokenNames.set(tokenId, outcome);
-      if (outcomes.length === 2 && tokenIds.length === 2) {
-        const opposite = outcomes[1 - index];
-        if (opposite) oppositeTokenNames.set(tokenId, opposite);
-      }
+    const yesTokenId = market.outcomes.yes.tokenId;
+    const noTokenId = market.outcomes.no.tokenId;
+    if (yesTokenId) {
+      tokenNames.set(yesTokenId, market.outcomes.yes.label);
+      oppositeTokenNames.set(yesTokenId, market.outcomes.no.label);
+    }
+    if (noTokenId) {
+      tokenNames.set(noTokenId, market.outcomes.no.label);
+      oppositeTokenNames.set(noTokenId, market.outcomes.yes.label);
     }
   }
 
   const marketRules = orderedEvent.markets.flatMap((market) => {
-    const marketId = String(market.id);
-    const body = marketDescriptions.get(marketId);
-    if (!body) return [];
+    const body = text(market.description);
+    if (
+      !isUsefulDescription(body) ||
+      sameDescription(body, rawDescription)
+    )
+      return [];
+
     return [
       {
-        marketId,
-        title: marketTitles.get(marketId) ?? market.question ?? "(untitled)",
+        marketId: market.id,
+        title:
+          marketTitles.get(market.id) ?? market.question ?? "(untitled)",
         body,
       },
     ];
@@ -153,12 +145,13 @@ export function buildEventBundle(
 
   return {
     event: orderedEvent,
-    rawMarkets,
     presentation: {
       iconUrl,
       description,
       marketRules,
     },
+    thresholdByMarketId,
+    resolutionMsByMarketId,
     marketTitles,
     marketIcons,
     tokenNames,
@@ -166,20 +159,77 @@ export function buildEventBundle(
   };
 }
 
-function parseStringArray(value: unknown, field: string): string[] {
-  if (Array.isArray(value))
-    return value.filter((item): item is string => typeof item === "string");
-  if (typeof value !== "string") return [];
+function extractRawMarketAnnotations(
+  event: Event,
+  rawMarkets: readonly unknown[],
+): {
+  thresholdByMarketId: Map<MarketId, number>;
+  resolutionMsByMarketId: Map<MarketId, number>;
+} {
+  const knownIds = new Map(event.markets.map((market) => [market.id, market.id]));
+  const thresholdByMarketId = new Map<MarketId, number>();
+  const resolutionMsByMarketId = new Map<MarketId, number>();
 
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === "string")
-      : [];
-  } catch (error) {
-    console.warn(`Could not parse Gamma ${field}:`, error);
-    return [];
+  for (const rawMarketValue of rawMarkets) {
+    const rawMarket = asRecord(rawMarketValue);
+    if (!rawMarket) continue;
+
+    const rawId =
+      typeof rawMarket.id === "string" || typeof rawMarket.id === "number"
+        ? String(rawMarket.id)
+        : null;
+    if (!rawId) continue;
+
+    const marketId = knownIds.get(rawId);
+    if (!marketId) continue;
+
+    const threshold = numericValue(rawMarket.groupItemThreshold);
+    if (threshold !== null) thresholdByMarketId.set(marketId, threshold);
+
+    const rawState = asRecord(rawMarket.state);
+    const resolutionMs = firstTimestamp(
+      rawState?.endDate,
+      rawState?.end_date,
+      rawMarket.endDate,
+      rawMarket.endDateIso,
+      rawMarket.end_date,
+      rawMarket.end_date_iso,
+    );
+    if (resolutionMs !== null)
+      resolutionMsByMarketId.set(marketId, resolutionMs);
   }
+
+  for (const market of event.markets) {
+    if (resolutionMsByMarketId.has(market.id)) continue;
+    const resolutionMs = marketResolutionMs(market);
+    if (resolutionMs !== null)
+      resolutionMsByMarketId.set(market.id, resolutionMs);
+  }
+
+  return { thresholdByMarketId, resolutionMsByMarketId };
+}
+
+function marketResolutionMs(market: Market): number | null {
+  return firstTimestamp(market.state.endDate, market.state.closedTime);
+}
+
+function firstTimestamp(...values: readonly unknown[]): number | null {
+  for (const value of values) {
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function numericValue(value: unknown): number | null {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function descriptionPreview(description: string): string {
@@ -231,12 +281,6 @@ function normalizeArtworkUrl(value: string): string {
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function idText(value: unknown): string {
-  return typeof value === "string" || typeof value === "number"
-    ? String(value)
-    : "";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
