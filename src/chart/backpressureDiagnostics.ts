@@ -9,10 +9,10 @@ export class FeedBackpressureDiagnostics {
   private events = 0;
   private workItems = 0;
   private readonly byType = new Map<string, number>();
-  private lagSamples = 0;
-  private latestLagMs = 0;
-  private totalLagMs = 0;
-  private maxLagMs = 0;
+  private readonly lagByType = new Map<
+    string,
+    { samples: number; latest: number; total: number; max: number }
+  >();
   private totalHandlerMs = 0;
   private maxHandlerMs = 0;
 
@@ -33,10 +33,17 @@ export class FeedBackpressureDiagnostics {
     this.maxHandlerMs = Math.max(this.maxHandlerMs, handlerMs);
 
     if (sourceLagMs !== null) {
-      this.lagSamples++;
-      this.latestLagMs = sourceLagMs;
-      this.totalLagMs += sourceLagMs;
-      this.maxLagMs = Math.max(this.maxLagMs, sourceLagMs);
+      const lag = this.lagByType.get(eventType) ?? {
+        samples: 0,
+        latest: 0,
+        total: 0,
+        max: 0,
+      };
+      lag.samples++;
+      lag.latest = sourceLagMs;
+      lag.total += sourceLagMs;
+      lag.max = Math.max(lag.max, sourceLagMs);
+      this.lagByType.set(eventType, lag);
     }
 
     const now = performance.now();
@@ -51,14 +58,16 @@ export class FeedBackpressureDiagnostics {
         byType: Object.fromEntries(
           [...this.byType].sort((a, b) => b[1] - a[1]),
         ),
-        sourceLagMs:
-          this.lagSamples === 0
-            ? null
-            : {
-                latest: round(this.latestLagMs),
-                average: round(this.totalLagMs / this.lagSamples),
-                max: round(this.maxLagMs),
-              },
+        sourceAgeMsByType: Object.fromEntries(
+          [...this.lagByType].map(([type, lag]) => [
+            type,
+            {
+              latest: round(lag.latest),
+              average: round(lag.total / lag.samples),
+              max: round(lag.max),
+            },
+          ]),
+        ),
         handlerMs: {
           average: round(this.totalHandlerMs / Math.max(1, this.events)),
           max: round(this.maxHandlerMs),
@@ -70,9 +79,7 @@ export class FeedBackpressureDiagnostics {
     this.events = 0;
     this.workItems = 0;
     this.byType.clear();
-    this.lagSamples = 0;
-    this.totalLagMs = 0;
-    this.maxLagMs = 0;
+    this.lagByType.clear();
     this.totalHandlerMs = 0;
     this.maxHandlerMs = 0;
   }
