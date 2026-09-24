@@ -9,6 +9,7 @@ import {
 import {
   pressureScaleForToken,
   type ChartDefinition,
+  type ChartMarketControl,
 } from "@/lib/chartDefinition";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
@@ -53,7 +54,7 @@ export class ChartController {
   private readonly themeQuery: MediaQueryList;
   private readonly resizeObserver: ResizeObserver;
   private readonly activeTokens = new Set<TokenId>();
-  private readonly tokenIdByValue = new Map<string, TokenId>();
+  private readonly controlByTokenValue = new Map<string, ChartMarketControl>();
 
   private theme: ChartTheme;
   private plotter!: OrderBookPlotter;
@@ -76,7 +77,7 @@ export class ChartController {
       options.onMarketLifecycleChanged ?? (() => undefined);
     for (const control of definition.controls) {
       this.lifecycleByMarketId.set(control.market.id, control.lifecycle);
-      this.tokenIdByValue.set(control.tokenId, control.tokenId);
+      this.controlByTokenValue.set(control.tokenId, control);
     }
 
     this.feed = new LiveBookFeed(polyMarketClient, {
@@ -217,14 +218,11 @@ export class ChartController {
   }
 
   private knownTokenId(value: string): TokenId | null {
-    return this.tokenIdByValue.get(value) ?? null;
+    return this.controlByTokenValue.get(value)?.tokenId ?? null;
   }
 
-  private controlForTokenValue(value: string) {
-    const tokenId = this.knownTokenId(value);
-    return tokenId
-      ? this.definition.controls.find((control) => control.tokenId === tokenId)
-      : undefined;
+  private controlForTokenValue(value: string): ChartMarketControl | undefined {
+    return this.controlByTokenValue.get(value);
   }
 
   private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
