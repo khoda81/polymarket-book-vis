@@ -1,9 +1,5 @@
 import type { ConnectionStatus } from "@/lib/chartState";
 import {
-  BACKPRESSURE_DEBUG,
-  FeedBackpressureDiagnostics,
-} from "./backpressureDiagnostics";
-import {
   applyPriceChange,
   bookFromSnapshot,
   type CanonicalBookChange,
@@ -60,15 +56,11 @@ export class LiveBookFeed {
   private readonly tokenIdByValue = new Map<string, TokenId>();
   private state: FeedState = { kind: "idle" };
   private tokenIds: TokenId[] = [];
-  private readonly diagnostics: FeedBackpressureDiagnostics;
 
   constructor(
     private readonly client: PublicClient,
     private readonly callbacks: LiveBookFeedCallbacks,
-    debugLabel = "market",
-  ) {
-    this.diagnostics = new FeedBackpressureDiagnostics(debugLabel);
-  }
+  ) {}
 
   getBook(tokenId: TokenId): TokenBook | undefined {
     return this.books.get(tokenId);
@@ -156,10 +148,6 @@ export class LiveBookFeed {
       for await (const event of stream) {
         if (this.state.kind !== "live" || this.state.stream !== stream) return;
 
-        const handlerStartedAt = BACKPRESSURE_DEBUG ? performance.now() : 0;
-        const sourceLagMs = eventLagMs(event);
-        let workItems = 1;
-
         if (event.type === "book") {
           const tokenId = this.tokenIdByValue.get(event.payload.assetId);
           if (tokenId) {
@@ -175,7 +163,6 @@ export class LiveBookFeed {
           }
         } else if (event.type === "price_change") {
           const changesByToken = new Map<TokenId, CanonicalBookChange[]>();
-          workItems = event.payload.priceChanges.length;
 
           for (const change of event.payload.priceChanges) {
             const tokenId = this.tokenIdByValue.get(change.assetId);
@@ -213,13 +200,6 @@ export class LiveBookFeed {
             winningOutcome: event.payload.winningOutcome ?? null,
           });
         }
-
-        this.diagnostics.observe(
-          event.type,
-          sourceLagMs,
-          BACKPRESSURE_DEBUG ? performance.now() - handlerStartedAt : 0,
-          workItems,
-        );
       }
     } catch (error) {
       if (this.state.kind === "live" && this.state.stream === stream)
@@ -246,11 +226,4 @@ function eventTimeMs(value: unknown): number {
     timestamp <= nowMs + 60_000
     ? timestamp
     : nowMs;
-}
-
-function eventLagMs(event: MarketEvent): number | null {
-  if (!BACKPRESSURE_DEBUG) return null;
-  const timestamp = Number(event.payload.timestamp);
-  if (!Number.isFinite(timestamp) || timestamp < 0) return null;
-  return Math.max(0, Date.now() - timestamp);
 }

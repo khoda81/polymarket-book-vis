@@ -15,6 +15,19 @@ test("bid and ask decimal boundaries share one exact coordinate", () => {
   expect(restored.shellsAtPrice(p(0.008))[0]?.hiVolume).toBe(100);
 });
 
+test("one book observation applies both bid and ask changes", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateBookLevels(
+    [{ price: p(0.6), shares: 10 }],
+    [{ price: p(0.4), shares: 20 }],
+    1_000,
+  );
+
+  expect(memory.currentLevels("bid")).toEqual([{ key: p(0.6), weight: 10 }]);
+  expect(memory.currentLevels("ask")).toEqual([{ key: p(0.6), weight: 20 }]);
+});
+
 test("unchanged observations advance only the current pressure timestamp", () => {
   const memory = new PressureFrontierMemory();
 

@@ -30,10 +30,6 @@ import {
 import { OrderBookPlotter, type ChartTheme, type Frame } from "@/lib/renderer";
 import { chartThemeForDarkMode } from "./chartTheme";
 import {
-  BACKPRESSURE_DEBUG,
-  DrawBackpressureDiagnostics,
-} from "./backpressureDiagnostics";
-import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
@@ -100,7 +96,6 @@ export class SeriesTimelineView {
   private readonly marketByToken = new Map<string, Market>();
   private readonly absoluteTimeLabelByStart = new Map<number, string>();
   private readonly hydratedTokens = new Set<string>();
-  private readonly drawDiagnostics: DrawBackpressureDiagnostics;
 
   private theme: ChartTheme;
   private rows: TimedSeriesEvent[];
@@ -129,9 +124,6 @@ export class SeriesTimelineView {
     private readonly series: Series,
     options: SeriesTimelineViewOptions = {},
   ) {
-    this.drawDiagnostics = new DrawBackpressureDiagnostics(
-      `series:${series.id}`,
-    );
     const seedEvents = [...(series.events ?? [])];
     this.cadenceMs = inferSeriesCadenceMs(seedEvents, series.recurrence);
     this.rows = seedEvents
@@ -394,7 +386,6 @@ export class SeriesTimelineView {
 
   private draw(): void {
     if (this.destroyed) return;
-    const startedAt = BACKPRESSURE_DEBUG ? performance.now() : 0;
     if (this.stalenessRefreshTimer !== undefined) {
       window.clearTimeout(this.stalenessRefreshTimer);
       this.stalenessRefreshTimer = undefined;
@@ -492,9 +483,6 @@ export class SeriesTimelineView {
       this.scheduleStalenessRefresh(
         ghostRefreshDelayMs(tuning.ghostHalfLifeMs),
       );
-
-    if (BACKPRESSURE_DEBUG)
-      this.drawDiagnostics.observe(performance.now() - startedAt);
   }
 
   private drawTimeline(
@@ -706,7 +694,7 @@ export class SeriesTimelineView {
         }
         this.requestDraw();
       },
-    }, `series:${this.series.id}`);
+    });
     this.feed = feed;
 
     void feed.start(unique).catch((error) => {

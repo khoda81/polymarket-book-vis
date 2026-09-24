@@ -4,6 +4,7 @@ import {
   type MarketLifecycle,
 } from "./marketLifecycle";
 import { resolutionOrder, sameDisplayTitle } from "./marketMetadata";
+import { isActiveOrderMarket } from "./marketTradability";
 import { buildNegRiskPalette } from "./negRiskColors";
 import {
   buildThresholdPalette,
@@ -40,10 +41,18 @@ export interface ChartDefinition {
 
 export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
   const { event } = bundle;
-  const pressureScales = buildPressureScales(event, bundle.thresholdByMarketId);
-  const orderByToken = resolutionOrder(event, bundle.resolutionMsByMarketId);
+  const markets = event.markets.filter(isActiveOrderMarket);
+  const chartEvent: Event = { ...event, markets };
+  const pressureScales = buildPressureScales(
+    chartEvent,
+    bundle.thresholdByMarketId,
+  );
+  const orderByToken = resolutionOrder(
+    chartEvent,
+    bundle.resolutionMsByMarketId,
+  );
 
-  const controls = event.markets.flatMap((market, index) => {
+  const controls = markets.flatMap((market, index) => {
     const tokenId = market.outcomes.yes.tokenId;
     if (!tokenId) return [];
 
@@ -54,7 +63,7 @@ export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
     const oppositeColor = scale ? signedVolumeColor(-1, scale) : primaryColor;
     const title = market.groupItemTitle ?? market.question ?? "(untitled)";
     const suppressAgeIdentity =
-      event.markets.length === 1 && sameDisplayTitle(title, event.title);
+      markets.length === 1 && sameDisplayTitle(title, event.title);
 
     return [
       {
@@ -75,7 +84,7 @@ export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
   });
 
   return {
-    event,
+    event: chartEvent,
     controls,
     pressureScales,
   };

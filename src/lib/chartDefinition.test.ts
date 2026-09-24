@@ -19,7 +19,7 @@ function fakeBundle(): EventDetails {
         groupItemTitle: "First label",
         icon: "https://example.com/m1.png",
         conditionId: null,
-        state: { active: true, closed: false },
+        state: { active: true, closed: false, acceptingOrders: true },
         resolution: { umaResolutionStatus: null },
         outcomes: {
           yes: { label: "Yes", tokenId: "yes-1", price: "0.5" },
@@ -30,11 +30,22 @@ function fakeBundle(): EventDetails {
         id: "m2",
         question: "Inactive?",
         conditionId: null,
-        state: { active: false, closed: true },
+        state: { active: false, closed: true, acceptingOrders: true },
         resolution: { umaResolutionStatus: null },
         outcomes: {
           yes: { label: "Yes", tokenId: "yes-2", price: "1" },
           no: { label: "No", tokenId: "no-2", price: "0" },
+        },
+      },
+      {
+        id: "m3",
+        question: "Not accepting orders?",
+        conditionId: null,
+        state: { active: true, closed: false, acceptingOrders: false },
+        resolution: { umaResolutionStatus: null },
+        outcomes: {
+          yes: { label: "Yes", tokenId: "yes-3", price: "0.5" },
+          no: { label: "No", tokenId: "no-3", price: "0.5" },
         },
       },
     ],
@@ -52,10 +63,13 @@ function fakeBundle(): EventDetails {
   };
 }
 
-test("chart definition keeps resolved markets renderable", () => {
+test("chart definition keeps only active markets accepting orders", () => {
   const definition = buildChartDefinition(fakeBundle());
 
-  expect(definition.controls).toHaveLength(2);
+  expect(definition.controls).toHaveLength(1);
+  expect(definition.event.markets.map((market) => String(market.id))).toEqual([
+    "m1",
+  ]);
   expect(definition.controls[0]).toMatchObject({
     market: {
       id: "m1",

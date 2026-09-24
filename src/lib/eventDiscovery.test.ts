@@ -24,6 +24,7 @@ function event(
     volume?: string;
     liquidity?: string;
     createdAt?: string;
+    active?: boolean;
     acceptingOrders?: boolean;
     closed?: boolean;
   } = {},
@@ -41,7 +42,10 @@ function event(
     series: [],
     markets: [
       {
-        state: { acceptingOrders: overrides.acceptingOrders ?? true },
+        state: {
+          active: overrides.active ?? true,
+          acceptingOrders: overrides.acceptingOrders ?? true,
+        },
         outcomes: { yes: { tokenId: `token-${id}` } },
       },
     ],
@@ -77,6 +81,13 @@ test("event discovery keeps only recent, open, tradeable, high-volume topics", (
   expect(
     matchesDiscoveryFilters(
       event("inactive", { acceptingOrders: false }),
+      FILTERS,
+      NOW,
+    ),
+  ).toBe(false);
+  expect(
+    matchesDiscoveryFilters(
+      event("disabled", { active: false, acceptingOrders: true }),
       FILTERS,
       NOW,
     ),

@@ -1,5 +1,6 @@
 import type { Event } from "@polymarket/client";
 import { createPublicClient } from "@polymarket/client";
+import { isActiveOrderMarket } from "./marketTradability";
 
 type PublicClient = ReturnType<typeof createPublicClient>;
 
@@ -79,8 +80,7 @@ export function matchesDiscoveryFilters(
       (Number.isFinite(liquidity) && liquidity >= filters.minLiquidity)) &&
     event.markets.some(
       (market) =>
-        market.state.acceptingOrders === true &&
-        Boolean(market.outcomes.yes.tokenId),
+        isActiveOrderMarket(market) && Boolean(market.outcomes.yes.tokenId),
     )
   );
 }

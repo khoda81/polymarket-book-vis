@@ -94,10 +94,9 @@ export class PressureFrontierMemory {
     validThroughMs: number,
   ): void {
     validThroughMs = this.normalizeTime(validThroughMs);
-    const observed =
-      this.applyLevels("bid", bidChanges, validThroughMs) ||
-      this.applyLevels("ask", askChanges, validThroughMs);
-    if (!observed) return;
+    const bidObserved = this.applyLevels("bid", bidChanges, validThroughMs);
+    const askObserved = this.applyLevels("ask", askChanges, validThroughMs);
+    if (!bidObserved && !askObserved) return;
 
     this.field.observeCurrent(validThroughMs);
     this.lastUpdateMs = validThroughMs;
