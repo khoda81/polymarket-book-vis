@@ -90,7 +90,6 @@ export async function discoverEvents(
   client: PublicClient,
   filters: EventDiscoveryFilters,
   excludedIds: ReadonlySet<string>,
-  excludedSlugs: ReadonlySet<string>,
   nowMs = Date.now(),
   excludedSeriesIds: ReadonlySet<string> = new Set(),
 ): Promise<Event[]> {
@@ -118,12 +117,11 @@ export async function discoverEvents(
   for await (const page of pages) {
     pageCount++;
     for (const event of page.items) {
-      const id = String(event.id);
+      const id = event.id;
       if (seenIds.has(id)) continue;
       seenIds.add(id);
-      if (event.slug && excludedSlugs.has(event.slug)) continue;
       if (
-        event.series.some((series) => excludedSeriesIds.has(String(series.id)))
+        event.series.some((series) => excludedSeriesIds.has(series.id))
       )
         continue;
       if (!matchesDiscoveryFilters(event, filters, nowMs)) continue;
