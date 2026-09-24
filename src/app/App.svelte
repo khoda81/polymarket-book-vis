@@ -22,17 +22,16 @@
   import {
     eventLabel,
     eventSlug,
-    isSeriesEntry,
     normalizePinnedSeriesIds,
     normalizePinnedSlugs,
     pinState,
     seriesLabel,
     toEventSlug,
-    type DashboardEntry,
+    type EventDashboardItem,
     type DashboardItem,
     type EventSlug,
     type PinState,
-    type SeriesDashboardEntry,
+    type SeriesDashboardItem,
   } from "./model";
   import {
     createPublicClient,
@@ -498,7 +497,7 @@
         new Set([
           ...dismissedDiscoveryIds,
           ...entries
-            .filter((entry): entry is DashboardEntry => !isSeriesEntry(entry))
+            .filter((entry): entry is EventDashboardItem => entry.kind === "event")
             .map((entry) => String(entry.event.id)),
         ]),
         new Set(pinnedSlugs),
@@ -558,7 +557,7 @@
     focusExisting = true,
   ): boolean {
     const existing = entries.find(
-      (entry) => !isSeriesEntry(entry) && entry.event.id === event.id,
+      (entry) => entry.kind === "event" && entry.event.id === event.id,
     );
     if (existing) {
       if (focusExisting) {
@@ -574,7 +573,7 @@
       return false;
     }
 
-    const entry: DashboardEntry = {
+    const entry: EventDashboardItem = {
       kind: "event",
       event,
       announceLifecycle,
@@ -587,7 +586,7 @@
   function addSeries(series: Series, announceLifecycle: boolean): boolean {
     const seriesId = String(series.id);
     const existing = entries.find(
-      (entry) => isSeriesEntry(entry) && String(entry.series.id) === seriesId,
+      (entry) => entry.kind === "series" && String(entry.series.id) === seriesId,
     );
     if (existing) {
       status = `${seriesLabel(series)} is already on the dashboard.`;
@@ -601,7 +600,7 @@
       return false;
     }
 
-    const entry: SeriesDashboardEntry = {
+    const entry: SeriesDashboardItem = {
       kind: "series",
       series,
       announceLifecycle,
@@ -670,7 +669,7 @@
     setPinned(state.slug, state.kind !== "pinned", "end");
   }
 
-  function removeEvent(entry: DashboardEntry): void {
+  function removeEvent(entry: EventDashboardItem): void {
     dismissedDiscoveryIds.add(String(entry.event.id));
     persistDismissedDiscoveryIds();
     const slug = eventSlug(entry.event);
@@ -678,36 +677,38 @@
     forgetLayoutKey(itemKey(entry));
     entries = entries.filter(
       (candidate) =>
-        isSeriesEntry(candidate) || candidate.event.id !== entry.event.id,
+        candidate.kind === "series" || candidate.event.id !== entry.event.id,
     );
     status = `Removed ${eventLabel(entry.event)}.`;
   }
 
-  function removeSeries(entry: SeriesDashboardEntry): void {
+  function removeSeries(entry: SeriesDashboardItem): void {
     const seriesId = String(entry.series.id);
     if (pinnedSeriesIds.includes(seriesId)) setSeriesPinned(seriesId, false);
     forgetLayoutKey(itemKey(entry));
     entries = entries.filter(
       (candidate) =>
-        !isSeriesEntry(candidate) || String(candidate.series.id) !== seriesId,
+        candidate.kind === "event" || String(candidate.series.id) !== seriesId,
     );
     status = `Removed ${seriesLabel(entry.series)}.`;
   }
 
   function itemReady(entry: DashboardItem): void {
     if (!entry.announceLifecycle) return;
-    status = isSeriesEntry(entry)
-      ? `Added ${seriesLabel(entry.series)}.`
-      : `Added ${eventLabel(entry.event)}.`;
+    status =
+      entry.kind === "series"
+        ? `Added ${seriesLabel(entry.series)}.`
+        : `Added ${eventLabel(entry.event)}.`;
   }
 
   function itemFailed(entry: DashboardItem, message: string): void {
-    if (isSeriesEntry(entry)) {
+    if (entry.kind === "series") {
       const seriesId = String(entry.series.id);
       forgetLayoutKey(itemKey(entry));
       entries = entries.filter(
         (candidate) =>
-          !isSeriesEntry(candidate) || String(candidate.series.id) !== seriesId,
+          candidate.kind === "event" ||
+          String(candidate.series.id) !== seriesId,
       );
       status = `Could not add ${seriesLabel(entry.series)}: ${message}`;
       return;
@@ -716,7 +717,7 @@
     forgetLayoutKey(itemKey(entry));
     entries = entries.filter(
       (candidate) =>
-        isSeriesEntry(candidate) || candidate.event.id !== entry.event.id,
+        candidate.kind === "series" || candidate.event.id !== entry.event.id,
     );
     status = `Could not add ${eventLabel(entry.event)}: ${message}`;
   }
@@ -783,7 +784,7 @@
   }
 
   function itemKey(entry: DashboardItem): string {
-    if (isSeriesEntry(entry)) return `series:${String(entry.series.id)}`;
+    if (entry.kind === "series") return `series:${String(entry.series.id)}`;
     return `event:${eventSlug(entry.event) ?? entry.event.id}`;
   }
 </script>
@@ -839,7 +840,7 @@
       data-layout-key={itemKey(entry)}
       use:masonryItem
     >
-      {#if isSeriesEntry(entry)}
+      {#if entry.kind === "series"}
         <SeriesCard
           series={entry.series}
           {client}
