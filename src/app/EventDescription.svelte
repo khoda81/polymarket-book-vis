@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { EventDescription } from "../lib/eventBundle";
+  import type { EventDescription } from "../lib/eventDetails";
 
   export let description: EventDescription;
 </script>

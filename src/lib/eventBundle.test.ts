@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Event } from "@polymarket/client";
-import { buildEventBundle } from "./eventBundle";
+import { buildEventDetails } from "./eventDetails";
 
 function fakeEvent(): Event {
   return {
@@ -41,7 +41,7 @@ function fakeEvent(): Event {
 
 test("presentation uses normalized SDK metadata and dedupes artwork", () => {
   const event = fakeEvent();
-  const bundle = buildEventBundle(event, { markets: [] });
+  const bundle = buildEventDetails(event, { markets: [] });
 
   expect(bundle.presentation.description).toBeNull();
   expect(bundle.presentation.marketRules).toEqual([
@@ -70,7 +70,7 @@ test("raw Gamma data is reduced to missing market annotations", () => {
     })),
   } as Event;
 
-  const bundle = buildEventBundle(event, {
+  const bundle = buildEventDetails(event, {
     markets: [
       {
         id: "m1",

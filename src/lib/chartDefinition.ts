@@ -14,7 +14,7 @@ import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "./signedVolume";
-import type { EventDetails } from "./eventBundle";
+import type { EventDetails } from "./eventDetails";
 import type {
   Event,
   Market,

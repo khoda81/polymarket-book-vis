@@ -9,7 +9,7 @@
     type ChartMarketControl,
   } from "../lib/chartDefinition";
   import type { ConnectionStatus, ViewMode } from "../lib/chartState";
-  import type { EventDetails } from "../lib/eventBundle";
+  import type { EventDetails } from "../lib/eventDetails";
   import {
     summarizeEventMarketStatus,
     type EventMarketStatus,

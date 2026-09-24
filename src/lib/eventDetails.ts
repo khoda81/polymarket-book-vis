@@ -53,7 +53,7 @@ const GENERIC_DESCRIPTION_LABELS = new Set([
   "rules",
 ]);
 
-export async function loadEventBundle(
+export async function loadEventDetails(
   client: PublicClient,
   event: Event,
 ): Promise<EventDetails> {
@@ -66,10 +66,10 @@ export async function loadEventBundle(
   if (!response.ok)
     throw new Error(`Gamma API returned status ${response.status}`);
 
-  return buildEventBundle(event, await response.json());
+  return buildEventDetails(event, await response.json());
 }
 
-export function buildEventBundle(
+export function buildEventDetails(
   event: Event,
   rawEventValue: unknown,
 ): EventDetails {

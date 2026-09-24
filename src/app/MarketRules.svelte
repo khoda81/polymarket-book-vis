@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { MarketRule } from "../lib/eventBundle";
+  import type { MarketRule } from "../lib/eventDetails";
 
   export let rules: readonly MarketRule[];
 </script>

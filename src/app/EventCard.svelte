@@ -11,7 +11,7 @@
     type CardReorderStart,
   } from "./cardReorderSurface";
   import type { ConnectionStatus, ViewMode } from "../lib/chartState";
-  import { loadEventBundle, type EventDetails } from "../lib/eventBundle";
+  import { loadEventDetails, type EventDetails } from "../lib/eventDetails";
   import type { EventMarketStatus } from "../lib/marketLifecycle";
   import { createPublicClient, type Event } from "@polymarket/client";
 
@@ -80,7 +80,7 @@
   onMount(() => {
     let alive = true;
 
-    void loadEventBundle(client, event).then(
+    void loadEventDetails(client, event).then(
       (loaded) => {
         if (!alive) return;
         runtime = {

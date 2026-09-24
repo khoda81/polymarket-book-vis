@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Event } from "@polymarket/client";
-import type { EventDetails } from "./eventBundle";
+import type { EventDetails } from "./eventDetails";
 import { buildChartDefinition, pressureScaleForToken } from "./chartDefinition";
 import { signedVolumeColor } from "./signedVolume";
 
