@@ -44,25 +44,27 @@ export class FeedBackpressureDiagnostics {
     if (elapsedMs < REPORT_INTERVAL_MS) return;
 
     const seconds = elapsedMs / 1_000;
-    console.log(`[backpressure:feed] ${this.label}`, {
-      eventsPerSecond: round(this.events / seconds),
-      workItemsPerSecond: round(this.workItems / seconds),
-      byType: Object.fromEntries(
-        [...this.byType].sort((a, b) => b[1] - a[1]),
-      ),
-      sourceLagMs:
-        this.lagSamples === 0
-          ? null
-          : {
-              latest: round(this.latestLagMs),
-              average: round(this.totalLagMs / this.lagSamples),
-              max: round(this.maxLagMs),
-            },
-      handlerMs: {
-        average: round(this.totalHandlerMs / Math.max(1, this.events)),
-        max: round(this.maxHandlerMs),
-      },
-    });
+    console.log(
+      `[backpressure:feed] ${this.label} ${JSON.stringify({
+        eventsPerSecond: round(this.events / seconds),
+        workItemsPerSecond: round(this.workItems / seconds),
+        byType: Object.fromEntries(
+          [...this.byType].sort((a, b) => b[1] - a[1]),
+        ),
+        sourceLagMs:
+          this.lagSamples === 0
+            ? null
+            : {
+                latest: round(this.latestLagMs),
+                average: round(this.totalLagMs / this.lagSamples),
+                max: round(this.maxLagMs),
+              },
+        handlerMs: {
+          average: round(this.totalHandlerMs / Math.max(1, this.events)),
+          max: round(this.maxHandlerMs),
+        },
+      })}`,
+    );
 
     this.reportStartedAt = now;
     this.events = 0;
@@ -95,13 +97,15 @@ export class DrawBackpressureDiagnostics {
     const elapsedMs = now - this.reportStartedAt;
     if (elapsedMs < REPORT_INTERVAL_MS) return;
 
-    console.log(`[backpressure:draw] ${this.label}`, {
-      framesPerSecond: round(this.frames / (elapsedMs / 1_000)),
-      drawMs: {
-        average: round(this.totalMs / Math.max(1, this.frames)),
-        max: round(this.maxMs),
-      },
-    });
+    console.log(
+      `[backpressure:draw] ${this.label} ${JSON.stringify({
+        framesPerSecond: round(this.frames / (elapsedMs / 1_000)),
+        drawMs: {
+          average: round(this.totalMs / Math.max(1, this.frames)),
+          max: round(this.maxMs),
+        },
+      })}`,
+    );
 
     this.reportStartedAt = now;
     this.frames = 0;
