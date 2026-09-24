@@ -1,13 +1,13 @@
-import type { Event } from "@polymarket/client";
+import type { Event, MarketId, TokenId } from "@polymarket/client";
 import { stableHue } from "./negRiskColors";
 import type { SignedVolumeColorScale } from "./signedVolume";
 
 export type ThresholdFamilyDirection = "prefix" | "suffix";
 
 export interface ThresholdOutcomeColor {
-  readonly marketId: string;
-  readonly yesTokenId: string;
-  readonly noTokenId: string;
+  readonly marketId: MarketId;
+  readonly yesTokenId: TokenId;
+  readonly noTokenId: TokenId;
   readonly thresholdIndex: number;
   readonly hue: number;
   readonly magnitude: number;
@@ -21,13 +21,8 @@ export interface ThresholdOutcomeColor {
 export interface ThresholdPalette {
   readonly direction: ThresholdFamilyDirection;
   readonly outcomes: readonly ThresholdOutcomeColor[];
-  readonly byYesTokenId: ReadonlyMap<string, ThresholdOutcomeColor>;
-  readonly byNoTokenId: ReadonlyMap<string, ThresholdOutcomeColor>;
-}
-
-interface RawThresholdMarket {
-  readonly id?: unknown;
-  readonly groupItemThreshold?: unknown;
+  readonly byYesTokenId: ReadonlyMap<TokenId, ThresholdOutcomeColor>;
+  readonly byNoTokenId: ReadonlyMap<TokenId, ThresholdOutcomeColor>;
 }
 
 const SEMANTIC_LUMINANCE = 0.72;
@@ -46,22 +41,15 @@ const MIN_TOTAL_PRICE_TREND = 0.03;
  */
 export function buildThresholdPalette(
   event: Event,
-  rawMarkets: readonly unknown[],
+  thresholdByMarketId: ReadonlyMap<MarketId, number>,
 ): ThresholdPalette | null {
   if (event.trading.negRiskAugmented === true || event.markets.length < 2)
     return null;
 
-  const rawById = new Map<string, RawThresholdMarket>();
-  for (const raw of rawMarkets) {
-    if (!raw || typeof raw !== "object") continue;
-    const market = raw as RawThresholdMarket;
-    if (market.id === undefined) continue;
-    rawById.set(String(market.id), market);
-  }
-
   const rows = event.markets.map((market) => {
-    const raw = rawById.get(String(market.id));
-    const thresholdIndex = parseThresholdIndex(raw?.groupItemThreshold);
+    const thresholdIndex = parseThresholdIndex(
+      thresholdByMarketId.get(market.id),
+    );
     const yesTokenId = market.outcomes.yes.tokenId;
     const noTokenId = market.outcomes.no.tokenId;
     const yesPrice = parseProbability(market.outcomes.yes.price);
@@ -73,9 +61,9 @@ export function buildThresholdPalette(
     )
       return null;
     return {
-      marketId: String(market.id),
-      yesTokenId: String(yesTokenId),
-      noTokenId: String(noTokenId),
+      marketId: market.id,
+      yesTokenId,
+      noTokenId,
       thresholdIndex,
       yesPrice,
     };
