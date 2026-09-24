@@ -29,11 +29,11 @@ type FeedState =
 export type LiveBookUpdate =
   | {
       readonly kind: "snapshot";
-      readonly observedAtMs: number;
+      readonly validThroughMs: number;
     }
   | {
       readonly kind: "levels";
-      readonly observedAtMs: number;
+      readonly validThroughMs: number;
       readonly changes: readonly {
         readonly side: "bid" | "ask";
         readonly price: import("@/lib/price").Price;
@@ -156,7 +156,7 @@ export class LiveBookFeed {
           this.books.set(tokenId, book);
           this.callbacks.onBookUpdated(tokenId, book, {
             kind: "snapshot",
-            observedAtMs: observationTimeMs(),
+            validThroughMs: eventTimeMs(event.payload.timestamp),
           });
           continue;
         }
@@ -176,13 +176,13 @@ export class LiveBookFeed {
             changesByToken.set(tokenId, changes);
           }
 
-          const observedAtMs = observationTimeMs();
+          const validThroughMs = eventTimeMs(event.payload.timestamp);
           for (const [tokenId, changes] of changesByToken) {
             const book = this.books.get(tokenId);
             if (!book) continue;
             this.callbacks.onBookUpdated(tokenId, book, {
               kind: "levels",
-              observedAtMs,
+              validThroughMs,
               changes,
             });
           }
@@ -221,10 +221,12 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function observationTimeMs(): number {
-  // Pressure history is defined by the order in which this client observes
-  // and applies book states. Exchange timestamps may arrive out of order.
-  // performance.timeOrigin + performance.now() gives us epoch-compatible,
-  // monotonic time for ghost aging without trusting transport ordering.
-  return performance.timeOrigin + performance.now();
+function eventTimeMs(value: unknown): number {
+  const nowMs = Date.now();
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) &&
+    timestamp >= 0 &&
+    timestamp <= nowMs + 60_000
+    ? timestamp
+    : nowMs;
 }
