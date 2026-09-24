@@ -19,7 +19,7 @@ import { chartThemeForDarkMode } from "./chartTheme";
 import { AgeStripView } from "./ageStripView";
 import { LiveBookFeed } from "./liveBookFeed";
 import { VolumeBookView } from "./volumeBookView";
-import { TokenId, PublicClient } from "@polymarket/client";
+import type { MarketId, PublicClient, TokenId } from "@polymarket/client";
 
 export interface ChartSurfaceElements {
   readonly canvas: HTMLCanvasElement;
@@ -30,11 +30,11 @@ export interface ChartSurfaceElements {
 export interface ChartControllerOptions {
   readonly onConnectionStatus?: (status: ConnectionStatus) => void;
   readonly onMarketAutoHidden?: (
-    marketId: string,
+    marketId: MarketId,
     reason: AutoHiddenReason,
   ) => void;
   readonly onMarketLifecycleChanged?: (
-    marketId: string,
+    marketId: MarketId,
     lifecycle: MarketLifecycle,
   ) => void;
 }
@@ -42,14 +42,14 @@ export interface ChartControllerOptions {
 export class ChartController {
   private readonly feed: LiveBookFeed;
   private readonly onMarketAutoHidden: (
-    marketId: string,
+    marketId: MarketId,
     reason: AutoHiddenReason,
   ) => void;
   private readonly onMarketLifecycleChanged: (
-    marketId: string,
+    marketId: MarketId,
     lifecycle: MarketLifecycle,
   ) => void;
-  private readonly lifecycleByMarketId = new Map<string, MarketLifecycle>();
+  private readonly lifecycleByMarketId = new Map<MarketId, MarketLifecycle>();
   private readonly themeQuery: MediaQueryList;
   private readonly resizeObserver: ResizeObserver;
   private readonly activeTokens = new Set<TokenId>();
@@ -139,7 +139,7 @@ export class ChartController {
     this.reqDraw();
   };
 
-  async start(hiddenMarketIds: ReadonlySet<string>): Promise<void> {
+  async start(hiddenMarketIds: ReadonlySet<MarketId>): Promise<void> {
     if (this.lifecycle !== "new")
       throw new Error(`ChartController cannot start from ${this.lifecycle}`);
     this.lifecycle = "started";
@@ -178,7 +178,7 @@ export class ChartController {
     this.reqDraw();
   }
 
-  setMarketVisible(marketId: string, visible: boolean): void {
+  setMarketVisible(marketId: MarketId, visible: boolean): void {
     const control = this.definition.controls.find(
       (candidate) => candidate.marketId === marketId,
     );
@@ -201,7 +201,7 @@ export class ChartController {
   }
 
   private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
-    return pressureScaleForToken(this.definition, String(tokenId));
+    return pressureScaleForToken(this.definition, tokenId);
   }
 
   private autoHideToken(tokenId: TokenId, reason: AutoHiddenReason): void {
@@ -223,12 +223,12 @@ export class ChartController {
       const belongsToMarket =
         (control.conditionId !== null &&
           control.conditionId === resolution.conditionId) ||
-        resolution.assetIds.includes(String(control.tokenId)) ||
+        resolution.assetIds.includes(control.tokenId) ||
         (control.oppositeTokenId !== null &&
-          resolution.assetIds.includes(String(control.oppositeTokenId))) ||
-        resolution.winningTokenId === String(control.tokenId) ||
+          resolution.assetIds.includes(control.oppositeTokenId)) ||
+        resolution.winningAssetId === control.tokenId ||
         (control.oppositeTokenId !== null &&
-          resolution.winningTokenId === String(control.oppositeTokenId));
+          resolution.winningAssetId === control.oppositeTokenId);
       if (!belongsToMarket) continue;
 
       const current =
