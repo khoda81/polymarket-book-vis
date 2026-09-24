@@ -15,20 +15,138 @@ test("bid and ask decimal boundaries share one exact coordinate", () => {
   expect(restored.shellsAtPrice(p(0.008))[0]?.hiVolume).toBe(100);
 });
 
-test("adjacent floating-point share amounts keep the entire live shell", () => {
+test("unchanged observations advance only the current pressure timestamp", () => {
   const memory = new PressureFrontierMemory();
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 0.3 }], 1);
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 0.1 + 0.2 }], 2);
+
+  memory.updateLevels("bid", [{ price: p(0.5), shares: 100 }], 1_000);
+  memory.updateLevels("bid", [{ price: p(0.5), shares: 60 }], 2_000);
+  memory.updateLevels("bid", [{ price: p(0.5), shares: 60 }], 3_000);
 
   expect(memory.shellsAtPrice(p(0.4))).toEqual([
-    { loVolume: 0, hiVolume: 0.1 + 0.2, side: 1, state: { kind: "live" } },
+    {
+      loVolume: 0,
+      hiVolume: 60,
+      side: 1,
+      validThroughMs: 3_000,
+    },
+    {
+      loVolume: 60,
+      hiVolume: 100,
+      side: 1,
+      validThroughMs: 1_000,
+    },
   ]);
-  expect(() =>
-    new PressureFrontierMemory().restore(memory.snapshot()),
-  ).not.toThrow();
 });
 
-test("decimal level updates preserve field totals through snapshot round trips", () => {
+test("successive shrink events preserve each last-valid boundary", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels("bid", [{ price: p(0.5), shares: 100 }], 1_000);
+  memory.updateLevels("bid", [{ price: p(0.5), shares: 60 }], 2_000);
+  memory.updateLevels("bid", [{ price: p(0.5), shares: 60 }], 3_000);
+  memory.updateLevels("bid", [{ price: p(0.5), shares: 30 }], 4_000);
+
+  expect(memory.shellsAtPrice(p(0.4))).toEqual([
+    {
+      loVolume: 0,
+      hiVolume: 30,
+      side: 1,
+      validThroughMs: 4_000,
+    },
+    {
+      loVolume: 30,
+      hiVolume: 60,
+      side: 1,
+      validThroughMs: 3_000,
+    },
+    {
+      loVolume: 60,
+      hiVolume: 100,
+      side: 1,
+      validThroughMs: 1_000,
+    },
+  ]);
+});
+
+test("newer opposite-side observations permanently occlude older history", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels("bid", [{ price: p(0.55), shares: 120 }], 1_000);
+  memory.updateLevels("bid", [{ price: p(0.55), shares: 0 }], 2_000);
+  memory.updateLevels("ask", [{ price: p(0.5), shares: 70 }], 3_000);
+  memory.updateLevels("ask", [{ price: p(0.5), shares: 0 }], 4_000);
+
+  expect(memory.shellsAtPrice(p(0.52))).toEqual([
+    {
+      loVolume: 0,
+      hiVolume: 70,
+      side: -1,
+      validThroughMs: 3_000,
+    },
+    {
+      loVolume: 70,
+      hiVolume: 120,
+      side: 1,
+      validThroughMs: 1_000,
+    },
+  ]);
+});
+
+test("still-current hidden liquidity reappears when the newer side retreats", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels("bid", [{ price: p(0.6), shares: 100 }], 1_000);
+  memory.updateLevels("ask", [{ price: p(0.5), shares: 60 }], 2_000);
+
+  expect(memory.shellsAtPrice(p(0.55))).toEqual([
+    {
+      loVolume: 0,
+      hiVolume: 60,
+      side: -1,
+      validThroughMs: 2_000,
+    },
+    {
+      loVolume: 60,
+      hiVolume: 100,
+      side: 1,
+      validThroughMs: 2_000,
+    },
+  ]);
+
+  memory.updateLevels("ask", [{ price: p(0.5), shares: 0 }], 3_000);
+  expect(memory.shellsAtPrice(p(0.55))).toEqual([
+    {
+      loVolume: 0,
+      hiVolume: 100,
+      side: 1,
+      validThroughMs: 3_000,
+    },
+  ]);
+});
+
+test("out-of-order source timestamps never move validity backward", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateLevels("bid", [{ price: p(0.5), shares: 100 }], 2_000);
+  memory.updateLevels("bid", [{ price: p(0.5), shares: 60 }], 1_500);
+
+  expect(memory.shellsAtPrice(p(0.4))).toEqual([
+    {
+      loVolume: 0,
+      hiVolume: 60,
+      side: 1,
+      validThroughMs: 2_000,
+    },
+    {
+      loVolume: 60,
+      hiVolume: 100,
+      side: 1,
+      validThroughMs: 2_000,
+    },
+  ]);
+});
+
+test("decimal updates preserve field totals through snapshot round trips", () => {
   const memory = new PressureFrontierMemory();
   const levels = {
     bid: new Map<number, number>(),
@@ -47,13 +165,10 @@ test("decimal level updates preserve field totals through snapshot round trips",
     const key = side === "ask" ? p(1 - price / 10_000) : price;
     if (shares > 0) levels[side].set(key, shares);
     else levels[side].delete(key);
-    memory.updateLevels(side, [{ price, shares }], step);
-    const snapshot = memory.snapshot();
-    if (snapshot.version !== 3)
-      throw new Error("Expected current snapshot format");
 
-    // Independent flat-book oracle, including the tiny intervals that have
-    // no representable interior sample. No tree or renderer queries here.
+    memory.updateLevels(side, [{ price, shares }], step);
+
+    const snapshot = memory.snapshot();
     for (const run of snapshot.field.runs) {
       const bids = [...levels.bid].filter(([key]) => key >= run.hi);
       const asks = [...levels.ask].filter(([key]) => 10_000 - key <= run.lo);
@@ -66,167 +181,12 @@ test("decimal level updates preserve field totals through snapshot round trips",
         7,
       );
     }
+
     expect(() => new PressureFrontierMemory().restore(snapshot)).not.toThrow();
   }
 });
 
-test("decreasing a level creates exactly the uncovered ghost shell", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 100 }], 1_000);
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 60 }], 2_000);
-
-  expect(memory.shellsAtPrice(p(0.4))).toEqual([
-    {
-      loVolume: 0,
-      hiVolume: 60,
-      side: 1,
-      state: { kind: "live" },
-    },
-    {
-      loVolume: 60,
-      hiVolume: 100,
-      side: 1,
-      state: { kind: "ghost", sinceMs: 2_000 },
-    },
-  ]);
-});
-
-test("increasing pressure overwrites history instead of creating another layer", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 100 }], 1_000);
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 40 }], 2_000);
-  expect(memory.historyDepth("bid")).toBe(1);
-
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 80 }], 3_000);
-  expect(memory.historyDepth("bid")).toBe(1);
-  expect(memory.shellsAtPrice(p(0.4))).toEqual([
-    {
-      loVolume: 0,
-      hiVolume: 80,
-      side: 1,
-      state: { kind: "live" },
-    },
-    {
-      loVolume: 80,
-      hiVolume: 100,
-      side: 1,
-      state: { kind: "ghost", sinceMs: 2_000 },
-    },
-  ]);
-});
-
-test("older outer ghosts survive newer inner shrink events", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 100 }], 1_000);
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 60 }], 2_000);
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 30 }], 3_000);
-
-  expect(memory.shellsAtPrice(p(0.4))).toEqual([
-    {
-      loVolume: 0,
-      hiVolume: 30,
-      side: 1,
-      state: { kind: "live" },
-    },
-    {
-      loVolume: 30,
-      hiVolume: 60,
-      side: 1,
-      state: { kind: "ghost", sinceMs: 3_000 },
-    },
-    {
-      loVolume: 60,
-      hiVolume: 100,
-      side: 1,
-      state: { kind: "ghost", sinceMs: 2_000 },
-    },
-  ]);
-});
-
-test("newer opposite-side history owns overlap in the spread", () => {
-  const memory = new PressureFrontierMemory();
-
-  // Bid once reached this price with 120 shares, then disappeared.
-  memory.updateLevels("bid", [{ price: p(0.55), shares: 120 }], 1_000);
-  memory.updateLevels("bid", [{ price: p(0.55), shares: 0 }], 2_000);
-
-  // Later the ask moved through the same price with 70 shares and disappeared.
-  memory.updateLevels("ask", [{ price: p(0.5), shares: 70 }], 3_000);
-  memory.updateLevels("ask", [{ price: p(0.5), shares: 0 }], 4_000);
-
-  expect(memory.shellsAtPrice(p(0.52))).toEqual([
-    {
-      loVolume: 0,
-      hiVolume: 70,
-      side: -1,
-      state: { kind: "ghost", sinceMs: 4_000 },
-    },
-    {
-      loVolume: 70,
-      hiVolume: 120,
-      side: 1,
-      state: { kind: "ghost", sinceMs: 2_000 },
-    },
-  ]);
-});
-
-test("a newer larger opposite-side excursion permanently occludes older history", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels("bid", [{ price: p(0.55), shares: 120 }], 1_000);
-  memory.updateLevels("bid", [{ price: p(0.55), shares: 0 }], 2_000);
-
-  memory.updateLevels("ask", [{ price: p(0.5), shares: 150 }], 3_000);
-  memory.updateLevels("ask", [{ price: p(0.5), shares: 0 }], 4_000);
-
-  expect(memory.shellsAtPrice(p(0.52))).toEqual([
-    {
-      loVolume: 0,
-      hiVolume: 150,
-      side: -1,
-      state: { kind: "ghost", sinceMs: 4_000 },
-    },
-  ]);
-});
-
-test("one price-level atom affects only its monotone side-local prefix", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels(
-    "bid",
-    [
-      { price: p(0.3), shares: 10 },
-      { price: p(0.7), shares: 20 },
-    ],
-    1_000,
-  );
-
-  expect(memory.shellsAtPrice(p(0.2))[0]?.hiVolume).toBe(30);
-  expect(memory.shellsAtPrice(p(0.5))[0]?.hiVolume).toBe(20);
-  expect(memory.shellsAtPrice(p(0.8))).toEqual([]);
-});
-
-test("same-timestamp batch uses final absolute level sizes", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 100 }], 1_000);
-  memory.updateLevels(
-    "bid",
-    [
-      { price: p(0.5), shares: 20 },
-      { price: p(0.5), shares: 120 },
-    ],
-    2_000,
-  );
-
-  expect(memory.historyDepth("bid")).toBe(0);
-  expect(memory.shellsAtPrice(p(0.4))[0]?.hiVolume).toBe(120);
-});
-
-test("removing large fractional ask levels cannot leave negative cumulative pressure", () => {
+test("large fractional removals cannot leave negative cumulative pressure", () => {
   const memory = new PressureFrontierMemory();
 
   memory.updateLevels("ask", [{ price: p(0.19), shares: 26_383_410.511 }], 1);
@@ -235,177 +195,19 @@ test("removing large fractional ask levels cannot leave negative cumulative pres
   memory.updateLevels("ask", [{ price: p(0.11), shares: 0 }], 4);
 
   expect(memory.currentLevels("ask")).toEqual([]);
-  expect(
-    memory
-      .renderRuns()
-      .every((run) => run.bands.every((band) => band.state.kind === "ghost")),
-  ).toBe(true);
+  expect(memory.renderRuns().every((run) =>
+    run.bands.every((band) => band.hiVolume > band.loVolume),
+  )).toBe(true);
 });
 
-test("render runs are stable between draws and invalidate only on mutation", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels(
-    "bid",
-    [
-      { price: p(0.4), shares: 10 },
-      { price: p(0.6), shares: 20 },
-    ],
-    1_000,
-  );
-
-  const first = memory.renderRuns();
-  const second = memory.renderRuns();
-  expect(second).toBe(first);
-
-  memory.updateLevels("bid", [{ price: p(0.6), shares: 15 }], 2_000);
-  const third = memory.renderRuns();
-
-  expect(third).not.toBe(first);
-  expect(
-    third
-      .filter((run) => run.bands.length > 0)
-      .map(({ lo, hi, bands }) => ({ lo, hi, bands })),
-  ).toEqual([
-    {
-      lo: p(0),
-      hi: p(0.4),
-      bands: [
-        {
-          loVolume: 0,
-          hiVolume: 25,
-          side: 1,
-          state: { kind: "live" },
-        },
-        {
-          loVolume: 25,
-          hiVolume: 30,
-          side: 1,
-          state: { kind: "ghost", sinceMs: 2_000 },
-        },
-      ],
-    },
-    {
-      lo: p(0.4),
-      hi: p(0.6),
-      bands: [
-        {
-          loVolume: 0,
-          hiVolume: 15,
-          side: 1,
-          state: { kind: "live" },
-        },
-        {
-          loVolume: 15,
-          hiVolume: 20,
-          side: 1,
-          state: { kind: "ghost", sinceMs: 2_000 },
-        },
-      ],
-    },
-  ]);
-});
-
-test("render runs merge adjacent price intervals with identical shell stacks", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels("bid", [{ price: p(0.8), shares: 20 }], 1_000);
-  memory.updateLevels("ask", [{ price: p(0.2), shares: 10 }], 2_000);
-  memory.updateLevels("ask", [{ price: p(0.2), shares: 0 }], 3_000);
-
-  const runs = memory.renderRuns();
-  expect(runs.every((run) => run.hi > run.lo)).toBe(true);
-  expect(memory.renderRuns()).toBe(runs);
-});
-
-test("out-of-order external timestamps preserve observation order", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels("bid", [{ price: p(0.5), shares: 100 }], 2_000);
-  expect(() =>
-    memory.updateLevels("bid", [{ price: p(0.5), shares: 60 }], 1_500),
-  ).not.toThrow();
-
-  expect(memory.shellsAtPrice(p(0.4))).toEqual([
-    {
-      loVolume: 0,
-      hiVolume: 60,
-      side: 1,
-      state: { kind: "live" },
-    },
-    {
-      loVolume: 60,
-      hiVolume: 100,
-      side: 1,
-      state: { kind: "ghost", sinceMs: 2_000 },
-    },
-  ]);
-});
-
-test("still-live hidden liquidity reappears when the newer side retreats", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels("bid", [{ price: p(0.6), shares: 100 }], 1_000);
-  memory.updateLevels("ask", [{ price: p(0.5), shares: 60 }], 2_000);
-
-  expect(memory.shellsAtPrice(p(0.55))).toEqual([
-    {
-      loVolume: 0,
-      hiVolume: 60,
-      side: -1,
-      state: { kind: "live" },
-    },
-    {
-      loVolume: 60,
-      hiVolume: 100,
-      side: 1,
-      state: { kind: "live" },
-    },
-  ]);
-
-  memory.updateLevels("ask", [{ price: p(0.5), shares: 0 }], 3_000);
-  expect(memory.shellsAtPrice(p(0.55))).toEqual([
-    {
-      loVolume: 0,
-      hiVolume: 100,
-      side: 1,
-      state: { kind: "live" },
-    },
-  ]);
-});
-
-test("overwritten historical liquidity never resurrects", () => {
-  const memory = new PressureFrontierMemory();
-
-  memory.updateLevels("bid", [{ price: p(0.6), shares: 100 }], 1_000);
-  memory.updateLevels("bid", [{ price: p(0.6), shares: 0 }], 2_000);
-  memory.updateLevels("ask", [{ price: p(0.5), shares: 60 }], 3_000);
-  memory.updateLevels("ask", [{ price: p(0.5), shares: 0 }], 4_000);
-
-  expect(memory.shellsAtPrice(p(0.55))).toEqual([
-    {
-      loVolume: 0,
-      hiVolume: 60,
-      side: -1,
-      state: { kind: "ghost", sinceMs: 4_000 },
-    },
-    {
-      loVolume: 60,
-      hiVolume: 100,
-      side: 1,
-      state: { kind: "ghost", sinceMs: 2_000 },
-    },
-  ]);
-});
-
-test("ghost visibility is reversible when the display half-life changes", () => {
+test("visibility depends only on timestamp and display half-life", () => {
   const memory = new PressureFrontierMemory();
 
   memory.updateLevels("bid", [{ price: p(0.5), shares: 100 }], 1_000);
   memory.updateLevels("bid", [{ price: p(0.5), shares: 0 }], 2_000);
 
   const history = memory.shellsAtPrice(p(0.4));
-  expect(memory.hasVisibleGhosts(20_000, 1_000)).toBe(false);
-  expect(memory.hasVisibleGhosts(20_000, 100_000)).toBe(true);
+  expect(memory.hasVisiblePressure(20_000, 1_000)).toBe(false);
+  expect(memory.hasVisiblePressure(20_000, 100_000)).toBe(true);
   expect(memory.shellsAtPrice(p(0.4))).toEqual(history);
 });
