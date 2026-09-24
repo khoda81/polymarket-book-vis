@@ -15,6 +15,7 @@
   } from "../lib/eventDiscovery";
   import { setSharedTooltipSuppressed } from "../lib/sharedTooltip";
   import {
+    dashboardDragScrollVelocity,
     dashboardOrderForPointer,
     type DashboardDragSnapshot,
   } from "./dashboardReorder";
@@ -57,6 +58,9 @@
   let columnCount = loadColumnCount();
   let draggingKey: string | null = null;
   let dragSnapshot: DashboardDragSnapshot | null = null;
+  let dragPointer: { x: number; y: number } | null = null;
+  let dragScrollFrame: number | null = null;
+  let dragScrollFrameTime: number | null = null;
   let status = "";
   let discoveryStatus = "";
   let discovering = false;
@@ -270,6 +274,7 @@
     dragSnapshot = {
       order: visibleOrder,
       items,
+      viewportScrollY: window.scrollY,
       grid: {
         left: gridRect.left + paddingLeft,
         top: gridRect.top + paddingTop,
@@ -313,10 +318,23 @@
     event.preventDefault();
     event.stopPropagation();
 
-    const nextVisible = dashboardOrderForPointer(dragSnapshot, draggingKey, {
-      x: event.clientX,
-      y: event.clientY,
-    });
+    dragPointer = { x: event.clientX, y: event.clientY };
+    applyReorderAtPointer(dragPointer);
+    updateDragAutoScroll();
+  }
+
+  function applyReorderAtPointer(pointer: { x: number; y: number }): void {
+    if (!draggingKey || !dragSnapshot) return;
+
+    const nextVisible = dashboardOrderForPointer(
+      dragSnapshot,
+      draggingKey,
+      {
+        x: pointer.x,
+        y: pointer.y,
+      },
+      window.scrollY,
+    );
     const visible = new Set(dragSnapshot.order);
     let nextIndex = 0;
     const next = layoutOrder.map((itemKey) =>
@@ -332,13 +350,61 @@
     layoutOrder = next;
   }
 
+  function updateDragAutoScroll(): void {
+    if (!dragPointer || !draggingKey) return;
+    if (dashboardDragScrollVelocity(dragPointer.y, window.innerHeight) === 0) {
+      stopDragAutoScroll();
+      return;
+    }
+    if (dragScrollFrame === null)
+      dragScrollFrame = requestAnimationFrame(runDragAutoScroll);
+  }
+
+  function runDragAutoScroll(time: number): void {
+    dragScrollFrame = null;
+    if (!dragPointer || !draggingKey) return;
+
+    const velocity = dashboardDragScrollVelocity(
+      dragPointer.y,
+      window.innerHeight,
+    );
+    if (velocity === 0) {
+      dragScrollFrameTime = null;
+      return;
+    }
+
+    const elapsedMs =
+      dragScrollFrameTime === null
+        ? 16
+        : Math.min(32, Math.max(0, time - dragScrollFrameTime));
+    dragScrollFrameTime = time;
+    const before = window.scrollY;
+    window.scrollBy(0, (velocity * elapsedMs) / 1_000);
+
+    if (window.scrollY === before) {
+      dragScrollFrameTime = null;
+      return;
+    }
+
+    applyReorderAtPointer(dragPointer);
+    dragScrollFrame = requestAnimationFrame(runDragAutoScroll);
+  }
+
+  function stopDragAutoScroll(): void {
+    if (dragScrollFrame !== null) cancelAnimationFrame(dragScrollFrame);
+    dragScrollFrame = null;
+    dragScrollFrameTime = null;
+  }
+
   function finishReorder(): void {
     window.removeEventListener("pointermove", moveReorder, true);
     window.removeEventListener("pointerup", finishReorder, true);
     window.removeEventListener("pointercancel", finishReorder, true);
     if (draggingKey) persistLayoutOrder();
+    stopDragAutoScroll();
     draggingKey = null;
     dragSnapshot = null;
+    dragPointer = null;
     setSharedTooltipSuppressed(false);
   }
 

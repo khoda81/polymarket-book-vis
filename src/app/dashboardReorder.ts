@@ -24,8 +24,34 @@ export interface DashboardDragSnapshot {
   readonly order: readonly string[];
   readonly items: readonly DashboardDragItem[];
   readonly grid: DashboardGridSnapshot;
+  /** Window scroll position paired with the viewport-space grid snapshot. */
+  readonly viewportScrollY: number;
   /** Pointer position inside the dragged card at pointer-down. */
   readonly grabOffset: DashboardDragPoint;
+}
+
+const AUTO_SCROLL_EDGE_PX = 96;
+const MAX_AUTO_SCROLL_PX_PER_SECOND = 900;
+
+/** Signed window-scroll velocity for a pointer near a viewport edge. */
+export function dashboardDragScrollVelocity(
+  pointerY: number,
+  viewportHeight: number,
+): number {
+  if (!Number.isFinite(pointerY) || !(viewportHeight > 0)) return 0;
+
+  const edge = Math.min(AUTO_SCROLL_EDGE_PX, viewportHeight / 3);
+  if (pointerY < edge)
+    return (
+      -MAX_AUTO_SCROLL_PX_PER_SECOND *
+      Math.min(1, Math.max(0, (edge - pointerY) / edge))
+    );
+  if (pointerY > viewportHeight - edge)
+    return (
+      MAX_AUTO_SCROLL_PX_PER_SECOND *
+      Math.min(1, Math.max(0, (pointerY - (viewportHeight - edge)) / edge))
+    );
+  return 0;
 }
 
 /**
@@ -46,6 +72,7 @@ export function dashboardOrderForPointer(
   snapshot: DashboardDragSnapshot,
   draggedKey: string,
   pointer: DashboardDragPoint,
+  viewportScrollY = snapshot.viewportScrollY,
 ): string[] {
   const originalIndex = snapshot.order.indexOf(draggedKey);
   if (originalIndex < 0) return [...snapshot.order];
@@ -62,6 +89,8 @@ export function dashboardOrderForPointer(
   let bestIndexDistance = Number.POSITIVE_INFINITY;
   let bestInsertionIndex = Number.POSITIVE_INFINITY;
   const pointerColumn = columnForX(pointer.x, snapshot.grid);
+  const pointerY =
+    pointer.y + Math.max(0, viewportScrollY) - snapshot.viewportScrollY;
 
   for (
     let insertionIndex = 0;
@@ -83,7 +112,7 @@ export function dashboardOrderForPointer(
 
     const columnDistance = Math.abs(rect.column - pointerColumn);
     const verticalDistance = squared(
-      pointer.y - (rect.top + snapshot.grabOffset.y),
+      pointerY - (rect.top + snapshot.grabOffset.y),
     );
     const indexDistance = Math.abs(insertionIndex - originalIndex);
 

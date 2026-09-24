@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import {
+  dashboardDragScrollVelocity,
   dashboardOrderForPointer,
   type DashboardDragSnapshot,
 } from "./dashboardReorder";
 
 const snapshot: DashboardDragSnapshot = {
   order: ["a", "b", "c", "d"],
+  viewportScrollY: 0,
   grid: {
     left: 0,
     top: 0,
@@ -30,6 +32,21 @@ test("same drag-start snapshot and pointer always give the same order", () => {
   const second = dashboardOrderForPointer(snapshot, "a", pointer);
 
   expect(second).toEqual(first);
+});
+
+test("scroll delta advances the pointer through the immutable snapshot", () => {
+  expect(
+    dashboardOrderForPointer(snapshot, "a", { x: 80, y: 100 }, 120),
+  ).toEqual(dashboardOrderForPointer(snapshot, "a", { x: 80, y: 220 }, 0));
+});
+
+test("drag auto-scroll accelerates toward the viewport edges", () => {
+  expect(dashboardDragScrollVelocity(300, 600)).toBe(0);
+  expect(dashboardDragScrollVelocity(96, 600)).toBe(0);
+  expect(dashboardDragScrollVelocity(48, 600)).toBeCloseTo(-450);
+  expect(dashboardDragScrollVelocity(552, 600)).toBeCloseTo(450);
+  expect(dashboardDragScrollVelocity(-20, 600)).toBe(-900);
+  expect(dashboardDragScrollVelocity(620, 600)).toBe(900);
 });
 
 test("matches the cursor column, then the dragged grab point's height", () => {
@@ -86,6 +103,7 @@ test("different card heights are accounted for by masonry simulation", () => {
 test("exact ties prefer the drag-start insertion index", () => {
   const tied: DashboardDragSnapshot = {
     order: ["a", "b"],
+    viewportScrollY: 0,
     grid: {
       left: 0,
       top: 0,
