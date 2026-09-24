@@ -13,10 +13,10 @@
   $: resolutionSide =
     lifecycle.kind !== "resolved"
       ? ""
-      : String(lifecycle.winningTokenId) === String(control.tokenId)
+      : lifecycle.winningTokenId === control.tokenId
         ? "primary"
         : control.oppositeTokenId !== null &&
-            String(lifecycle.winningTokenId) === String(control.oppositeTokenId)
+            lifecycle.winningTokenId === control.oppositeTokenId
           ? "opposite"
           : "";
   $: resolutionOutcome =
