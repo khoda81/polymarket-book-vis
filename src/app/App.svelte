@@ -191,7 +191,7 @@
         }
       }
     } catch {
-      // Fall through to the legacy pin ordering below.
+      // Fall back to the stored pin order below.
     }
 
     return [
@@ -534,7 +534,11 @@
     persistIds(PINNED_SERIES_IDS_STORAGE_KEY, pinnedSeriesIds);
   }
 
-  function addEvent( event: Event, announceReady: boolean, focusExisting = true ): boolean {
+  function addEvent(
+    event: Event,
+    announceReady: boolean,
+    focusExisting = true,
+  ): boolean {
     const existing = entries.find(
       (entry) => entry.kind === "event" && entry.event.id === event.id,
     );
