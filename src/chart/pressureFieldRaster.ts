@@ -1,5 +1,5 @@
 import { pressureInkThicknessCss } from "@/lib/pressureInk";
-import { ghostAlpha, type PressureBand } from "@/lib/pressureField";
+import { stalenessAlpha, type PressureBand } from "@/lib/pressureField";
 
 export interface RgbColor {
   readonly r: number;
@@ -22,7 +22,7 @@ export interface PressureColumnRasterOptions {
   readonly dpr: number;
   readonly ghostHalfLifeMs: number;
   readonly nowMs: number;
-  readonly visibleGhostSinceMs: number;
+  readonly visibleSinceMs: number;
   readonly centerDevice: number;
   readonly topDevice: number;
   readonly heightDevice: number;
@@ -93,20 +93,13 @@ function buildRasterShells(
   const shells: RasterShell[] = [];
 
   for (const band of bands) {
-    if (
-      band.state.kind === "ghost" &&
-      band.state.sinceMs <= options.visibleGhostSinceMs
-    )
-      continue;
+    if (band.validThroughMs <= options.visibleSinceMs) continue;
 
-    const alpha =
-      band.state.kind === "live"
-        ? 1
-        : ghostAlpha(
-            band.state.sinceMs,
-            options.nowMs,
-            options.ghostHalfLifeMs,
-          );
+    const alpha = stalenessAlpha(
+      band.validThroughMs,
+      options.nowMs,
+      options.ghostHalfLifeMs,
+    );
     if (!(alpha > 1 / 255)) continue;
 
     const innerRadius =
