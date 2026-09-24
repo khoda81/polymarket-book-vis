@@ -24,7 +24,7 @@ export interface VolumeBookViewHost {
   readonly definition: ChartDefinition;
   readonly activeTokens: ReadonlySet<TokenId>;
   readonly getBook: (
-    tokenId: string,
+    tokenId: TokenId,
   ) => ReturnType<typeof emptyTokenBook> | undefined;
   readonly getTheme: () => ChartTheme;
   readonly isActive: () => boolean;
@@ -79,10 +79,8 @@ export class VolumeBookView {
       const tokenId = market.outcomes.yes.tokenId;
       if (!tokenId || !this.host.activeTokens.has(tokenId)) continue;
 
-      const book = this.host.getBook(String(tokenId)) ?? emptyTokenBook();
-      const semanticScale = this.host.definition.pressureScales.get(
-        String(tokenId),
-      );
+      const book = this.host.getBook(tokenId) ?? emptyTokenBook();
+      const semanticScale = this.host.definition.pressureScales.get(tokenId);
       const yesColor = semanticScale
         ? signedVolumeColor(1, semanticScale)
         : marketColor(this.host.definition.event.id, index);
