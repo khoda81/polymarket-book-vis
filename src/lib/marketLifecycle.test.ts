@@ -7,8 +7,8 @@ import {
 } from "./marketLifecycle";
 
 const CONDITION_ID = "condition-1" as ConditionId;
-const YES_TOKEN_ID = YES_TOKEN_ID;
-const NO_TOKEN_ID = NO_TOKEN_ID;
+const YES_TOKEN_ID = "yes-token" as TokenId;
+const NO_TOKEN_ID = "no-token" as TokenId;
 
 function market(overrides: Partial<Market> = {}): Market {
   return {
