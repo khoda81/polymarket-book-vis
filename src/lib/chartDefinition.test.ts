@@ -49,16 +49,6 @@ function fakeBundle(): EventBundle {
       description: null,
       marketRules: [],
     },
-    marketTitles: new Map([[event.markets[0]!.id, "First label"]]),
-    marketIcons: new Map([
-      [event.markets[0]!.id, "https://example.com/m1.png"],
-    ]),
-    tokenNames: new Map([
-      [event.markets[0]!.outcomes.yes.tokenId!, "Primary"],
-    ]),
-    oppositeTokenNames: new Map([
-      [event.markets[0]!.outcomes.yes.tokenId!, "Opposite"],
-    ]),
   };
 }
 
@@ -67,27 +57,26 @@ test("chart definition keeps resolved markets renderable", () => {
 
   expect(definition.controls).toHaveLength(2);
   expect(definition.controls[0]).toMatchObject({
-    marketId: "m1",
+    market: {
+      id: "m1",
+      conditionId: null,
+    },
     tokenId: "yes-1",
-    oppositeTokenId: "no-1",
-    conditionId: null,
-    primaryOutcome: "Yes",
-    oppositeOutcome: "No",
     lifecycle: { kind: "live" },
     title: "First label",
     iconUrl: "https://example.com/m1.png",
-    acceptingOrders: false,
     order: 0,
     resolutionMs: null,
     ageLabel: "First label",
     suppressAgeIdentity: false,
   });
-  const tokenId = definition.controls[0]!.tokenId;
-  expect(definition.controls[0]?.dotColor).toBe(
-    signedVolumeColor(1, pressureScaleForToken(definition, tokenId)),
+
+  const control = definition.controls[0]!;
+  expect(control.dotColor).toBe(
+    signedVolumeColor(1, pressureScaleForToken(definition, control.tokenId)),
   );
-  expect(definition.tokenNames.get(tokenId)).toBe("Primary");
-  expect(definition.oppositeTokenNames.get(tokenId)).toBe("Opposite");
+  expect(control.market.outcomes.yes.label).toBe("Yes");
+  expect(control.market.outcomes.no.label).toBe("No");
 });
 
 test("single-market wrapper metadata survives DOM recreation", () => {
@@ -121,21 +110,19 @@ test("single-market wrapper metadata survives DOM recreation", () => {
   const bundle: EventBundle = {
     event,
     thresholdByMarketId: new Map(),
-    resolutionMsByMarketId: new Map([[event.markets[0]!.id, Date.parse(endDate)]]),
+    resolutionMsByMarketId: new Map([
+      [event.markets[0]!.id, Date.parse(endDate)],
+    ]),
     presentation: {
       iconUrl: null,
       description: null,
       marketRules: [],
     },
-    marketTitles: new Map(),
-    marketIcons: new Map(),
-    tokenNames: new Map(),
-    oppositeTokenNames: new Map(),
   };
 
   const control = buildChartDefinition(bundle).controls[0];
   expect(control).toMatchObject({
-    marketId: "m1",
+    market: { id: "m1" },
     ageLabel: "",
     suppressAgeIdentity: true,
     order: 0,
