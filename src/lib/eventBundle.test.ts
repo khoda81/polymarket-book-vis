@@ -7,85 +7,104 @@ function fakeEvent(): Event {
     id: "event-1",
     slug: "example-event",
     title: "Example",
+    icon: "https://cdn.example/event.png?size=128",
+    description: "Rules",
     display: { sortBy: "price" },
     markets: [
       {
         id: "m1",
         question: "First market?",
+        groupItemTitle: "First",
+        description: "Specific first-market rule.",
+        icon: "https://cdn.example/event.png?size=32",
+        state: {},
         outcomes: {
-          yes: { tokenId: "yes-1", price: "0.7" },
-          no: { tokenId: "no-1", price: "0.3" },
+          yes: { label: "Yes", tokenId: "yes-1", price: "0.7" },
+          no: { label: "No", tokenId: "no-1", price: "0.3" },
         },
       },
       {
         id: "m2",
         question: "Second market?",
+        groupItemTitle: "Second",
+        description: "Rules",
+        icon: "https://cdn.example/second.png",
+        state: {},
         outcomes: {
-          yes: { tokenId: "yes-2", price: "0.2" },
-          no: { tokenId: "no-2", price: "0.8" },
+          yes: { label: "Yes", tokenId: "yes-2", price: "0.2" },
+          no: { label: "No", tokenId: "no-2", price: "0.8" },
         },
       },
     ],
   } as unknown as Event;
 }
 
-test("presentation hides placeholder event descriptions and dedupes artwork", () => {
-  const bundle = buildEventBundle(fakeEvent(), {
-    icon: "https://cdn.example/event.png?size=128",
-    description: "Rules",
-    markets: [
-      {
-        id: "m1",
-        groupItemTitle: "First",
-        icon: "https://cdn.example/event.png?size=32",
-        description: "Specific first-market rule.",
-        outcomes: '["Yes","No"]',
-        clobTokenIds: '["yes-1","no-1"]',
-      },
-      {
-        id: "m2",
-        groupItemTitle: "Second",
-        icon: "https://cdn.example/second.png",
-        description: "Rules",
-        outcomes: '["Yes","No"]',
-        clobTokenIds: '["yes-2","no-2"]',
-      },
-    ],
-  });
+test("presentation uses normalized SDK metadata and dedupes artwork", () => {
+  const event = fakeEvent();
+  const bundle = buildEventBundle(event, { markets: [] });
 
   expect(bundle.presentation.description).toBeNull();
-  expect(bundle.marketIcons.get("m1")).toBeUndefined();
-  expect(bundle.marketIcons.get("m2")).toBe("https://cdn.example/second.png");
+  expect(bundle.marketIcons.get(event.markets[0]!.id)).toBeUndefined();
+  expect(bundle.marketIcons.get(event.markets[1]!.id)).toBe(
+    "https://cdn.example/second.png",
+  );
   expect(bundle.presentation.marketRules).toEqual([
     {
-      marketId: "m1",
+      marketId: event.markets[0]!.id,
       title: "First",
       body: "Specific first-market rule.",
     },
   ]);
+  expect(bundle.tokenNames.get(event.markets[0]!.outcomes.yes.tokenId!)).toBe(
+    "Yes",
+  );
+  expect(
+    bundle.oppositeTokenNames.get(event.markets[0]!.outcomes.yes.tokenId!),
+  ).toBe("No");
 });
 
-test("presentation uses subtitle as preview and omits duplicate market rules", () => {
-  const common =
-    "This market resolves according to the official published figure.";
-  const bundle = buildEventBundle(fakeEvent(), {
+test("raw Gamma data is reduced to missing market annotations", () => {
+  const event = {
+    ...fakeEvent(),
     subtitle: "Official figure at the deadline",
-    description: common,
+    description:
+      "This market resolves according to the official published figure.",
+    markets: fakeEvent().markets.map((market, index) => ({
+      ...market,
+      description:
+        "This market resolves according to the official published figure.",
+      state: {
+        ...market.state,
+        endDate: index === 0 ? "2026-12-31T23:59:00Z" : null,
+      },
+    })),
+  } as Event;
+
+  const bundle = buildEventBundle(event, {
     markets: [
       {
         id: "m1",
-        description: common,
-        outcomes: ["Primary", "Opposite"],
-        clobTokenIds: ["yes-1", "no-1"],
+        groupItemThreshold: "0",
+      },
+      {
+        id: "m2",
+        groupItemThreshold: "1",
+        endDateIso: "2027-01-02",
       },
     ],
   });
 
   expect(bundle.presentation.description).toEqual({
     preview: "Official figure at the deadline",
-    body: common,
+    body: "This market resolves according to the official published figure.",
   });
   expect(bundle.presentation.marketRules).toEqual([]);
-  expect(bundle.tokenNames.get("yes-1")).toBe("Primary");
-  expect(bundle.oppositeTokenNames.get("yes-1")).toBe("Opposite");
+  expect(bundle.thresholdByMarketId.get(event.markets[0]!.id)).toBe(0);
+  expect(bundle.thresholdByMarketId.get(event.markets[1]!.id)).toBe(1);
+  expect(bundle.resolutionMsByMarketId.get(event.markets[0]!.id)).toBe(
+    Date.parse("2026-12-31T23:59:00Z"),
+  );
+  expect(bundle.resolutionMsByMarketId.get(event.markets[1]!.id)).toBe(
+    Date.parse("2027-01-02"),
+  );
 });
