@@ -28,9 +28,9 @@ function fakeBundle(): EventDetails {
       },
       {
         id: "m2",
-        question: "Inactive?",
+        question: "Resolved?",
         conditionId: null,
-        state: { active: false, closed: true, acceptingOrders: true },
+        state: { active: true, closed: true, acceptingOrders: false },
         resolution: { umaResolutionStatus: null },
         outcomes: {
           yes: { label: "Yes", tokenId: "yes-2", price: "1" },
@@ -39,13 +39,24 @@ function fakeBundle(): EventDetails {
       },
       {
         id: "m3",
-        question: "Not accepting orders?",
+        question: "Awaiting resolution?",
         conditionId: null,
-        state: { active: true, closed: false, acceptingOrders: false },
+        state: { active: true, closed: true, acceptingOrders: false },
         resolution: { umaResolutionStatus: null },
         outcomes: {
           yes: { label: "Yes", tokenId: "yes-3", price: "0.5" },
           no: { label: "No", tokenId: "no-3", price: "0.5" },
+        },
+      },
+      {
+        id: "m4",
+        question: "Broken placeholder?",
+        conditionId: null,
+        state: { active: false, closed: false, acceptingOrders: true },
+        resolution: { umaResolutionStatus: null },
+        outcomes: {
+          yes: { label: "Yes", tokenId: "yes-4", price: null },
+          no: { label: "No", tokenId: "no-4", price: null },
         },
       },
     ],
@@ -63,12 +74,13 @@ function fakeBundle(): EventDetails {
   };
 }
 
-test("chart definition keeps only active markets accepting orders", () => {
+test("chart definition keeps tradable and resolved markets, not broken ones", () => {
   const definition = buildChartDefinition(fakeBundle());
 
-  expect(definition.controls).toHaveLength(1);
+  expect(definition.controls).toHaveLength(2);
   expect(definition.event.markets.map((market) => String(market.id))).toEqual([
     "m1",
+    "m2",
   ]);
   expect(definition.controls[0]).toMatchObject({
     market: {
@@ -91,6 +103,16 @@ test("chart definition keeps only active markets accepting orders", () => {
   );
   expect(control.market.outcomes.yes.label).toBe("Yes");
   expect(control.market.outcomes.no.label).toBe("No");
+
+  expect(definition.controls[1]).toMatchObject({
+    market: { id: "m2" },
+    tokenId: "yes-2",
+    lifecycle: {
+      kind: "resolved",
+      winningTokenId: "yes-2",
+      winningOutcome: "Yes",
+    },
+  });
 });
 
 test("single-market wrapper metadata survives DOM recreation", () => {

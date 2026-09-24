@@ -41,7 +41,17 @@ export interface ChartDefinition {
 
 export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
   const { event } = bundle;
-  const markets = event.markets.filter(isActiveOrderMarket);
+  const eligible = event.markets.flatMap((market) => {
+    const tokenId = market.outcomes.yes.tokenId;
+    if (!tokenId) return [];
+
+    const lifecycle = initialMarketLifecycle(market);
+    if (!isActiveOrderMarket(market) && lifecycle.kind !== "resolved")
+      return [];
+
+    return [{ market, tokenId, lifecycle }];
+  });
+  const markets = eligible.map(({ market }) => market);
   const chartEvent: Event = { ...event, markets };
   const pressureScales = buildPressureScales(
     chartEvent,
@@ -52,10 +62,7 @@ export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
     bundle.resolutionMsByMarketId,
   );
 
-  const controls = markets.flatMap((market, index) => {
-    const tokenId = market.outcomes.yes.tokenId;
-    if (!tokenId) return [];
-
+  const controls = eligible.map(({ market, tokenId, lifecycle }, index) => {
     const scale = pressureScales.get(tokenId);
     const primaryColor = scale
       ? signedVolumeColor(1, scale)
@@ -65,22 +72,20 @@ export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
     const suppressAgeIdentity =
       markets.length === 1 && sameDisplayTitle(title, event.title);
 
-    return [
-      {
-        market,
-        tokenId,
-        lifecycle: initialMarketLifecycle(market),
-        title,
-        iconUrl: distinctMarketArtworkUrl(market, bundle.presentation.iconUrl),
-        dotColor: primaryColor,
-        primaryColor,
-        oppositeColor,
-        order: orderByToken.get(tokenId) ?? index,
-        resolutionMs: bundle.resolutionMsByMarketId.get(market.id) ?? null,
-        ageLabel: suppressAgeIdentity ? "" : title,
-        suppressAgeIdentity,
-      },
-    ];
+    return {
+      market,
+      tokenId,
+      lifecycle,
+      title,
+      iconUrl: distinctMarketArtworkUrl(market, bundle.presentation.iconUrl),
+      dotColor: primaryColor,
+      primaryColor,
+      oppositeColor,
+      order: orderByToken.get(tokenId) ?? index,
+      resolutionMs: bundle.resolutionMsByMarketId.get(market.id) ?? null,
+      ageLabel: suppressAgeIdentity ? "" : title,
+      suppressAgeIdentity,
+    };
   });
 
   return {
