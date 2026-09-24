@@ -135,14 +135,14 @@ export function inferSeriesCadenceMs(
 export function mergeSeriesEvents(
   ...groups: readonly (readonly Event[])[]
 ): Event[] {
-  const byId = new Map<string, Event>();
+  const byId = new Map<Event["id"], Event>();
   for (const group of groups)
-    for (const event of group) byId.set(String(event.id), event);
+    for (const event of group) byId.set(event.id, event);
 
   return [...byId.values()].sort((a, b) => {
     const aStart = eventStartMs(a) ?? Infinity;
     const bStart = eventStartMs(b) ?? Infinity;
-    return aStart - bStart || String(a.id).localeCompare(String(b.id));
+    return aStart - bStart || a.id.localeCompare(b.id);
   });
 }
 
@@ -196,19 +196,6 @@ export async function loadSeriesEventsAround(
       start <= centerMs + halfWindowMs + cadenceMs
     );
   });
-}
-
-export async function findSeriesBySlug(
-  client: PublicClient,
-  slug: string,
-): Promise<Series | null> {
-  const page = await client
-    .listSeries({ slug: [slug], pageSize: 10 })
-    .firstPage();
-  return (
-    page.items.find((candidate) => candidate.slug?.trim() === slug.trim()) ??
-    null
-  );
 }
 
 async function collectEvents(
