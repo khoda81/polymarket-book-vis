@@ -363,10 +363,6 @@ class AgeRecorder {
           "rest-seed",
           shortToken(tokenId),
           `buffered=${buffered.length}`,
-          `historyLayers=${
-            (this.memories.get(tokenId)?.historyDepth("bid") ?? 0) +
-            (this.memories.get(tokenId)?.historyDepth("ask") ?? 0)
-          }`,
         );
       }
     } catch (error) {
