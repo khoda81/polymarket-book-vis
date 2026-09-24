@@ -305,7 +305,7 @@ function transitionRun(
           loVolume: lo,
           hiVolume: hi,
           side: oldOwner,
-          validThroughMs,
+          validThroughMs: existing?.validThroughMs ?? validThroughMs,
         },
         run,
       );
