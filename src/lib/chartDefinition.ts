@@ -16,26 +16,21 @@ import {
 } from "./signedVolume";
 import type { EventBundle } from "./eventBundle";
 import type {
-  ConditionId,
   Event,
+  Market,
   MarketId,
   TokenId,
 } from "@polymarket/client";
 
 export interface ChartMarketControl {
-  readonly marketId: MarketId;
+  readonly market: Market;
   readonly tokenId: TokenId;
-  readonly oppositeTokenId: TokenId | null;
-  readonly conditionId: ConditionId | null;
-  readonly primaryOutcome: string;
-  readonly oppositeOutcome: string;
   readonly lifecycle: MarketLifecycle;
   readonly title: string;
   readonly iconUrl: string | null;
   readonly dotColor: string;
   readonly primaryColor: string;
   readonly oppositeColor: string;
-  readonly acceptingOrders: boolean;
   readonly order: number;
   readonly resolutionMs: number | null;
   readonly ageLabel: string;
@@ -46,8 +41,6 @@ export interface ChartDefinition {
   readonly event: Event;
   readonly controls: readonly ChartMarketControl[];
   readonly pressureScales: ReadonlyMap<TokenId, SignedVolumeColorScale>;
-  readonly tokenNames: ReadonlyMap<TokenId, string>;
-  readonly oppositeTokenNames: ReadonlyMap<TokenId, string>;
 }
 
 export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
@@ -65,38 +58,28 @@ export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
     const tokenId = market.outcomes.yes.tokenId;
     if (!tokenId) return [];
 
-    const marketId = market.id;
     const scale = pressureScales.get(tokenId);
     const primaryColor = scale
       ? signedVolumeColor(1, scale)
       : marketColor(event.id, index);
     const oppositeColor = scale ? signedVolumeColor(-1, scale) : primaryColor;
-    const dotColor = primaryColor;
     const title =
-      bundle.marketTitles.get(marketId) ??
-      market.groupItemTitle ??
-      market.question ??
-      "(untitled)";
+      market.groupItemTitle ?? market.question ?? "(untitled)";
     const suppressAgeIdentity =
       event.markets.length === 1 && sameDisplayTitle(title, event.title);
 
     return [
       {
-        marketId,
+        market,
         tokenId,
-        oppositeTokenId: market.outcomes.no.tokenId,
-        conditionId: market.conditionId,
-        primaryOutcome: market.outcomes.yes.label,
-        oppositeOutcome: market.outcomes.no.label,
         lifecycle: initialMarketLifecycle(market),
         title,
-        iconUrl: bundle.marketIcons.get(marketId) ?? null,
-        dotColor,
+        iconUrl: distinctMarketArtworkUrl(market, bundle.presentation.iconUrl),
+        dotColor: primaryColor,
         primaryColor,
         oppositeColor,
-        acceptingOrders: market.state.acceptingOrders === true,
         order: orderByToken.get(tokenId) ?? index,
-        resolutionMs: bundle.resolutionMsByMarketId.get(marketId) ?? null,
+        resolutionMs: bundle.resolutionMsByMarketId.get(market.id) ?? null,
         ageLabel: suppressAgeIdentity ? "" : title,
         suppressAgeIdentity,
       },
@@ -107,8 +90,6 @@ export function buildChartDefinition(bundle: EventBundle): ChartDefinition {
     event,
     controls,
     pressureScales,
-    tokenNames: bundle.tokenNames,
-    oppositeTokenNames: bundle.oppositeTokenNames,
   };
 }
 
@@ -156,4 +137,26 @@ export function defaultPressureScaleForMarket(
   marketIndex: number,
 ): SignedVolumeColorScale {
   return semanticYesNeutralNoScale(marketHue(event.id, marketIndex));
+}
+
+function distinctMarketArtworkUrl(
+  market: Market,
+  eventArtworkUrl: string | null,
+): string | null {
+  const marketArtworkUrl = market.icon?.trim() || market.image?.trim() || null;
+  if (!marketArtworkUrl) return null;
+  if (!eventArtworkUrl) return marketArtworkUrl;
+  return normalizeArtworkUrl(marketArtworkUrl) ===
+    normalizeArtworkUrl(eventArtworkUrl)
+    ? null
+    : marketArtworkUrl;
+}
+
+function normalizeArtworkUrl(value: string): string {
+  try {
+    const url = new URL(value, "https://polymarket.com");
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return value.split(/[?#]/, 1)[0] ?? value;
+  }
 }
