@@ -1,4 +1,4 @@
-import { ghostVisibleSinceMs } from "@/lib/pressureField";
+import { visibleSinceMs } from "@/lib/pressureField";
 import type { PressureFrontierMemory } from "@/lib/pressureFrontierMemory";
 import type { Frame } from "@/lib/renderer";
 import {
@@ -82,7 +82,7 @@ export function drawPressureMemoryStrip(
   const reserveShares = volumePerCssPixel * geometry.heightCss;
   const colors = pressureColors(colorScale);
   const rgbColors = pressureRgbColors(colorScale, colors);
-  const visibleGhostSinceMs = ghostVisibleSinceMs(nowMs, ghostHalfLifeMs);
+  const oldestVisibleMs = visibleSinceMs(nowMs, ghostHalfLifeMs);
 
   const rowTopDevice = Math.floor(
     (geometry.centerCss - geometry.heightCss / 2) * dpr,
@@ -118,7 +118,7 @@ export function drawPressureMemoryStrip(
         dpr,
         ghostHalfLifeMs,
         nowMs,
-        visibleGhostSinceMs,
+        visibleSinceMs: oldestVisibleMs,
         centerDevice,
         topDevice: rowTopDevice,
         heightDevice: rowHeightDevice,
