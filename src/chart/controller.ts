@@ -17,6 +17,10 @@ import {
 } from "@/lib/signedVolume";
 import { OrderBookPlotter, type ChartTheme } from "@/lib/renderer";
 import { chartThemeForDarkMode } from "./chartTheme";
+import {
+  BACKPRESSURE_DEBUG,
+  DrawBackpressureDiagnostics,
+} from "./backpressureDiagnostics";
 import { AgeStripView } from "./ageStripView";
 import { LiveBookFeed } from "./liveBookFeed";
 import { VolumeBookView } from "./volumeBookView";
@@ -62,6 +66,7 @@ export class ChartController {
   private volumeView!: VolumeBookView;
   private raf: number | null = null;
   private readonly definition: ChartDefinition;
+  private readonly drawDiagnostics: DrawBackpressureDiagnostics;
   private viewMode: ViewMode = "age";
   private lifecycle: "new" | "started" | "destroyed" = "new";
 
@@ -72,6 +77,9 @@ export class ChartController {
     options: ChartControllerOptions = {},
   ) {
     this.definition = definition;
+    this.drawDiagnostics = new DrawBackpressureDiagnostics(
+      `event:${definition.event.id}`,
+    );
     this.onMarketAutoHidden = options.onMarketAutoHidden ?? (() => undefined);
     this.onMarketLifecycleChanged =
       options.onMarketLifecycleChanged ?? (() => undefined);
@@ -89,7 +97,7 @@ export class ChartController {
       onMarketResolved: (resolution) => {
         this.applyResolution(resolution);
       },
-    });
+    }, `event:${definition.event.id}`);
 
     this.themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
     this.theme = chartThemeForDarkMode(this.themeQuery.matches);
@@ -284,12 +292,15 @@ export class ChartController {
 
   private performDraw() {
     this.raf = null;
-    if (this.viewMode === "age") {
-      this.ageView.draw();
-      return;
+    const startedAt = BACKPRESSURE_DEBUG ? performance.now() : 0;
+
+    if (this.viewMode === "age") this.ageView.draw();
+    else {
+      this.ageView.prepareVolumeView();
+      this.volumeView.draw();
     }
 
-    this.ageView.prepareVolumeView();
-    this.volumeView.draw();
+    if (BACKPRESSURE_DEBUG)
+      this.drawDiagnostics.observe(performance.now() - startedAt);
   }
 }
