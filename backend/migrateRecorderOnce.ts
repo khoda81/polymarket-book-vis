@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
+import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
 import { parsePressureFrontierSnapshot } from "../src/lib/pressureFrontierSnapshot";
 import { priceFromLegacyNumber, priceFromTicks } from "../src/lib/price";
 
@@ -68,8 +69,9 @@ export function migrateRecorderDatabase(path: string): void {
     increment(formatCounts, format);
 
     const pressure = migratePressureSnapshot(raw, Number(row.saved_at_ms));
-    // Validate the exact representation the new recorder will load.
-    parsePressureFrontierSnapshot(pressure);
+    // Validate the exact representation and invariants the new recorder loads.
+    const parsed = parsePressureFrontierSnapshot(pressure);
+    new PressureFrontierMemory().restore(parsed);
 
     return {
       tokenId: row.token_id,
@@ -96,12 +98,6 @@ export function migrateRecorderDatabase(path: string): void {
 
   db = openDatabase(path);
   try {
-    const insert = db.prepare(
-      `INSERT INTO token_state_new
-       (token_id, status, recording_since_ms, pressure)
-       VALUES (?, ?, ?, ?)`,
-    );
-
     const migrate = db.transaction((batch: readonly MigratedRow[]) => {
       db.exec(`
         DROP TABLE IF EXISTS token_state_new;
@@ -112,6 +108,12 @@ export function migrateRecorderDatabase(path: string): void {
           pressure BLOB
         ) WITHOUT ROWID;
       `);
+
+      const insert = db.prepare(
+        `INSERT INTO token_state_new
+         (token_id, status, recording_since_ms, pressure)
+         VALUES (?, ?, ?, ?)`,
+      );
 
       for (const row of batch)
         insert.run(
