@@ -1,15 +1,19 @@
 import { expect, test } from "bun:test";
-import type { Market, TokenId } from "@polymarket/client";
+import type { ConditionId, Market, TokenId } from "@polymarket/client";
 import {
   initialMarketLifecycle,
   resolveMarketLifecycle,
   summarizeEventMarketStatus,
 } from "./marketLifecycle";
 
+const CONDITION_ID = "condition-1" as ConditionId;
+const YES_TOKEN_ID = YES_TOKEN_ID;
+const NO_TOKEN_ID = NO_TOKEN_ID;
+
 function market(overrides: Partial<Market> = {}): Market {
   return {
     id: "m1",
-    conditionId: "condition-1",
+    conditionId: CONDITION_ID,
     state: {
       active: true,
       closed: false,
@@ -18,13 +22,13 @@ function market(overrides: Partial<Market> = {}): Market {
     outcomes: {
       yes: {
         label: "Up",
-        tokenId: "yes-token" as TokenId,
+        tokenId: YES_TOKEN_ID,
         positionId: null,
         price: "0.5",
       },
       no: {
         label: "Down",
-        tokenId: "no-token" as TokenId,
+        tokenId: NO_TOKEN_ID,
         positionId: null,
         price: "0.5",
       },
@@ -70,7 +74,7 @@ test("initial lifecycle distinguishes live, awaiting, and resolved", () => {
   resolved.outcomes.no.price = "0" as Market["outcomes"]["no"]["price"];
   expect(initialMarketLifecycle(resolved)).toEqual({
     kind: "resolved",
-    winningTokenId: "yes-token" as TokenId,
+    winningTokenId: YES_TOKEN_ID,
     winningOutcome: "Up",
   });
 });
@@ -80,19 +84,19 @@ test("resolution update carries the actual winner instead of hiding the market",
     resolveMarketLifecycle(
       { kind: "live" },
       {
-        conditionId: "condition-1",
-        assetIds: ["yes-token", "no-token"],
-        winningTokenId: "no-token" as TokenId,
+        conditionId: CONDITION_ID,
+        assetIds: [YES_TOKEN_ID, NO_TOKEN_ID],
+        winningAssetId: NO_TOKEN_ID,
         winningOutcome: "Down",
       },
-      "yes-token" as TokenId,
-      "no-token" as TokenId,
+      YES_TOKEN_ID,
+      NO_TOKEN_ID,
       "Up",
       "Down",
     ),
   ).toEqual({
     kind: "resolved",
-    winningTokenId: "no-token" as TokenId,
+    winningTokenId: NO_TOKEN_ID,
     winningOutcome: "Down",
   });
 });
