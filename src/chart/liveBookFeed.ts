@@ -60,12 +60,15 @@ export class LiveBookFeed {
   private readonly tokenIdByValue = new Map<string, TokenId>();
   private state: FeedState = { kind: "idle" };
   private tokenIds: TokenId[] = [];
-  private diagnostics = new FeedBackpressureDiagnostics("tokens=0");
+  private readonly diagnostics: FeedBackpressureDiagnostics;
 
   constructor(
     private readonly client: PublicClient,
     private readonly callbacks: LiveBookFeedCallbacks,
-  ) {}
+    debugLabel = "market",
+  ) {
+    this.diagnostics = new FeedBackpressureDiagnostics(debugLabel);
+  }
 
   getBook(tokenId: TokenId): TokenBook | undefined {
     return this.books.get(tokenId);
@@ -76,9 +79,6 @@ export class LiveBookFeed {
       throw new Error(`LiveBookFeed cannot start from ${this.state.kind}`);
 
     this.tokenIds = [...tokenIds];
-    this.diagnostics = new FeedBackpressureDiagnostics(
-      `tokens=${tokenIds.length}`,
-    );
     this.tokenIdByValue.clear();
     for (const tokenId of tokenIds) this.tokenIdByValue.set(tokenId, tokenId);
     this.state = { kind: "connecting" };
