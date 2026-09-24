@@ -2,11 +2,10 @@
   import type { ConnectionStatus } from "../lib/chartState";
   import type { EventMarketStatus } from "../lib/marketLifecycle";
   import type { Event } from "@polymarket/client";
-  import type { EventSlug } from "./model";
   import CopySlug from "./CopySlug.svelte";
 
   export let event: Event;
-  export let slug: EventSlug | null;
+  export let slug: string | null | undefined;
   export let iconUrl: string | null;
   export let connection: ConnectionStatus;
   export let marketStatus: EventMarketStatus;
