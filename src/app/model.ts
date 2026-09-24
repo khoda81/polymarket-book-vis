@@ -1,13 +1,5 @@
 import type { Event, Series } from "@polymarket/client";
 
-declare const eventSlugBrand: unique symbol;
-export type EventSlug = string & { readonly [eventSlugBrand]: true };
-
-export type PinState =
-  | { readonly kind: "unavailable" }
-  | { readonly kind: "unpinned"; readonly slug: EventSlug }
-  | { readonly kind: "pinned"; readonly slug: EventSlug };
-
 interface DashboardItemBase {
   readonly announceReady: boolean;
 }
@@ -24,55 +16,12 @@ export interface SeriesDashboardItem extends DashboardItemBase {
 
 export type DashboardItem = EventDashboardItem | SeriesDashboardItem;
 
-export function toEventSlug(value: unknown): EventSlug | null {
-  if (typeof value !== "string") return null;
-  const slug = value.trim();
-  return slug.length > 0 ? (slug as EventSlug) : null;
-}
-
-export function eventSlug(event: Event): EventSlug | null {
-  return toEventSlug(event.slug);
-}
-
 export function eventLabel(event: Event): string {
   return event.title?.trim() || event.slug?.trim() || "event";
 }
 
 export function seriesLabel(series: Series): string {
   return series.title?.trim() || series.slug?.trim() || "series";
-}
-
-export function pinState(event: Event, pinned: readonly EventSlug[]): PinState {
-  const slug = eventSlug(event);
-  if (!slug) return { kind: "unavailable" };
-  return pinned.includes(slug)
-    ? { kind: "pinned", slug }
-    : { kind: "unpinned", slug };
-}
-
-export function normalizePinnedSlugs(values: readonly unknown[]): EventSlug[] {
-  const result: EventSlug[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const slug = toEventSlug(value);
-    if (!slug || seen.has(slug)) continue;
-    seen.add(slug);
-    result.push(slug);
-  }
-  return result;
-}
-
-export function normalizePinnedSeriesIds(values: readonly unknown[]): string[] {
-  const result: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    if (typeof value !== "string" && typeof value !== "number") continue;
-    const id = String(value).trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    result.push(id);
-  }
-  return result;
 }
 
 export function errorMessage(error: unknown): string {
