@@ -20,7 +20,7 @@ interface DatabaseRow {
   token_id: string;
   status: RecorderTokenStatus;
   recording_since_ms: number | null;
-  cells_json: string | Uint8Array | null;
+  pressure: string | Uint8Array | null;
 }
 
 export type RecorderStoreIndexRecord = Omit<RecorderStoreRecord, "pressure"> & {
@@ -48,8 +48,7 @@ export class RecorderStore {
         token_id TEXT PRIMARY KEY,
         status TEXT NOT NULL CHECK (status IN ('watched', 'completed')),
         recording_since_ms INTEGER,
-        cells_json BLOB,
-        saved_at_ms INTEGER NOT NULL
+        pressure BLOB
       ) WITHOUT ROWID;
       CREATE INDEX IF NOT EXISTS token_state_status_idx
         ON token_state(status);
@@ -60,7 +59,7 @@ export class RecorderStore {
     return this.db
       .query<DatabaseRow & { has_pressure: number }, []>(
         `SELECT token_id, status, recording_since_ms,
-                cells_json IS NOT NULL AS has_pressure
+                pressure IS NOT NULL AS has_pressure
          FROM token_state`,
       )
       .all()
@@ -78,7 +77,7 @@ export class RecorderStore {
   load(tokenId: string): RecorderStoreRecord | null {
     const row = this.db
       .query<DatabaseRow, [string]>(
-        `SELECT token_id, status, recording_since_ms, cells_json
+        `SELECT token_id, status, recording_since_ms, pressure
          FROM token_state WHERE token_id = ?`,
       )
       .get(tokenId);
@@ -93,19 +92,16 @@ export class RecorderStore {
         token_id,
         status,
         recording_since_ms,
-        cells_json,
-        saved_at_ms
-      ) VALUES (?, ?, ?, ?, ?)
+        pressure
+      ) VALUES (?, ?, ?, ?)
       ON CONFLICT(token_id) DO UPDATE SET
         status = excluded.status,
         recording_since_ms = excluded.recording_since_ms,
-        cells_json = excluded.cells_json,
-        saved_at_ms = excluded.saved_at_ms
+        pressure = excluded.pressure
     `);
 
     const writeTransaction = this.db.transaction(
       (batch: readonly RecorderStoreRecord[]) => {
-        const savedAtMs = Date.now();
         for (const record of batch) {
           statement.run(
             record.tokenId,
@@ -114,7 +110,6 @@ export class RecorderStore {
             record.pressure === null
               ? null
               : gzipSync(JSON.stringify(record.pressure), { level: 1 }),
-            savedAtMs,
           );
         }
       },
@@ -132,7 +127,7 @@ export class RecorderStore {
 }
 
 function decodeRow(row: DatabaseRow): RecorderStoreRecord {
-  const value = row.cells_json;
+  const value = row.pressure;
   return {
     tokenId: row.token_id,
     status: row.status,
