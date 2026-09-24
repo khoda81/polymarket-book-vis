@@ -182,15 +182,13 @@ export class LiveBookFeed {
         }
 
         if (event.type === "market_resolved") {
-          const assetIds = (event.payload.assetIds ?? []).map(String);
-          for (const tokenId of assetIds) this.books.delete(tokenId);
+          const assetIds = event.payload.assetIds ?? [];
+          for (const assetId of assetIds) this.books.delete(assetId);
 
           this.callbacks.onMarketResolved({
-            conditionId: String(event.payload.conditionId),
+            conditionId: event.payload.conditionId,
             assetIds,
-            winningTokenId: event.payload.winningAssetId
-              ? String(event.payload.winningAssetId)
-              : null,
+            winningAssetId: event.payload.winningAssetId ?? null,
             winningOutcome: event.payload.winningOutcome ?? null,
           });
         }
