@@ -51,22 +51,28 @@ export function eventEndMs(event: Event): number | null {
 
 export function timedSeriesEvent(
   event: Event,
-  fallbackDurationMs: number,
+  cadenceMs: number,
 ): TimedSeriesEvent | null {
+  const endMs = eventEndMs(event);
+
+  if (endMs !== null) {
+    const startMs = endMs - cadenceMs;
+    return {
+      event,
+      startMs,
+      endMs,
+      centerMs: endMs - cadenceMs / 2,
+    };
+  }
+
   const startMs = eventStartMs(event);
   if (startMs === null) return null;
-
-  const explicitEnd = eventEndMs(event);
-  const endMs =
-    explicitEnd !== null && explicitEnd > startMs
-      ? explicitEnd
-      : startMs + fallbackDurationMs;
 
   return {
     event,
     startMs,
-    endMs,
-    centerMs: (startMs + endMs) / 2,
+    endMs: startMs + cadenceMs,
+    centerMs: startMs + cadenceMs / 2,
   };
 }
 
@@ -166,10 +172,9 @@ export async function loadSeriesEventsAround(
     centerMs + halfWindowMs + cadenceMs,
   ).toISOString();
 
-  // Recurring crypto events are often listed well before their actual trading
-  // interval. Gamma's event startDate therefore is not a reliable timeline
-  // coordinate for this family. endDate is the actual contract deadline and is
-  // consistently filterable, while schedule.startTime supplies the row start.
+  // Recurring crypto events are often listed/opened well before their actual
+  // contract interval. endDate is the reliable contract boundary; row starts
+  // are derived from endDate - cadence rather than the trading-open timestamp.
   const common = {
     seriesIds: [seriesId],
     endDateMin,
@@ -189,11 +194,11 @@ export async function loadSeriesEventsAround(
     openEvents,
     closedEvents,
   ).filter((event) => {
-    const start = eventStartMs(event);
+    const timed = timedSeriesEvent(event, cadenceMs);
     return (
-      start !== null &&
-      start >= centerMs - halfWindowMs - cadenceMs &&
-      start <= centerMs + halfWindowMs + cadenceMs
+      timed !== null &&
+      timed.centerMs >= centerMs - halfWindowMs - cadenceMs &&
+      timed.centerMs <= centerMs + halfWindowMs + cadenceMs
     );
   });
 }
