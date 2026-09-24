@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Event } from "@polymarket/client";
+import type { Event, MarketId } from "@polymarket/client";
 import { orderMarkets } from "./marketOrder";
 
 function eventWithPrices(sortBy: string | undefined, prices: unknown[]): Event {
@@ -10,6 +10,19 @@ function eventWithPrices(sortBy: string | undefined, prices: unknown[]): Event {
       outcomes: { yes: { price } },
     })),
   } as unknown as Event;
+}
+
+function thresholdMap(
+  event: Event,
+  values: readonly (number | undefined)[],
+): ReadonlyMap<MarketId, number> {
+  const result = new Map<MarketId, number>();
+  for (const [index, value] of values.entries()) {
+    if (value === undefined) continue;
+    const market = event.markets[index];
+    if (market) result.set(market.id, value);
+  }
+  return result;
 }
 
 const ids = (markets: Event["markets"]): string[] =>
@@ -26,11 +39,10 @@ test("price mode orders by Yes price descending, not threshold, without mutating
     "0.007",
   ]);
   const original = [...event.markets];
-  const raw = event.markets.map((market, index) => ({
-    id: market.id,
-    groupItemThreshold: String(index),
-  }));
-  const ordered = orderMarkets(event, raw);
+  const ordered = orderMarkets(
+    event,
+    thresholdMap(event, [0, 1, 2, 3, 4, 5]),
+  );
   expect(ids(ordered)).toEqual(["1", "0", "2", "3", "4", "5"]);
   expect(event.markets).toEqual(original);
   expect(ordered).not.toBe(event.markets);
@@ -48,7 +60,7 @@ test("price ties stay stable and missing or invalid prices follow zero", () => {
     "bad",
     Infinity,
   ]);
-  expect(ids(orderMarkets(event, []))).toEqual([
+  expect(ids(orderMarkets(event, new Map()))).toEqual([
     "2",
     "3",
     "1",
@@ -61,17 +73,10 @@ test("price ties stay stable and missing or invalid prices follow zero", () => {
 });
 
 test("threshold modes retain direction, stable ties, and put missing values last", () => {
-  const raw = [
-    { id: "0", groupItemThreshold: "2" },
-    { id: "1", groupItemThreshold: "0" },
-    { id: "2", groupItemThreshold: "2" },
-    { id: "3", groupItemThreshold: "invalid" },
-    { id: "4", groupItemThreshold: "" },
-    null,
-  ];
   for (const mode of [undefined, "ascending", "unknown", "descending"]) {
     const event = eventWithPrices(mode, [null, null, null, null, null, null]);
-    expect(ids(orderMarkets(event, raw))).toEqual(
+    const thresholds = thresholdMap(event, [2, 0, 2, undefined, undefined]);
+    expect(ids(orderMarkets(event, thresholds))).toEqual(
       mode === "descending"
         ? ["0", "2", "1", "3", "4", "5"]
         : ["1", "0", "2", "3", "4", "5"],
@@ -81,7 +86,9 @@ test("threshold modes retain direction, stable ties, and put missing values last
 
 test("empty and singleton events retain their markets", () => {
   for (const mode of ["price", "ascending", "descending"]) {
-    expect(orderMarkets(eventWithPrices(mode, []), [])).toEqual([]);
-    expect(ids(orderMarkets(eventWithPrices(mode, [null]), []))).toEqual(["0"]);
+    expect(orderMarkets(eventWithPrices(mode, []), new Map())).toEqual([]);
+    expect(
+      ids(orderMarkets(eventWithPrices(mode, [null]), new Map())),
+    ).toEqual(["0"]);
   }
 });
