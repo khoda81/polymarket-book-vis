@@ -53,7 +53,7 @@ test("visibility partition reacts to a replaced visibility map", () => {
       [marketId("c"), { kind: "hidden", reason: "user" }],
     ]),
   );
-  expect(second.visible.map((market) => market.market.id)).toEqual(["b"]);
+  expect(second.visible.map((market) => market.market.id)).toEqual([marketId("b")]);
   expect(second.hidden.map((market) => market.market.id)).toEqual([marketId("a"), marketId("c")]);
 });
 
