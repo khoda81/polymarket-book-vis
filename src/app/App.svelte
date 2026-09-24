@@ -576,7 +576,7 @@
     const entry: EventDashboardItem = {
       kind: "event",
       event,
-      announceLifecycle,
+      announceReady: announceLifecycle,
     };
     rememberLayoutKey(itemKey(entry));
     entries = [...entries, entry];
@@ -603,7 +603,7 @@
     const entry: SeriesDashboardItem = {
       kind: "series",
       series,
-      announceLifecycle,
+      announceReady: announceLifecycle,
     };
     rememberLayoutKey(itemKey(entry));
     entries = [...entries, entry];
@@ -694,7 +694,7 @@
   }
 
   function itemReady(entry: DashboardItem): void {
-    if (!entry.announceLifecycle) return;
+    if (!entry.announceReady) return;
     status =
       entry.kind === "series"
         ? `Added ${seriesLabel(entry.series)}.`

@@ -3,7 +3,6 @@ import type { Event } from "@polymarket/client";
 import {
   eventSlug,
   normalizePinnedSlugs,
-  orderEntries,
   pinState,
   toEventSlug,
   type EventDashboardItem,
@@ -51,20 +50,4 @@ test("stored pin order is unique and preserves first occurrence", () => {
       null,
     ]).map(String),
   ).toEqual(["alpha-event", "beta-event"]);
-});
-
-test("dashboard ordering follows pin order, then insertion order", () => {
-  const a = fakeEvent("a", "alpha-event");
-  const b = fakeEvent("b", "beta-event");
-  const c = fakeEvent("c", "charlie-event");
-  const entries: EventDashboardItem[] = [
-    { kind: "event", event: a, announceLifecycle: false },
-    { kind: "event", event: b, announceLifecycle: false },
-    { kind: "event", event: c, announceLifecycle: false },
-  ];
-  const pinned = ["charlie-event", "alpha-event"] as EventSlug[];
-
-  expect(
-    orderEntries(entries, pinned).map((entry) => String(entry.event.id)),
-  ).toEqual(["c", "a", "b"]);
 });

@@ -9,7 +9,7 @@ export type PinState =
   | { readonly kind: "pinned"; readonly slug: EventSlug };
 
 interface DashboardItemBase {
-  readonly announceLifecycle: boolean;
+  readonly announceReady: boolean;
 }
 
 export interface EventDashboardItem extends DashboardItemBase {
@@ -73,30 +73,6 @@ export function normalizePinnedSeriesIds(values: readonly unknown[]): string[] {
     result.push(id);
   }
   return result;
-}
-
-export function orderEntries(
-  entries: readonly EventDashboardItem[],
-  pinned: readonly EventSlug[],
-): EventDashboardItem[] {
-  const rank = new Map<string, number>(
-    pinned.map((slug, index) => [slug, index]),
-  );
-  const insertion = new Map(
-    entries.map((entry, index) => [entry.event.id, index]),
-  );
-
-  return [...entries].sort((a, b) => {
-    const aSlug = eventSlug(a.event);
-    const bSlug = eventSlug(b.event);
-    const aRank = aSlug ? rank.get(aSlug) : undefined;
-    const bRank = bSlug ? rank.get(bSlug) : undefined;
-
-    if (aRank !== undefined && bRank !== undefined) return aRank - bRank;
-    if (aRank !== undefined) return -1;
-    if (bRank !== undefined) return 1;
-    return (insertion.get(a.event.id) ?? 0) - (insertion.get(b.event.id) ?? 0);
-  });
 }
 
 export function errorMessage(error: unknown): string {
