@@ -12,7 +12,6 @@
   } from "./cardReorderSurface";
   import type { ConnectionStatus, ViewMode } from "../lib/chartState";
   import { loadEventBundle, type EventBundle } from "../lib/eventBundle";
-  import { eventSlug, type PinState } from "./model";
   import type { EventMarketStatus } from "../lib/marketLifecycle";
   import { createPublicClient, type Event } from "@polymarket/client";
 
@@ -34,8 +33,8 @@
 
   export let event: Event;
   export let client: PublicClient;
-  export let pin: PinState;
-  export let onpin: (pin: PinState) => void;
+  export let pinned: boolean;
+  export let onpin: (pinned: boolean) => void;
   export let onremove: () => void;
   export let onready: () => void;
   export let onfailure: (message: string) => void;
@@ -46,9 +45,7 @@
   let runtime: RuntimeState = { kind: "metadata-loading" };
   let marketStatus: EventMarketStatus = { kind: "trading" };
 
-  $: slug = eventSlug(event);
-  $: pinned = pin.kind === "pinned";
-  $: pinnable = pin.kind !== "unavailable";
+  $: slug = event.slug;
   $: bundle =
     runtime.kind === "chart-loading" || runtime.kind === "ready"
       ? runtime.bundle
@@ -108,7 +105,7 @@
   class="card"
   class:card--pinned={pinned}
   data-event-id={event.id}
-  data-event-slug={pin.kind === "unavailable" ? "" : pin.slug}
+  data-event-slug={slug ?? ""}
   use:cardReorderSurface={onreorderstart}
 >
   <button
@@ -141,13 +138,12 @@
     <button
       type="button"
       class="card-pin"
-      disabled={!pinnable}
       aria-pressed={pinned}
       aria-label={pinned ? "Unpin event" : "Pin event across reloads"}
       title={pinned
         ? "Pinned — click to stop restoring this event on reload"
         : "Pin this event so it returns after reload"}
-      onclick={() => onpin(pin)}
+      onclick={() => onpin(!pinned)}
     >
       {#if pinned}
         <svg viewBox="0 0 24 24" aria-hidden="true">
