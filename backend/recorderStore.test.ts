@@ -30,7 +30,7 @@ test("RecorderStore persists timestamped pressure without temporal rewriting", (
     expect(
       raw
         .query<{ type: string }, []>(
-          "SELECT typeof(cells_json) AS type FROM token_state",
+          "SELECT typeof(pressure) AS type FROM token_state",
         )
         .get()?.type,
     ).toBe("blob");
