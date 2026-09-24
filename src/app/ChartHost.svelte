@@ -26,7 +26,7 @@
     type MarketVisibility,
   } from "../lib/marketVisibility";
   import MarketControl from "./MarketControl.svelte";
-  import { createPublicClient } from "@polymarket/client";
+  import { createPublicClient, type MarketId } from "@polymarket/client";
 
   type PublicClient = ReturnType<typeof createPublicClient>;
 
@@ -43,7 +43,7 @@
   const VISIBLE_MARKET: MarketVisibility = { kind: "visible" };
 
   let visibilityByMarketId = loadMarketVisibility(definition.controls);
-  let lifecycleByMarketId = new Map<string, MarketLifecycle>(
+  let lifecycleByMarketId = new Map<MarketId, MarketLifecycle>(
     definition.controls.map((control) => [control.marketId, control.lifecycle]),
   );
 
@@ -73,7 +73,7 @@
   }
 
   function marketLifecycleChanged(
-    marketId: string,
+    marketId: MarketId,
     lifecycle: MarketLifecycle,
   ): void {
     lifecycleByMarketId = new Map(lifecycleByMarketId);
@@ -91,14 +91,14 @@
     chart?.setMarketVisible(marketId, false);
   }
 
-  function autoHide(marketId: string, reason: AutoHiddenReason): void {
+  function autoHide(marketId: MarketId, reason: AutoHiddenReason): void {
     visibilityByMarketId = setMarketVisibility(visibilityByMarketId, marketId, {
       kind: "hidden",
       reason,
     });
   }
 
-  function initialHiddenMarketIds(): Set<string> {
+  function initialHiddenMarketIds(): Set<MarketId> {
     return new Set(
       partitionMarketVisibility(
         definition.controls,
