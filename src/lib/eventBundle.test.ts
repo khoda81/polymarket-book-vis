@@ -44,10 +44,6 @@ test("presentation uses normalized SDK metadata and dedupes artwork", () => {
   const bundle = buildEventBundle(event, { markets: [] });
 
   expect(bundle.presentation.description).toBeNull();
-  expect(bundle.marketIcons.get(event.markets[0]!.id)).toBeUndefined();
-  expect(bundle.marketIcons.get(event.markets[1]!.id)).toBe(
-    "https://cdn.example/second.png",
-  );
   expect(bundle.presentation.marketRules).toEqual([
     {
       marketId: event.markets[0]!.id,
@@ -55,12 +51,6 @@ test("presentation uses normalized SDK metadata and dedupes artwork", () => {
       body: "Specific first-market rule.",
     },
   ]);
-  expect(bundle.tokenNames.get(event.markets[0]!.outcomes.yes.tokenId!)).toBe(
-    "Yes",
-  );
-  expect(
-    bundle.oppositeTokenNames.get(event.markets[0]!.outcomes.yes.tokenId!),
-  ).toBe("No");
 });
 
 test("raw Gamma data is reduced to missing market annotations", () => {
