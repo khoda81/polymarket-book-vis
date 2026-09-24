@@ -53,6 +53,7 @@ export class ChartController {
   private readonly themeQuery: MediaQueryList;
   private readonly resizeObserver: ResizeObserver;
   private readonly activeTokens = new Set<TokenId>();
+  private readonly tokenIdByValue = new Map<string, TokenId>();
 
   private theme: ChartTheme;
   private plotter!: OrderBookPlotter;
@@ -73,8 +74,10 @@ export class ChartController {
     this.onMarketAutoHidden = options.onMarketAutoHidden ?? (() => undefined);
     this.onMarketLifecycleChanged =
       options.onMarketLifecycleChanged ?? (() => undefined);
-    for (const control of definition.controls)
+    for (const control of definition.controls) {
       this.lifecycleByMarketId.set(control.marketId, control.lifecycle);
+      this.tokenIdByValue.set(control.tokenId, control.tokenId);
+    }
 
     this.feed = new LiveBookFeed(polyMarketClient, {
       onConnectionStatus: options.onConnectionStatus ?? (() => undefined),
@@ -98,17 +101,30 @@ export class ChartController {
       toggles: surface.toggles,
       plotter: this.plotter,
       activeTokens: this.activeTokens,
-      getBook: (tokenId) => this.feed.getBook(tokenId),
-      getTokenName: (tokenId) =>
-        this.definition.tokenNames.get(String(tokenId)),
-      getOppositeTokenName: (tokenId) =>
-        this.definition.oppositeTokenNames.get(String(tokenId)),
-      getPressureColorScale: (tokenId) =>
-        this.pressureColorScale(tokenId as TokenId),
+      getBook: (tokenId) => {
+        const id = this.knownTokenId(tokenId);
+        return id ? this.feed.getBook(id) : undefined;
+      },
+      getTokenName: (tokenId) => {
+        const id = this.knownTokenId(tokenId);
+        return id ? this.definition.tokenNames.get(id) : undefined;
+      },
+      getOppositeTokenName: (tokenId) => {
+        const id = this.knownTokenId(tokenId);
+        return id ? this.definition.oppositeTokenNames.get(id) : undefined;
+      },
+      getPressureColorScale: (tokenId) => {
+        const id = this.knownTokenId(tokenId);
+        return id
+          ? this.pressureColorScale(id)
+          : DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
+      },
       getTheme: () => this.theme,
       getViewMode: () => this.viewMode,
-      hideToken: (tokenId) =>
-        this.autoHideToken(tokenId as TokenId, "empty-book"),
+      hideToken: (tokenId) => {
+        const id = this.knownTokenId(tokenId);
+        if (id) this.autoHideToken(id, "empty-book");
+      },
       requestDraw: () => this.reqDraw(),
     });
 
@@ -198,6 +214,10 @@ export class ChartController {
     this.plotter.destroy();
     this.resizeObserver.disconnect();
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
+  }
+
+  private knownTokenId(value: string): TokenId | null {
+    return this.tokenIdByValue.get(value) ?? null;
   }
 
   private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
