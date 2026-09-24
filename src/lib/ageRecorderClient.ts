@@ -1,24 +1,17 @@
-import { parsePressureCells, rebasePressureCells } from "./legacyPressureCells";
-import { PressureFrontierMemory } from "./pressureFrontierMemory";
 import {
   parsePressureFrontierSnapshot,
-  rebasePressureFrontierSnapshot,
   type PressureFrontierSnapshot,
 } from "./pressureFrontierSnapshot";
 
 interface RecorderStateResponse {
-  serverNowMs?: number;
-  connected?: boolean;
   recordingSinceMsByToken?: Record<string, number>;
-  states?: Record<string, { pressure?: unknown; cells?: unknown }>;
+  states?: Record<string, { pressure?: unknown }>;
   pendingTokenIds?: string[];
   debug?: unknown;
 }
 
 export interface RecorderHydration {
-  /** Individual recorder coverage starts, keyed by token id. */
   readonly recordingSinceMsByToken: Readonly<Record<string, number>>;
-  /** Monotone pressure memory rebased onto the browser clock. */
   readonly pressureSnapshotsByToken: Readonly<
     Record<string, PressureFrontierSnapshot>
   >;
@@ -35,15 +28,6 @@ const recorderRequestWaiters: Array<() => void> = [];
 const RECORDER_DEBUG =
   new URLSearchParams(window.location.search).get("recorderDebug") === "1";
 
-/**
- * Register tokens with the recorder and hydrate ghost state.
- *
- * Registration and the recorder's first websocket snapshot are inherently
- * asynchronous. A successful HTTP response can therefore legitimately contain
- * no state yet. Retry that pending window here while live market startup
- * continues independently; callers intentionally do not await this before
- * opening their own live feed.
- */
 export async function fetchRecorderHydration(
   tokenIds: readonly string[],
 ): Promise<RecorderHydration> {
@@ -66,7 +50,6 @@ export async function fetchRecorderHydration(
       recorderDebug("hydrate-response", {
         attempt: attempt + 1,
         requested: remaining.map(shortToken),
-        connected: body.connected,
         states: Object.keys(body.states ?? {}).map(shortToken),
         pending: (body.pendingTokenIds ?? []).map(shortToken),
         debug: body.debug,
@@ -84,16 +67,11 @@ export async function fetchRecorderHydration(
           : [],
       );
 
-      remaining = remaining.filter((tokenId) => {
-        if (pressureSnapshotsByToken[tokenId]) return false;
-        if (explicitPending.has(tokenId)) return true;
-
-        // Backward compatibility with an older recorder: a token with claimed
-        // coverage but no state is almost always in the registration→snapshot
-        // race, so give it the same bounded retry treatment.
-        return recordingSinceMsByToken[tokenId] !== undefined;
-      });
-
+      remaining = remaining.filter(
+        (tokenId) =>
+          pressureSnapshotsByToken[tokenId] === undefined &&
+          explicitPending.has(tokenId),
+      );
       if (remaining.length === 0) break;
     } catch (error) {
       lastError = error;
@@ -177,33 +155,12 @@ function mergeRecorderResponse(
       recordingSinceMsByToken[tokenId] = since;
   }
 
-  const sourceNowMs =
-    typeof body.serverNowMs === "number" && Number.isFinite(body.serverNowMs)
-      ? body.serverNowMs
-      : Date.now();
-  const targetNowMs = Date.now();
-
   for (const [tokenId, state] of Object.entries(body.states ?? {})) {
+    if (state.pressure === undefined) continue;
     try {
-      if (state.pressure !== undefined) {
-        pressureSnapshotsByToken[tokenId] = rebasePressureFrontierSnapshot(
-          parsePressureFrontierSnapshot(state.pressure),
-          sourceNowMs,
-          targetNowMs,
-        );
-        continue;
-      }
-
-      // Legacy recorder compatibility. Convert old cells exactly once at the
-      // transport boundary so the rest of the app only sees frontier state.
-      const legacy = rebasePressureCells(
-        parsePressureCells(state.cells),
-        sourceNowMs,
-        targetNowMs,
+      pressureSnapshotsByToken[tokenId] = parsePressureFrontierSnapshot(
+        state.pressure,
       );
-      const memory = new PressureFrontierMemory();
-      memory.restoreLegacyCells(legacy);
-      pressureSnapshotsByToken[tokenId] = memory.snapshot();
     } catch (error) {
       console.warn(
         `Ignoring malformed recorder pressure state for ${tokenId}`,
