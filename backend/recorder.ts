@@ -402,8 +402,7 @@ class AgeRecorder {
         const target = change.side === "bid" ? bids : asks;
         target.push(change);
       }
-      if (bids.length > 0) memory.updateLevels("bid", bids, validThroughMs);
-      if (asks.length > 0) memory.updateLevels("ask", asks, validThroughMs);
+      memory.updateBookLevels(bids, asks, validThroughMs);
     }
 
     this.memories.set(tokenId, memory);
