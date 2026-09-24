@@ -1,13 +1,13 @@
-import type { Event } from "@polymarket/client";
+import type { Event, MarketId, TokenId } from "@polymarket/client";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   type SignedVolumeColorScale,
 } from "./signedVolume";
 
 export interface NegRiskOutcomeColor {
-  readonly marketId: string;
-  readonly yesTokenId: string;
-  readonly noTokenId: string;
+  readonly marketId: MarketId;
+  readonly yesTokenId: TokenId;
+  readonly noTokenId: TokenId;
   /** Unit-circle phase assigned to this categorical outcome. */
   readonly hue: number;
   /** Pressure colors for this market's YES / complement-NO sides. */
@@ -17,7 +17,7 @@ export interface NegRiskOutcomeColor {
 export interface NegRiskPalette {
   readonly groupId: string;
   readonly outcomes: readonly NegRiskOutcomeColor[];
-  readonly byYesTokenId: ReadonlyMap<string, NegRiskOutcomeColor>;
+  readonly byYesTokenId: ReadonlyMap<TokenId, NegRiskOutcomeColor>;
 }
 
 /**
@@ -39,9 +39,9 @@ export function buildNegRiskPalette(event: Event): NegRiskPalette | null {
       const noTokenId = market.outcomes.no.tokenId;
       if (!yesTokenId || !noTokenId) return null;
       return {
-        marketId: String(market.id),
-        yesTokenId: String(yesTokenId),
-        noTokenId: String(noTokenId),
+        marketId: market.id,
+        yesTokenId,
+        noTokenId,
       };
     });
 
@@ -63,7 +63,7 @@ export function buildNegRiskPalette(event: Event): NegRiskPalette | null {
   if (new Set(slots.map((slot) => slot.yesTokenId)).size !== slots.length)
     return null;
 
-  const groupId = event.trading.negRiskMarketId?.trim() || String(event.id);
+  const groupId = event.trading.negRiskMarketId?.trim() || event.id;
   const phase = stableHue(groupId);
   const count = slots.length;
   const complementMagnitude = 1 / (count - 1);
