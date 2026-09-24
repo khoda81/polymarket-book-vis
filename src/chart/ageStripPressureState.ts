@@ -10,19 +10,14 @@ import type { LiveBookUpdate } from "./liveBookFeed";
 export interface AgeStripPressureTiming {
   readonly recordingSinceMs: number | null;
   readonly resolutionMs: number | null;
+  readonly validThroughMs: number | null;
 }
 
 interface PressureState extends AgeStripPressureTiming {
   readonly memory: PressureFrontierMemory;
 }
 
-/**
- * Shared pressure/history state for age-strip rows.
- *
- * The live state is a pair of monotone side-local cumulative frontiers. Normal
- * websocket level changes update those frontiers directly; the old PressureCell
- * format survives only as recorder hydration and renderer compatibility seams.
- */
+/** Shared timestamped pressure history for age-strip rows. */
 export class AgeStripPressureState {
   private readonly states = new Map<string, PressureState>();
 
@@ -36,6 +31,7 @@ export class AgeStripPressureState {
       state = {
         recordingSinceMs: null,
         resolutionMs,
+        validThroughMs: null,
         memory: new PressureFrontierMemory(),
       };
       this.states.set(tokenId, state);
@@ -44,10 +40,7 @@ export class AgeStripPressureState {
       Number.isFinite(resolutionMs) &&
       state.resolutionMs !== resolutionMs
     ) {
-      state = {
-        ...state,
-        resolutionMs,
-      };
+      state = { ...state, resolutionMs };
       this.states.set(tokenId, state);
     }
     return state;
@@ -83,7 +76,6 @@ export class AgeStripPressureState {
   hydrate(
     snapshotsByToken: Readonly<Record<string, PressureFrontierSnapshot>>,
     getBook: (tokenId: string) => TokenBook | undefined,
-    nowMs = Date.now(),
   ): void {
     for (const [tokenId, snapshot] of Object.entries(snapshotsByToken)) {
       const state = this.ensure(tokenId);
@@ -91,20 +83,16 @@ export class AgeStripPressureState {
         state.memory.restore(snapshot);
       } catch (error) {
         console.warn(
-          `Ignoring invalid recorder pressure for token ${tokenId}; preserving live pressure`,
+          `Ignoring invalid recorder pressure for token ${tokenId}; preserving current pressure`,
           error,
         );
       }
 
-      // A websocket snapshot may have arrived before recorder hydration.
-      // Paint the current book last so live pressure wins over persisted ghosts.
+      // A newer websocket book may have arrived before recorder hydration.
       const book = getBook(tokenId);
-      if (book) state.memory.observeBook(book, nowMs);
+      if (book && state.validThroughMs !== null)
+        state.memory.observeBook(book, state.validThroughMs);
     }
-  }
-
-  observeBook(tokenId: string, book: TokenBook, nowMs = Date.now()): void {
-    this.ensure(tokenId).memory.observeBook(book, nowMs);
   }
 
   applyBookUpdate(
@@ -112,9 +100,18 @@ export class AgeStripPressureState {
     book: TokenBook,
     update: LiveBookUpdate,
   ): void {
-    const memory = this.ensure(tokenId).memory;
+    let state = this.ensure(tokenId);
+    if (
+      state.validThroughMs === null ||
+      update.validThroughMs > state.validThroughMs
+    ) {
+      state = { ...state, validThroughMs: update.validThroughMs };
+      this.states.set(tokenId, state);
+    }
+
+    const memory = state.memory;
     if (update.kind === "snapshot") {
-      memory.observeBook(book, update.observedAtMs);
+      memory.observeBook(book, update.validThroughMs);
       return;
     }
 
@@ -132,9 +129,9 @@ export class AgeStripPressureState {
       });
 
     if (bySide.bid.length > 0)
-      memory.updateLevels("bid", bySide.bid, update.observedAtMs);
+      memory.updateLevels("bid", bySide.bid, update.validThroughMs);
     if (bySide.ask.length > 0)
-      memory.updateLevels("ask", bySide.ask, update.observedAtMs);
+      memory.updateLevels("ask", bySide.ask, update.validThroughMs);
   }
 
   resolve(tokenId: string): void {
@@ -149,13 +146,13 @@ export class AgeStripPressureState {
     return this.states.get(tokenId);
   }
 
-  hasVisibleGhosts(
+  hasVisiblePressure(
     tokenId: string,
     nowMs: number,
     halfLifeMs: number,
   ): boolean {
     return (
-      this.states.get(tokenId)?.memory.hasVisibleGhosts(nowMs, halfLifeMs) ??
+      this.states.get(tokenId)?.memory.hasVisiblePressure(nowMs, halfLifeMs) ??
       false
     );
   }
