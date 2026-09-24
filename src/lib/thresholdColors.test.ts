@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Event } from "@polymarket/client";
+import type { Event, MarketId } from "@polymarket/client";
 import {
   buildThresholdPalette,
   semanticYesNeutralNoScale,
@@ -27,22 +27,28 @@ function thresholdEvent(prices: readonly number[]): Event {
   } as unknown as Event;
 }
 
-function rawThresholds(
+function thresholdMap(
+  event: Event,
   count: number,
-  overrides: Partial<Record<number, unknown>> = {},
-): unknown[] {
-  return Array.from({ length: count }, (_, index) => ({
-    id: String(100 + index),
-    groupItemThreshold: index in overrides ? overrides[index] : String(index),
-  }));
+  overrides: Partial<Record<number, number | undefined>> = {},
+): ReadonlyMap<MarketId, number> {
+  const result = new Map<MarketId, number>();
+  for (let index = 0; index < count; index++) {
+    const market = event.markets.find(
+      (candidate) => candidate.id === String(100 + index),
+    );
+    if (!market) continue;
+
+    const value = index in overrides ? overrides[index] : index;
+    if (typeof value === "number") result.set(market.id, value);
+  }
+  return result;
 }
 
 describe("nested threshold color geometry", () => {
   test("detects an increasing prefix family", () => {
-    const palette = buildThresholdPalette(
-      thresholdEvent([0.15, 0.4, 0.82]),
-      rawThresholds(3),
-    );
+    const event = thresholdEvent([0.15, 0.4, 0.82]);
+    const palette = buildThresholdPalette(event, thresholdMap(event, 3));
     expect(palette?.direction).toBe("prefix");
     expect(palette?.outcomes).toHaveLength(3);
 
@@ -65,10 +71,8 @@ describe("nested threshold color geometry", () => {
   });
 
   test("detects a decreasing suffix family", () => {
-    const palette = buildThresholdPalette(
-      thresholdEvent([0.91, 0.7, 0.42]),
-      rawThresholds(3),
-    );
+    const event = thresholdEvent([0.91, 0.7, 0.42]);
+    const palette = buildThresholdPalette(event, thresholdMap(event, 3));
     expect(palette?.direction).toBe("suffix");
 
     const [first, middle, last] = palette!.outcomes;
@@ -81,10 +85,8 @@ describe("nested threshold color geometry", () => {
   });
 
   test("uses the requested shrinking partition geometry for four thresholds", () => {
-    const palette = buildThresholdPalette(
-      thresholdEvent([0.94, 0.83, 0.75, 0.56]),
-      rawThresholds(4),
-    )!;
+    const event = thresholdEvent([0.94, 0.83, 0.75, 0.56]);
+    const palette = buildThresholdPalette(event, thresholdMap(event, 4))!;
     expect(palette.direction).toBe("suffix");
 
     const expectedYes = [[0, 1, 2, 3], [0, 1, 2], [0, 1], [0]];
@@ -108,8 +110,9 @@ describe("nested threshold color geometry", () => {
       markets: [event.markets[2], event.markets[0], event.markets[1]],
     } as Event;
 
-    const a = buildThresholdPalette(event, rawThresholds(3))!;
-    const b = buildThresholdPalette(shuffled, rawThresholds(3))!;
+    const thresholds = thresholdMap(event, 3);
+    const a = buildThresholdPalette(event, thresholds)!;
+    const b = buildThresholdPalette(shuffled, thresholds)!;
 
     for (const tokenId of ["yes-0", "yes-1", "yes-2"]) {
       expect(a.byYesTokenId.get(tokenId)?.hue).toBe(
@@ -123,21 +126,27 @@ describe("nested threshold color geometry", () => {
 
   test("refuses ambiguous or incomplete threshold families", () => {
     expect(
-      buildThresholdPalette(thresholdEvent([0.5, 0.5, 0.5]), rawThresholds(3)),
+      (() => {
+        const event = thresholdEvent([0.5, 0.5, 0.5]);
+        return buildThresholdPalette(event, thresholdMap(event, 3));
+      })(),
     ).toBeNull();
 
     expect(
-      buildThresholdPalette(
-        thresholdEvent([0.1, 0.5, 0.9]),
-        rawThresholds(3, { 1: undefined }),
-      ),
+      (() => {
+        const event = thresholdEvent([0.1, 0.5, 0.9]);
+        return buildThresholdPalette(
+          event,
+          thresholdMap(event, 3, { 1: undefined }),
+        );
+      })(),
     ).toBeNull();
 
     expect(
-      buildThresholdPalette(
-        thresholdEvent([0.1, 0.5, 0.9]),
-        rawThresholds(3, { 1: "7" }),
-      ),
+      (() => {
+        const event = thresholdEvent([0.1, 0.5, 0.9]);
+        return buildThresholdPalette(event, thresholdMap(event, 3, { 1: 7 }));
+      })(),
     ).toBeNull();
 
     const augmented = thresholdEvent([0.1, 0.5, 0.9]);
@@ -149,7 +158,7 @@ describe("nested threshold color geometry", () => {
         negRiskAugmented: true,
       },
     } as Event;
-    expect(buildThresholdPalette(marked, rawThresholds(3))).toBeNull();
+    expect(buildThresholdPalette(marked, thresholdMap(marked, 3))).toBeNull();
   });
 
   test("accepts threshold metadata inside ordinary negative-risk events", () => {
@@ -163,7 +172,7 @@ describe("nested threshold color geometry", () => {
       })),
     } as Event;
 
-    const palette = buildThresholdPalette(marked, rawThresholds(3));
+    const palette = buildThresholdPalette(marked, thresholdMap(marked, 3));
     expect(palette?.direction).toBe("suffix");
     expect(palette?.outcomes.map((outcome) => outcome.yesAtomIndices)).toEqual([
       [0, 1, 2],
