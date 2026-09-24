@@ -62,10 +62,6 @@ export class RecorderSubscriptionPool {
     private readonly onDebug: (...args: unknown[]) => void = () => undefined,
   ) {}
 
-  get connected(): boolean {
-    return this.batches.size > 0;
-  }
-
   get activeBatchCount(): number {
     return this.batches.size;
   }
