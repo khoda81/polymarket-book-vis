@@ -14,7 +14,10 @@ export interface MarketRule {
 
 export interface EventPresentation {
   readonly iconUrl: string | null;
+  readonly subtitle: string | null;
   readonly description: EventDescription | null;
+  readonly resolutionSource: string | null;
+  readonly endDate: string | null;
   readonly marketRules: readonly MarketRule[];
 }
 
@@ -80,6 +83,8 @@ export function buildEventBundle(
     ? rawDescription
     : null;
   const subtitle = text(rawEvent.subtitle);
+  const resolutionSource = text(rawEvent.resolutionSource);
+  const endDate = text(rawEvent.endDate);
   const description =
     usefulDescription === null
       ? null
@@ -153,7 +158,10 @@ export function buildEventBundle(
     rawMarkets,
     presentation: {
       iconUrl,
+      subtitle: subtitle || null,
       description,
+      resolutionSource: resolutionSource || null,
+      endDate: endDate || null,
       marketRules,
     },
     marketTitles,
