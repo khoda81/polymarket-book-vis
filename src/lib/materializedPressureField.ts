@@ -54,9 +54,14 @@ interface MutableRun {
 export class MaterializedPressureField {
   private runs: MutableRun[] = [emptyRun()];
   private revision = 0;
+  private currentValidThroughMs: number | undefined;
 
   renderRuns(): readonly PressureRenderRun[] {
-    return this.runs;
+    return this.runs.map((run) => ({
+      lo: run.lo,
+      hi: run.hi,
+      bands: materializeBands(run, this.currentValidThroughMs),
+    }));
   }
 
   priceBoundaries(): readonly Price[] {
@@ -74,7 +79,7 @@ export class MaterializedPressureField {
       const run = this.runs[mid]!;
       if (price < run.lo) hi = mid;
       else if (price >= run.hi && mid + 1 < this.runs.length) lo = mid + 1;
-      else return run.bands;
+      else return materializeBands(run, this.currentValidThroughMs);
     }
     return [];
   }
@@ -114,53 +119,40 @@ export class MaterializedPressureField {
       );
       if (nextVolume === (side === "bid" ? run.bidVolume : run.askVolume))
         continue;
-      transitionRun(run, side, nextVolume, validThroughMs, revision);
+      transitionRun(
+        run,
+        side,
+        nextVolume,
+        validThroughMs,
+        revision,
+        this.currentValidThroughMs,
+      );
     }
 
     this.mergeAdjacentRuns();
   }
 
-  /** Advance every currently-owned pressure band without creating history. */
+  /** Advance all current pressure in O(1), without creating history. */
   observeCurrent(validThroughMs: number): void {
     if (!Number.isFinite(validThroughMs))
       throw new RangeError("pressure observation timestamp must be finite");
-
-    for (const run of this.runs) {
-      const next: PressureBand[] = [];
-      for (const band of run.bands) {
-        const owner = currentOwner(
-          run.bidVolume,
-          run.askVolume,
-          run.bidRevision,
-          run.askRevision,
-          band.loVolume,
-        );
-        appendBand(
-          next,
-          owner === null
-            ? band
-            : {
-                ...band,
-                side: owner,
-                validThroughMs,
-              },
-          run,
-        );
-      }
-      run.bands = next;
-    }
-    this.mergeAdjacentRuns();
+    this.currentValidThroughMs = validThroughMs;
   }
 
   hasVisiblePressure(visibleSinceMs: number): boolean {
     return this.runs.some((run) =>
-      run.bands.some((band) => band.validThroughMs > visibleSinceMs),
+      run.bands.some(
+        (band) =>
+          effectiveValidThroughMs(run, band, this.currentValidThroughMs) >
+          visibleSinceMs,
+      ),
     );
   }
 
   clear(): void {
     this.runs = [emptyRun()];
     this.revision = 0;
+    this.currentValidThroughMs = undefined;
   }
 
   snapshot(): PressureFieldSnapshot {
@@ -173,7 +165,7 @@ export class MaterializedPressureField {
         askVolume: run.askVolume,
         bidRevision: run.bidRevision,
         askRevision: run.askRevision,
-        bands: run.bands.map(cloneBand),
+        bands: materializeBands(run, this.currentValidThroughMs),
       })),
     };
   }
@@ -197,6 +189,7 @@ export class MaterializedPressureField {
     validateRuns(runs);
     this.runs = runs;
     this.revision = snapshot.revision;
+    this.currentValidThroughMs = newestCurrentValidThroughMs(runs);
     this.mergeAdjacentRuns();
   }
 
@@ -222,7 +215,8 @@ export class MaterializedPressureField {
     const merged: MutableRun[] = [];
     for (const run of this.runs) {
       const previous = merged[merged.length - 1];
-      if (previous && runsEquivalent(previous, run)) previous.hi = run.hi;
+      if (previous && runsEquivalent(previous, run, this.currentValidThroughMs))
+        previous.hi = run.hi;
       else merged.push(run);
     }
     this.runs = merged;
@@ -235,6 +229,7 @@ function transitionRun(
   nextVolume: number,
   validThroughMs: number,
   revision: number,
+  currentValidThroughMs: number | undefined,
 ): void {
   const oldBidVolume = run.bidVolume;
   const oldAskVolume = run.askVolume;
@@ -305,7 +300,13 @@ function transitionRun(
           loVolume: lo,
           hiVolume: hi,
           side: oldOwner,
-          validThroughMs: existing?.validThroughMs ?? validThroughMs,
+          validThroughMs:
+            existing === undefined
+              ? validThroughMs
+              : Math.max(
+                  existing.validThroughMs,
+                  currentValidThroughMs ?? Number.NEGATIVE_INFINITY,
+                ),
         },
         run,
       );
@@ -380,34 +381,76 @@ function isCurrent(run: MutableRun, radius: number): boolean {
   );
 }
 
-function runsEquivalent(a: MutableRun, b: MutableRun): boolean {
+function runsEquivalent(
+  a: MutableRun,
+  b: MutableRun,
+  currentValidThroughMs: number | undefined,
+): boolean {
   return (
     a.hi === b.lo &&
     a.bidVolume === b.bidVolume &&
     a.askVolume === b.askVolume &&
     a.bidRevision === b.bidRevision &&
     a.askRevision === b.askRevision &&
-    bandsEqual(a.bands, b.bands)
+    bandsEqual(a, b, currentValidThroughMs)
   );
 }
 
 function bandsEqual(
-  a: readonly PressureBand[],
-  b: readonly PressureBand[],
+  a: MutableRun,
+  b: MutableRun,
+  currentValidThroughMs: number | undefined,
 ): boolean {
   return (
-    a === b ||
-    (a.length === b.length &&
-      a.every((band, index) => {
-        const other = b[index]!;
+    a.bands === b.bands ||
+    (a.bands.length === b.bands.length &&
+      a.bands.every((band, index) => {
+        const other = b.bands[index]!;
         return (
           band.loVolume === other.loVolume &&
           band.hiVolume === other.hiVolume &&
           band.side === other.side &&
-          band.validThroughMs === other.validThroughMs
+          effectiveValidThroughMs(a, band, currentValidThroughMs) ===
+            effectiveValidThroughMs(b, other, currentValidThroughMs)
         );
       }))
   );
+}
+
+function materializeBands(
+  run: MutableRun,
+  currentValidThroughMs: number | undefined,
+): PressureBand[] {
+  return run.bands.map((band) => ({
+    ...band,
+    validThroughMs: effectiveValidThroughMs(run, band, currentValidThroughMs),
+  }));
+}
+
+function effectiveValidThroughMs(
+  run: MutableRun,
+  band: PressureBand,
+  currentValidThroughMs: number | undefined,
+): number {
+  if (currentValidThroughMs === undefined || !isCurrent(run, band.loVolume))
+    return band.validThroughMs;
+  return Math.max(band.validThroughMs, currentValidThroughMs);
+}
+
+function newestCurrentValidThroughMs(
+  runs: readonly MutableRun[],
+): number | undefined {
+  let newest: number | undefined;
+  for (const run of runs) {
+    for (const band of run.bands) {
+      if (!isCurrent(run, band.loVolume)) continue;
+      newest = Math.max(
+        newest ?? Number.NEGATIVE_INFINITY,
+        band.validThroughMs,
+      );
+    }
+  }
+  return newest;
 }
 
 function validateRuns(runs: readonly MutableRun[]): void {
