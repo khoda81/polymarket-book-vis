@@ -166,7 +166,9 @@ function extractRawMarketAnnotations(
   thresholdByMarketId: Map<MarketId, number>;
   resolutionMsByMarketId: Map<MarketId, number>;
 } {
-  const knownIds = new Map(event.markets.map((market) => [market.id, market.id]));
+  const knownIds = new Map<string, MarketId>(
+    event.markets.map((market) => [market.id, market.id]),
+  );
   const thresholdByMarketId = new Map<MarketId, number>();
   const resolutionMsByMarketId = new Map<MarketId, number>();
 
