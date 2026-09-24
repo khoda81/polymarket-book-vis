@@ -44,6 +44,8 @@ import {
 } from "@/lib/seriesTimeline";
 import type { ConnectionStatus } from "@/lib/chartState";
 import type {
+  ClobAssetId,
+  ConditionId,
   Event,
   Market,
   PublicClient,
@@ -82,17 +84,16 @@ export class SeriesTimelineView {
   private readonly onAnchorEventChanged: (event: Event | null) => void;
   private readonly onError: (message: string) => void;
   private readonly resolutionByCondition = new Map<
-    string,
+    ConditionId,
     MarketResolutionUpdate
   >();
   private readonly resolutionByAsset = new Map<
-    string,
+    ClobAssetId,
     MarketResolutionUpdate
   >();
   private readonly bookCache = new Map<string, TokenBook>();
   private readonly scaleByToken = new Map<string, SignedVolumeColorScale>();
-  private readonly tokenNameByToken = new Map<string, string>();
-  private readonly oppositeTokenNameByToken = new Map<string, string>();
+  private readonly marketByToken = new Map<string, Market>();
   private readonly absoluteTimeLabelByStart = new Map<number, string>();
   private readonly hydratedTokens = new Set<string>();
 
@@ -162,11 +163,17 @@ export class SeriesTimelineView {
     this.tooltip = new AgeStripTooltip({
       canvas,
       getViewMode: () => "age",
-      getBook: (tokenId) =>
-        this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId),
-      getTokenName: (tokenId) => this.tokenNameByToken.get(tokenId),
+      getBook: (tokenId) => {
+        const canonical = this.marketByToken.get(tokenId)?.outcomes.yes.tokenId;
+        return (
+          this.bookCache.get(tokenId) ??
+          (canonical ? this.feed?.getBook(canonical) : undefined)
+        );
+      },
+      getTokenName: (tokenId) =>
+        this.marketByToken.get(tokenId)?.outcomes.yes.label,
       getOppositeTokenName: (tokenId) =>
-        this.oppositeTokenNameByToken.get(tokenId),
+        this.marketByToken.get(tokenId)?.outcomes.no.label,
       getPressureColorScale: (tokenId) =>
         this.scaleByToken.get(tokenId) ?? DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     });
@@ -328,8 +335,7 @@ export class SeriesTimelineView {
 
       const keepTokens = new Set<string>();
       this.scaleByToken.clear();
-      this.tokenNameByToken.clear();
-      this.oppositeTokenNameByToken.clear();
+      this.marketByToken.clear();
       for (const row of this.rows) {
         for (const [marketIndex, market] of row.event.markets.entries()) {
           const tokenId = market.outcomes.yes.tokenId;
@@ -340,9 +346,7 @@ export class SeriesTimelineView {
             key,
             defaultPressureScaleForMarket(row.event, marketIndex),
           );
-          this.tokenNameByToken.set(key, market.outcomes.yes.label);
-          if (market.outcomes.no.label)
-            this.oppositeTokenNameByToken.set(key, market.outcomes.no.label);
+          this.marketByToken.set(key, market);
           this.pressure.ensure(key, row.endMs);
         }
       }
@@ -437,7 +441,7 @@ export class SeriesTimelineView {
       const rowOffsetCss = seriesRowOffsetCss(frame, row.centerMs);
 
       if (lifecycle.kind === "resolved") {
-        const primaryWon = String(lifecycle.winningTokenId) === key;
+        const primaryWon = lifecycle.winningTokenId === tokenId;
         drawResolvedMarketStrip(
           frame,
           row.centerMs,
@@ -595,7 +599,7 @@ export class SeriesTimelineView {
           lifecycle.kind === "resolved"
             ? {
                 side:
-                  String(lifecycle.winningTokenId) === String(tokenId)
+                  lifecycle.winningTokenId === tokenId
                     ? ("primary" as const)
                     : ("opposite" as const),
                 outcome: lifecycle.winningOutcome,
@@ -633,15 +637,15 @@ export class SeriesTimelineView {
 
   private marketLifecycle(market: Market): MarketLifecycle {
     const initial = initialMarketLifecycle(market);
-    const conditionId = market.conditionId ? String(market.conditionId) : null;
+    const conditionId = market.conditionId;
     const primary = market.outcomes.yes.tokenId;
     const opposite = market.outcomes.no.tokenId;
     if (!primary) return initial;
 
     const update =
       (conditionId ? this.resolutionByCondition.get(conditionId) : undefined) ??
-      this.resolutionByAsset.get(String(primary)) ??
-      (opposite ? this.resolutionByAsset.get(String(opposite)) : undefined);
+      this.resolutionByAsset.get(primary) ??
+      (opposite ? this.resolutionByAsset.get(opposite) : undefined);
     if (!update) return initial;
 
     return resolveMarketLifecycle(
@@ -655,9 +659,7 @@ export class SeriesTimelineView {
   }
 
   private refreshFeed(tokenIds: readonly TokenId[]): void {
-    const unique = [...new Set(tokenIds.map(String))]
-      .sort()
-      .map((tokenId) => tokenId as TokenId);
+    const unique = [...new Set(tokenIds)].sort();
     const key = unique.join(",");
     if (key === this.feedKey) return;
     this.feedKey = key;
@@ -713,7 +715,13 @@ export class SeriesTimelineView {
     this.pressure.setRecordingCoverage(hydration.recordingSinceMsByToken);
     this.pressure.hydrate(
       hydration.pressureSnapshotsByToken,
-      (tokenId) => this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId),
+      (tokenId) => {
+        const canonical = this.marketByToken.get(tokenId)?.outcomes.yes.tokenId;
+        return (
+          this.bookCache.get(tokenId) ??
+          (canonical ? this.feed?.getBook(canonical) : undefined)
+        );
+      },
     );
     this.ageClock.refresh();
     this.requestDraw();
