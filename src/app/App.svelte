@@ -551,11 +551,7 @@
     persistPinnedSeriesIds(pinnedSeriesIds);
   }
 
-  function addEvent(
-    event: Event,
-    announceLifecycle: boolean,
-    focusExisting = true,
-  ): boolean {
+  function addEvent( event: Event, announceReady: boolean, focusExisting = true ): boolean {
     const existing = entries.find(
       (entry) => entry.kind === "event" && entry.event.id === event.id,
     );
@@ -573,17 +569,13 @@
       return false;
     }
 
-    const entry: EventDashboardItem = {
-      kind: "event",
-      event,
-      announceReady: announceLifecycle,
-    };
+    const entry: EventDashboardItem = { kind: "event", event, announceReady };
     rememberLayoutKey(itemKey(entry));
     entries = [...entries, entry];
     return true;
   }
 
-  function addSeries(series: Series, announceLifecycle: boolean): boolean {
+  function addSeries(series: Series, announceReady: boolean): boolean {
     const seriesId = String(series.id);
     const existing = entries.find(
       (entry) => entry.kind === "series" && String(entry.series.id) === seriesId,
@@ -600,11 +592,7 @@
       return false;
     }
 
-    const entry: SeriesDashboardItem = {
-      kind: "series",
-      series,
-      announceReady: announceLifecycle,
-    };
+    const entry: SeriesDashboardItem = { kind: "series", series, announceReady };
     rememberLayoutKey(itemKey(entry));
     entries = [...entries, entry];
     return true;
