@@ -106,8 +106,7 @@ test("event discovery uses topic and volume filters and skips pinned/dismissed e
   const found = await discoverEvents(
     client,
     FILTERS,
-    new Set(["dismissed"]),
-    new Set(["event-pinned"]),
+    new Set(["pinned", "dismissed"]),
     NOW,
   );
 
@@ -201,7 +200,6 @@ test("all-topic discovery skips tag lookups, forwards sort/liquidity and caps ad
     client,
     { ...FILTERS, topics: [], minLiquidity: 1000, order: "volume24hr" },
     new Set(),
-    new Set(),
     NOW,
   );
   expect(found).toHaveLength(8);
@@ -232,7 +230,6 @@ test("discovery bounds page scanning and skips events from pinned series", async
     await discoverEvents(
       client,
       { ...FILTERS, topics: [] },
-      new Set(),
       new Set(),
       NOW,
       new Set(["pinned-series"]),
