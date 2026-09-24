@@ -89,6 +89,11 @@
   let dismissedDiscoveryIds = loadDismissedDiscoveryIds();
 
   $: orderedEntries = orderDashboardItems(entries, layoutOrder);
+  $: loadedEventIds = new Set(
+    entries.flatMap((entry) =>
+      entry.kind === "event" ? [entry.event.id] : [],
+    ),
+  );
 
   function loadDiscoveryNumber(
     key: string,
@@ -802,6 +807,7 @@
     <EventSearch
       {client}
       {status}
+      {loadedEventIds}
       onchoose={(event) => void addManualEvent(event)}
       onchooseseries={addManualSeries}
       onstatus={(message) => (status = message)}
