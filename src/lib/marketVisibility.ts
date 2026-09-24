@@ -36,7 +36,8 @@ export function loadUserHiddenMarketIds(): Set<string> {
           parsed.filter((value): value is string => typeof value === "string"),
         )
       : new Set();
-  } catch {
+  } catch (error) {
+    console.warn("Could not restore hidden market preferences:", error);
     return new Set();
   }
 }
@@ -46,8 +47,8 @@ export function persistUserHiddenMarketIds(
 ): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...marketIds]));
-  } catch {
-    // Preferences are best effort.
+  } catch (error) {
+    console.warn("Could not persist hidden market preferences:", error);
   }
 }
 
