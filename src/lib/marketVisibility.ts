@@ -1,4 +1,4 @@
-import type { MarketId } from "@polymarket/client";
+import type { Market, MarketId } from "@polymarket/client";
 import type { MarketLifecycle } from "./marketLifecycle";
 export type HiddenMarketReason = "user" | "empty-book" | "resolved-default";
 
@@ -54,7 +54,7 @@ export function persistUserHiddenMarketIds(
 }
 
 export interface MarketIdentified {
-  readonly marketId: MarketId;
+  readonly market: Pick<Market, "id">;
 }
 
 export interface MarketVisibilityPartition<T extends MarketIdentified> {
@@ -70,7 +70,7 @@ export function partitionMarketVisibility<T extends MarketIdentified>(
   const hidden: T[] = [];
 
   for (const market of markets) {
-    const visibility = visibilityByMarketId.get(market.marketId) ?? {
+    const visibility = visibilityByMarketId.get(market.market.id) ?? {
       kind: "visible" as const,
     };
     (isMarketVisible(visibility) ? visible : hidden).push(market);
@@ -89,9 +89,9 @@ export function loadMarketVisibility(
   const userHidden = loadUserHiddenMarketIds();
   return new Map(
     markets.map((market) => [
-      market.marketId,
+      market.market.id,
       initialMarketVisibility(
-        userHidden.has(market.marketId),
+        userHidden.has(market.market.id),
         market.lifecycle,
       ),
     ]),
