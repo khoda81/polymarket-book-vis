@@ -81,38 +81,24 @@ export class PressureFrontierMemory {
     changes: readonly PressureLevelChange[],
     validThroughMs: number,
   ): void {
+    this.updateBookLevels(
+      side === "bid" ? changes : [],
+      side === "ask" ? changes : [],
+      validThroughMs,
+    );
+  }
+
+  updateBookLevels(
+    bidChanges: readonly PressureLevelChange[],
+    askChanges: readonly PressureLevelChange[],
+    validThroughMs: number,
+  ): void {
     validThroughMs = this.normalizeTime(validThroughMs);
-    const state = this.sideState(side);
+    const observed =
+      this.applyLevels("bid", bidChanges, validThroughMs) ||
+      this.applyLevels("ask", askChanges, validThroughMs);
+    if (!observed) return;
 
-    const finalByKey = new Map<Price, number>();
-    for (const change of changes) {
-      const key = localKey(side, change.price);
-      if (key === null) continue;
-      if (!Number.isFinite(change.shares) || change.shares < 0) continue;
-      finalByKey.set(key, change.shares);
-    }
-    if (finalByKey.size === 0) return;
-
-    let next = state.current;
-    const deltas: PressureSideDelta[] = [];
-    for (const [key, shares] of finalByKey) {
-      const previousShares = frontierLevel(next, key);
-      if (shares === previousShares) continue;
-
-      next = setFrontierLevel(next, key, shares);
-      deltas.push({
-        price: side === "bid" ? key : complementPrice(key),
-        delta: shares - previousShares,
-      });
-    }
-
-    if (deltas.length > 0) {
-      this.field.applySideDeltas(side, deltas, validThroughMs, next);
-      state.current = next;
-    }
-
-    // An ordered book event confirms the whole resulting book, even when the
-    // changed level did not alter this particular pressure interval.
     this.field.observeCurrent(validThroughMs);
     this.lastUpdateMs = validThroughMs;
   }
@@ -173,6 +159,41 @@ export class PressureFrontierMemory {
 
   currentLevels(side: PressureBookSide): readonly FrontierLevel[] {
     return frontierLevels(this.sideState(side).current);
+  }
+
+  private applyLevels(
+    side: PressureBookSide,
+    changes: readonly PressureLevelChange[],
+    validThroughMs: number,
+  ): boolean {
+    const state = this.sideState(side);
+    const finalByKey = new Map<Price, number>();
+
+    for (const change of changes) {
+      const key = localKey(side, change.price);
+      if (key === null) continue;
+      if (!Number.isFinite(change.shares) || change.shares < 0) continue;
+      finalByKey.set(key, change.shares);
+    }
+    if (finalByKey.size === 0) return false;
+
+    let next = state.current;
+    const deltas: PressureSideDelta[] = [];
+    for (const [key, shares] of finalByKey) {
+      const previousShares = frontierLevel(next, key);
+      if (shares === previousShares) continue;
+      next = setFrontierLevel(next, key, shares);
+      deltas.push({
+        price: side === "bid" ? key : complementPrice(key),
+        delta: shares - previousShares,
+      });
+    }
+
+    if (deltas.length > 0) {
+      this.field.applySideDeltas(side, deltas, validThroughMs, next);
+      state.current = next;
+    }
+    return true;
   }
 
   private replaceSide(
