@@ -75,7 +75,7 @@ export class ChartController {
     this.onMarketLifecycleChanged =
       options.onMarketLifecycleChanged ?? (() => undefined);
     for (const control of definition.controls) {
-      this.lifecycleByMarketId.set(control.marketId, control.lifecycle);
+      this.lifecycleByMarketId.set(control.market.id, control.lifecycle);
       this.tokenIdByValue.set(control.tokenId, control.tokenId);
     }
 
@@ -106,12 +106,12 @@ export class ChartController {
         return id ? this.feed.getBook(id) : undefined;
       },
       getTokenName: (tokenId) => {
-        const id = this.knownTokenId(tokenId);
-        return id ? this.definition.tokenNames.get(id) : undefined;
+        const control = this.controlForTokenValue(tokenId);
+        return control?.market.outcomes.yes.label;
       },
       getOppositeTokenName: (tokenId) => {
-        const id = this.knownTokenId(tokenId);
-        return id ? this.definition.oppositeTokenNames.get(id) : undefined;
+        const control = this.controlForTokenValue(tokenId);
+        return control?.market.outcomes.no.label;
       },
       getPressureColorScale: (tokenId) => {
         const id = this.knownTokenId(tokenId);
@@ -166,7 +166,7 @@ export class ChartController {
     const tokenIds = unresolvedControls.map((control) => control.tokenId);
 
     for (const control of this.definition.controls)
-      if (!hiddenMarketIds.has(control.marketId))
+      if (!hiddenMarketIds.has(control.market.id))
         this.activeTokens.add(control.tokenId);
 
     this.ageView.configureMarkets(this.definition.controls);
@@ -220,6 +220,13 @@ export class ChartController {
     return this.tokenIdByValue.get(value) ?? null;
   }
 
+  private controlForTokenValue(value: string) {
+    const tokenId = this.knownTokenId(value);
+    return tokenId
+      ? this.definition.controls.find((control) => control.tokenId === tokenId)
+      : undefined;
+  }
+
   private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
     return pressureScaleForToken(this.definition, tokenId);
   }
@@ -230,43 +237,44 @@ export class ChartController {
     );
     if (!control) return;
 
-    const lifecycle = this.lifecycleByMarketId.get(control.marketId);
+    const lifecycle = this.lifecycleByMarketId.get(control.market.id);
     if (lifecycle && lifecycle.kind !== "live") return;
 
     if (!this.activeTokens.delete(tokenId)) return;
-    this.onMarketAutoHidden(control.marketId, reason);
+    this.onMarketAutoHidden(control.market.id, reason);
     this.reqDraw();
   }
 
   private applyResolution(resolution: MarketResolutionUpdate): void {
     for (const control of this.definition.controls) {
+      const oppositeTokenId = control.market.outcomes.no.tokenId;
       const belongsToMarket =
-        (control.conditionId !== null &&
-          control.conditionId === resolution.conditionId) ||
+        (control.market.conditionId !== null &&
+          control.market.conditionId === resolution.conditionId) ||
         resolution.assetIds.includes(control.tokenId) ||
-        (control.oppositeTokenId !== null &&
-          resolution.assetIds.includes(control.oppositeTokenId)) ||
+        (oppositeTokenId !== null &&
+          resolution.assetIds.includes(oppositeTokenId)) ||
         resolution.winningAssetId === control.tokenId ||
-        (control.oppositeTokenId !== null &&
-          resolution.winningAssetId === control.oppositeTokenId);
+        (oppositeTokenId !== null &&
+          resolution.winningAssetId === oppositeTokenId);
       if (!belongsToMarket) continue;
 
       const current =
-        this.lifecycleByMarketId.get(control.marketId) ?? control.lifecycle;
+        this.lifecycleByMarketId.get(control.market.id) ?? control.lifecycle;
       const next = resolveMarketLifecycle(
         current,
         resolution,
         control.tokenId,
-        control.oppositeTokenId,
-        control.primaryOutcome,
-        control.oppositeOutcome,
+        oppositeTokenId,
+        control.market.outcomes.yes.label,
+        control.market.outcomes.no.label,
       );
       if (next === current) continue;
 
-      this.lifecycleByMarketId.set(control.marketId, next);
+      this.lifecycleByMarketId.set(control.market.id, next);
       this.activeTokens.add(control.tokenId);
       this.ageView.resolveMarket(String(control.tokenId));
-      this.onMarketLifecycleChanged(control.marketId, next);
+      this.onMarketLifecycleChanged(control.market.id, next);
     }
     this.reqDraw();
   }
