@@ -23,6 +23,11 @@ export interface EventPresentation {
   readonly marketRules: readonly MarketRule[];
 }
 
+/**
+ * One SDK Event plus the small amount of presentation and Gamma-only metadata
+ * needed to initialize its chart. The Event/Market objects remain the source
+ * of truth for identity, outcomes, labels, and lifecycle metadata.
+ */
 export interface EventBundle {
   readonly event: Event;
   readonly presentation: EventPresentation;
