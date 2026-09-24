@@ -98,17 +98,23 @@
       : fallback;
   }
 
-  function loadDismissedDiscoveryIds(): Set<string> {
+  function loadStoredJson(key: string): unknown {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return undefined;
+
     try {
-      const parsed: unknown = JSON.parse(
-        localStorage.getItem(DISMISSED_DISCOVERY_STORAGE_KEY) ?? "[]",
-      );
-      return Array.isArray(parsed)
-        ? new Set(parsed.filter((id): id is string => typeof id === "string"))
-        : new Set();
-    } catch {
-      return new Set();
+      return JSON.parse(raw);
+    } catch (error) {
+      console.warn(`Ignoring malformed localStorage value for ${key}:`, error);
+      return undefined;
     }
+  }
+
+  function loadDismissedDiscoveryIds(): Set<string> {
+    const parsed = loadStoredJson(DISMISSED_DISCOVERY_STORAGE_KEY);
+    return Array.isArray(parsed)
+      ? new Set(parsed.filter((id): id is string => typeof id === "string"))
+      : new Set();
   }
 
   function persistDismissedDiscoveryIds(): void {
@@ -119,31 +125,21 @@
   }
 
   function loadStoredIds<T extends string>(key: string): T[] {
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return [];
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
+    const parsed = loadStoredJson(key);
+    if (!Array.isArray(parsed)) return [];
 
-      const ids = parsed.filter(
-        (value): value is string =>
-          typeof value === "string" && value.trim().length > 0,
-      );
-      return [...new Set(ids)] as T[];
-    } catch {
-      return [];
-    }
+    const ids = parsed.filter(
+      (value): value is string =>
+        typeof value === "string" && value.trim().length > 0,
+    );
+    return [...new Set(ids)] as T[];
   }
 
   function loadColumnCount(): number {
-    try {
-      const raw = localStorage.getItem(COLUMN_COUNT_STORAGE_KEY);
-      if (raw !== null) {
-        const parsed = Number(raw);
-        if (Number.isInteger(parsed) && parsed >= MIN_COLUMNS) return parsed;
-      }
-    } catch {
-      // Fall back to the responsive default below.
+    const raw = localStorage.getItem(COLUMN_COUNT_STORAGE_KEY);
+    if (raw !== null) {
+      const parsed = Number(raw);
+      if (Number.isInteger(parsed) && parsed >= MIN_COLUMNS) return parsed;
     }
 
     if (window.innerWidth < 800) return 1;
@@ -172,26 +168,19 @@
     eventPins: readonly EventId[],
     seriesPins: readonly SeriesId[],
   ): string[] {
-    try {
-      const raw = localStorage.getItem(LAYOUT_ORDER_STORAGE_KEY);
-      if (raw) {
-        const parsed: unknown = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          const seen = new Set<string>();
-          return parsed.filter((value): value is string => {
-            if (
-              typeof value !== "string" ||
-              seen.has(value) ||
-              (!value.startsWith("event:") && !value.startsWith("series:"))
-            )
-              return false;
-            seen.add(value);
-            return true;
-          });
-        }
-      }
-    } catch {
-      // Fall back to the stored pin order below.
+    const parsed = loadStoredJson(LAYOUT_ORDER_STORAGE_KEY);
+    if (Array.isArray(parsed)) {
+      const seen = new Set<string>();
+      return parsed.filter((value): value is string => {
+        if (
+          typeof value !== "string" ||
+          seen.has(value) ||
+          (!value.startsWith("event:") && !value.startsWith("series:"))
+        )
+          return false;
+        seen.add(value);
+        return true;
+      });
     }
 
     return [
