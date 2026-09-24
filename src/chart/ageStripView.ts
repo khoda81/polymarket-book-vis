@@ -58,7 +58,7 @@ export class AgeStripView {
   private readonly unsubscribeTuning: () => void;
   private readonly pressure = new AgeStripPressureState();
   private readonly visibilityInitialized = new Set<string>();
-  private ghostRefreshTimer: number | undefined;
+  private stalenessRefreshTimer: number | undefined;
   private layoutMode: "age" | "volume" | null = null;
 
   constructor(host: AgeStripHost) {
@@ -91,7 +91,7 @@ export class AgeStripView {
   reset(): void {
     this.pressure.reset();
     this.visibilityInitialized.clear();
-    this.cancelGhostRefresh();
+    this.cancelStalenessRefresh();
     this.clock.reset();
     this.tooltip.clear();
     this.layoutMode = null;
@@ -140,13 +140,13 @@ export class AgeStripView {
   }
 
   draw(): void {
-    // A book-driven redraw already advances the ghosts. Reset the decay timer
-    // so a ghost-only frame happens only after the chart has gone quiet.
-    this.cancelGhostRefresh();
+    // A book-driven redraw advances validity. Reset the decay timer so the
+    // next staleness-only frame happens only after the chart goes quiet.
+    this.cancelStalenessRefresh();
 
     const tuning = getAgeStripTuning();
     const nowMs = Date.now();
-    let hasVisibleGhosts = false;
+    let hasVisiblePressure = false;
 
     const controls = this.collectControls();
     const activeControls = controls.filter((label) => this.isActive(label));
@@ -218,7 +218,7 @@ export class AgeStripView {
         tuning.ghostHalfLifeMs,
         nowMs,
       );
-      hasVisibleGhosts ||= this.pressure.hasVisibleGhosts(
+      hasVisiblePressure ||= this.pressure.hasVisiblePressure(
         tokenId,
         nowMs,
         tuning.ghostHalfLifeMs,
@@ -229,8 +229,8 @@ export class AgeStripView {
       this.host.getPressureColorScale(tokenId),
     );
 
-    if (hasVisibleGhosts)
-      this.scheduleGhostRefresh(ghostRefreshDelayMs(tuning.ghostHalfLifeMs));
+    if (hasVisiblePressure)
+      this.scheduleStalenessRefresh(ghostRefreshDelayMs(tuning.ghostHalfLifeMs));
   }
 
   prepareVolumeView(): void {
@@ -265,7 +265,7 @@ export class AgeStripView {
 
   destroy(): void {
     this.unsubscribeTuning();
-    this.cancelGhostRefresh();
+    this.cancelStalenessRefresh();
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.clock.destroy();
     this.tooltip.destroy();
@@ -279,23 +279,23 @@ export class AgeStripView {
     event.stopImmediatePropagation();
   };
 
-  private scheduleGhostRefresh(delayMs: number): void {
+  private scheduleStalenessRefresh(delayMs: number): void {
     if (
-      this.ghostRefreshTimer !== undefined ||
+      this.stalenessRefreshTimer !== undefined ||
       this.host.getViewMode() !== "age"
     )
       return;
 
-    this.ghostRefreshTimer = window.setTimeout(() => {
-      this.ghostRefreshTimer = undefined;
+    this.stalenessRefreshTimer = window.setTimeout(() => {
+      this.stalenessRefreshTimer = undefined;
       this.host.requestDraw();
     }, delayMs);
   }
 
-  private cancelGhostRefresh(): void {
-    if (this.ghostRefreshTimer === undefined) return;
-    clearTimeout(this.ghostRefreshTimer);
-    this.ghostRefreshTimer = undefined;
+  private cancelStalenessRefresh(): void {
+    if (this.stalenessRefreshTimer === undefined) return;
+    clearTimeout(this.stalenessRefreshTimer);
+    this.stalenessRefreshTimer = undefined;
   }
 
   private installAgeLayout(
