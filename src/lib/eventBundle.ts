@@ -116,8 +116,11 @@ export function buildEventBundle(
     )
       marketDescriptions.set(marketId, marketDescription);
 
-    const outcomes = parseStringArray(rawMarket.outcomes);
-    const tokenIds = parseStringArray(rawMarket.clobTokenIds);
+    const outcomes = parseStringArray(rawMarket.outcomes, `${marketId}.outcomes`);
+    const tokenIds = parseStringArray(
+      rawMarket.clobTokenIds,
+      `${marketId}.clobTokenIds`,
+    );
     for (
       let index = 0;
       index < Math.min(outcomes.length, tokenIds.length);
@@ -163,16 +166,18 @@ export function buildEventBundle(
   };
 }
 
-function parseStringArray(value: unknown): string[] {
+function parseStringArray(value: unknown, field: string): string[] {
   if (Array.isArray(value))
     return value.filter((item): item is string => typeof item === "string");
   if (typeof value !== "string") return [];
+
   try {
     const parsed: unknown = JSON.parse(value);
     return Array.isArray(parsed)
       ? parsed.filter((item): item is string => typeof item === "string")
       : [];
-  } catch {
+  } catch (error) {
+    console.warn(`Could not parse Gamma ${field}:`, error);
     return [];
   }
 }
