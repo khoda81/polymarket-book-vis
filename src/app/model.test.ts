@@ -6,7 +6,7 @@ import {
   orderEntries,
   pinState,
   toEventSlug,
-  type DashboardEntry,
+  type EventDashboardItem,
   type EventSlug,
 } from "./model";
 
@@ -57,10 +57,10 @@ test("dashboard ordering follows pin order, then insertion order", () => {
   const a = fakeEvent("a", "alpha-event");
   const b = fakeEvent("b", "beta-event");
   const c = fakeEvent("c", "charlie-event");
-  const entries: DashboardEntry[] = [
-    { event: a, announceLifecycle: false },
-    { event: b, announceLifecycle: false },
-    { event: c, announceLifecycle: false },
+  const entries: EventDashboardItem[] = [
+    { kind: "event", event: a, announceLifecycle: false },
+    { kind: "event", event: b, announceLifecycle: false },
+    { kind: "event", event: c, announceLifecycle: false },
   ];
   const pinned = ["charlie-event", "alpha-event"] as EventSlug[];
 
