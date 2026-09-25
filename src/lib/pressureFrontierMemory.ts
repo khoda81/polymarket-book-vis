@@ -42,6 +42,12 @@ interface SideFrontierState {
   current: FrontierRoot;
 }
 
+interface SideUpdatePlan {
+  readonly observed: boolean;
+  readonly next: FrontierRoot;
+  readonly deltas: readonly PressureSideDelta[];
+}
+
 /**
  * Current liquidity lives in two monotone frontiers used for incremental
  * updates. The materialized field is the complete rendered observation history:
@@ -56,22 +62,21 @@ export class PressureFrontierMemory {
   observeBook(book: TokenBook, validThroughMs: number): void {
     validThroughMs = this.normalizeTime(validThroughMs);
 
-    this.replaceSide(
+    const bid = this.planReplacement(
       "bid",
       [...book.usdToYes.asOrders()]
         .filter(validBookOrder)
         .map((order) => ({ key: order.price, weight: order.take })),
-      validThroughMs,
     );
-    this.replaceSide(
+    const ask = this.planReplacement(
       "ask",
       [...book.yesToUsd.asSellOrders()].filter(validBookOrder).map((order) => ({
         key: complementPrice(order.price),
         weight: order.take,
       })),
-      validThroughMs,
     );
 
+    this.applyBookPlan(bid, ask, validThroughMs);
     this.field.observeCurrent(validThroughMs);
     this.lastUpdateMs = validThroughMs;
   }
@@ -94,10 +99,11 @@ export class PressureFrontierMemory {
     validThroughMs: number,
   ): void {
     validThroughMs = this.normalizeTime(validThroughMs);
-    const bidObserved = this.applyLevels("bid", bidChanges, validThroughMs);
-    const askObserved = this.applyLevels("ask", askChanges, validThroughMs);
-    if (!bidObserved && !askObserved) return;
+    const bid = this.planLevelChanges("bid", bidChanges);
+    const ask = this.planLevelChanges("ask", askChanges);
+    if (!bid.observed && !ask.observed) return;
 
+    this.applyBookPlan(bid, ask, validThroughMs);
     this.field.observeCurrent(validThroughMs);
     this.lastUpdateMs = validThroughMs;
   }
@@ -160,11 +166,10 @@ export class PressureFrontierMemory {
     return frontierLevels(this.sideState(side).current);
   }
 
-  private applyLevels(
+  private planLevelChanges(
     side: PressureBookSide,
     changes: readonly PressureLevelChange[],
-    validThroughMs: number,
-  ): boolean {
+  ): SideUpdatePlan {
     const state = this.sideState(side);
     const finalByKey = new Map<Price, number>();
 
@@ -174,7 +179,8 @@ export class PressureFrontierMemory {
       if (!Number.isFinite(change.shares) || change.shares < 0) continue;
       finalByKey.set(key, change.shares);
     }
-    if (finalByKey.size === 0) return false;
+    if (finalByKey.size === 0)
+      return { observed: false, next: state.current, deltas: [] };
 
     let next = state.current;
     const deltas: PressureSideDelta[] = [];
@@ -188,22 +194,18 @@ export class PressureFrontierMemory {
       });
     }
 
-    if (deltas.length > 0) {
-      this.field.applySideDeltas(side, deltas, validThroughMs, next);
-      state.current = next;
-    }
-    return true;
+    return { observed: true, next, deltas };
   }
 
-  private replaceSide(
+  private planReplacement(
     side: PressureBookSide,
     levels: readonly FrontierLevel[],
-    validThroughMs: number,
-  ): void {
+  ): SideUpdatePlan {
     const state = this.sideState(side);
     const normalized = normalizeLevels(levels);
     const previousLevels = frontierLevels(state.current);
-    if (levelsEqual(previousLevels, normalized)) return;
+    if (levelsEqual(previousLevels, normalized))
+      return { observed: true, next: state.current, deltas: [] };
 
     const previousByKey = new Map(
       previousLevels.map((level) => [level.key, level.weight] as const),
@@ -224,8 +226,23 @@ export class PressureFrontierMemory {
     }
 
     const next = buildFrontier(normalized);
-    this.field.applySideDeltas(side, deltas, validThroughMs, next);
-    state.current = next;
+    return { observed: true, next, deltas };
+  }
+
+  private applyBookPlan(
+    bid: SideUpdatePlan,
+    ask: SideUpdatePlan,
+    validThroughMs: number,
+  ): void {
+    this.field.applyBookDeltas(
+      bid.deltas,
+      ask.deltas,
+      validThroughMs,
+      bid.next,
+      ask.next,
+    );
+    if (bid.deltas.length > 0) this.bid.current = bid.next;
+    if (ask.deltas.length > 0) this.ask.current = ask.next;
   }
 
   private validateFieldAgainstFrontiers(

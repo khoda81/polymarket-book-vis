@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bookFromSnapshot } from "./bookIngestion";
 import { PressureFrontierMemory } from "./pressureFrontierMemory";
 import { priceFromLegacyNumber as p } from "./price";
 
@@ -26,6 +27,56 @@ test("one book observation applies both bid and ask changes", () => {
 
   expect(memory.currentLevels("bid")).toEqual([{ key: p(0.6), weight: 10 }]);
   expect(memory.currentLevels("ask")).toEqual([{ key: p(0.6), weight: 20 }]);
+});
+
+test("one level event cannot materialize an intermediate bid/ask book", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.updateBookLevels(
+    [{ price: p(0.81), shares: 75.6 }],
+    [
+      { price: p(0.74), shares: 131.7 },
+      { price: p(0.77), shares: 96.7 },
+    ],
+    1_000,
+  );
+  memory.updateBookLevels(
+    [{ price: p(0.82), shares: 2 }],
+    [{ price: p(0.77), shares: 11.9 }],
+    2_000,
+  );
+
+  expectAtomicAskGhost(memory);
+});
+
+test("one snapshot cannot materialize an intermediate bid/ask book", () => {
+  const memory = new PressureFrontierMemory();
+
+  memory.observeBook(
+    bookFromSnapshot(
+      [{ price: "0.81", size: "75.6" }],
+      [
+        { price: "0.74", size: "131.7" },
+        { price: "0.77", size: "96.7" },
+      ],
+    ),
+    1_000,
+  );
+  memory.observeBook(
+    bookFromSnapshot(
+      [
+        { price: "0.81", size: "75.6" },
+        { price: "0.82", size: "2" },
+      ],
+      [
+        { price: "0.74", size: "131.7" },
+        { price: "0.77", size: "11.9" },
+      ],
+    ),
+    2_000,
+  );
+
+  expectAtomicAskGhost(memory);
 });
 
 test("unchanged observations advance only the current pressure timestamp", () => {
@@ -226,3 +277,24 @@ test("visibility depends only on timestamp and display half-life", () => {
   expect(memory.hasVisiblePressure(20_000, 100_000)).toBe(true);
   expect(memory.shellsAtPrice(p(0.4))).toEqual(history);
 });
+
+function expectAtomicAskGhost(memory: PressureFrontierMemory): void {
+  // For asks, allowing a higher price is less strict. The outer ghost must
+  // therefore be at least as recent at 0.83 as it is at 0.815. Sequentially
+  // applying the two sides used to stamp only the stricter interval at 2_000.
+  const stricter = memory.shellsAtPrice(p(0.815));
+  expect(memory.shellsAtPrice(p(0.83))).toEqual(stricter);
+  expect(stricter).toHaveLength(2);
+  expect(stricter[0]).toMatchObject({
+    loVolume: 0,
+    hiVolume: 143.6,
+    side: -1,
+    validThroughMs: 2_000,
+  });
+  expect(stricter[1]).toMatchObject({
+    loVolume: 143.6,
+    side: -1,
+    validThroughMs: 1_000,
+  });
+  expect(stricter[1]!.hiVolume).toBeCloseTo(228.4);
+}

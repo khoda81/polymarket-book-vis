@@ -84,47 +84,51 @@ export class MaterializedPressureField {
     return [];
   }
 
-  applySideDeltas(
-    side: PressureBookSide,
-    deltas: readonly PressureSideDelta[],
+  /** Apply one complete old-book -> new-book observation without intermediate states. */
+  applyBookDeltas(
+    bidDeltas: readonly PressureSideDelta[],
+    askDeltas: readonly PressureSideDelta[],
     validThroughMs: number,
-    nextFrontier: FrontierRoot,
+    nextBidFrontier: FrontierRoot,
+    nextAskFrontier: FrontierRoot,
   ): void {
-    const actual = deltas.filter(
-      ({ price, delta }) =>
-        Number.isSafeInteger(price) &&
-        price >= PRICE_ZERO &&
-        price <= PRICE_ONE &&
-        Number.isFinite(delta) &&
-        delta !== 0,
-    );
-    if (actual.length === 0) return;
+    const actualBid = validDeltas(bidDeltas);
+    const actualAsk = validDeltas(askDeltas);
+    if (actualBid.length === 0 && actualAsk.length === 0) return;
 
-    for (const { price } of actual) this.splitAt(price);
-    const revision = ++this.revision;
+    for (const { price } of actualBid) this.splitAt(price);
+    for (const { price } of actualAsk) this.splitAt(price);
+
+    // Preserve the previous deterministic tie behavior for crossed books:
+    // when both sides change in one observation, asks receive the later
+    // revision and therefore win an exact current-overlap tie.
+    const bidRevision =
+      actualBid.length > 0 ? ++this.revision : Number.NEGATIVE_INFINITY;
+    const askRevision =
+      actualAsk.length > 0 ? ++this.revision : Number.NEGATIVE_INFINITY;
 
     for (const run of this.runs) {
-      const affected = actual.some(
-        (change) =>
-          (side === "bid" && run.hi <= change.price) ||
-          (side === "ask" && run.lo >= change.price),
-      );
-      if (!affected) continue;
+      const bidAffected = actualBid.some((change) => run.hi <= change.price);
+      const askAffected = actualAsk.some((change) => run.lo >= change.price);
+      if (!bidAffected && !askAffected) continue;
 
-      const nextVolume = frontierVolumeOnInterval(
-        nextFrontier,
-        side,
-        run.lo,
-        run.hi,
-      );
-      if (nextVolume === (side === "bid" ? run.bidVolume : run.askVolume))
-        continue;
+      const nextBidVolume = bidAffected
+        ? frontierVolumeOnInterval(nextBidFrontier, "bid", run.lo, run.hi)
+        : run.bidVolume;
+      const nextAskVolume = askAffected
+        ? frontierVolumeOnInterval(nextAskFrontier, "ask", run.lo, run.hi)
+        : run.askVolume;
+      const bidChanged = nextBidVolume !== run.bidVolume;
+      const askChanged = nextAskVolume !== run.askVolume;
+      if (!bidChanged && !askChanged) continue;
+
       transitionRun(
         run,
-        side,
-        nextVolume,
+        nextBidVolume,
+        nextAskVolume,
         validThroughMs,
-        revision,
+        bidChanged ? bidRevision : run.bidRevision,
+        askChanged ? askRevision : run.askRevision,
         this.currentValidThroughMs,
       );
     }
@@ -223,12 +227,26 @@ export class MaterializedPressureField {
   }
 }
 
+function validDeltas(
+  deltas: readonly PressureSideDelta[],
+): PressureSideDelta[] {
+  return deltas.filter(
+    ({ price, delta }) =>
+      Number.isSafeInteger(price) &&
+      price >= PRICE_ZERO &&
+      price <= PRICE_ONE &&
+      Number.isFinite(delta) &&
+      delta !== 0,
+  );
+}
+
 function transitionRun(
   run: MutableRun,
-  side: PressureBookSide,
-  nextVolume: number,
+  nextBidVolume: number,
+  nextAskVolume: number,
   validThroughMs: number,
-  revision: number,
+  nextBidRevision: number,
+  nextAskRevision: number,
   currentValidThroughMs: number | undefined,
 ): void {
   const oldBidVolume = run.bidVolume;
@@ -236,13 +254,10 @@ function transitionRun(
   const oldBidRevision = run.bidRevision;
   const oldAskRevision = run.askRevision;
 
-  if (side === "bid") {
-    run.bidVolume = nextVolume;
-    run.bidRevision = revision;
-  } else {
-    run.askVolume = nextVolume;
-    run.askRevision = revision;
-  }
+  run.bidVolume = nextBidVolume;
+  run.askVolume = nextAskVolume;
+  run.bidRevision = nextBidRevision;
+  run.askRevision = nextAskRevision;
 
   const boundaries = new Set<number>([
     0,
