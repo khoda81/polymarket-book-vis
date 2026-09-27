@@ -8,17 +8,12 @@ import {
 import type { PressureBand } from "./pressureField";
 import { priceFromTicks } from "./price";
 
-export const PRESSURE_FRONTIER_SNAPSHOT_VERSION = 3 as const;
-
-export interface PressureEdgeSnapshot {
-  readonly current: readonly FrontierLevel[];
-  readonly field: PressureFieldSnapshot;
-}
+export const PRESSURE_FRONTIER_SNAPSHOT_VERSION = 4 as const;
 
 export interface PressureFrontierSnapshot {
   readonly version: typeof PRESSURE_FRONTIER_SNAPSHOT_VERSION;
-  readonly primaryToCollateral: PressureEdgeSnapshot;
-  readonly oppositeToCollateral: PressureEdgeSnapshot;
+  readonly current: readonly FrontierLevel[];
+  readonly field: PressureFieldSnapshot;
 }
 
 export function parsePressureFrontierSnapshot(
@@ -30,48 +25,31 @@ export function parsePressureFrontierSnapshot(
     throw new RangeError(
       `unsupported pressure frontier snapshot version: ${String(value.version)}`,
     );
+  if (!Array.isArray(value.current))
+    throw new TypeError("pressure frontier current must be an array");
 
   return {
     version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-    primaryToCollateral: parseEdge(
-      value.primaryToCollateral,
-      "primaryToCollateral",
-    ),
-    oppositeToCollateral: parseEdge(
-      value.oppositeToCollateral,
-      "oppositeToCollateral",
-    ),
+    current: parseLevels(value.current, "current"),
+    field: parseField(value.field),
   };
 }
 
-export function snapshotEdge(
-  current: FrontierRoot,
-  field: PressureFieldSnapshot,
-): PressureEdgeSnapshot {
-  return { current: frontierLevels(current), field };
+export function snapshotCurrent(current: FrontierRoot): readonly FrontierLevel[] {
+  return frontierLevels(current);
 }
 
-export function restoreEdgeCurrent(edge: PressureEdgeSnapshot): FrontierRoot {
-  return buildFrontier(edge.current);
+export function restoreCurrent(
+  levels: readonly FrontierLevel[],
+): FrontierRoot {
+  return buildFrontier(levels);
 }
 
-function parseEdge(value: unknown, label: string): PressureEdgeSnapshot {
+function parseField(value: unknown): PressureFieldSnapshot {
   if (!isRecord(value))
-    throw new TypeError(`pressure edge ${label} must be an object`);
-  if (!Array.isArray(value.current))
-    throw new TypeError(`pressure edge ${label}.current must be an array`);
-
-  return {
-    current: parseLevels(value.current, `${label}.current`),
-    field: parseField(value.field, label),
-  };
-}
-
-function parseField(value: unknown, label: string): PressureFieldSnapshot {
-  if (!isRecord(value))
-    throw new TypeError(`pressure edge ${label}.field must be an object`);
+    throw new TypeError("pressure field snapshot must be an object");
   if (!Array.isArray(value.runs))
-    throw new TypeError(`pressure edge ${label}.field.runs must be an array`);
+    throw new TypeError("pressure field runs must be an array");
 
   return {
     currentValidThroughMs:
@@ -79,32 +57,29 @@ function parseField(value: unknown, label: string): PressureFieldSnapshot {
         ? null
         : finiteNumber(
             value.currentValidThroughMs,
-            `${label}.field.currentValidThroughMs`,
+            "pressure field current valid-through",
           ),
-    runs: value.runs.map((run, index) => parseRun(run, label, index)),
+    runs: value.runs.map((run, index) => parseRun(run, index)),
   };
 }
 
 function parseRun(
   value: unknown,
-  label: string,
   index: number,
 ): PressureFieldSnapshot["runs"][number] {
   if (!isRecord(value))
-    throw new TypeError(`${label}.field.run[${index}] must be an object`);
+    throw new TypeError(`pressure field run[${index}] must be an object`);
   if (!Array.isArray(value.bands))
-    throw new TypeError(`${label}.field.run[${index}].bands must be an array`);
+    throw new TypeError(
+      `pressure field run[${index}].bands must be an array`,
+    );
 
   return {
-    lo: priceFromTicks(
-      finiteNumber(value.lo, `${label}.field.run[${index}].lo`),
-    ),
-    hi: priceFromTicks(
-      finiteNumber(value.hi, `${label}.field.run[${index}].hi`),
-    ),
-    volume: finiteNumber(value.volume, `${label}.field.run[${index}].volume`),
+    lo: priceFromTicks(finiteNumber(value.lo, `run[${index}].lo`)),
+    hi: priceFromTicks(finiteNumber(value.hi, `run[${index}].hi`)),
+    volume: finiteNumber(value.volume, `run[${index}].volume`),
     bands: value.bands.map((band, bandIndex) =>
-      parseBand(band, `${label}.field.run[${index}].bands[${bandIndex}]`),
+      parseBand(band, `run[${index}].bands[${bandIndex}]`),
     ),
   };
 }
@@ -129,7 +104,9 @@ function parseLevels(
   const levels = value.map((raw, index) => {
     if (!isRecord(raw))
       throw new TypeError(`${label}[${index}] must be an object`);
-    const key = priceFromTicks(finiteNumber(raw.key, `${label}[${index}].key`));
+    const key = priceFromTicks(
+      finiteNumber(raw.key, `${label}[${index}].key`),
+    );
     const weight = finiteNumber(raw.weight, `${label}[${index}].weight`);
     if (!(weight > 0))
       throw new RangeError(`${label}[${index}].weight must be positive`);
