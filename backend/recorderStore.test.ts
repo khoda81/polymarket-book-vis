@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
+import { PressureFrontierMemory } from "./legacyPressureV5/pressureFrontierMemory";
 import { priceFromLegacyNumber as p } from "../src/lib/price";
 import {
   RECORDER_CHECKPOINT_MUTATIONS,

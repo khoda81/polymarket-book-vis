@@ -15,8 +15,8 @@ import {
   tokenPressureChanges,
   tokenPressureLevels,
 } from "../src/lib/pressureBookAdapter";
-import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
-import type { PressureFrontierSnapshot } from "../src/lib/pressureFrontierSnapshot";
+import { PressureFrontierMemory } from "./legacyPressureV5/pressureFrontierMemory";
+import type { PressureFrontierSnapshot } from "./legacyPressureV5/pressureFrontierSnapshot";
 
 const PORT = Number(process.env.RECORDER_PORT ?? 3001);
 const DATABASE_PATH = resolve(

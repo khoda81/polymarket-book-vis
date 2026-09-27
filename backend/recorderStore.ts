@@ -8,11 +8,11 @@ import {
   replayPressureMutation,
   type RecorderPressureMutation,
 } from "./recorderPressureLog";
-import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
+import { PressureFrontierMemory } from "./legacyPressureV5/pressureFrontierMemory";
 import {
   parsePressureFrontierSnapshot,
   type PressureFrontierSnapshot,
-} from "../src/lib/pressureFrontierSnapshot";
+} from "./legacyPressureV5/pressureFrontierSnapshot";
 
 export const RECORDER_DATABASE_VERSION = 5;
 export const RECORDER_CHECKPOINT_MUTATIONS = 512;

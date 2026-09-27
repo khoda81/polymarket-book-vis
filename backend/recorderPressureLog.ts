@@ -1,8 +1,8 @@
-import type { FrontierLevel } from "../src/lib/monotoneFrontier";
+import type { FrontierLevel } from "./legacyPressureV5/monotoneFrontier";
 import {
   PressureFrontierMemory,
   type PressureLevelChange,
-} from "../src/lib/pressureFrontierMemory";
+} from "./legacyPressureV5/pressureFrontierMemory";
 import { priceFromTicks } from "../src/lib/price";
 
 const MUTATION_CLEAR = 0;
