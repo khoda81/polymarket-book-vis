@@ -221,7 +221,10 @@ export function renderAgeTooltip(
   const title = document.createElement("div");
   title.className = "cpv-ov-label";
   title.textContent = `${tokenName}@${formatProbability(tokenPrice)}`;
-  title.style.color = signedVolumeColor(isBid ? 1 : -1, colorScale);
+  // The pressure renderer interprets a primary-token bid as the
+  // complementary opposite-token -> collateral edge. Keep the original-order
+  // tooltip label, but color it with the edge that is actually rendered.
+  title.style.color = signedVolumeColor(isBid ? -1 : 1, colorScale);
   overlay.appendChild(title);
   overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
 
