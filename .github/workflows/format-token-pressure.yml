@@ -17,7 +17,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Format and dump
         run: |
-          files="backend/recorderStore.ts src/chart/seriesTimelineView.ts src/lib/pressureBookAdapter.test.ts src/lib/pressureBookAdapter.ts src/lib/pressureFrontierMemory.ts src/lib/pressureFrontierSnapshot.ts"
+          files="backend/recorderStore.ts backend/recorderStore.test.ts src/chart/seriesTimelineView.ts src/lib/pressureBookAdapter.test.ts src/lib/pressureBookAdapter.ts src/lib/pressureFrontierMemory.ts src/lib/pressureFrontierSnapshot.ts"
           bunx prettier --write $files
           for f in $files; do
             echo "FILE_BEGIN:$f"
