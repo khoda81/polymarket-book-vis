@@ -176,6 +176,8 @@ export class SeriesTimelineView {
         this.marketByToken.get(tokenId)?.outcomes.yes.label,
       getOppositeTokenName: (tokenId) =>
         this.marketByToken.get(tokenId)?.outcomes.no.label,
+      getOppositeTokenId: (tokenId) =>
+        this.marketByToken.get(tokenId)?.outcomes.no.tokenId ?? undefined,
       getPressureColorScale: (tokenId) =>
         this.scaleByToken.get(tokenId) ?? DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     });
@@ -353,6 +355,14 @@ export class SeriesTimelineView {
           );
           this.marketByToken.set(key, market);
           this.pressure.ensure(key, row.endMs);
+
+          const oppositeTokenId = market.outcomes.no.tokenId;
+          if (oppositeTokenId) {
+            const oppositeKey = String(oppositeTokenId);
+            keepTokens.add(oppositeKey);
+            this.marketByToken.set(oppositeKey, market);
+            this.pressure.ensure(oppositeKey, row.endMs);
+          }
         }
       }
 
@@ -431,8 +441,15 @@ export class SeriesTimelineView {
       if (!market || !tokenId) continue;
 
       const lifecycle = this.marketLifecycle(market);
-      if (lifecycle.kind !== "resolved") hydratableTokens.push(String(tokenId));
-      if (lifecycle.kind === "live") bufferedTokens.push(tokenId);
+      const oppositeTokenId = market.outcomes.no.tokenId;
+      if (lifecycle.kind !== "resolved") {
+        hydratableTokens.push(String(tokenId));
+        if (oppositeTokenId) hydratableTokens.push(String(oppositeTokenId));
+      }
+      if (lifecycle.kind === "live") {
+        bufferedTokens.push(tokenId);
+        if (oppositeTokenId) bufferedTokens.push(oppositeTokenId);
+      }
     }
     void this.hydrateTokens(hydratableTokens);
 
@@ -464,8 +481,13 @@ export class SeriesTimelineView {
         continue;
       }
 
-      const memory = this.pressure.memory(key);
-      if (!memory) continue;
+      const primaryMemory = this.pressure.memory(key);
+      const oppositeTokenId = market.outcomes.no.tokenId;
+      const oppositeKey = oppositeTokenId ? String(oppositeTokenId) : null;
+      const oppositeMemory = oppositeKey
+        ? this.pressure.memory(oppositeKey)
+        : undefined;
+      if (!primaryMemory && !oppositeMemory) continue;
 
       const geometry = seriesRowGeometry(frame, row.centerMs, dpr);
       gpuRows.push({
@@ -473,25 +495,40 @@ export class SeriesTimelineView {
         centerCss: geometry.centerCss,
         heightCss: geometry.heightCss,
         surfaces: [
-          {
-            runs: memory.renderRuns("primaryToCollateral"),
-            color: signedVolumeColor(1, scale),
-            mirrorPrice: true,
-            yDirection: 1,
-          },
-          {
-            runs: memory.renderRuns("oppositeToCollateral"),
-            color: signedVolumeColor(-1, scale),
-            mirrorPrice: false,
-            yDirection: -1,
-          },
+          ...(primaryMemory
+            ? [
+                {
+                  runs: primaryMemory.renderRuns(),
+                  color: signedVolumeColor(1, scale),
+                  mirrorPrice: true,
+                  yDirection: 1 as const,
+                },
+              ]
+            : []),
+          ...(oppositeMemory
+            ? [
+                {
+                  runs: oppositeMemory.renderRuns(),
+                  color: signedVolumeColor(-1, scale),
+                  mirrorPrice: false,
+                  yDirection: -1 as const,
+                },
+              ]
+            : []),
         ],
       });
-      hasVisiblePressure ||= this.pressure.hasVisiblePressure(
-        key,
-        nowMs,
-        tuning.ghostHalfLifeMs,
-      );
+      hasVisiblePressure ||=
+        this.pressure.hasVisiblePressure(
+          key,
+          nowMs,
+          tuning.ghostHalfLifeMs,
+        ) ||
+        (oppositeKey !== null &&
+          this.pressure.hasVisiblePressure(
+            oppositeKey,
+            nowMs,
+            tuning.ghostHalfLifeMs,
+          ));
     }
 
     this.pressureLayer.render({
@@ -752,13 +789,12 @@ export class SeriesTimelineView {
     if (this.destroyed) return;
 
     this.pressure.setRecordingCoverage(hydration.recordingSinceMsByToken);
-    this.pressure.hydrate(hydration.pressureSnapshotsByToken, (tokenId) => {
-      const canonical = this.marketByToken.get(tokenId)?.outcomes.yes.tokenId;
-      return (
+    this.pressure.hydrate(
+      hydration.pressureSnapshotsByToken,
+      (tokenId) =>
         this.bookCache.get(tokenId) ??
-        (canonical ? this.feed?.getBook(canonical) : undefined)
-      );
-    });
+        this.feed?.getBook(tokenId as TokenId),
+    );
     this.pressureRevision++;
     this.pressureLayer.invalidate();
     this.ageClock.refresh();
