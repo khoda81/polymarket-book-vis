@@ -48,25 +48,31 @@ export class PressureFrontierMemory {
   observeLevels(
     levels: readonly FrontierLevel[],
     validThroughMs: number,
-  ): void {
+  ): boolean {
     validThroughMs = this.normalizeTime(validThroughMs);
+    const previousUpdateMs = this.lastUpdateMs;
     const plan = this.planReplacement(levels);
-    if (this.applyPlan(plan, validThroughMs)) this.renderRevision++;
+    const geometryChanged = this.applyPlan(plan, validThroughMs);
+    if (geometryChanged) this.renderRevision++;
     this.field.observeCurrent(validThroughMs);
     this.lastUpdateMs = validThroughMs;
+    return geometryChanged || validThroughMs !== previousUpdateMs;
   }
 
   updateLevels(
     changes: readonly PressureLevelChange[],
     validThroughMs: number,
-  ): void {
+  ): boolean {
     validThroughMs = this.normalizeTime(validThroughMs);
     const plan = this.planLevelChanges(changes);
-    if (!plan.observed) return;
+    if (!plan.observed) return false;
 
-    if (this.applyPlan(plan, validThroughMs)) this.renderRevision++;
+    const previousUpdateMs = this.lastUpdateMs;
+    const geometryChanged = this.applyPlan(plan, validThroughMs);
+    if (geometryChanged) this.renderRevision++;
     this.field.observeCurrent(validThroughMs);
     this.lastUpdateMs = validThroughMs;
+    return geometryChanged || validThroughMs !== previousUpdateMs;
   }
 
   snapshot(): PressureFrontierSnapshot {

@@ -184,3 +184,17 @@ test("snapshot stores current pressure implicitly", () => {
     ],
   });
 });
+
+test("pressure updates report whether persisted state changed", () => {
+  const memory = new PressureFrontierMemory();
+
+  expect(memory.updateLevels([], 1_000)).toBe(false);
+  expect(memory.updateLevels([{ price: p(0), shares: 10 }], 1_000)).toBe(false);
+
+  expect(memory.updateLevels([{ price: p(0.5), shares: 10 }], 1_000)).toBe(true);
+  expect(memory.updateLevels([{ price: p(0.5), shares: 10 }], 1_000)).toBe(false);
+  expect(memory.updateLevels([{ price: p(0.5), shares: 10 }], 2_000)).toBe(true);
+
+  expect(memory.observeLevels([{ key: p(0.5), weight: 10 }], 2_000)).toBe(false);
+  expect(memory.observeLevels([{ key: p(0.5), weight: 10 }], 3_000)).toBe(true);
+});

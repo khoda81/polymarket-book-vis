@@ -29,6 +29,20 @@ export type RecorderStoreIndexRecord = Omit<RecorderStoreRecord, "pressure"> & {
   readonly hasPressure: boolean;
 };
 
+export interface RecorderStoreWriteStats {
+  readonly encodeMs: number;
+  readonly sqliteMs: number;
+  readonly rawPressureBytes: number;
+  readonly storedPressureBytes: number;
+}
+
+interface EncodedRecorderStoreRecord {
+  readonly tokenId: string;
+  readonly status: RecorderTokenStatus;
+  readonly recordingSinceMs: number | null;
+  readonly pressure: Uint8Array | null;
+}
+
 /**
  * Durable recorder storage. One SQLite row owns one token's compressed pressure
  * snapshot. Snapshot timestamps are source timestamps and need no load-time
@@ -36,6 +50,9 @@ export type RecorderStoreIndexRecord = Omit<RecorderStoreRecord, "pressure"> & {
  */
 export class RecorderStore {
   private readonly db: Database;
+  private readonly writeBatch: (
+    batch: readonly EncodedRecorderStoreRecord[],
+  ) => void;
 
   constructor(readonly path: string) {
     mkdirSync(dirname(path), { recursive: true });
@@ -56,6 +73,31 @@ export class RecorderStore {
         ON token_state(status);
     `);
     this.ensureDatabaseVersion();
+
+    const statement = this.db.prepare(`
+      INSERT INTO token_state (
+        token_id,
+        status,
+        recording_since_ms,
+        pressure
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(token_id) DO UPDATE SET
+        status = excluded.status,
+        recording_since_ms = excluded.recording_since_ms,
+        pressure = excluded.pressure
+    `);
+    const transaction = this.db.transaction(
+      (batch: readonly EncodedRecorderStoreRecord[]) => {
+        for (const record of batch)
+          statement.run(
+            record.tokenId,
+            record.status,
+            record.recordingSinceMs,
+            record.pressure,
+          );
+      },
+    );
+    this.writeBatch = (batch) => transaction(batch);
   }
 
   loadIndex(): RecorderStoreIndexRecord[] {
@@ -87,37 +129,45 @@ export class RecorderStore {
     return row === null ? null : decodeRow(row);
   }
 
-  write(records: readonly RecorderStoreRecord[]): void {
-    if (records.length === 0) return;
+  write(records: readonly RecorderStoreRecord[]): RecorderStoreWriteStats {
+    if (records.length === 0)
+      return {
+        encodeMs: 0,
+        sqliteMs: 0,
+        rawPressureBytes: 0,
+        storedPressureBytes: 0,
+      };
 
-    const statement = this.db.prepare(`
-      INSERT INTO token_state (
-        token_id,
-        status,
-        recording_since_ms,
-        pressure
-      ) VALUES (?, ?, ?, ?)
-      ON CONFLICT(token_id) DO UPDATE SET
-        status = excluded.status,
-        recording_since_ms = excluded.recording_since_ms,
-        pressure = excluded.pressure
-    `);
+    const encodeStartedAt = performance.now();
+    let rawPressureBytes = 0;
+    let storedPressureBytes = 0;
 
-    const writeTransaction = this.db.transaction(
-      (batch: readonly RecorderStoreRecord[]) => {
-        for (const record of batch) {
-          statement.run(
-            record.tokenId,
-            record.status,
-            record.recordingSinceMs,
-            record.pressure === null
-              ? null
-              : gzipSync(JSON.stringify(record.pressure), { level: 1 }),
-          );
-        }
-      },
-    );
-    writeTransaction(records);
+    const encoded: EncodedRecorderStoreRecord[] = records.map((record) => {
+      if (record.pressure === null) return { ...record, pressure: null };
+
+      const json = JSON.stringify(record.pressure);
+      rawPressureBytes += Buffer.byteLength(json);
+      const pressure = gzipSync(json, { level: 1 });
+      storedPressureBytes += pressure.byteLength;
+      return {
+        tokenId: record.tokenId,
+        status: record.status,
+        recordingSinceMs: record.recordingSinceMs,
+        pressure,
+      };
+    });
+    const encodeMs = performance.now() - encodeStartedAt;
+
+    const sqliteStartedAt = performance.now();
+    this.writeBatch(encoded);
+    const sqliteMs = performance.now() - sqliteStartedAt;
+
+    return {
+      encodeMs,
+      sqliteMs,
+      rawPressureBytes,
+      storedPressureBytes,
+    };
   }
 
   checkpoint(): void {

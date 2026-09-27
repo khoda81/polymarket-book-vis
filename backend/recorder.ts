@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { createPublicClient, OrderSide } from "@polymarket/client";
 import type { MarketEvent } from "@polymarket/client/actions";
+import { DirtyTokenTracker } from "./dirtyTokenTracker";
 import { RecorderStore } from "./recorderStore";
 import { RecorderSubscriptionPool } from "./recorderSubscriptionPool";
 import {
@@ -27,6 +28,7 @@ const PERSIST_BATCH_TOKENS = Number(
 const REST_SEED_BATCH_TOKENS = 20;
 const REST_SEED_RETRY_MS = 5_000;
 const RECORDER_DEBUG = process.env.RECORDER_DEBUG === "1";
+const BYTES_PER_KIB = 1024;
 
 interface BufferedPriceChangeEvent {
   readonly timestampMs: number;
@@ -87,7 +89,7 @@ class AgeRecorder {
   >();
   private readonly seedInFlight = new Set<string>();
   private readonly seedRetryAfterMs = new Map<string, number>();
-  private readonly dirtyTokens = new Set<string>();
+  private readonly dirtyTokens = new DirtyTokenTracker();
   private readonly subscriptions = new RecorderSubscriptionPool(
     () => createPublicClient(),
     (event) => this.consumeEvent(event),
@@ -392,12 +394,11 @@ class AgeRecorder {
     changes?: readonly CanonicalBookChange[],
   ): void {
     const memory = this.ensureMemory(tokenId) ?? new PressureFrontierMemory();
-
-    if (changes === undefined) {
-      memory.observeLevels(tokenPressureLevels(book), validThroughMs);
-    } else {
-      memory.updateLevels(tokenPressureChanges(changes), validThroughMs);
-    }
+    const mutated =
+      changes === undefined
+        ? memory.observeLevels(tokenPressureLevels(book), validThroughMs)
+        : memory.updateLevels(tokenPressureChanges(changes), validThroughMs);
+    if (!mutated) return;
 
     this.memories.set(tokenId, memory);
 
@@ -414,7 +415,7 @@ class AgeRecorder {
   }
 
   private markDirty(tokenIds: Iterable<string>): void {
-    for (const tokenId of tokenIds) this.dirtyTokens.add(tokenId);
+    this.dirtyTokens.mark(tokenIds);
     this.schedulePersist();
   }
 
@@ -443,44 +444,51 @@ class AgeRecorder {
     if (this.dirtyTokens.size === 0) return;
 
     const startedAt = performance.now();
-    const tokenIds = [...this.dirtyTokens];
-    for (const tokenId of tokenIds) this.dirtyTokens.delete(tokenId);
+    const tokenIds = this.dirtyTokens.tokenIds();
+    let encodeMs = 0;
+    let sqliteMs = 0;
+    let rawPressureBytes = 0;
+    let storedPressureBytes = 0;
 
-    let written = 0;
-    try {
-      for (
-        let offset = 0;
-        offset < tokenIds.length;
-        offset += PERSIST_BATCH_TOKENS
-      ) {
-        const batch = tokenIds.slice(offset, offset + PERSIST_BATCH_TOKENS);
-        this.store.write(
-          batch.map((tokenId) => ({
-            tokenId,
-            status: this.completed.has(tokenId)
-              ? ("completed" as const)
-              : ("watched" as const),
-            recordingSinceMs: this.recordingSince.get(tokenId) ?? null,
-            pressure: this.ensureMemory(tokenId)?.snapshot() ?? null,
-          })),
-        );
-        written += batch.length;
+    for (
+      let offset = 0;
+      offset < tokenIds.length;
+      offset += PERSIST_BATCH_TOKENS
+    ) {
+      const batch = tokenIds.slice(offset, offset + PERSIST_BATCH_TOKENS);
+      const versions = this.dirtyTokens.capture(batch);
+      if (versions.length === 0) continue;
 
-        // bun:sqlite is synchronous. Keep transactions deliberately small and
-        // yield between them so recorder HTTP/WebSocket traffic is never stuck
-        // behind a multi-second checkpoint.
-        if (offset + batch.length < tokenIds.length) await Bun.sleep(0);
-      }
-    } catch (error) {
-      for (const tokenId of tokenIds.slice(written))
-        this.dirtyTokens.add(tokenId);
-      throw error;
+      const stats = this.store.write(
+        versions.map(({ tokenId }) => ({
+          tokenId,
+          status: this.completed.has(tokenId)
+            ? ("completed" as const)
+            : ("watched" as const),
+          recordingSinceMs: this.recordingSince.get(tokenId) ?? null,
+          pressure: this.ensureMemory(tokenId)?.snapshot() ?? null,
+        })),
+      );
+      encodeMs += stats.encodeMs;
+      sqliteMs += stats.sqliteMs;
+      rawPressureBytes += stats.rawPressureBytes;
+      storedPressureBytes += stats.storedPressureBytes;
+      this.dirtyTokens.acknowledge(versions);
+
+      // bun:sqlite is synchronous. Keep transactions deliberately small and
+      // yield between them so recorder HTTP/WebSocket traffic is never stuck
+      // behind a multi-second checkpoint.
+      if (offset + batch.length < tokenIds.length) await Bun.sleep(0);
     }
 
     debugLog(
       "sqlite-flush",
       `tokens=${tokenIds.length}`,
       `ms=${Math.round(performance.now() - startedAt)}`,
+      `encodeMs=${Math.round(encodeMs)}`,
+      `sqliteMs=${Math.round(sqliteMs)}`,
+      `rawKiB=${Math.round(rawPressureBytes / BYTES_PER_KIB)}`,
+      `storedKiB=${Math.round(storedPressureBytes / BYTES_PER_KIB)}`,
       `redirtied=${this.dirtyTokens.size}`,
     );
   }
