@@ -16,138 +16,95 @@ import { PRICE_ONE, PRICE_ZERO, type Price, priceFromTicks } from "./price";
 import {
   PRESSURE_FRONTIER_SNAPSHOT_VERSION,
   parsePressureFrontierSnapshot,
-  restoreEdgeCurrent,
-  snapshotEdge,
+  restoreCurrent,
+  snapshotCurrent,
   type PressureFrontierSnapshot,
 } from "./pressureFrontierSnapshot";
-
-export type PressureEdge = "primaryToCollateral" | "oppositeToCollateral";
 
 export interface PressureLevelChange {
   readonly price: Price;
   readonly shares: number;
 }
 
-interface EdgeState {
-  current: FrontierRoot;
-  field: MaterializedPressureField;
-}
-
-interface EdgeUpdatePlan {
+interface UpdatePlan {
   readonly observed: boolean;
   readonly next: FrontierRoot;
   readonly deltas: readonly PressureLevelDelta[];
 }
 
 /**
- * Timestamped pressure for the two outcome-token -> collateral edges of one
- * binary market.
+ * Timestamped pressure for one directed token -> collateral edge.
  *
- * Both edges have identical semantics and edge-local price coordinates. This
- * class intentionally knows nothing about CLOB bid/ask sides or screen
- * orientation; adapters and render perspectives live outside it.
+ * This object has no market/opposing-token/bid/ask semantics. It stores one
+ * token-local cumulative supply surface and can therefore be persisted and
+ * rendered independently.
  */
 export class PressureFrontierMemory {
-  private readonly primaryToCollateral: EdgeState = {
-    current: null,
-    field: new MaterializedPressureField(),
-  };
-  private readonly oppositeToCollateral: EdgeState = {
-    current: null,
-    field: new MaterializedPressureField(),
-  };
+  private current: FrontierRoot = null;
+  private field = new MaterializedPressureField();
   private lastUpdateMs: number | undefined;
 
-  observeEdges(
-    primaryLevels: readonly FrontierLevel[],
-    oppositeLevels: readonly FrontierLevel[],
+  observeLevels(
+    levels: readonly FrontierLevel[],
     validThroughMs: number,
   ): void {
     validThroughMs = this.normalizeTime(validThroughMs);
-
-    const primary = this.planReplacement(
-      this.primaryToCollateral,
-      primaryLevels,
-    );
-    const opposite = this.planReplacement(
-      this.oppositeToCollateral,
-      oppositeLevels,
-    );
-
-    this.applyPlan(this.primaryToCollateral, primary, validThroughMs);
-    this.applyPlan(this.oppositeToCollateral, opposite, validThroughMs);
-    this.observeCurrent(validThroughMs);
+    const plan = this.planReplacement(levels);
+    this.applyPlan(plan, validThroughMs);
+    this.field.observeCurrent(validThroughMs);
+    this.lastUpdateMs = validThroughMs;
   }
 
-  updateEdges(
-    primaryChanges: readonly PressureLevelChange[],
-    oppositeChanges: readonly PressureLevelChange[],
+  updateLevels(
+    changes: readonly PressureLevelChange[],
     validThroughMs: number,
   ): void {
     validThroughMs = this.normalizeTime(validThroughMs);
-    const primary = this.planLevelChanges(
-      this.primaryToCollateral,
-      primaryChanges,
-    );
-    const opposite = this.planLevelChanges(
-      this.oppositeToCollateral,
-      oppositeChanges,
-    );
-    if (!primary.observed && !opposite.observed) return;
+    const plan = this.planLevelChanges(changes);
+    if (!plan.observed) return;
 
-    this.applyPlan(this.primaryToCollateral, primary, validThroughMs);
-    this.applyPlan(this.oppositeToCollateral, opposite, validThroughMs);
-    this.observeCurrent(validThroughMs);
+    this.applyPlan(plan, validThroughMs);
+    this.field.observeCurrent(validThroughMs);
+    this.lastUpdateMs = validThroughMs;
   }
 
   snapshot(): PressureFrontierSnapshot {
     return {
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-      primaryToCollateral: snapshotEdge(
-        this.primaryToCollateral.current,
-        this.primaryToCollateral.field.snapshot(),
-      ),
-      oppositeToCollateral: snapshotEdge(
-        this.oppositeToCollateral.current,
-        this.oppositeToCollateral.field.snapshot(),
-      ),
+      current: snapshotCurrent(this.current),
+      field: this.field.snapshot(),
     };
   }
 
   restore(snapshot: PressureFrontierSnapshot | unknown): void {
     const parsed = parsePressureFrontierSnapshot(snapshot);
-    const restored = new PressureFrontierMemory();
+    const current = restoreCurrent(parsed.current);
+    const field = new MaterializedPressureField();
+    field.restore(parsed.field);
+    field.validateAgainstFrontier(current);
 
-    restored.restoreEdge(
-      restored.primaryToCollateral,
-      parsed.primaryToCollateral,
-    );
-    restored.restoreEdge(
-      restored.oppositeToCollateral,
-      parsed.oppositeToCollateral,
-    );
-    restored.lastUpdateMs = newestValidThrough([
-      parsed.primaryToCollateral.field,
-      parsed.oppositeToCollateral.field,
-    ]);
+    const boundaries = new Set(field.priceBoundaries());
+    for (const { key } of frontierLevels(current))
+      if (!boundaries.has(key))
+        throw new RangeError(
+          "materialized pressure field is missing a frontier boundary",
+        );
 
-    this.primaryToCollateral.current = restored.primaryToCollateral.current;
-    this.primaryToCollateral.field = restored.primaryToCollateral.field;
-    this.oppositeToCollateral.current = restored.oppositeToCollateral.current;
-    this.oppositeToCollateral.field = restored.oppositeToCollateral.field;
-    this.lastUpdateMs = restored.lastUpdateMs;
+    this.current = current;
+    this.field = field;
+    this.lastUpdateMs = newestValidThrough(parsed.field);
   }
 
-  priceBoundaries(edge: PressureEdge): readonly Price[] {
-    return this.edgeState(edge).field.priceBoundaries();
+  priceBoundaries(): readonly Price[] {
+    return this.field.priceBoundaries();
   }
 
-  renderRuns(edge: PressureEdge): readonly PressureRenderRun[] {
-    return this.edgeState(edge).field.renderRuns();
+  renderRuns(): readonly PressureRenderRun[] {
+    return this.field.renderRuns();
   }
 
-  bandsAtPrice(edge: PressureEdge, price: Price): readonly PressureBand[] {
-    return this.edgeState(edge).field.bandsAtPrice(price);
+  bandsAtPrice(price: Price): readonly PressureBand[] {
+    return this.field.bandsAtPrice(price);
   }
 
   hasVisiblePressure(
@@ -155,29 +112,24 @@ export class PressureFrontierMemory {
     halfLifeMs: number,
     minAlpha = 1 / 255,
   ): boolean {
-    const since = visibleSinceMs(nowMs, halfLifeMs, minAlpha);
-    return (
-      this.primaryToCollateral.field.hasVisiblePressure(since) ||
-      this.oppositeToCollateral.field.hasVisiblePressure(since)
+    return this.field.hasVisiblePressure(
+      visibleSinceMs(nowMs, halfLifeMs, minAlpha),
     );
   }
 
   clear(): void {
-    for (const edge of [this.primaryToCollateral, this.oppositeToCollateral]) {
-      edge.current = null;
-      edge.field.clear();
-    }
+    this.current = null;
+    this.field.clear();
     this.lastUpdateMs = undefined;
   }
 
-  currentLevels(edge: PressureEdge): readonly FrontierLevel[] {
-    return frontierLevels(this.edgeState(edge).current);
+  currentLevels(): readonly FrontierLevel[] {
+    return frontierLevels(this.current);
   }
 
   private planLevelChanges(
-    state: EdgeState,
     changes: readonly PressureLevelChange[],
-  ): EdgeUpdatePlan {
+  ): UpdatePlan {
     const finalByPrice = new Map<Price, number>();
 
     for (const change of changes) {
@@ -191,9 +143,9 @@ export class PressureFrontierMemory {
       finalByPrice.set(price, change.shares);
     }
     if (finalByPrice.size === 0)
-      return { observed: false, next: state.current, deltas: [] };
+      return { observed: false, next: this.current, deltas: [] };
 
-    let next = state.current;
+    let next = this.current;
     const deltas: PressureLevelDelta[] = [];
     for (const [price, shares] of finalByPrice) {
       const previousShares = frontierLevel(next, price);
@@ -205,14 +157,11 @@ export class PressureFrontierMemory {
     return { observed: true, next, deltas };
   }
 
-  private planReplacement(
-    state: EdgeState,
-    levels: readonly FrontierLevel[],
-  ): EdgeUpdatePlan {
+  private planReplacement(levels: readonly FrontierLevel[]): UpdatePlan {
     const normalized = normalizeLevels(levels);
-    const previousLevels = frontierLevels(state.current);
+    const previousLevels = frontierLevels(this.current);
     if (levelsEqual(previousLevels, normalized))
-      return { observed: true, next: state.current, deltas: [] };
+      return { observed: true, next: this.current, deltas: [] };
 
     const previousByPrice = new Map(
       previousLevels.map((level) => [level.key, level.weight] as const),
@@ -232,41 +181,9 @@ export class PressureFrontierMemory {
     return { observed: true, next: buildFrontier(normalized), deltas };
   }
 
-  private applyPlan(
-    state: EdgeState,
-    plan: EdgeUpdatePlan,
-    validThroughMs: number,
-  ): void {
-    state.field.applyDeltas(plan.deltas, validThroughMs, plan.next);
-    if (plan.deltas.length > 0) state.current = plan.next;
-  }
-
-  private observeCurrent(validThroughMs: number): void {
-    this.primaryToCollateral.field.observeCurrent(validThroughMs);
-    this.oppositeToCollateral.field.observeCurrent(validThroughMs);
-    this.lastUpdateMs = validThroughMs;
-  }
-
-  private restoreEdge(
-    state: EdgeState,
-    snapshot: PressureFrontierSnapshot[PressureEdge],
-  ): void {
-    state.current = restoreEdgeCurrent(snapshot);
-    state.field.restore(snapshot.field);
-    state.field.validateAgainstFrontier(state.current);
-
-    const boundaries = new Set(state.field.priceBoundaries());
-    for (const { key } of frontierLevels(state.current))
-      if (!boundaries.has(key))
-        throw new RangeError(
-          "materialized pressure field is missing a frontier boundary",
-        );
-  }
-
-  private edgeState(edge: PressureEdge): EdgeState {
-    return edge === "primaryToCollateral"
-      ? this.primaryToCollateral
-      : this.oppositeToCollateral;
+  private applyPlan(plan: UpdatePlan, validThroughMs: number): void {
+    this.field.applyDeltas(plan.deltas, validThroughMs, plan.next);
+    if (plan.deltas.length > 0) this.current = plan.next;
   }
 
   private normalizeTime(value: number): number {
@@ -311,18 +228,12 @@ function levelsEqual(
 }
 
 function newestValidThrough(
-  fields: readonly {
-    readonly currentValidThroughMs: number | null;
-    readonly runs: readonly { readonly bands: readonly PressureBand[] }[];
-  }[],
+  field: PressureFrontierSnapshot["field"],
 ): number | undefined {
-  let newest = Number.NEGATIVE_INFINITY;
-  for (const field of fields) {
-    if (field.currentValidThroughMs !== null)
-      newest = Math.max(newest, field.currentValidThroughMs);
-    for (const run of field.runs)
-      for (const band of run.bands)
-        newest = Math.max(newest, band.validThroughMs);
-  }
+  let newest =
+    field.currentValidThroughMs ?? Number.NEGATIVE_INFINITY;
+  for (const run of field.runs)
+    for (const band of run.bands)
+      newest = Math.max(newest, band.validThroughMs);
   return Number.isFinite(newest) ? newest : undefined;
 }
