@@ -43,6 +43,7 @@ export class PressureFrontierMemory {
   private current: FrontierRoot = null;
   private field = new MaterializedPressureField();
   private lastUpdateMs: number | undefined;
+  private renderRevision = 0;
 
   observeLevels(
     levels: readonly FrontierLevel[],
@@ -50,7 +51,7 @@ export class PressureFrontierMemory {
   ): void {
     validThroughMs = this.normalizeTime(validThroughMs);
     const plan = this.planReplacement(levels);
-    this.applyPlan(plan, validThroughMs);
+    if (this.applyPlan(plan, validThroughMs)) this.renderRevision++;
     this.field.observeCurrent(validThroughMs);
     this.lastUpdateMs = validThroughMs;
   }
@@ -63,7 +64,7 @@ export class PressureFrontierMemory {
     const plan = this.planLevelChanges(changes);
     if (!plan.observed) return;
 
-    this.applyPlan(plan, validThroughMs);
+    if (this.applyPlan(plan, validThroughMs)) this.renderRevision++;
     this.field.observeCurrent(validThroughMs);
     this.lastUpdateMs = validThroughMs;
   }
@@ -93,6 +94,7 @@ export class PressureFrontierMemory {
     this.current = current;
     this.field = field;
     this.lastUpdateMs = newestValidThrough(parsed.field);
+    this.renderRevision++;
   }
 
   priceBoundaries(): readonly Price[] {
@@ -105,6 +107,10 @@ export class PressureFrontierMemory {
 
   renderCurrentValidThroughMs(): number | undefined {
     return this.field.renderCurrentValidThroughMs();
+  }
+
+  renderDataRevision(): number {
+    return this.renderRevision;
   }
 
   bandsAtPrice(price: Price): readonly PressureBand[] {
@@ -129,6 +135,7 @@ export class PressureFrontierMemory {
     this.current = null;
     this.field.clear();
     this.lastUpdateMs = undefined;
+    this.renderRevision++;
   }
 
   currentLevels(): readonly FrontierLevel[] {
@@ -189,9 +196,11 @@ export class PressureFrontierMemory {
     return { observed: true, next: buildFrontier(normalized), deltas };
   }
 
-  private applyPlan(plan: UpdatePlan, validThroughMs: number): void {
+  private applyPlan(plan: UpdatePlan, validThroughMs: number): boolean {
     this.field.applyDeltas(plan.deltas, validThroughMs, plan.next);
-    if (plan.deltas.length > 0) this.current = plan.next;
+    if (plan.deltas.length === 0) return false;
+    this.current = plan.next;
+    return true;
   }
 
   private normalizeTime(value: number): number {

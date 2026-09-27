@@ -263,6 +263,8 @@ export class AgeStripView {
           ...(primaryMemory
             ? [
                 agePressureSurface(
+                  tokenId,
+                  primaryMemory.renderDataRevision(),
                   primaryMemory.renderRuns(),
                   primaryMemory.renderCurrentValidThroughMs(),
                   colorScale,
@@ -273,6 +275,8 @@ export class AgeStripView {
           ...(oppositeMemory
             ? [
                 agePressureSurface(
+                  oppositeTokenId!,
+                  oppositeMemory.renderDataRevision(),
                   oppositeMemory.renderRuns(),
                   oppositeMemory.renderCurrentValidThroughMs(),
                   colorScale,

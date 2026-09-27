@@ -109,3 +109,20 @@ test("render view keeps stored bands stable while current validity advances sepa
     { loVolume: 0, hiVolume: 100, validThroughMs: 3_000 },
   ]);
 });
+
+test("render data revision changes only when pressure geometry changes", () => {
+  const memory = new PressureFrontierMemory();
+
+  expect(memory.renderDataRevision()).toBe(0);
+
+  memory.updateLevels([{ price: p(0.5), shares: 100 }], 1_000);
+  expect(memory.renderDataRevision()).toBe(1);
+
+  // A newer observation refreshes current validity but leaves resident geometry
+  // unchanged, so the GPU buffer can be reused.
+  memory.updateLevels([{ price: p(0.5), shares: 100 }], 2_000);
+  expect(memory.renderDataRevision()).toBe(1);
+
+  memory.updateLevels([{ price: p(0.5), shares: 80 }], 3_000);
+  expect(memory.renderDataRevision()).toBe(2);
+});

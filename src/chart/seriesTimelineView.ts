@@ -497,6 +497,8 @@ export class SeriesTimelineView {
           ...(primaryMemory
             ? [
                 agePressureSurface(
+                  key,
+                  primaryMemory.renderDataRevision(),
                   primaryMemory.renderRuns(),
                   primaryMemory.renderCurrentValidThroughMs(),
                   scale,
@@ -507,6 +509,8 @@ export class SeriesTimelineView {
           ...(oppositeMemory
             ? [
                 agePressureSurface(
+                  oppositeKey!,
+                  oppositeMemory.renderDataRevision(),
                   oppositeMemory.renderRuns(),
                   oppositeMemory.renderCurrentValidThroughMs(),
                   scale,

@@ -3,6 +3,8 @@ import type { PressureRenderRun } from "@/lib/materializedPressureField";
 import { priceToNumber } from "@/lib/price";
 
 export interface GpuPressureSurface {
+  readonly key: string;
+  readonly dataRevision: number;
   readonly runs: readonly PressureRenderRun[];
   /** O(1) validity timestamp for the currently resting portion of every run. */
   readonly currentValidThroughMs: number | undefined;
@@ -222,6 +224,14 @@ void main() {
 }
 `;
 
+interface CachedPressureSurface {
+  readonly buffer: WebGLBuffer;
+  readonly vao: WebGLVertexArrayObject;
+  signature: string;
+  instanceCount: number;
+  timeOriginMs: number;
+}
+
 export class GpuPressureLayer {
   private readonly gl: WebGL2RenderingContext;
   private readonly geometryProgram: WebGLProgram;
@@ -231,6 +241,8 @@ export class GpuPressureLayer {
   private readonly instanceBuffer: WebGLBuffer;
   private readonly framebuffer: WebGLFramebuffer;
   private readonly colorTexture: WebGLTexture;
+  private readonly surfaceBuffers = new Map<string, CachedPressureSurface>();
+  private totalCachedInstanceCount = 0;
 
   private displayWidth = 0;
   private displayHeight = 0;
@@ -271,6 +283,123 @@ export class GpuPressureLayer {
     gl.bindVertexArray(this.geometryVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer);
 
+    // Only token-local pressure data is resident. Presentation attributes are
+    // supplied as constant vertex attributes when the surface is drawn.
+    for (let location = 0; location <= 6; location++) {
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribPointer(
+        location,
+        1,
+        gl.FLOAT,
+        false,
+        INSTANCE_STRIDE,
+        location * Float32Array.BYTES_PER_ELEMENT,
+      );
+      gl.vertexAttribDivisor(location, 1);
+    }
+
+    gl.bindVertexArray(null);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+
+    configureTexture(gl, this.colorTexture);
+  }
+
+  setVisible(visible: boolean): void {
+    if (visible === this.visible) return;
+    this.visible = visible;
+    this.canvas.style.display = visible ? "block" : "none";
+  }
+
+  invalidate(): void {
+    this.clearSurfaceBuffers();
+    this.rasterKey = "";
+  }
+
+  render(frame: GpuPressureFrame): void {
+    this.setVisible(true);
+    this.canvas.style.background = frame.background;
+
+    const displayWidth = Math.max(1, Math.floor(frame.cssWidth * frame.dpr));
+    const displayHeight = Math.max(1, Math.floor(frame.cssHeight * frame.dpr));
+    const [supersampleX, supersampleY] = supersampleFactors(frame.dpr);
+    const targetWidth = displayWidth * supersampleX;
+    const targetHeight = displayHeight * supersampleY;
+    const resized = this.resizeTargets(
+      displayWidth,
+      displayHeight,
+      targetWidth,
+      targetHeight,
+      supersampleX,
+      supersampleY,
+    );
+
+    const buffersChanged = this.syncSurfaceBuffers(frame);
+
+    const nextRasterKey = rasterProjectionKey(frame, targetWidth, targetHeight);
+    if (resized || buffersChanged || nextRasterKey !== this.rasterKey) {
+      this.rasterize(frame);
+      this.rasterKey = nextRasterKey;
+    }
+
+    this.drawDisplay(frame);
+  }
+
+  destroy(): void {
+    const gl = this.gl;
+    this.clearSurfaceBuffers();
+    gl.deleteTexture(this.colorTexture);
+    gl.deleteFramebuffer(this.framebuffer);
+    gl.deleteBuffer(this.instanceBuffer);
+    gl.deleteVertexArray(this.geometryVao);
+    gl.deleteVertexArray(this.displayVao);
+    gl.deleteProgram(this.geometryProgram);
+    gl.deleteProgram(this.displayProgram);
+  }
+
+  private syncSurfaceBuffers(frame: GpuPressureFrame): boolean {
+    const active = new Set<string>();
+    let changed = false;
+    let totalInstances = 0;
+
+    for (const row of frame.rows) {
+      for (const surface of row.surfaces) {
+        active.add(surface.key);
+        let cached = this.surfaceBuffers.get(surface.key);
+        if (!cached) {
+          cached = this.createSurfaceBuffer();
+          this.surfaceBuffers.set(surface.key, cached);
+          changed = true;
+        }
+
+        const signature = surfaceBufferSignature(row, surface);
+        if (cached.signature !== signature) {
+          this.uploadSurfaceBuffer(cached, row, surface, frame.nowMs);
+          cached.signature = signature;
+          changed = true;
+        }
+        totalInstances += cached.instanceCount;
+      }
+    }
+
+    for (const [key, cached] of this.surfaceBuffers) {
+      if (active.has(key)) continue;
+      this.deleteSurfaceBuffer(cached);
+      this.surfaceBuffers.delete(key);
+      changed = true;
+    }
+
+    this.totalCachedInstanceCount = totalInstances;
+    return changed;
+  }
+
+  private createSurfaceBuffer(): CachedPressureSurface {
+    const gl = this.gl;
+    const buffer = required(gl.createBuffer(), "pressure surface buffer");
+    const vao = required(gl.createVertexArray(), "pressure surface VAO");
+
+    gl.bindVertexArray(vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
     for (let location = 0; location <= 10; location++) {
       gl.enableVertexAttribArray(location);
       gl.vertexAttribPointer(
@@ -298,65 +427,48 @@ export class GpuPressureLayer {
     gl.bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
 
-    configureTexture(gl, this.colorTexture);
+    return { buffer, vao, signature: "", instanceCount: 0, timeOriginMs: 0 };
   }
 
-  setVisible(visible: boolean): void {
-    if (visible === this.visible) return;
-    this.visible = visible;
-    this.canvas.style.display = visible ? "block" : "none";
-  }
-
-  invalidate(): void {
-    this.instanceDataKey = "";
-    this.rasterKey = "";
-  }
-
-  render(frame: GpuPressureFrame): void {
-    this.setVisible(true);
-    this.canvas.style.background = frame.background;
-
-    const displayWidth = Math.max(1, Math.floor(frame.cssWidth * frame.dpr));
-    const displayHeight = Math.max(1, Math.floor(frame.cssHeight * frame.dpr));
-    const [supersampleX, supersampleY] = supersampleFactors(frame.dpr);
-    const targetWidth = displayWidth * supersampleX;
-    const targetHeight = displayHeight * supersampleY;
-    const resized = this.resizeTargets(
-      displayWidth,
-      displayHeight,
-      targetWidth,
-      targetHeight,
-      supersampleX,
-      supersampleY,
+  private uploadSurfaceBuffer(
+    cached: CachedPressureSurface,
+    row: GpuPressureRow,
+    surface: GpuPressureSurface,
+    nowMs: number,
+  ): void {
+    cached.timeOriginMs = nowMs;
+    const values: number[] = [];
+    appendResidentRuns(
+      values,
+      surface.runs,
+      row.centerCss,
+      row.heightCss,
+      resolveCssColor(surface.color),
+      surface.mirrorPrice,
+      surface.yDirection,
+      surface.currentValidThroughMs,
+      cached.timeOriginMs,
     );
 
-    const nextInstanceDataKey = instanceDataKey(frame);
-    let instancesChanged = false;
-    if (nextInstanceDataKey !== this.instanceDataKey) {
-      this.uploadInstances(frame);
-      this.instanceDataKey = nextInstanceDataKey;
-      this.rasterKey = "";
-      instancesChanged = true;
-    }
+    const instances = new Float32Array(values);
+    cached.instanceCount = instances.length / INSTANCE_FLOATS;
 
-    const nextRasterKey = rasterProjectionKey(frame, targetWidth, targetHeight);
-    if (resized || instancesChanged || nextRasterKey !== this.rasterKey) {
-      this.rasterize(frame);
-      this.rasterKey = nextRasterKey;
-    }
-
-    this.drawDisplay(frame);
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, cached.buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, instances, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
   }
 
-  destroy(): void {
-    const gl = this.gl;
-    gl.deleteTexture(this.colorTexture);
-    gl.deleteFramebuffer(this.framebuffer);
-    gl.deleteBuffer(this.instanceBuffer);
-    gl.deleteVertexArray(this.geometryVao);
-    gl.deleteVertexArray(this.displayVao);
-    gl.deleteProgram(this.geometryProgram);
-    gl.deleteProgram(this.displayProgram);
+  private deleteSurfaceBuffer(cached: CachedPressureSurface): void {
+    this.gl.deleteBuffer(cached.buffer);
+    this.gl.deleteVertexArray(cached.vao);
+  }
+
+  private clearSurfaceBuffers(): void {
+    for (const cached of this.surfaceBuffers.values())
+      this.deleteSurfaceBuffer(cached);
+    this.surfaceBuffers.clear();
+    this.totalCachedInstanceCount = 0;
   }
 
   private resizeTargets(
@@ -451,7 +563,7 @@ export class GpuPressureLayer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    if (this.instanceCount > 0) {
+    if (this.totalCachedInstanceCount > 0) {
       gl.useProgram(this.geometryProgram);
       uniform2f(
         gl,
@@ -499,8 +611,20 @@ export class GpuPressureLayer {
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE);
-      gl.bindVertexArray(this.geometryVao);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.instanceCount);
+      for (const row of frame.rows) {
+        for (const surface of row.surfaces) {
+          const cached = this.surfaceBuffers.get(surface.key);
+          if (!cached || cached.instanceCount === 0) continue;
+          uniform1f(
+            gl,
+            this.geometryProgram,
+            "uNowOffsetSec",
+            (frame.nowMs - cached.timeOriginMs) / 1_000,
+          );
+          gl.bindVertexArray(cached.vao);
+          gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, cached.instanceCount);
+        }
+      }
       gl.bindVertexArray(null);
       gl.disable(gl.BLEND);
     }
@@ -517,7 +641,7 @@ export class GpuPressureLayer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    if (this.instanceCount === 0) return;
+    if (this.totalCachedInstanceCount === 0) return;
 
     gl.useProgram(this.displayProgram);
 
@@ -594,6 +718,21 @@ function appendResidentRuns(
       );
     }
   }
+}
+
+function surfaceBufferSignature(
+  row: GpuPressureRow,
+  surface: GpuPressureSurface,
+): string {
+  return [
+    surface.dataRevision,
+    surface.currentValidThroughMs ?? "",
+    row.centerCss,
+    row.heightCss,
+    surface.color,
+    surface.mirrorPrice ? 1 : 0,
+    surface.yDirection,
+  ].join(":");
 }
 
 function instanceDataKey(frame: GpuPressureFrame): string {

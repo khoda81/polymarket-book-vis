@@ -44,6 +44,8 @@ export function agePressurePerspective(
 }
 
 export function agePressureSurface(
+  key: string,
+  dataRevision: number,
   runs: readonly PressureRenderRun[],
   currentValidThroughMs: number | undefined,
   colorScale: SignedVolumeColorScale,
@@ -51,6 +53,8 @@ export function agePressureSurface(
 ): GpuPressureSurface {
   const perspective = agePressurePerspective(sourceSide);
   return {
+    key,
+    dataRevision,
     runs,
     currentValidThroughMs,
     color: signedVolumeColor(perspective.colorSign, colorScale),
