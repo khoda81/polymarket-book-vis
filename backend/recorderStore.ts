@@ -167,7 +167,7 @@ function migratePressureSnapshot(
     return {
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
       current: edge.current as PressureFrontierSnapshot["current"],
-      field: edge.field as PressureFieldSnapshot,
+      field: edge.field as unknown as PressureFieldSnapshot,
     };
   }
 
@@ -182,10 +182,16 @@ function migratePressureSnapshot(
   ) {
     const current = migrateComplementedCurrent(raw.ask.current);
     if (current === null) return null;
+    const askField = raw.field.ask;
+    if (!Array.isArray(askField.runs)) return null;
     return {
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
       current,
-      field: raw.field.ask as unknown as PressureFieldSnapshot,
+      field: {
+        currentValidThroughMs:
+          numeric(raw.field.currentValidThroughMs) ?? null,
+        runs: askField.runs as PressureFieldSnapshot["runs"],
+      },
     };
   }
 
