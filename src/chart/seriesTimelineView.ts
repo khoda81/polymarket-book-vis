@@ -518,11 +518,7 @@ export class SeriesTimelineView {
         ],
       });
       hasVisiblePressure ||=
-        this.pressure.hasVisiblePressure(
-          key,
-          nowMs,
-          tuning.ghostHalfLifeMs,
-        ) ||
+        this.pressure.hasVisiblePressure(key, nowMs, tuning.ghostHalfLifeMs) ||
         (oppositeKey !== null &&
           this.pressure.hasVisiblePressure(
             oppositeKey,
@@ -792,8 +788,7 @@ export class SeriesTimelineView {
     this.pressure.hydrate(
       hydration.pressureSnapshotsByToken,
       (tokenId) =>
-        this.bookCache.get(tokenId) ??
-        this.feed?.getBook(tokenId as TokenId),
+        this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId as TokenId),
     );
     this.pressureRevision++;
     this.pressureLayer.invalidate();
