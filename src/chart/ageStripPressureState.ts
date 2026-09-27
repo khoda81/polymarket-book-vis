@@ -2,8 +2,8 @@ import type { TokenBook } from "@/lib/orderBook";
 import { PressureFrontierMemory } from "@/lib/pressureFrontierMemory";
 import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
 import {
-  pressureEdgeChanges,
-  pressureEdgeLevels,
+  tokenPressureChanges,
+  tokenPressureLevels,
 } from "@/lib/pressureBookAdapter";
 import type { LiveBookUpdate } from "./liveBookFeed";
 
@@ -17,7 +17,7 @@ interface PressureState extends AgeStripPressureTiming {
   readonly memory: PressureFrontierMemory;
 }
 
-/** Shared timestamped pressure history for age-strip rows. */
+/** Token-local timestamped pressure histories used by age views. */
 export class AgeStripPressureState {
   private readonly states = new Map<string, PressureState>();
 
@@ -91,7 +91,10 @@ export class AgeStripPressureState {
       // A newer websocket book may have arrived before recorder hydration.
       const book = getBook(tokenId);
       if (book && state.validThroughMs !== null)
-        observeBookEdges(state.memory, book, state.validThroughMs);
+        state.memory.observeLevels(
+          tokenPressureLevels(book),
+          state.validThroughMs,
+        );
     }
   }
 
@@ -109,16 +112,16 @@ export class AgeStripPressureState {
       this.states.set(tokenId, state);
     }
 
-    const memory = state.memory;
     if (update.kind === "snapshot") {
-      observeBookEdges(memory, book, update.validThroughMs);
+      state.memory.observeLevels(
+        tokenPressureLevels(book),
+        update.validThroughMs,
+      );
       return;
     }
 
-    const changes = pressureEdgeChanges(update.changes);
-    memory.updateEdges(
-      changes.primaryToCollateral,
-      changes.oppositeToCollateral,
+    state.memory.updateLevels(
+      tokenPressureChanges(update.changes),
       update.validThroughMs,
     );
   }
@@ -145,17 +148,4 @@ export class AgeStripPressureState {
       false
     );
   }
-}
-
-function observeBookEdges(
-  memory: PressureFrontierMemory,
-  book: TokenBook,
-  validThroughMs: number,
-): void {
-  const edges = pressureEdgeLevels(book);
-  memory.observeEdges(
-    edges.primaryToCollateral,
-    edges.oppositeToCollateral,
-    validThroughMs,
-  );
 }
