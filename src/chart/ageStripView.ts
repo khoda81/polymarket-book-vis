@@ -40,6 +40,7 @@ export interface AgeStripHost {
   readonly getBook: (tokenId: string) => TokenBook | undefined;
   readonly getTokenName: (tokenId: string) => string | undefined;
   readonly getOppositeTokenName: (tokenId: string) => string | undefined;
+  readonly getOppositeTokenId: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
   readonly getTheme: () => ChartTheme;
   readonly getViewMode: () => "volume" | "age";
@@ -79,6 +80,7 @@ export class AgeStripView {
       getBook: host.getBook,
       getTokenName: host.getTokenName,
       getOppositeTokenName: host.getOppositeTokenName,
+      getOppositeTokenId: host.getOppositeTokenId,
       getPressureColorScale: host.getPressureColorScale,
     });
 
@@ -125,10 +127,21 @@ export class AgeStripView {
   configureMarkets(controls: readonly ChartMarketControl[]): void {
     this.visibilityInitialized.clear();
     this.pressure.configure(
-      controls.map((control) => ({
-        tokenId: String(control.tokenId),
-        resolutionMs: control.resolutionMs,
-      })),
+      controls.flatMap((control) => {
+        const rows = [
+          {
+            tokenId: String(control.tokenId),
+            resolutionMs: control.resolutionMs,
+          },
+        ];
+        const oppositeTokenId = control.market.outcomes.no.tokenId;
+        if (oppositeTokenId)
+          rows.push({
+            tokenId: String(oppositeTokenId),
+            resolutionMs: control.resolutionMs,
+          });
+        return rows;
+      }),
     );
     this.pressureRevision++;
     this.pressureLayer?.invalidate();
@@ -150,6 +163,8 @@ export class AgeStripView {
 
   resolveMarket(tokenId: string): void {
     this.pressure.resolve(tokenId);
+    const oppositeTokenId = this.host.getOppositeTokenId(tokenId);
+    if (oppositeTokenId) this.pressure.resolve(oppositeTokenId);
     this.pressureRevision++;
     this.pressureLayer?.invalidate();
   }
@@ -216,8 +231,12 @@ export class AgeStripView {
     for (const [index, label] of activeControls.entries()) {
       const tokenId = label.dataset.tokenId;
       if (!tokenId) continue;
-      const memory = this.pressure.memory(tokenId);
-      if (!memory) continue;
+      const primaryMemory = this.pressure.memory(tokenId);
+      const oppositeTokenId = this.host.getOppositeTokenId(tokenId);
+      const oppositeMemory = oppositeTokenId
+        ? this.pressure.memory(oppositeTokenId)
+        : undefined;
+      if (!primaryMemory && !oppositeMemory) continue;
 
       const resolutionSide = label.dataset.ageResolutionSide;
       if (resolutionSide === "primary" || resolutionSide === "opposite") {
@@ -239,25 +258,40 @@ export class AgeStripView {
         centerCss: rowGeometry.centerCss,
         heightCss: rowGeometry.heightCss,
         surfaces: [
-          {
-            runs: memory.renderRuns("primaryToCollateral"),
-            color: signedVolumeColor(1, colorScale),
-            mirrorPrice: true,
-            yDirection: 1,
-          },
-          {
-            runs: memory.renderRuns("oppositeToCollateral"),
-            color: signedVolumeColor(-1, colorScale),
-            mirrorPrice: false,
-            yDirection: -1,
-          },
+          ...(primaryMemory
+            ? [
+                {
+                  runs: primaryMemory.renderRuns(),
+                  color: signedVolumeColor(1, colorScale),
+                  mirrorPrice: true,
+                  yDirection: 1 as const,
+                },
+              ]
+            : []),
+          ...(oppositeMemory
+            ? [
+                {
+                  runs: oppositeMemory.renderRuns(),
+                  color: signedVolumeColor(-1, colorScale),
+                  mirrorPrice: false,
+                  yDirection: -1 as const,
+                },
+              ]
+            : []),
         ],
       });
-      hasVisiblePressure ||= this.pressure.hasVisiblePressure(
-        tokenId,
-        nowMs,
-        tuning.ghostHalfLifeMs,
-      );
+      hasVisiblePressure ||=
+        this.pressure.hasVisiblePressure(
+          tokenId,
+          nowMs,
+          tuning.ghostHalfLifeMs,
+        ) ||
+        (oppositeTokenId !== undefined &&
+          this.pressure.hasVisiblePressure(
+            oppositeTokenId,
+            nowMs,
+            tuning.ghostHalfLifeMs,
+          ));
     }
 
     const pressureLayer =
