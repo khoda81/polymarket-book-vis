@@ -1,23 +1,19 @@
 import { expect, test } from "bun:test";
 import { applyPriceChange, bookFromSnapshot } from "./bookIngestion";
-import { pressureEdgeChanges, pressureEdgeLevels } from "./pressureBookAdapter";
+import { tokenPressureChanges, tokenPressureLevels } from "./pressureBookAdapter";
 import { parsePrice } from "./price";
 
-test("asks become primary-token to collateral levels", () => {
-  const book = bookFromSnapshot([], [{ price: "0.63", size: "8.25" }]);
-  expect(pressureEdgeLevels(book).primaryToCollateral).toEqual([
+test("token pressure uses only token-to-collateral asks", () => {
+  const book = bookFromSnapshot(
+    [{ price: "0.37", size: "12.5" }],
+    [{ price: "0.63", size: "8.25" }],
+  );
+  expect(tokenPressureLevels(book)).toEqual([
     { key: parsePrice("0.63"), weight: 8.25 },
   ]);
 });
 
-test("bids become complemented opposite-token to collateral levels", () => {
-  const book = bookFromSnapshot([{ price: "0.37", size: "12.5" }], []);
-  expect(pressureEdgeLevels(book).oppositeToCollateral).toEqual([
-    { key: parsePrice("0.63"), weight: 12.5 },
-  ]);
-});
-
-test("incremental changes use the same edge canonicalization", () => {
+test("incremental token pressure ignores bids", () => {
   const book = bookFromSnapshot([], []);
   const ask = applyPriceChange(book, {
     side: "SELL",
@@ -30,8 +26,7 @@ test("incremental changes use the same edge canonicalization", () => {
     size: "12.5",
   });
 
-  expect(pressureEdgeChanges([ask, bid])).toEqual({
-    primaryToCollateral: [{ price: parsePrice("0.63"), shares: 8.25 }],
-    oppositeToCollateral: [{ price: parsePrice("0.63"), shares: 12.5 }],
-  });
+  expect(tokenPressureChanges([ask, bid])).toEqual([
+    { price: parsePrice("0.63"), shares: 8.25 },
+  ]);
 });
