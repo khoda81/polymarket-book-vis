@@ -1,4 +1,5 @@
 export type TooltipOwner = symbol;
+export type TooltipVerticalPlacement = "auto" | "above" | "below";
 
 let overlay: HTMLDivElement | null = null;
 let activeOwner: TooltipOwner | null = null;
@@ -11,6 +12,7 @@ export function showSharedTooltip(
   render: (overlay: HTMLDivElement) => void,
   anchorX: number,
   anchorY: number,
+  verticalPlacement: TooltipVerticalPlacement = "auto",
 ): void {
   if (suppressed) return;
 
@@ -24,15 +26,21 @@ export function showSharedTooltip(
   element.style.display = "block";
   element.style.left = `${anchorX}px`;
   element.style.top = `${anchorY}px`;
+
+  const translateY =
+    verticalPlacement === "above"
+      ? "translateY(calc(-100% - 12px))"
+      : verticalPlacement === "below"
+        ? "translateY(12px)"
+        : anchorY > window.innerHeight / 2
+          ? "translateY(calc(-100% - 12px))"
+          : "translateY(12px)";
+
   element.style.transform = `${
     anchorX > window.innerWidth / 2
       ? "translateX(calc(-100% - 12px))"
       : "translateX(12px)"
-  } ${
-    anchorY > window.innerHeight / 2
-      ? "translateY(calc(-100% - 12px))"
-      : "translateY(12px)"
-  }`;
+  } ${translateY}`;
 }
 
 export function hideSharedTooltip(owner: TooltipOwner): void {

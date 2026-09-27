@@ -178,23 +178,27 @@ export class AgeStripTooltip {
         );
         if (alpha > PRESSURE_MIN_VISIBLE_ALPHA)
           hover = {
-            shares: volume,
+            // This band is a slice of the cumulative rectangle that existed at
+            // this timestamp. Its upper edge is that rectangle's volume.
+            shares: band.hiVolume,
             validThroughMs: band.validThroughMs,
           };
       }
     }
 
+    const displayedShares = hover?.shares ?? volume;
     const ageDisplay = hover
       ? relativeTimeDisplay(
           Math.max(0, nowMs - hover.validThroughMs) / 1_000,
           "elapsed",
         )
       : null;
+    const ageText = ageDisplay?.text ?? (displayedShares === null ? null : "∞");
     const signature = [
       semanticTokenId,
       formatProbability(semanticPrice),
-      hover ? formatShares(hover.shares) : "",
-      ageDisplay?.text ?? "",
+      displayedShares === null ? "" : formatShares(displayedShares),
+      ageText ?? "",
     ].join("|");
 
     showSharedTooltip(
@@ -206,11 +210,12 @@ export class AgeStripTooltip {
           tokenName,
           semanticPrice,
           color,
-          hover,
-          ageDisplay?.text ?? null,
+          displayedShares,
+          ageText,
         ),
       pointer.canvasLeft + sx,
       pointer.canvasTop + centerCss,
+      sx < vp.l + vp.width / 2 ? "above" : "below",
     );
 
     if (ageDisplay?.nextChangeMs != null)
@@ -257,7 +262,7 @@ export function renderAgeTooltip(
   tokenName: string,
   tokenPrice: number,
   color: string,
-  hover: PressureHover | null,
+  shares: number | null,
   ageText: string | null,
 ): void {
   overlay.replaceChildren();
@@ -268,10 +273,10 @@ export function renderAgeTooltip(
   title.style.color = color;
   overlay.appendChild(title);
 
-  if (!hover) return;
+  if (shares === null) return;
 
-  overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
-  overlay.appendChild(tooltipRow("Age", ageText ?? "0ms"));
+  overlay.appendChild(tooltipRow("Shares", formatShares(shares)));
+  overlay.appendChild(tooltipRow("Age", ageText ?? "∞"));
 }
 
 function rowHeight(
