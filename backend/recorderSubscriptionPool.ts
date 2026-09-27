@@ -31,6 +31,8 @@ interface SubscriptionBatch {
   readonly id: number;
   readonly shardId: number;
   readonly handle: SubscriptionHandle<MarketEvent>;
+  /** Earliest time at which this subscription's initial snapshots were requested. */
+  readonly snapshotRequestedAtMs: number;
   /** Assets owned by this SDK subscription handle. */
   readonly subscribedTokenIds: Set<string>;
   /** Assets that the recorder still cares about. */
@@ -58,7 +60,10 @@ export class RecorderSubscriptionPool {
 
   constructor(
     private readonly createClient: () => PublicClient,
-    private readonly onEvent: (event: MarketEvent) => void,
+    private readonly onEvent: (
+      event: MarketEvent,
+      snapshotRequestedAtMs: number,
+    ) => void,
     private readonly onDebug: (...args: unknown[]) => void = () => undefined,
     private readonly onContinuityLost: (
       tokenIds: readonly string[],
@@ -204,14 +209,14 @@ export class RecorderSubscriptionPool {
     this.connecting = true;
     try {
       const shard = this.pickShard(tokenIds.length);
-      const handle = await this.open(shard.client, tokenIds);
-      if (!handle) return;
+      const subscription = await this.open(shard.client, tokenIds);
+      if (!subscription) return;
 
       const id = this.nextBatchId++;
       const batch: SubscriptionBatch = {
         id,
         shardId: shard.id,
-        handle,
+        ...subscription,
         subscribedTokenIds: new Set(tokenIds),
         activeTokenIds: new Set(tokenIds),
       };
@@ -260,9 +265,13 @@ export class RecorderSubscriptionPool {
   private async open(
     client: PublicClient,
     tokenIds: readonly string[],
-  ): Promise<SubscriptionHandle<MarketEvent> | null> {
+  ): Promise<{
+    readonly handle: SubscriptionHandle<MarketEvent>;
+    readonly snapshotRequestedAtMs: number;
+  } | null> {
     while (!this.stopped) {
       try {
+        const snapshotRequestedAtMs = Date.now();
         const handle = await client.subscribe([
           {
             topic: "market",
@@ -274,7 +283,7 @@ export class RecorderSubscriptionPool {
           void handle.close().catch(() => undefined);
           return null;
         }
-        return handle;
+        return { handle, snapshotRequestedAtMs };
       } catch (error) {
         console.error(
           error instanceof TransportError
@@ -292,7 +301,7 @@ export class RecorderSubscriptionPool {
     try {
       for await (const event of batch.handle) {
         if (this.stopped || this.batches.get(batch.id) !== batch) return;
-        this.onEvent(event);
+        this.onEvent(event, batch.snapshotRequestedAtMs);
       }
     } catch (error) {
       if (!this.stopped)

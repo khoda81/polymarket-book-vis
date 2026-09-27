@@ -22,6 +22,7 @@ type FeedState =
   | {
       readonly kind: "live";
       readonly stream: SubscriptionHandle<MarketEvent>;
+      readonly snapshotRequestedAtMs: number;
     }
   | { readonly kind: "ended" }
   | { readonly kind: "destroyed" };
@@ -91,17 +92,20 @@ export class LiveBookFeed {
   }
 
   private async connect(): Promise<void> {
-    const stream = await this.subscribeWithRetry(this.tokenIds);
-    if (!stream) return;
+    const subscription = await this.subscribeWithRetry(this.tokenIds);
+    if (!subscription) return;
 
     if (this.state.kind !== "connecting") {
-      await stream.close().catch(() => undefined);
+      await subscription.stream.close().catch(() => undefined);
       return;
     }
 
-    this.state = { kind: "live", stream };
+    this.state = { kind: "live", ...subscription };
     this.callbacks.onConnectionStatus("live");
-    void this.readEvents(stream);
+    void this.readEvents(
+      subscription.stream,
+      subscription.snapshotRequestedAtMs,
+    );
   }
 
   private reconnect(): void {
@@ -116,11 +120,13 @@ export class LiveBookFeed {
     void this.connect();
   }
 
-  private async subscribeWithRetry(
-    tokenIds: readonly TokenId[],
-  ): Promise<SubscriptionHandle<MarketEvent> | null> {
+  private async subscribeWithRetry(tokenIds: readonly TokenId[]): Promise<{
+    readonly stream: SubscriptionHandle<MarketEvent>;
+    readonly snapshotRequestedAtMs: number;
+  } | null> {
     while (this.state.kind === "connecting") {
       try {
+        const snapshotRequestedAtMs = Date.now();
         const stream = await this.client.subscribe([
           {
             topic: "market",
@@ -128,7 +134,8 @@ export class LiveBookFeed {
             customFeatureEnabled: true,
           },
         ]);
-        if (this.state.kind === "connecting") return stream;
+        if (this.state.kind === "connecting")
+          return { stream, snapshotRequestedAtMs };
         await stream.close().catch(() => undefined);
         return null;
       } catch (error) {
@@ -143,6 +150,7 @@ export class LiveBookFeed {
 
   private async readEvents(
     stream: SubscriptionHandle<MarketEvent>,
+    snapshotRequestedAtMs: number,
   ): Promise<void> {
     try {
       for await (const event of stream) {
@@ -158,7 +166,10 @@ export class LiveBookFeed {
             this.books.set(tokenId, book);
             this.callbacks.onBookUpdated(tokenId, book, {
               kind: "snapshot",
-              validThroughMs: eventTimeMs(event.payload.timestamp),
+              validThroughMs: snapshotValidThroughMs(
+                event.payload.timestamp,
+                snapshotRequestedAtMs,
+              ),
             });
           }
         } else if (event.type === "price_change") {
@@ -218,12 +229,22 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function eventTimeMs(value: unknown): number {
+function snapshotValidThroughMs(
+  value: unknown,
+  snapshotRequestedAtMs: number,
+): number {
+  return Math.max(
+    snapshotRequestedAtMs,
+    eventTimeMs(value, snapshotRequestedAtMs),
+  );
+}
+
+function eventTimeMs(value: unknown, fallbackMs = Date.now()): number {
   const nowMs = Date.now();
   const timestamp = Number(value);
   return Number.isFinite(timestamp) &&
     timestamp >= 0 &&
     timestamp <= nowMs + 60_000
     ? timestamp
-    : nowMs;
+    : fallbackMs;
 }

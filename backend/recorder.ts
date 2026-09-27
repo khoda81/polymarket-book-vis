@@ -97,7 +97,8 @@ class AgeRecorder {
   private readonly dirtyTokens = new DirtyTokenTracker();
   private readonly subscriptions = new RecorderSubscriptionPool(
     () => createPublicClient(),
-    (event) => this.consumeEvent(event),
+    (event, snapshotRequestedAtMs) =>
+      this.consumeEvent(event, snapshotRequestedAtMs),
     (...args) => debugLog(...args),
     (tokenIds) => this.invalidateBooks(tokenIds),
   );
@@ -262,7 +263,10 @@ class AgeRecorder {
     };
   }
 
-  private consumeEvent(stream: MarketEvent): void {
+  private consumeEvent(
+    stream: MarketEvent,
+    snapshotRequestedAtMs: number,
+  ): void {
     if (stream.type === "book") {
       const tokenId = String(stream.payload.tokenId);
       if (!this.watched.has(tokenId)) return;
@@ -273,7 +277,10 @@ class AgeRecorder {
       this.updateMemory(
         tokenId,
         book,
-        eventTimestampMs(stream.payload.timestamp),
+        Math.max(
+          snapshotRequestedAtMs,
+          eventTimestampMs(stream.payload.timestamp, snapshotRequestedAtMs),
+        ),
       );
       return;
     }
@@ -356,6 +363,7 @@ class AgeRecorder {
     const startedAt = performance.now();
 
     try {
+      const snapshotRequestedAtMs = Date.now();
       const snapshots = await this.snapshotClient.fetchOrderBooks(
         tokenIds.map((assetId) => ({ assetId })),
       );
@@ -369,7 +377,10 @@ class AgeRecorder {
         )
           continue;
 
-        const snapshotMs = eventTimestampMs(snapshot.timestamp);
+        const snapshotMs = Math.max(
+          snapshotRequestedAtMs,
+          eventTimestampMs(snapshot.timestamp, snapshotRequestedAtMs),
+        );
         const book = bookFromSnapshot(snapshot.bids, snapshot.asks);
         this.books.set(tokenId, book);
         this.updateMemory(tokenId, book, snapshotMs);

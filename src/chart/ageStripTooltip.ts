@@ -1,4 +1,5 @@
 import { AGE_ROW_BAND_PX, getAgeStripTuning } from "@/lib/ageStripTuning";
+import { relativeTimeDisplay } from "@/lib/math";
 import {
   PRESSURE_MIN_VISIBLE_ALPHA,
   stalenessAlpha,
@@ -54,6 +55,8 @@ export class AgeStripTooltip {
   private readonly tooltipOwner = Symbol("age-strip-tooltip");
   private geometry: AgeStripGeometry | null = null;
   private pointer: HoverPointer | null = null;
+  private refreshTimer: number | undefined;
+  private refreshRaf: number | undefined;
 
   constructor(private readonly host: AgeStripTooltipHost) {
     host.canvas.addEventListener("pointermove", this.handlePointerMove);
@@ -73,6 +76,7 @@ export class AgeStripTooltip {
   }
 
   destroy(): void {
+    this.cancelRefresh();
     this.host.canvas.removeEventListener("pointermove", this.handlePointerMove);
     this.host.canvas.removeEventListener(
       "pointerleave",
@@ -97,6 +101,8 @@ export class AgeStripTooltip {
   };
 
   private render(pointer: HoverPointer): void {
+    this.cancelRefresh();
+
     const { sx, sy } = pointer;
     if (this.host.getViewMode() !== "age") {
       this.hide();
@@ -158,13 +164,13 @@ export class AgeStripTooltip {
       getAgeStripTuning().volumePerCssPixel,
     );
 
+    const nowMs = Date.now();
     let hover: PressureHover | null = null;
     if (volume !== null) {
       const memory = this.host.getPressureMemory(sourceTokenId);
       const band = memory?.bandAtPoint(pressurePrice, volume);
 
       if (band) {
-        const nowMs = Date.now();
         const alpha = stalenessAlpha(
           band.validThroughMs,
           nowMs,
@@ -178,11 +184,17 @@ export class AgeStripTooltip {
       }
     }
 
+    const ageDisplay = hover
+      ? relativeTimeDisplay(
+          Math.max(0, nowMs - hover.validThroughMs) / 1_000,
+          "elapsed",
+        )
+      : null;
     const signature = [
       semanticTokenId,
       formatProbability(semanticPrice),
       hover ? formatShares(hover.shares) : "",
-      hover ? formatAge(Date.now() - hover.validThroughMs) : "",
+      ageDisplay?.text ?? "",
     ].join("|");
 
     showSharedTooltip(
@@ -195,14 +207,47 @@ export class AgeStripTooltip {
           semanticPrice,
           color,
           hover,
-          Date.now(),
+          ageDisplay?.text ?? null,
         ),
       pointer.canvasLeft + sx,
       pointer.canvasTop + centerCss,
     );
+
+    if (ageDisplay?.nextChangeMs != null)
+      this.scheduleRefresh(ageDisplay.nextChangeMs);
+  }
+
+  private scheduleRefresh(delayMs: number): void {
+    if (delayMs <= 34) {
+      this.refreshRaf = requestAnimationFrame(() => {
+        this.refreshRaf = undefined;
+        if (this.pointer) this.render(this.pointer);
+      });
+      return;
+    }
+
+    this.refreshTimer = window.setTimeout(
+      () => {
+        this.refreshTimer = undefined;
+        if (this.pointer) this.render(this.pointer);
+      },
+      Math.max(1, Math.ceil(delayMs) + 1),
+    );
+  }
+
+  private cancelRefresh(): void {
+    if (this.refreshTimer !== undefined) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+    if (this.refreshRaf !== undefined) {
+      cancelAnimationFrame(this.refreshRaf);
+      this.refreshRaf = undefined;
+    }
   }
 
   private hide(): void {
+    this.cancelRefresh();
     hideSharedTooltip(this.tooltipOwner);
   }
 }
@@ -213,7 +258,7 @@ export function renderAgeTooltip(
   tokenPrice: number,
   color: string,
   hover: PressureHover | null,
-  nowMs: number,
+  ageText: string | null,
 ): void {
   overlay.replaceChildren();
 
@@ -226,9 +271,7 @@ export function renderAgeTooltip(
   if (!hover) return;
 
   overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
-  overlay.appendChild(
-    tooltipRow("Age", formatAge(nowMs - hover.validThroughMs)),
-  );
+  overlay.appendChild(tooltipRow("Age", ageText ?? "0ms"));
 }
 
 function rowHeight(
@@ -264,20 +307,6 @@ function formatShares(value: number): string {
     notation: "compact",
     maximumFractionDigits: 2,
   }).format(value);
-}
-
-function formatAge(ageMs: number): string {
-  const ms = Math.max(0, ageMs);
-  if (ms < 1_000) return "now";
-  if (ms < 60_000) return `${formatCompact(ms / 1_000)}s`;
-  if (ms < 3_600_000) return `${formatCompact(ms / 60_000)}m`;
-  if (ms < 86_400_000) return `${formatCompact(ms / 3_600_000)}h`;
-  return `${formatCompact(ms / 86_400_000)}d`;
-}
-
-function formatCompact(value: number): string {
-  const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
 function clamp01(value: number): number {
