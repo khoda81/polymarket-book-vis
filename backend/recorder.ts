@@ -2,7 +2,8 @@ import { resolve } from "node:path";
 import { createPublicClient, OrderSide } from "@polymarket/client";
 import type { MarketEvent } from "@polymarket/client/actions";
 import { DirtyTokenTracker } from "./dirtyTokenTracker";
-import { RecorderStore, type RecorderPressureMutation } from "./recorderStore";
+import type { RecorderPressureMutation } from "./recorderPressureLog";
+import { RecorderStore } from "./recorderStore";
 import { RecorderSubscriptionPool } from "./recorderSubscriptionPool";
 import {
   applyPriceChange,
@@ -477,8 +478,7 @@ class AgeRecorder {
     let mutationCount = 0;
     let mutationBytes = 0;
     let checkpointCount = 0;
-    let checkpointRawBytes = 0;
-    let checkpointStoredBytes = 0;
+    let checkpointBytes = 0;
 
     for (
       let offset = 0;
@@ -493,7 +493,7 @@ class AgeRecorder {
         const mutations = this.pendingPressureMutations.get(tokenId) ?? [];
         const shouldCheckpoint =
           this.completed.has(tokenId) ||
-          this.store.needsCheckpoint(tokenId, mutations.length);
+          this.store.shouldCheckpoint(tokenId, mutations.length);
 
         return {
           tokenId,
@@ -514,8 +514,7 @@ class AgeRecorder {
       mutationCount += stats.mutationCount;
       mutationBytes += stats.mutationBytes;
       checkpointCount += stats.checkpointCount;
-      checkpointRawBytes += stats.checkpointRawBytes;
-      checkpointStoredBytes += stats.checkpointStoredBytes;
+      checkpointBytes += stats.checkpointBytes;
 
       for (const { tokenId } of versions)
         this.pendingPressureMutations.delete(tokenId);
@@ -536,10 +535,7 @@ class AgeRecorder {
       `ops=${mutationCount}`,
       `opKiB=${Math.round(mutationBytes / BYTES_PER_KIB)}`,
       `checkpoints=${checkpointCount}`,
-      `checkpointRawKiB=${Math.round(checkpointRawBytes / BYTES_PER_KIB)}`,
-      `checkpointStoredKiB=${Math.round(
-        checkpointStoredBytes / BYTES_PER_KIB,
-      )}`,
+      `checkpointKiB=${Math.round(checkpointBytes / BYTES_PER_KIB)}`,
       `redirtied=${this.dirtyTokens.size}`,
     );
   }

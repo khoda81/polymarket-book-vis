@@ -2,26 +2,20 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
-import type { FrontierLevel } from "../src/lib/monotoneFrontier";
 import {
-  PressureFrontierMemory,
-  type PressureLevelChange,
-} from "../src/lib/pressureFrontierMemory";
+  decodePressureMutation,
+  encodePressureMutation,
+  replayPressureMutation,
+  type RecorderPressureMutation,
+} from "./recorderPressureLog";
+import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
 import {
   parsePressureFrontierSnapshot,
   type PressureFrontierSnapshot,
 } from "../src/lib/pressureFrontierSnapshot";
-import { priceFromTicks } from "../src/lib/price";
 
 export const RECORDER_DATABASE_VERSION = 5;
 export const RECORDER_CHECKPOINT_MUTATIONS = 512;
-
-const PREVIOUS_INCREMENTAL_DATABASE_VERSION = 4;
-const MUTATION_CLEAR = 0;
-const MUTATION_REPLACE = 1;
-const MUTATION_UPDATE = 2;
-const MUTATION_HEADER_BYTES = 11;
-const MUTATION_LEVEL_BYTES = 10;
 
 export type RecorderTokenStatus = "watched" | "completed";
 
@@ -32,38 +26,23 @@ export interface RecorderStoreRecord {
   readonly pressure: PressureFrontierSnapshot | null;
 }
 
-export type RecorderPressureMutation =
-  | {
-      readonly kind: "replace";
-      readonly validThroughMs: number;
-      readonly levels: readonly FrontierLevel[];
-    }
-  | {
-      readonly kind: "update";
-      readonly validThroughMs: number;
-      readonly changes: readonly PressureLevelChange[];
-    }
-  | {
-      readonly kind: "clear";
-    };
-
 export interface RecorderStoreWriteRecord {
   readonly tokenId: string;
   readonly status: RecorderTokenStatus;
   readonly recordingSinceMs: number | null;
   readonly mutations?: readonly RecorderPressureMutation[];
   /**
-   * Undefined keeps the existing checkpoint and appends mutations.
-   * A snapshot (or null) replaces the checkpoint and clears the mutation log.
+   * Undefined appends mutations to the existing checkpoint.
+   * A snapshot (or null) replaces the checkpoint and clears its mutation tail.
    */
   readonly checkpoint?: PressureFrontierSnapshot | null;
 }
 
-interface DatabaseRow {
+interface TokenStateRow {
   token_id: string;
   status: RecorderTokenStatus;
   recording_since_ms: number | null;
-  pressure: string | Uint8Array | null;
+  checkpoint: Uint8Array | null;
 }
 
 interface PressureLogRow {
@@ -80,8 +59,7 @@ export interface RecorderStoreWriteStats {
   readonly mutationCount: number;
   readonly mutationBytes: number;
   readonly checkpointCount: number;
-  readonly checkpointRawBytes: number;
-  readonly checkpointStoredBytes: number;
+  readonly checkpointBytes: number;
 }
 
 interface EncodedRecorderStoreWriteRecord {
@@ -95,14 +73,13 @@ interface EncodedRecorderStoreWriteRecord {
 /**
  * Durable recorder storage.
  *
- * token_state holds sparse full checkpoints. The hot path appends compact
- * pressure mutations to pressure_log instead of rewriting the complete
- * historical snapshot on every observation. Replay is bounded by periodically
- * compacting the log back into a checkpoint.
+ * token_state.pressure is a sparse full checkpoint. The hot path appends
+ * compact pressure mutations to pressure_log. Replay stays bounded because
+ * mutation tails are periodically compacted back into a checkpoint.
  */
 export class RecorderStore {
   private readonly db: Database;
-  private readonly opCounts = new Map<string, number>();
+  private readonly mutationCounts = new Map<string, number>();
   private readonly writeBatch: (
     batch: readonly EncodedRecorderStoreWriteRecord[],
   ) => void;
@@ -116,18 +93,7 @@ export class RecorderStore {
     this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec("PRAGMA wal_autocheckpoint = 1000");
     this.db.exec("PRAGMA foreign_keys = ON");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS token_state (
-        token_id TEXT PRIMARY KEY,
-        status TEXT NOT NULL CHECK (status IN ('watched', 'completed')),
-        recording_since_ms INTEGER,
-        pressure BLOB
-      ) WITHOUT ROWID;
-      CREATE INDEX IF NOT EXISTS token_state_status_idx
-        ON token_state(status);
-    `);
-    this.ensureDatabaseVersion();
-    this.ensureIncrementalSchema();
+    this.initializeDatabase();
 
     for (const row of this.db
       .query<{ token_id: string; count: number }, []>(
@@ -136,7 +102,7 @@ export class RecorderStore {
          GROUP BY token_id`,
       )
       .all())
-      this.opCounts.set(row.token_id, Number(row.count));
+      this.mutationCounts.set(row.token_id, Number(row.count));
 
     const upsertMetadata = this.db.prepare(`
       INSERT INTO token_state (
@@ -184,8 +150,8 @@ export class RecorderStore {
 
   loadIndex(): RecorderStoreIndexRecord[] {
     return this.db
-      .query<DatabaseRow & { has_pressure: number }, []>(
-        `SELECT s.token_id, s.status, s.recording_since_ms, s.pressure,
+      .query<Omit<TokenStateRow, "checkpoint"> & { has_pressure: number }, []>(
+        `SELECT s.token_id, s.status, s.recording_since_ms,
                 (
                   s.pressure IS NOT NULL OR
                   EXISTS (
@@ -209,8 +175,8 @@ export class RecorderStore {
 
   load(tokenId: string): RecorderStoreRecord | null {
     const row = this.db
-      .query<DatabaseRow, [string]>(
-        `SELECT token_id, status, recording_since_ms, pressure
+      .query<TokenStateRow, [string]>(
+        `SELECT token_id, status, recording_since_ms, pressure AS checkpoint
          FROM token_state WHERE token_id = ?`,
       )
       .get(tokenId);
@@ -225,7 +191,8 @@ export class RecorderStore {
       )
       .all(tokenId);
 
-    let pressure = row.pressure === null ? null : decodePressure(row.pressure);
+    let pressure =
+      row.checkpoint === null ? null : decodePressure(row.checkpoint);
     if (mutations.length > 0) {
       const memory = new PressureFrontierMemory();
       if (pressure !== null) memory.restore(pressure);
@@ -246,9 +213,9 @@ export class RecorderStore {
     };
   }
 
-  needsCheckpoint(tokenId: string, additionalMutations: number): boolean {
+  shouldCheckpoint(tokenId: string, additionalMutations: number): boolean {
     return (
-      (this.opCounts.get(tokenId) ?? 0) + additionalMutations >=
+      (this.mutationCounts.get(tokenId) ?? 0) + additionalMutations >=
       RECORDER_CHECKPOINT_MUTATIONS
     );
   }
@@ -260,8 +227,7 @@ export class RecorderStore {
     let mutationCount = 0;
     let mutationBytes = 0;
     let checkpointCount = 0;
-    let checkpointRawBytes = 0;
-    let checkpointStoredBytes = 0;
+    let checkpointBytes = 0;
 
     const encoded: EncodedRecorderStoreWriteRecord[] = records.map((record) => {
       const checkpoint =
@@ -273,11 +239,7 @@ export class RecorderStore {
 
       if (record.checkpoint !== undefined) {
         checkpointCount++;
-        if (record.checkpoint !== null) {
-          const json = JSON.stringify(record.checkpoint);
-          checkpointRawBytes += Buffer.byteLength(json);
-          checkpointStoredBytes += checkpoint!.byteLength;
-        }
+        checkpointBytes += checkpoint?.byteLength ?? 0;
         return {
           tokenId: record.tokenId,
           status: record.status,
@@ -312,14 +274,14 @@ export class RecorderStore {
       const record = records[index]!;
       const encodedRecord = encoded[index]!;
       if (record.checkpoint !== undefined) {
-        this.opCounts.delete(record.tokenId);
+        this.mutationCounts.delete(record.tokenId);
         continue;
       }
 
       if (encodedRecord.mutations.length === 0) continue;
-      this.opCounts.set(
+      this.mutationCounts.set(
         record.tokenId,
-        (this.opCounts.get(record.tokenId) ?? 0) +
+        (this.mutationCounts.get(record.tokenId) ?? 0) +
           encodedRecord.mutations.length,
       );
     }
@@ -330,8 +292,7 @@ export class RecorderStore {
       mutationCount,
       mutationBytes,
       checkpointCount,
-      checkpointRawBytes,
-      checkpointStoredBytes,
+      checkpointBytes,
     };
   }
 
@@ -343,59 +304,56 @@ export class RecorderStore {
     this.db.close();
   }
 
-  private ensureDatabaseVersion(): void {
-    const row = this.db
-      .query<{ user_version: number }, []>("PRAGMA user_version")
-      .get();
-    const version = Number(row?.user_version ?? 0);
+  private initializeDatabase(): void {
+    const version = Number(
+      this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()
+        ?.user_version ?? 0,
+    );
 
     if (version === RECORDER_DATABASE_VERSION) return;
 
-    const count = Number(
-      this.db
-        .query<{ count: number }, []>(
-          "SELECT COUNT(*) AS count FROM token_state",
-        )
-        .get()?.count ?? 0,
-    );
+    if (version === 0) {
+      const existingTables = Number(
+        this.db
+          .query<{ count: number }, []>(
+            `SELECT COUNT(*) AS count
+             FROM sqlite_master
+             WHERE type = 'table'
+               AND name IN ('token_state', 'pressure_log')`,
+          )
+          .get()?.count ?? 0,
+      );
 
-    if (
-      version === PREVIOUS_INCREMENTAL_DATABASE_VERSION ||
-      (version === 0 && count === 0)
-    ) {
-      this.db.exec(`
-        BEGIN;
-        CREATE TABLE IF NOT EXISTS pressure_log (
-          seq INTEGER PRIMARY KEY,
-          token_id TEXT NOT NULL,
-          payload BLOB NOT NULL,
-          FOREIGN KEY(token_id) REFERENCES token_state(token_id) ON DELETE CASCADE
-        );
-        CREATE INDEX IF NOT EXISTS pressure_log_token_seq_idx
-          ON pressure_log(token_id, seq);
-        PRAGMA user_version = ${RECORDER_DATABASE_VERSION};
-        COMMIT;
-      `);
-      return;
+      if (existingTables === 0) {
+        this.db.exec(`
+          BEGIN;
+          CREATE TABLE token_state (
+            token_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK (status IN ('watched', 'completed')),
+            recording_since_ms INTEGER,
+            pressure BLOB
+          ) WITHOUT ROWID;
+          CREATE INDEX token_state_status_idx ON token_state(status);
+          CREATE TABLE pressure_log (
+            seq INTEGER PRIMARY KEY,
+            token_id TEXT NOT NULL,
+            payload BLOB NOT NULL,
+            FOREIGN KEY(token_id) REFERENCES token_state(token_id)
+              ON DELETE CASCADE
+          );
+          CREATE INDEX pressure_log_token_seq_idx
+            ON pressure_log(token_id, seq);
+          PRAGMA user_version = ${RECORDER_DATABASE_VERSION};
+          COMMIT;
+        `);
+        return;
+      }
     }
 
     this.db.close();
     throw new Error(
-      `Recorder database version ${version} requires migration to ${RECORDER_DATABASE_VERSION}`,
+      `Recorder database version ${version} is unsupported; expected ${RECORDER_DATABASE_VERSION}`,
     );
-  }
-
-  private ensureIncrementalSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS pressure_log (
-        seq INTEGER PRIMARY KEY,
-        token_id TEXT NOT NULL,
-        payload BLOB NOT NULL,
-        FOREIGN KEY(token_id) REFERENCES token_state(token_id) ON DELETE CASCADE
-      );
-      CREATE INDEX IF NOT EXISTS pressure_log_token_seq_idx
-        ON pressure_log(token_id, seq);
-    `);
   }
 }
 
@@ -406,8 +364,7 @@ function emptyWriteStats(): RecorderStoreWriteStats {
     mutationCount: 0,
     mutationBytes: 0,
     checkpointCount: 0,
-    checkpointRawBytes: 0,
-    checkpointStoredBytes: 0,
+    checkpointBytes: 0,
   };
 }
 
@@ -415,131 +372,7 @@ function encodePressure(snapshot: PressureFrontierSnapshot): Uint8Array {
   return gzipSync(JSON.stringify(snapshot), { level: 1 });
 }
 
-function decodePressure(value: string | Uint8Array): PressureFrontierSnapshot {
-  const raw = JSON.parse(
-    typeof value === "string" ? value : gunzipSync(value).toString("utf8"),
-  ) as unknown;
+function decodePressure(value: Uint8Array): PressureFrontierSnapshot {
+  const raw = JSON.parse(gunzipSync(value).toString("utf8")) as unknown;
   return parsePressureFrontierSnapshot(raw);
-}
-
-function encodePressureMutation(
-  mutation: RecorderPressureMutation,
-): Uint8Array {
-  if (mutation.kind === "clear") return Uint8Array.of(MUTATION_CLEAR);
-
-  if (!Number.isFinite(mutation.validThroughMs))
-    throw new RangeError("pressure mutation timestamp must be finite");
-
-  const entries =
-    mutation.kind === "replace"
-      ? mutation.levels.map(({ key, weight }) => ({
-          price: key,
-          shares: weight,
-        }))
-      : mutation.changes;
-
-  if (entries.length > 0xffff)
-    throw new RangeError("too many pressure levels in one mutation");
-
-  const bytes = new Uint8Array(
-    MUTATION_HEADER_BYTES + entries.length * MUTATION_LEVEL_BYTES,
-  );
-  const view = new DataView(bytes.buffer);
-  view.setUint8(
-    0,
-    mutation.kind === "replace" ? MUTATION_REPLACE : MUTATION_UPDATE,
-  );
-  view.setFloat64(1, mutation.validThroughMs, true);
-  view.setUint16(9, entries.length, true);
-
-  let offset = MUTATION_HEADER_BYTES;
-  for (const entry of entries) {
-    const price = priceFromTicks(entry.price);
-    if (
-      !Number.isFinite(entry.shares) ||
-      entry.shares < 0 ||
-      (mutation.kind === "replace" && !(entry.shares > 0))
-    )
-      throw new RangeError("invalid pressure mutation shares");
-
-    view.setUint16(offset, price, true);
-    view.setFloat64(offset + 2, entry.shares, true);
-    offset += MUTATION_LEVEL_BYTES;
-  }
-
-  return bytes;
-}
-
-function decodePressureMutation(value: Uint8Array): RecorderPressureMutation {
-  if (value.byteLength === 0) throw new RangeError("empty pressure mutation");
-
-  const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
-  const kind = view.getUint8(0);
-  if (kind === MUTATION_CLEAR) {
-    if (value.byteLength !== 1)
-      throw new RangeError("malformed clear pressure mutation");
-    return { kind: "clear" };
-  }
-
-  if (kind !== MUTATION_REPLACE && kind !== MUTATION_UPDATE)
-    throw new RangeError(`unsupported pressure mutation kind: ${kind}`);
-  if (value.byteLength < MUTATION_HEADER_BYTES)
-    throw new RangeError("truncated pressure mutation");
-
-  const validThroughMs = view.getFloat64(1, true);
-  if (!Number.isFinite(validThroughMs))
-    throw new RangeError("pressure mutation timestamp must be finite");
-
-  const count = view.getUint16(9, true);
-  const expectedBytes = MUTATION_HEADER_BYTES + count * MUTATION_LEVEL_BYTES;
-  if (value.byteLength !== expectedBytes)
-    throw new RangeError("pressure mutation has invalid length");
-
-  const entries: Array<{
-    price: ReturnType<typeof priceFromTicks>;
-    shares: number;
-  }> = [];
-  let offset = MUTATION_HEADER_BYTES;
-  for (let index = 0; index < count; index++) {
-    const price = priceFromTicks(view.getUint16(offset, true));
-    const shares = view.getFloat64(offset + 2, true);
-    if (
-      !Number.isFinite(shares) ||
-      shares < 0 ||
-      (kind === MUTATION_REPLACE && !(shares > 0))
-    )
-      throw new RangeError("invalid pressure mutation shares");
-    entries.push({ price, shares });
-    offset += MUTATION_LEVEL_BYTES;
-  }
-
-  return kind === MUTATION_REPLACE
-    ? {
-        kind: "replace",
-        validThroughMs,
-        levels: entries.map(({ price, shares }) => ({
-          key: price,
-          weight: shares,
-        })),
-      }
-    : {
-        kind: "update",
-        validThroughMs,
-        changes: entries,
-      };
-}
-
-function replayPressureMutation(
-  memory: PressureFrontierMemory,
-  mutation: RecorderPressureMutation,
-): void {
-  if (mutation.kind === "clear") {
-    memory.clear();
-    return;
-  }
-  if (mutation.kind === "replace") {
-    memory.observeLevels(mutation.levels, mutation.validThroughMs);
-    return;
-  }
-  memory.updateLevels(mutation.changes, mutation.validThroughMs);
 }

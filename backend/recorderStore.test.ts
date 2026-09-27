@@ -103,9 +103,9 @@ test("RecorderStore replays incremental mutations and compacts them into a check
       },
     ]);
 
-    expect(store.needsCheckpoint("token-a", 0)).toBe(false);
+    expect(store.shouldCheckpoint("token-a", 0)).toBe(false);
     expect(
-      store.needsCheckpoint("token-a", RECORDER_CHECKPOINT_MUTATIONS - 2),
+      store.shouldCheckpoint("token-a", RECORDER_CHECKPOINT_MUTATIONS - 2),
     ).toBe(true);
 
     const beforeCheckpoint = store.load("token-a");
@@ -151,7 +151,7 @@ test("RecorderStore replays incremental mutations and compacts them into a check
         checkpoint: beforeCheckpoint!.pressure,
       },
     ]);
-    expect(store.needsCheckpoint("token-a", 0)).toBe(false);
+    expect(store.shouldCheckpoint("token-a", 0)).toBe(false);
     store.close();
 
     const compacted = new Database(dbPath, { readonly: true });
@@ -174,42 +174,7 @@ test("RecorderStore replays incremental mutations and compacts them into a check
   }
 });
 
-test("RecorderStore upgrades the additive v4 schema to incremental v5", () => {
-  const dir = mkdtempSync(join(tmpdir(), "recorder-store-v4-"));
-  const dbPath = join(dir, "recorder.sqlite");
-
-  try {
-    const store = new RecorderStore(dbPath);
-    store.close();
-
-    const raw = new Database(dbPath);
-    raw.exec(`
-      DROP TABLE pressure_log;
-      PRAGMA user_version = 4;
-    `);
-    raw.close();
-
-    const reopened = new RecorderStore(dbPath);
-    reopened.close();
-
-    const upgraded = new Database(dbPath, { readonly: true });
-    expect(upgraded.query("PRAGMA user_version").get()).toEqual({
-      user_version: RECORDER_DATABASE_VERSION,
-    });
-    expect(
-      upgraded
-        .query<{ name: string }, []>(
-          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pressure_log'",
-        )
-        .get()?.name,
-    ).toBe("pressure_log");
-    upgraded.close();
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("RecorderStore rejects databases older than the incremental predecessor", () => {
+test("RecorderStore rejects non-v5 databases", () => {
   const dir = mkdtempSync(join(tmpdir(), "recorder-store-old-version-"));
   const dbPath = join(dir, "recorder.sqlite");
 
@@ -218,11 +183,11 @@ test("RecorderStore rejects databases older than the incremental predecessor", (
     store.close();
 
     const raw = new Database(dbPath);
-    raw.exec("PRAGMA user_version = 3");
+    raw.exec("PRAGMA user_version = 4");
     raw.close();
 
     expect(() => new RecorderStore(dbPath)).toThrow(
-      `Recorder database version 3 requires migration to ${RECORDER_DATABASE_VERSION}`,
+      `Recorder database version 4 is unsupported; expected ${RECORDER_DATABASE_VERSION}`,
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
