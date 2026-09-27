@@ -10,8 +10,8 @@ import {
 } from "../src/lib/bookIngestion";
 import type { TokenBook } from "../src/lib/orderBook";
 import {
-  pressureEdgeChanges,
-  pressureEdgeLevels,
+  tokenPressureChanges,
+  tokenPressureLevels,
 } from "../src/lib/pressureBookAdapter";
 import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
 import type { PressureFrontierSnapshot } from "../src/lib/pressureFrontierSnapshot";
@@ -394,19 +394,9 @@ class AgeRecorder {
     const memory = this.ensureMemory(tokenId) ?? new PressureFrontierMemory();
 
     if (changes === undefined) {
-      const edges = pressureEdgeLevels(book);
-      memory.observeEdges(
-        edges.primaryToCollateral,
-        edges.oppositeToCollateral,
-        validThroughMs,
-      );
+      memory.observeLevels(tokenPressureLevels(book), validThroughMs);
     } else {
-      const edges = pressureEdgeChanges(changes);
-      memory.updateEdges(
-        edges.primaryToCollateral,
-        edges.oppositeToCollateral,
-        validThroughMs,
-      );
+      memory.updateLevels(tokenPressureChanges(changes), validThroughMs);
     }
 
     this.memories.set(tokenId, memory);
@@ -416,10 +406,7 @@ class AgeRecorder {
       debugLog(
         "first-snapshot",
         shortToken(tokenId),
-        `priceBoundaries=${
-          memory.priceBoundaries("primaryToCollateral").length +
-          memory.priceBoundaries("oppositeToCollateral").length
-        }`,
+        `priceBoundaries=${memory.priceBoundaries().length}`,
       );
     }
 
