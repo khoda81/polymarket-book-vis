@@ -557,9 +557,9 @@ function appendResidentRuns(
   currentValidThroughMs: number | undefined,
   timeOriginMs: number,
 ): void {
-  const currentValidThroughSec =
+  const surfaceCurrentValidThroughSec =
     currentValidThroughMs === undefined
-      ? -1e30
+      ? undefined
       : (currentValidThroughMs - timeOriginMs) / 1_000;
 
   for (const run of runs) {
@@ -574,14 +574,16 @@ function appendResidentRuns(
       )
         continue;
 
+      const bandValidThroughSec = (band.validThroughMs - timeOriginMs) / 1_000;
+
       values.push(
         priceLo,
         priceHi,
         band.loVolume,
         band.hiVolume,
-        (band.validThroughMs - timeOriginMs) / 1_000,
+        bandValidThroughSec,
         run.volume,
-        currentValidThroughSec,
+        surfaceCurrentValidThroughSec ?? bandValidThroughSec,
         centerCss,
         rowHeightCss,
         mirrorPrice ? 1 : 0,
