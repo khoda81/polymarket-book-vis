@@ -1,4 +1,4 @@
-import type { PressureRenderRun } from "@/lib/materializedPressureField";
+import type { PressureRun } from "@/lib/pressureFrontierSnapshot";
 import { PRICE_SCALE, priceFromTicks, type Price } from "@/lib/price";
 import {
   signedVolumeColor,
@@ -47,7 +47,7 @@ export function agePressureSurface(
   key: string,
   dataRevision: number,
   maxPrice: Price,
-  runs: readonly PressureRenderRun[],
+  runs: readonly PressureRun[],
   currentValidThroughMs: number | undefined,
   colorScale: SignedVolumeColorScale,
   sourceSide: AgePressureSide,

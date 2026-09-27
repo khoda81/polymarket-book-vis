@@ -1,12 +1,12 @@
 import { PRESSURE_MIN_VISIBLE_ALPHA } from "@/lib/pressureField";
-import type { PressureRenderRun } from "@/lib/materializedPressureField";
+import type { PressureRun } from "@/lib/pressureFrontierSnapshot";
 import { priceToNumber, type Price } from "@/lib/price";
 
 export interface GpuPressureSurface {
   readonly key: string;
   readonly dataRevision: number;
   readonly maxPrice: Price;
-  readonly runs: readonly PressureRenderRun[];
+  readonly runs: readonly PressureRun[];
   /** O(1) validity timestamp for the currently resting portion of every run. */
   readonly currentValidThroughMs: number | undefined;
   readonly color: string;
@@ -633,36 +633,36 @@ export class GpuPressureLayer {
 
 function appendResidentRuns(
   values: number[],
-  runs: readonly PressureRenderRun[],
+  runs: readonly PressureRun[],
   maxPrice: Price,
   timeOriginMs: number,
 ): void {
+  let currentVolume = 0;
+
   for (let index = 0; index < runs.length; index++) {
     const run = runs[index]!;
+    currentVolume += run.shares;
+
     const nextPrice = runs[index + 1]?.price ?? maxPrice;
     const priceLo = priceToNumber(run.price);
     const priceHi = priceToNumber(nextPrice);
     if (!(priceHi > priceLo)) continue;
 
-    if (run.volume > 0) {
-      values.push(priceLo, priceHi, 0, run.volume, 0, 1);
-    }
+    if (currentVolume > 0)
+      values.push(priceLo, priceHi, 0, currentVolume, 0, 1);
 
-    for (const band of run.frozenBands) {
-      if (
-        !(band.hiVolume > band.loVolume) ||
-        !Number.isFinite(band.validThroughMs)
-      )
-        continue;
-
+    let lower = currentVolume;
+    for (let stepIndex = run.frozenSteps.length - 1; stepIndex >= 0; stepIndex--) {
+      const step = run.frozenSteps[stepIndex]!;
       values.push(
         priceLo,
         priceHi,
-        band.loVolume,
-        band.hiVolume,
-        (band.validThroughMs - timeOriginMs) / 1_000,
+        lower,
+        step.hiVolume,
+        (step.validThroughMs - timeOriginMs) / 1_000,
         0,
       );
+      lower = step.hiVolume;
     }
   }
 }
