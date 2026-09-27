@@ -14,6 +14,7 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
     Object.getOwnPropertyDescriptor(globalThis, key),
   );
   let wheel!: (event: WheelEvent) => void;
+  let frame!: FrameRequestCallback;
   const replacements = [
     {
       body: { appendChild() {} },
@@ -26,7 +27,10 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
     },
     { setTimeout: () => undefined },
     { DOM_DELTA_LINE: 1, DOM_DELTA_PAGE: 2 },
-    (_callback: FrameRequestCallback) => 1,
+    (callback: FrameRequestCallback) => {
+      frame = callback;
+      return 1;
+    },
     class {
       observe() {}
       disconnect() {}
@@ -86,6 +90,7 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
       },
       stopImmediatePropagation() {},
     } as WheelEvent);
+    frame(0);
     expect(getAgeStripTuning().volumePerCssPixel).not.toBe(initial);
     expect(prevented).toBe(true);
 
@@ -97,6 +102,7 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
       preventDefault() {},
       stopImmediatePropagation() {},
     } as WheelEvent);
+    frame(0);
     expect(getAgeStripTuning().volumePerCssPixel).toBeCloseTo(initial);
   } finally {
     view?.destroy();

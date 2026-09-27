@@ -38,7 +38,7 @@ test("infers cadence from event start timestamps before recurrence metadata", ()
   expect(inferSeriesCadenceMs(events, "daily")).toBe(5 * 60_000);
 });
 
-test("timed rows use explicit event interval and merge stably by time", () => {
+test("timed rows use cadence before explicit end and merge stably by time", () => {
   const a = event("a", "2026-09-19T10:05:00Z", "2026-09-19T10:10:00Z");
   const b = event("b", "2026-09-19T10:00:00Z", "2026-09-19T10:05:00Z");
   const duplicateB = event("b", "2026-09-19T10:00:00Z", "2026-09-19T10:05:00Z");
@@ -47,7 +47,9 @@ test("timed rows use explicit event interval and merge stably by time", () => {
   expect(eventEndMs(b)).toBe(Date.parse("2026-09-19T10:05:00Z"));
 
   const timed = timedSeriesEvent(b, 60_000);
-  expect(timed?.centerMs).toBe(Date.parse("2026-09-19T10:02:30Z"));
+  expect(timed?.startMs).toBe(Date.parse("2026-09-19T10:04:00Z"));
+  expect(timed?.endMs).toBe(Date.parse("2026-09-19T10:05:00Z"));
+  expect(timed?.centerMs).toBe(Date.parse("2026-09-19T10:04:30Z"));
 
   expect(
     mergeSeriesEvents([a], [b, duplicateB]).map((row) => String(row.id)),

@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { createPublicClient, OrderSide } from "@polymarket/client";
 import type { MarketEvent } from "@polymarket/client/actions";
 import { DirtyTokenTracker } from "./dirtyTokenTracker";
-import { RecorderStore } from "./recorderStore";
+import { RecorderStore, type RecorderPressureMutation } from "./recorderStore";
 import { RecorderSubscriptionPool } from "./recorderSubscriptionPool";
 import {
   applyPriceChange,
@@ -86,6 +86,10 @@ class AgeRecorder {
   private readonly pendingPriceChanges = new Map<
     string,
     BufferedPriceChangeEvent[]
+  >();
+  private readonly pendingPressureMutations = new Map<
+    string,
+    RecorderPressureMutation[]
   >();
   private readonly seedInFlight = new Set<string>();
   private readonly seedRetryAfterMs = new Map<string, number>();
@@ -247,6 +251,9 @@ class AgeRecorder {
       subscriptionConnections: this.subscriptions.activeConnectionCount,
       subscriptionBatches: this.subscriptions.activeBatchCount,
       dirtyTokens: this.dirtyTokens.size,
+      pendingPressureMutations: [
+        ...this.pendingPressureMutations.values(),
+      ].reduce((sum, mutations) => sum + mutations.length, 0),
       oldestRecordingSinceMs: starts.length ? Math.min(...starts) : null,
       newestRecordingSinceMs: starts.length ? Math.max(...starts) : null,
       databasePath: DATABASE_PATH,
@@ -311,13 +318,15 @@ class AgeRecorder {
     }
 
     if (stream.type === "market_resolved") {
-      const nowMs = Date.now();
       const resolvedTokenIds: string[] = [];
 
       for (const tokenIdValue of stream.payload.assetIds ?? []) {
         const tokenId = String(tokenIdValue);
         const memory = this.ensureMemory(tokenId);
-        memory?.clear();
+        if (memory) {
+          memory.clear();
+          this.queuePressureMutation(tokenId, { kind: "clear" });
+        }
 
         if (this.watched.delete(tokenId)) resolvedTokenIds.push(tokenId);
 
@@ -394,13 +403,22 @@ class AgeRecorder {
     changes?: readonly CanonicalBookChange[],
   ): void {
     const memory = this.ensureMemory(tokenId) ?? new PressureFrontierMemory();
-    const mutated =
-      changes === undefined
-        ? memory.observeLevels(tokenPressureLevels(book), validThroughMs)
-        : memory.updateLevels(tokenPressureChanges(changes), validThroughMs);
+
+    let mutation: RecorderPressureMutation;
+    let mutated: boolean;
+    if (changes === undefined) {
+      const levels = tokenPressureLevels(book);
+      mutated = memory.observeLevels(levels, validThroughMs);
+      mutation = { kind: "replace", validThroughMs, levels };
+    } else {
+      const pressureChanges = tokenPressureChanges(changes);
+      mutated = memory.updateLevels(pressureChanges, validThroughMs);
+      mutation = { kind: "update", validThroughMs, changes: pressureChanges };
+    }
     if (!mutated) return;
 
     this.memories.set(tokenId, memory);
+    this.queuePressureMutation(tokenId, mutation);
 
     if (!this.recordingSince.has(tokenId)) {
       this.recordingSince.set(tokenId, validThroughMs);
@@ -412,6 +430,15 @@ class AgeRecorder {
     }
 
     this.markDirty([tokenId]);
+  }
+
+  private queuePressureMutation(
+    tokenId: string,
+    mutation: RecorderPressureMutation,
+  ): void {
+    const pending = this.pendingPressureMutations.get(tokenId) ?? [];
+    pending.push(mutation);
+    this.pendingPressureMutations.set(tokenId, pending);
   }
 
   private markDirty(tokenIds: Iterable<string>): void {
@@ -447,8 +474,11 @@ class AgeRecorder {
     const tokenIds = this.dirtyTokens.tokenIds();
     let encodeMs = 0;
     let sqliteMs = 0;
-    let rawPressureBytes = 0;
-    let storedPressureBytes = 0;
+    let mutationCount = 0;
+    let mutationBytes = 0;
+    let checkpointCount = 0;
+    let checkpointRawBytes = 0;
+    let checkpointStoredBytes = 0;
 
     for (
       let offset = 0;
@@ -459,25 +489,41 @@ class AgeRecorder {
       const versions = this.dirtyTokens.capture(batch);
       if (versions.length === 0) continue;
 
-      const stats = this.store.write(
-        versions.map(({ tokenId }) => ({
+      const writes = versions.map(({ tokenId }) => {
+        const mutations = this.pendingPressureMutations.get(tokenId) ?? [];
+        const shouldCheckpoint =
+          this.completed.has(tokenId) ||
+          this.store.needsCheckpoint(tokenId, mutations.length);
+
+        return {
           tokenId,
           status: this.completed.has(tokenId)
             ? ("completed" as const)
             : ("watched" as const),
           recordingSinceMs: this.recordingSince.get(tokenId) ?? null,
-          pressure: this.ensureMemory(tokenId)?.snapshot() ?? null,
-        })),
-      );
+          mutations,
+          checkpoint: shouldCheckpoint
+            ? (this.ensureMemory(tokenId)?.snapshot() ?? null)
+            : undefined,
+        };
+      });
+
+      const stats = this.store.write(writes);
       encodeMs += stats.encodeMs;
       sqliteMs += stats.sqliteMs;
-      rawPressureBytes += stats.rawPressureBytes;
-      storedPressureBytes += stats.storedPressureBytes;
+      mutationCount += stats.mutationCount;
+      mutationBytes += stats.mutationBytes;
+      checkpointCount += stats.checkpointCount;
+      checkpointRawBytes += stats.checkpointRawBytes;
+      checkpointStoredBytes += stats.checkpointStoredBytes;
+
+      for (const { tokenId } of versions)
+        this.pendingPressureMutations.delete(tokenId);
       this.dirtyTokens.acknowledge(versions);
 
       // bun:sqlite is synchronous. Keep transactions deliberately small and
       // yield between them so recorder HTTP/WebSocket traffic is never stuck
-      // behind a multi-second checkpoint.
+      // behind a checkpoint.
       if (offset + batch.length < tokenIds.length) await Bun.sleep(0);
     }
 
@@ -487,8 +533,13 @@ class AgeRecorder {
       `ms=${Math.round(performance.now() - startedAt)}`,
       `encodeMs=${Math.round(encodeMs)}`,
       `sqliteMs=${Math.round(sqliteMs)}`,
-      `rawKiB=${Math.round(rawPressureBytes / BYTES_PER_KIB)}`,
-      `storedKiB=${Math.round(storedPressureBytes / BYTES_PER_KIB)}`,
+      `ops=${mutationCount}`,
+      `opKiB=${Math.round(mutationBytes / BYTES_PER_KIB)}`,
+      `checkpoints=${checkpointCount}`,
+      `checkpointRawKiB=${Math.round(checkpointRawBytes / BYTES_PER_KIB)}`,
+      `checkpointStoredKiB=${Math.round(
+        checkpointStoredBytes / BYTES_PER_KIB,
+      )}`,
       `redirtied=${this.dirtyTokens.size}`,
     );
   }
