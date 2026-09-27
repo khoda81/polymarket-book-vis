@@ -1,9 +1,15 @@
 import { legendTickOpacity } from "./legendTickDensity";
+import { fmtSIAtExponent } from "./math";
+
+const SHARE_STEP_MULTIPLIERS = [1, 0.5] as const;
 
 export interface ShareLegendTick {
   readonly value: number;
   readonly position: number;
   readonly opacity: number;
+  /** Engineering decade chosen by the tick family for display. */
+  readonly displayExponent: number;
+  readonly label: string;
 }
 
 export interface ShareLegendTickOptions {
@@ -18,7 +24,7 @@ export interface ShareLegendTickOptions {
  *   s = q / (|q| + reserve)
  *   x = 1/2 + s/2
  *
- * We sample tiny screen intervals, find the largest 1/2/5 × 10^n value grid
+ * We sample tiny screen intervals, find the largest 1/5 × 10^n value grid
  * that crosses each interval, and fade that grid according to the projected
  * pixel spacing to the next tick from the same family.
  */
@@ -42,6 +48,8 @@ export function shareLegendTicks(
     value: 0,
     position: 0.5,
     opacity: 1,
+    displayExponent: 0,
+    label: "0",
   };
   byValue.set(0, zero);
 
@@ -56,13 +64,13 @@ export function shareLegendTicks(
       continue;
     }
 
-    const step = biggestNiceStepCrossing(previousValue, nextValue);
-    if (step === null) {
+    const family = biggestNiceStepCrossing(previousValue, nextValue);
+    if (family === null) {
       previousValue = nextValue;
       continue;
     }
 
-    const value = firstGridBoundaryAfter(previousValue, step);
+    const value = firstGridBoundaryAfter(previousValue, family.step);
     previousValue = nextValue;
     if (
       value === 0 ||
@@ -72,8 +80,8 @@ export function shareLegendTicks(
       continue;
 
     const tickPosition = shareLegendPosition(value, reserve);
-    const nextPosition = shareLegendPosition(value + step, reserve);
-    const previousPosition = shareLegendPosition(value - step, reserve);
+    const nextPosition = shareLegendPosition(value + family.step, reserve);
+    const previousPosition = shareLegendPosition(value - family.step, reserve);
     const spacingPx =
       Math.min(
         Math.abs(nextPosition - tickPosition),
@@ -82,10 +90,14 @@ export function shareLegendTicks(
     const opacity = legendTickOpacity(spacingPx, minDistancePx, fadeDistancePx);
     if (opacity <= 1 / 255) continue;
 
+    const normalizedValue = normalizeZero(value);
+    const displayExponent = engineeringExponent(family.exponent);
     const tick: ShareLegendTick = {
-      value: normalizeZero(value),
+      value: normalizedValue,
       position: tickPosition,
       opacity,
+      displayExponent,
+      label: formatShareTick(normalizedValue, displayExponent),
     };
     const existing = byValue.get(tick.value);
     if (!existing || tick.opacity > existing.opacity)
@@ -119,7 +131,15 @@ export function shareValueAtPosition(
   return Math.sign(signed) * magnitude;
 }
 
-function biggestNiceStepCrossing(start: number, end: number): number | null {
+interface ShareStepFamily {
+  readonly step: number;
+  readonly exponent: number;
+}
+
+function biggestNiceStepCrossing(
+  start: number,
+  end: number,
+): ShareStepFamily | null {
   if (!(end > start)) return null;
 
   const maxMagnitude = Math.max(
@@ -127,15 +147,17 @@ function biggestNiceStepCrossing(start: number, end: number): number | null {
     Math.abs(end),
     Number.MIN_VALUE,
   );
-  let exponent = Math.floor(Math.log10(maxMagnitude));
 
-  // Descending sequence across decades:
-  // 5eN, 1eN, 5e(N-1), ...
+  // Start one decade above the data because 0.5 × 10^N is part of the family.
+  // Search order follows the family declaration:
+  // 1eN, 0.5eN, 1e(N-1), 0.5e(N-1), ...
+  let exponent = Math.floor(Math.log10(maxMagnitude)) + 1;
   for (let guard = 0; guard < 700; guard++, exponent--) {
-    for (const multiplier of [5, 1]) {
+    for (const multiplier of SHARE_STEP_MULTIPLIERS) {
       const step = multiplier * 10 ** exponent;
       if (!(step > 0) || !Number.isFinite(step)) continue;
-      if (firstGridBoundaryAfter(start, step) <= end) return step;
+      if (firstGridBoundaryAfter(start, step) <= end)
+        return { step, exponent };
     }
   }
   return null;
@@ -152,4 +174,14 @@ function firstGridBoundaryAfter(value: number, step: number): number {
 
 function normalizeZero(value: number): number {
   return Object.is(value, -0) ? 0 : value;
+}
+
+function engineeringExponent(exponent: number): number {
+  return Math.floor(exponent / 3) * 3;
+}
+
+function formatShareTick(value: number, displayExponent: number): string {
+  if (value === 0) return "0";
+  const magnitude = fmtSIAtExponent(Math.abs(value), displayExponent);
+  return `${value > 0 ? "+" : "−"}${magnitude}`;
 }

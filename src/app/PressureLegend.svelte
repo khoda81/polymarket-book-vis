@@ -6,21 +6,15 @@
     subscribeAgeStripTuning,
     type AgeStripTuning,
   } from "../lib/ageStripTuning";
-  import { fmtSI } from "../lib/math";
-  import {
-    formatDurationTick,
-    ghostLegendTicks,
-  } from "../lib/ghostLegendTicks";
+  import { ghostLegendTicks } from "../lib/ghostLegendTicks";
   import { shareLegendTicks } from "../lib/shareLegendTicks";
   import {
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     signedVolumeColor,
   } from "../lib/signedVolume";
 
-  const MIN_LABEL_DISTANCE_PX = 56;
-  // Ghost memory is one-sided; share pressure packs two mirrored scales into
-  // the same width, so use half the one-sided family spacing threshold.
-  const MIN_TICK_FAMILY_DISTANCE_PX = MIN_LABEL_DISTANCE_PX / 2;
+  const GHOST_TICK_MIN_DISTANCE_PX = 32;
+  const SHARE_TICK_MIN_DISTANCE_PX = 24;
   let shareBar: HTMLDivElement;
   let ghostBar: HTMLDivElement;
   let shareWidth = 0;
@@ -29,18 +23,13 @@
 
   $: reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
   $: ghostTicks = ghostLegendTicks(tuning.ghostHalfLifeMs, ghostWidth, {
-    minDistancePx: MIN_LABEL_DISTANCE_PX,
+    minDistancePx: GHOST_TICK_MIN_DISTANCE_PX,
   });
   $: shareTicks = shareLegendTicks(reserveShares, shareWidth, {
-    minDistancePx: MIN_TICK_FAMILY_DISTANCE_PX,
+    minDistancePx: SHARE_TICK_MIN_DISTANCE_PX,
   });
   $: negativeColor = signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
   $: positiveColor = signedVolumeColor(1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
-
-  function formatTick(value: number): string {
-    if (Object.is(value, -0) || value === 0) return "0";
-    return `${value > 0 ? "+" : "−"}${fmtSI(Math.abs(value))}`;
-  }
 
   onMount(() => {
     const unsubscribe = subscribeAgeStripTuning((next) => {
@@ -94,7 +83,7 @@
           style:left={`${tick.position * 100}%`}
           style:opacity={tick.opacity}
         >
-          {formatTick(tick.value)}
+          {tick.label}
         </span>
       {/each}
     </div>

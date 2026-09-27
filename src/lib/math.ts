@@ -231,17 +231,30 @@ export function fmtSI(n: number): string {
   if (!Number.isFinite(n)) return String(n);
   if (Object.is(n, -0) || n === 0) return "0";
 
-  const sign = n < 0 ? "-" : "";
   const magnitude = Math.abs(n);
-
   if (magnitude >= 1e-3 && magnitude < 1e3)
-    return sign + formatThreeSignificantDigits(magnitude);
+    return (n < 0 ? "-" : "") + formatThreeSignificantDigits(magnitude);
 
   const exponent = Math.floor(Math.log10(magnitude) / 3) * 3;
-  const prefix = SI_PREFIX_BY_EXPONENT.get(exponent);
-  if (!prefix) return sign + magnitude.toExponential(2);
+  return fmtSIAtExponent(n, exponent);
+}
 
-  const scaled = magnitude / 10 ** exponent;
+/**
+ * Format a number using a caller-selected engineering decade.
+ *
+ * This is useful when the tick family itself determines the meaningful unit:
+ * 500 on a 0.5 × 10³ family is naturally 0.5k rather than 500.
+ */
+export function fmtSIAtExponent(n: number, exponent: number): string {
+  if (!Number.isFinite(n)) return String(n);
+  if (Object.is(n, -0) || n === 0) return "0";
+  if (!Number.isInteger(exponent) || exponent % 3 !== 0) return fmtSI(n);
+
+  const prefix = exponent === 0 ? "" : SI_PREFIX_BY_EXPONENT.get(exponent);
+  if (prefix === undefined) return fmtSI(n);
+
+  const sign = n < 0 ? "-" : "";
+  const scaled = Math.abs(n) / 10 ** exponent;
   return sign + formatThreeSignificantDigits(scaled) + prefix;
 }
 
