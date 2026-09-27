@@ -215,7 +215,7 @@ export class AgeStripTooltip {
         ),
       pointer.canvasLeft + sx,
       pointer.canvasTop + centerCss,
-      sx < vp.l + vp.width / 2 ? "above" : "below",
+      perspective.yDirection < 0 ? "above" : "below",
     );
 
     if (ageDisplay?.nextChangeMs != null)
