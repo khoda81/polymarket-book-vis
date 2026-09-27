@@ -99,13 +99,20 @@ test("RecorderStore replays incremental mutations and compacts them into a check
             validThroughMs: 750,
             changes: [{ price: p(0.5), shares: 20 }],
           },
+          {
+            // A book event on the opposite side has no pressure-level changes
+            // but still confirms that the current pressure survived through 900.
+            kind: "update",
+            validThroughMs: 900,
+            changes: [],
+          },
         ],
       },
     ]);
 
     expect(store.shouldCheckpoint("token-a", 0)).toBe(false);
     expect(
-      store.shouldCheckpoint("token-a", RECORDER_CHECKPOINT_MUTATIONS - 2),
+      store.shouldCheckpoint("token-a", RECORDER_CHECKPOINT_MUTATIONS - 3),
     ).toBe(true);
 
     const beforeCheckpoint = store.load("token-a");
@@ -125,7 +132,7 @@ test("RecorderStore replays incremental mutations and compacts them into a check
           "SELECT COUNT(*) AS count FROM pressure_log",
         )
         .get()?.count,
-    ).toBe(2);
+    ).toBe(3);
     raw.close();
 
     const restored = new PressureFrontierMemory();
@@ -134,7 +141,7 @@ test("RecorderStore replays incremental mutations and compacts them into a check
       {
         loVolume: 0,
         hiVolume: 20,
-        validThroughMs: 750,
+        validThroughMs: 900,
       },
       {
         loVolume: 20,

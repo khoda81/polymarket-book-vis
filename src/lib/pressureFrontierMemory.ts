@@ -75,6 +75,15 @@ export class PressureFrontierMemory {
     return geometryChanged || validThroughMs !== previousUpdateMs;
   }
 
+  /** Advance the current pressure validity without changing its geometry. */
+  observeThrough(validThroughMs: number): boolean {
+    validThroughMs = this.normalizeTime(validThroughMs);
+    const previousUpdateMs = this.lastUpdateMs;
+    this.field.observeCurrent(validThroughMs);
+    this.lastUpdateMs = validThroughMs;
+    return validThroughMs !== previousUpdateMs;
+  }
+
   snapshot(): PressureFrontierSnapshot {
     return {
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,

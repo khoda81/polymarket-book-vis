@@ -148,4 +148,5 @@ export function replayPressureMutation(
     return;
   }
   memory.updateLevels(mutation.changes, mutation.validThroughMs);
+  memory.observeThrough(mutation.validThroughMs);
 }

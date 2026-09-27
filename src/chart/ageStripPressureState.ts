@@ -124,6 +124,7 @@ export class AgeStripPressureState {
       tokenPressureChanges(update.changes),
       update.validThroughMs,
     );
+    state.memory.observeThrough(update.validThroughMs);
   }
 
   resolve(tokenId: string): void {

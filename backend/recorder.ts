@@ -99,6 +99,7 @@ class AgeRecorder {
     () => createPublicClient(),
     (event) => this.consumeEvent(event),
     (...args) => debugLog(...args),
+    (tokenIds) => this.invalidateBooks(tokenIds),
   );
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
   private persistPromise: Promise<void> | null = null;
@@ -343,6 +344,14 @@ class AgeRecorder {
     }
   }
 
+  private invalidateBooks(tokenIds: readonly string[]): void {
+    for (const tokenId of tokenIds) {
+      this.books.delete(tokenId);
+      this.pendingPriceChanges.delete(tokenId);
+    }
+    debugLog("subscription-gap", tokenIds.map(shortToken));
+  }
+
   private async seedFromRest(tokenIds: readonly string[]): Promise<void> {
     const startedAt = performance.now();
 
@@ -414,6 +423,7 @@ class AgeRecorder {
     } else {
       const pressureChanges = tokenPressureChanges(changes);
       mutated = memory.updateLevels(pressureChanges, validThroughMs);
+      if (memory.observeThrough(validThroughMs)) mutated = true;
       mutation = { kind: "update", validThroughMs, changes: pressureChanges };
     }
     if (!mutated) return;

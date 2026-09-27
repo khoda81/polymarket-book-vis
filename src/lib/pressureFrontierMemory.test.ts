@@ -31,6 +31,22 @@ test("unchanged observations advance current pressure timestamp", () => {
   ]);
 });
 
+test("book observation advances current pressure without pressure-level changes", () => {
+  const memory = new PressureFrontierMemory();
+  memory.updateLevels([{ price: p(0.5), shares: 100 }], 1_000);
+
+  const runs = memory.renderRuns();
+  expect(memory.observeThrough(2_500)).toBe(true);
+  expect(memory.renderRuns()).toBe(runs);
+  expect(memory.renderDataRevision()).toBe(1);
+  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+    { loVolume: 0, hiVolume: 100, validThroughMs: 2_500 },
+  ]);
+
+  expect(memory.observeThrough(2_000)).toBe(false);
+  expect(memory.bandsAtPrice(p(0.6))[0]?.validThroughMs).toBe(2_500);
+});
+
 test("successive shrink events preserve last-valid shells", () => {
   const memory = new PressureFrontierMemory();
   memory.updateLevels([{ price: p(0.5), shares: 100 }], 1_000);

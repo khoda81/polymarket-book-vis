@@ -60,6 +60,9 @@ export class RecorderSubscriptionPool {
     private readonly createClient: () => PublicClient,
     private readonly onEvent: (event: MarketEvent) => void,
     private readonly onDebug: (...args: unknown[]) => void = () => undefined,
+    private readonly onContinuityLost: (
+      tokenIds: readonly string[],
+    ) => void = () => undefined,
   ) {}
 
   get activeBatchCount(): number {
@@ -298,6 +301,7 @@ export class RecorderSubscriptionPool {
       if (this.batches.get(batch.id) !== batch) return;
 
       const active = [...batch.activeTokenIds];
+      this.onContinuityLost(active);
       this.retireBatch(batch.id, batch);
       for (const tokenId of active) {
         this.subscribed.delete(tokenId);

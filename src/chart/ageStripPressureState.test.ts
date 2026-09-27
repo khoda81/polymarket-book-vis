@@ -20,6 +20,28 @@ test("token pressure follows only that token's asks", () => {
   ]);
 });
 
+test("opposite-side book updates advance token pressure validity", () => {
+  const state = new AgeStripPressureState();
+  const book = emptyTokenBook();
+  book.yesToUsd.setLevel(p(0.65), 70);
+
+  state.applyBookUpdate("token", book, {
+    kind: "snapshot",
+    validThroughMs: 1_000,
+  });
+
+  book.usdToYes.setLevel(p(0.6), 100);
+  state.applyBookUpdate("token", book, {
+    kind: "levels",
+    validThroughMs: 2_500,
+    changes: [{ side: "bid", price: p(0.6), shares: 100 }],
+  });
+
+  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+    { loVolume: 0, hiVolume: 70, validThroughMs: 2_500 },
+  ]);
+});
+
 test("invalid recorder data preserves current pressure and does not abort later tokens", () => {
   const state = new AgeStripPressureState();
   const currentBook = emptyTokenBook();
