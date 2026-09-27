@@ -37,6 +37,8 @@ export interface GpuPressureFrame {
 const INSTANCE_FLOATS = 13;
 const INSTANCE_STRIDE = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
 const MIN_ALPHA = 1 / 255;
+const MAX_SUPERSAMPLE_X = 2;
+const MAX_SUPERSAMPLE_Y = 4;
 
 const GEOMETRY_VERTEX = `#version 300 es
 precision highp float;
@@ -45,7 +47,7 @@ layout(location = 0) in float aPriceLo;
 layout(location = 1) in float aPriceHi;
 layout(location = 2) in float aVolumeLo;
 layout(location = 3) in float aVolumeHi;
-layout(location = 4) in float aDepth;
+layout(location = 4) in float aReferenceAlpha;
 layout(location = 5) in float aCenterCss;
 layout(location = 6) in float aRowHeightCss;
 layout(location = 7) in float aMirrorPrice;
@@ -55,8 +57,11 @@ layout(location = 10) in float aReserveShares;
 
 uniform vec2 uCanvasCssSize;
 uniform vec2 uPriceViewport;
+uniform vec2 uRasterScale;
 
 out vec3 vColor;
+flat out vec4 vRectPx;
+flat out float vReferenceAlpha;
 
 const vec2 CORNERS[6] = vec2[6](
   vec2(0.0, 0.0),
@@ -69,25 +74,55 @@ const vec2 CORNERS[6] = vec2[6](
 
 void main() {
   vec2 corner = CORNERS[gl_VertexID];
-  float price = mix(aPriceLo, aPriceHi, corner.x);
-  float volume = mix(aVolumeLo, aVolumeHi, corner.y);
-  float pressure = volume <= 0.0 ? 0.0 : volume / (volume + aReserveShares);
 
-  float yCss =
-      aCenterCss + aYDirection * 0.5 * aRowHeightCss * pressure;
+  float pressureLo =
+      aVolumeLo <= 0.0 ? 0.0 : aVolumeLo / (aVolumeLo + aReserveShares);
+  float pressureHi =
+      aVolumeHi <= 0.0 ? 0.0 : aVolumeHi / (aVolumeHi + aReserveShares);
 
-  // The field itself is perspective-free. Rendering chooses whether an
-  // edge-local price is viewed directly or through its complementary axis.
-  float displayPrice = aMirrorPrice > 0.5 ? 1.0 - price : price;
-  float xCss = uPriceViewport.x + displayPrice * uPriceViewport.y;
+  float y0Css =
+      aCenterCss + aYDirection * 0.5 * aRowHeightCss * pressureLo;
+  float y1Css =
+      aCenterCss + aYDirection * 0.5 * aRowHeightCss * pressureHi;
+  float yMinCss = min(y0Css, y1Css);
+  float yMaxCss = max(y0Css, y1Css);
+
+  float p0 = aMirrorPrice > 0.5 ? 1.0 - aPriceLo : aPriceLo;
+  float p1 = aMirrorPrice > 0.5 ? 1.0 - aPriceHi : aPriceHi;
+  float x0Css = uPriceViewport.x + p0 * uPriceViewport.y;
+  float x1Css = uPriceViewport.x + p1 * uPriceViewport.y;
+  float xMinCss = min(x0Css, x1Css);
+  float xMaxCss = max(x0Css, x1Css);
+
+  // Exact rectangle in bottom-left-origin raster pixels.
+  vRectPx = vec4(
+    xMinCss * uRasterScale.x,
+    (uCanvasCssSize.y - yMaxCss) * uRasterScale.y,
+    xMaxCss * uRasterScale.x,
+    (uCanvasCssSize.y - yMinCss) * uRasterScale.y
+  );
+
+  // Expand by half a raster pixel so partially covered edge pixels run.
+  vec2 halfPixelCss = 0.5 / uRasterScale;
+  float xCss = mix(
+    xMinCss - halfPixelCss.x,
+    xMaxCss + halfPixelCss.x,
+    corner.x
+  );
+  float yCss = mix(
+    yMinCss - halfPixelCss.y,
+    yMaxCss + halfPixelCss.y,
+    corner.y
+  );
+
   vec2 clip = vec2(
     2.0 * xCss / uCanvasCssSize.x - 1.0,
     1.0 - 2.0 * yCss / uCanvasCssSize.y
   );
 
-  // WebGL maps NDC z [-1, 1] to depth [0, 1].
-  gl_Position = vec4(clip, aDepth * 2.0 - 1.0, 1.0);
+  gl_Position = vec4(clip, 0.0, 1.0);
   vColor = aColor;
+  vReferenceAlpha = aReferenceAlpha;
 }
 `;
 
@@ -95,10 +130,22 @@ const GEOMETRY_FRAGMENT = `#version 300 es
 precision highp float;
 
 in vec3 vColor;
+flat in vec4 vRectPx;
+flat in float vReferenceAlpha;
 out vec4 outColor;
 
 void main() {
-  outColor = vec4(vColor, 1.0);
+  vec2 pixelMin = gl_FragCoord.xy - 0.5;
+  vec2 pixelMax = gl_FragCoord.xy + 0.5;
+  vec2 overlap = max(
+    vec2(0.0),
+    min(vRectPx.zw, pixelMax) - max(vRectPx.xy, pixelMin)
+  );
+  float coverage = overlap.x * overlap.y;
+  if (coverage <= 0.0) discard;
+
+  float alpha = coverage * vReferenceAlpha;
+  outColor = vec4(vColor * alpha, alpha);
 }
 `;
 
@@ -124,25 +171,30 @@ const DISPLAY_FRAGMENT = `#version 300 es
 precision highp float;
 
 uniform sampler2D uColor;
-uniform sampler2D uDepth;
-uniform float uNowRelativeMs;
-uniform float uTimeSpanMs;
-uniform float uHalfLifeMs;
+uniform float uGlobalDecay;
+uniform ivec2 uSupersample;
 
-in vec2 vUv;
 out vec4 outColor;
 
 void main() {
-  vec4 source = texture(uColor, vUv);
-  if (source.a <= 0.0) discard;
+  ivec2 outputPixel = ivec2(gl_FragCoord.xy);
+  ivec2 base = outputPixel * uSupersample;
 
-  float depth = texture(uDepth, vUv).r;
-  float ageMs = max(0.0, uNowRelativeMs - depth * uTimeSpanMs);
-  float alpha = exp2(-ageMs / uHalfLifeMs);
-  if (alpha <= 0.0039215686) discard;
+  vec4 sum = vec4(0.0);
+  for (int y = 0; y < 4; ++y) {
+    for (int x = 0; x < 2; ++x) {
+      if (x >= uSupersample.x || y >= uSupersample.y) continue;
+      sum += texelFetch(uColor, base + ivec2(x, y), 0);
+    }
+  }
 
-  // The browser expects a premultiplied-alpha WebGL backing store.
-  outColor = vec4(source.rgb * alpha, alpha);
+  float sampleCount = float(uSupersample.x * uSupersample.y);
+  vec4 resolved = (sum / sampleCount) * uGlobalDecay;
+  if (resolved.a <= 0.0039215686) discard;
+
+  // Geometry stored premultiplied color at a fixed reference time. Exponential
+  // decay factorizes, so advancing wall-clock time is one scalar multiply.
+  outColor = resolved;
 }
 `;
 
@@ -155,14 +207,16 @@ export class GpuPressureLayer {
   private readonly instanceBuffer: WebGLBuffer;
   private readonly framebuffer: WebGLFramebuffer;
   private readonly colorTexture: WebGLTexture;
-  private readonly depthTexture: WebGLTexture;
 
+  private displayWidth = 0;
+  private displayHeight = 0;
   private targetWidth = 0;
   private targetHeight = 0;
+  private supersampleX = 1;
+  private supersampleY = 1;
   private geometryKey = "";
   private instanceCount = 0;
-  private timeOriginMs = 0;
-  private timeSpanMs = 1;
+  private referenceTimeMs = 0;
   private visible = true;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -187,7 +241,6 @@ export class GpuPressureLayer {
     this.instanceBuffer = required(gl.createBuffer(), "instance buffer");
     this.framebuffer = required(gl.createFramebuffer(), "framebuffer");
     this.colorTexture = required(gl.createTexture(), "color texture");
-    this.depthTexture = required(gl.createTexture(), "depth texture");
 
     gl.bindVertexArray(this.geometryVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer);
@@ -231,7 +284,6 @@ export class GpuPressureLayer {
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
 
     configureTexture(gl, this.colorTexture);
-    configureTexture(gl, this.depthTexture);
   }
 
   setVisible(visible: boolean): void {
@@ -248,16 +300,23 @@ export class GpuPressureLayer {
     this.setVisible(true);
     this.canvas.style.background = frame.background;
 
-    const width = Math.max(1, Math.floor(frame.cssWidth * frame.dpr));
-    const height = Math.max(1, Math.floor(frame.cssHeight * frame.dpr));
-    const resized = this.resizeTargets(width, height);
+    const displayWidth = Math.max(1, Math.floor(frame.cssWidth * frame.dpr));
+    const displayHeight = Math.max(1, Math.floor(frame.cssHeight * frame.dpr));
+    const [supersampleX, supersampleY] = supersampleFactors(frame.dpr);
+    const targetWidth = displayWidth * supersampleX;
+    const targetHeight = displayHeight * supersampleY;
+    const resized = this.resizeTargets(
+      displayWidth,
+      displayHeight,
+      targetWidth,
+      targetHeight,
+      supersampleX,
+      supersampleY,
+    );
 
-    const key = geometryKey(frame, width, height);
-    const rangeExpired =
-      this.timeSpanMs <= 0 ||
-      frame.nowMs - this.timeOriginMs > this.timeSpanMs * 0.78;
+    const key = geometryKey(frame, targetWidth, targetHeight);
 
-    if (resized || key !== this.geometryKey || rangeExpired) {
+    if (resized || key !== this.geometryKey) {
       this.rebuildGeometry(frame);
       this.geometryKey = key;
     }
@@ -268,7 +327,6 @@ export class GpuPressureLayer {
   destroy(): void {
     const gl = this.gl;
     gl.deleteTexture(this.colorTexture);
-    gl.deleteTexture(this.depthTexture);
     gl.deleteFramebuffer(this.framebuffer);
     gl.deleteBuffer(this.instanceBuffer);
     gl.deleteVertexArray(this.geometryVao);
@@ -277,14 +335,30 @@ export class GpuPressureLayer {
     gl.deleteProgram(this.displayProgram);
   }
 
-  private resizeTargets(width: number, height: number): boolean {
-    if (width === this.targetWidth && height === this.targetHeight)
+  private resizeTargets(
+    displayWidth: number,
+    displayHeight: number,
+    targetWidth: number,
+    targetHeight: number,
+    supersampleX: number,
+    supersampleY: number,
+  ): boolean {
+    if (
+      displayWidth === this.displayWidth &&
+      displayHeight === this.displayHeight &&
+      targetWidth === this.targetWidth &&
+      targetHeight === this.targetHeight
+    )
       return false;
 
-    this.targetWidth = width;
-    this.targetHeight = height;
-    this.canvas.width = width;
-    this.canvas.height = height;
+    this.displayWidth = displayWidth;
+    this.displayHeight = displayHeight;
+    this.targetWidth = targetWidth;
+    this.targetHeight = targetHeight;
+    this.supersampleX = supersampleX;
+    this.supersampleY = supersampleY;
+    this.canvas.width = displayWidth;
+    this.canvas.height = displayHeight;
 
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
@@ -292,24 +366,11 @@ export class GpuPressureLayer {
       gl.TEXTURE_2D,
       0,
       gl.RGBA8,
-      width,
-      height,
+      targetWidth,
+      targetHeight,
       0,
       gl.RGBA,
       gl.UNSIGNED_BYTE,
-      null,
-    );
-
-    gl.bindTexture(gl.TEXTURE_2D, this.depthTexture);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.DEPTH_COMPONENT24,
-      width,
-      height,
-      0,
-      gl.DEPTH_COMPONENT,
-      gl.UNSIGNED_INT,
       null,
     );
 
@@ -319,13 +380,6 @@ export class GpuPressureLayer {
       gl.COLOR_ATTACHMENT0,
       gl.TEXTURE_2D,
       this.colorTexture,
-      0,
-    );
-    gl.framebufferTexture2D(
-      gl.FRAMEBUFFER,
-      gl.DEPTH_ATTACHMENT,
-      gl.TEXTURE_2D,
-      this.depthTexture,
       0,
     );
     const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
@@ -343,15 +397,7 @@ export class GpuPressureLayer {
       frame.ghostHalfLifeMs,
       MIN_ALPHA,
     );
-    const visibleWindowMs = Math.max(
-      frame.ghostHalfLifeMs,
-      frame.nowMs - oldestVisibleMs,
-    );
-
-    // Keep the depth mapping fixed across many display-only decay frames.
-    // New book geometry or an expired headroom window recenters it.
-    this.timeOriginMs = frame.nowMs - visibleWindowMs * 1.5;
-    this.timeSpanMs = visibleWindowMs * 3;
+    this.referenceTimeMs = frame.nowMs;
 
     const values: number[] = [];
     for (const row of frame.rows) {
@@ -367,8 +413,8 @@ export class GpuPressureLayer {
           surface.mirrorPrice,
           surface.yDirection,
           oldestVisibleMs,
-          this.timeOriginMs,
-          this.timeSpanMs,
+          this.referenceTimeMs,
+          frame.ghostHalfLifeMs,
         );
     }
 
@@ -381,13 +427,9 @@ export class GpuPressureLayer {
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
     gl.viewport(0, 0, this.targetWidth, this.targetHeight);
-    gl.disable(gl.BLEND);
-    gl.enable(gl.DEPTH_TEST);
-    gl.depthMask(true);
-    gl.depthFunc(gl.GREATER);
+    gl.disable(gl.DEPTH_TEST);
     gl.clearColor(0, 0, 0, 0);
-    gl.clearDepth(0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.clear(gl.COLOR_BUFFER_BIT);
 
     if (this.instanceCount > 0) {
       gl.useProgram(this.geometryProgram);
@@ -405,10 +447,25 @@ export class GpuPressureLayer {
         frame.viewport.l,
         frame.viewport.width,
       );
+      uniform2f(
+        gl,
+        this.geometryProgram,
+        "uRasterScale",
+        this.targetWidth / frame.cssWidth,
+        this.targetHeight / frame.cssHeight,
+      );
 
+      // Materialized pressure runs already partition the price×volume surface:
+      // every continuous point has exactly one timestamp. Additive
+      // premultiplied blending therefore computes the exact box-filter integral
+      // across cell boundaries, including boundaries between different ages.
+      gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
+      gl.blendFunc(gl.ONE, gl.ONE);
       gl.bindVertexArray(this.geometryVao);
       gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.instanceCount);
       gl.bindVertexArray(null);
+      gl.disable(gl.BLEND);
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -417,7 +474,7 @@ export class GpuPressureLayer {
   private drawDisplay(frame: GpuPressureFrame): void {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.targetWidth, this.targetHeight);
+    gl.viewport(0, 0, this.displayWidth, this.displayHeight);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.BLEND);
     gl.clearColor(0, 0, 0, 0);
@@ -431,18 +488,20 @@ export class GpuPressureLayer {
     gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
     uniform1i(gl, this.displayProgram, "uColor", 0);
 
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.depthTexture);
-    uniform1i(gl, this.displayProgram, "uDepth", 1);
-
+    const elapsedMs = Math.max(0, frame.nowMs - this.referenceTimeMs);
     uniform1f(
       gl,
       this.displayProgram,
-      "uNowRelativeMs",
-      frame.nowMs - this.timeOriginMs,
+      "uGlobalDecay",
+      2 ** (-elapsedMs / frame.ghostHalfLifeMs),
     );
-    uniform1f(gl, this.displayProgram, "uTimeSpanMs", this.timeSpanMs);
-    uniform1f(gl, this.displayProgram, "uHalfLifeMs", frame.ghostHalfLifeMs);
+    uniform2i(
+      gl,
+      this.displayProgram,
+      "uSupersample",
+      this.supersampleX,
+      this.supersampleY,
+    );
 
     gl.bindVertexArray(this.displayVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -460,8 +519,8 @@ function appendRuns(
   mirrorPrice: boolean,
   yDirection: -1 | 1,
   oldestVisibleMs: number,
-  timeOriginMs: number,
-  timeSpanMs: number,
+  referenceTimeMs: number,
+  halfLifeMs: number,
 ): void {
   for (const run of runs) {
     const priceLo = priceToNumber(run.lo);
@@ -475,15 +534,16 @@ function appendRuns(
       )
         continue;
 
-      const depth = clamp01((band.validThroughMs - timeOriginMs) / timeSpanMs);
-      if (!(depth > 0)) continue;
+      const referenceAlpha =
+        2 ** (-Math.max(0, referenceTimeMs - band.validThroughMs) / halfLifeMs);
+      if (!(referenceAlpha > 0)) continue;
 
       values.push(
         priceLo,
         priceHi,
         band.loVolume,
         band.hiVolume,
-        depth,
+        referenceAlpha,
         centerCss,
         rowHeightCss,
         mirrorPrice ? 1 : 0,
@@ -617,6 +677,16 @@ function uniform1i(
   gl.uniform1i(required(gl.getUniformLocation(program, name), name), value);
 }
 
+function uniform2i(
+  gl: WebGL2RenderingContext,
+  program: WebGLProgram,
+  name: string,
+  x: number,
+  y: number,
+): void {
+  gl.uniform2i(required(gl.getUniformLocation(program, name), name), x, y);
+}
+
 function uniform2f(
   gl: WebGL2RenderingContext,
   program: WebGLProgram,
@@ -627,11 +697,15 @@ function uniform2f(
   gl.uniform2f(required(gl.getUniformLocation(program, name), name), x, y);
 }
 
+function supersampleFactors(dpr: number): readonly [number, number] {
+  // Target at least ~2 horizontal and ~4 vertical raster samples per CSS
+  // pixel. HiDPI displays already supply some or all of that density.
+  const x = dpr < 2 ? 2 : 1;
+  const y = dpr < 2 ? 4 : dpr < 4 ? 2 : 1;
+  return [x, y];
+}
+
 function required<T>(value: T | null, label: string): T {
   if (value === null) throw new Error(`Could not create/find ${label}`);
   return value;
-}
-
-function clamp01(value: number): number {
-  return Math.max(0, Math.min(1, value));
 }
