@@ -48,53 +48,11 @@ test("snapshot persists exact token-local coordinates", () => {
   );
 });
 
-test("older snapshot versions are rejected by the canonical parser", () => {
-  expect(() =>
-    parsePressureFrontierSnapshot({
-      version: 3,
-      primaryToCollateral: { current: [], field: {} },
-    }),
-  ).toThrow(/unsupported pressure frontier snapshot version/);
-});
-
-test("version 4 snapshots migrate to frontier stacks", () => {
-  const parsed = parsePressureFrontierSnapshot({
-    version: 4,
-    current: [{ key: p(0.5), weight: 60 }],
-    field: {
-      currentValidThroughMs: 2_000,
-      runs: [
-        {
-          lo: p(0),
-          hi: p(0.5),
-          volume: 0,
-          bands: [],
-        },
-        {
-          lo: p(0.5),
-          hi: p(1),
-          volume: 60,
-          bands: [
-            { loVolume: 0, hiVolume: 60, validThroughMs: 2_000 },
-            { loVolume: 60, hiVolume: 100, validThroughMs: 1_000 },
-          ],
-        },
-      ],
-    },
-  });
-
-  expect(parsed.version).toBe(PRESSURE_FRONTIER_SNAPSHOT_VERSION);
-  expect(parsed.field).toEqual({
-    maxPrice: p(1),
-    currentValidThroughMs: 2_000,
-    runs: [
-      {
-        price: p(0.5),
-        volume: 60,
-        frozenBands: [{ loVolume: 60, hiVolume: 100, validThroughMs: 1_000 }],
-      },
-    ],
-  });
+test("noncanonical snapshot versions are rejected", () => {
+  for (const version of [3, 4])
+    expect(() =>
+      parsePressureFrontierSnapshot({ version, current: [], field: {} }),
+    ).toThrow(/unsupported pressure frontier snapshot version/);
 });
 
 test("canonical snapshots reject explicit price-zero pressure", () => {

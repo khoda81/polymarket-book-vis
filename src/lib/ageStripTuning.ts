@@ -107,8 +107,8 @@ function loadTuning(): AgeStripTuning {
           : fallback.volumePerCssPixel,
       ghostHalfLifeMs:
         typeof parsed.ghostHalfLifeMs === "number" &&
-          Number.isFinite(parsed.ghostHalfLifeMs) &&
-          parsed.ghostHalfLifeMs > 0
+        Number.isFinite(parsed.ghostHalfLifeMs) &&
+        parsed.ghostHalfLifeMs > 0
           ? parsed.ghostHalfLifeMs
           : fallback.ghostHalfLifeMs,
     };

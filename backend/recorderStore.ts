@@ -7,7 +7,7 @@ import {
   type PressureFrontierSnapshot,
 } from "../src/lib/pressureFrontierSnapshot";
 
-export const RECORDER_DATABASE_VERSION = 3;
+export const RECORDER_DATABASE_VERSION = 4;
 
 export type RecorderTokenStatus = "watched" | "completed";
 

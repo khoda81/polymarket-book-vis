@@ -81,23 +81,6 @@ export class AgeStripPressureState {
       const state = this.ensure(tokenId);
       try {
         state.memory.restore(snapshot);
-
-        // Recorder coverage metadata should never begin after pressure history
-        // that is demonstrably present in the snapshot. This also makes
-        // one-shot migrations self-healing if they preserved the field but
-        // accidentally reset recording_since_ms.
-        const oldestPressureMs = oldestSnapshotPressureMs(snapshot);
-        if (
-          oldestPressureMs !== null &&
-          (state.recordingSinceMs === null ||
-            oldestPressureMs < state.recordingSinceMs)
-        ) {
-          const corrected = {
-            ...state,
-            recordingSinceMs: oldestPressureMs,
-          };
-          this.states.set(tokenId, corrected);
-        }
       } catch (error) {
         console.warn(
           `Ignoring invalid recorder pressure for token ${tokenId}; preserving current pressure`,
@@ -165,22 +148,4 @@ export class AgeStripPressureState {
       false
     );
   }
-}
-
-function oldestSnapshotPressureMs(
-  snapshot: PressureFrontierSnapshot,
-): number | null {
-  let oldest = Number.POSITIVE_INFINITY;
-
-  if (
-    snapshot.field.currentValidThroughMs !== null &&
-    snapshot.field.runs.some((run) => run.volume > 0)
-  )
-    oldest = Math.min(oldest, snapshot.field.currentValidThroughMs);
-
-  for (const run of snapshot.field.runs)
-    for (const band of run.frozenBands)
-      oldest = Math.min(oldest, band.validThroughMs);
-
-  return Number.isFinite(oldest) ? oldest : null;
 }
