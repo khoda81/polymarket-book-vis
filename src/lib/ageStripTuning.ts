@@ -1,6 +1,6 @@
 import { DEFAULT_VOLUME_PER_CSS_PIXEL } from "./pressureInk";
 
-export const AGE_ROW_BAND_PX = 28;
+export const AGE_ROW_BAND_PX = 48;
 export const DEFAULT_GHOST_HALF_LIFE_MS = 5_000;
 
 const MIN_GHOST_REFRESH_MS = 33;
@@ -107,8 +107,8 @@ function loadTuning(): AgeStripTuning {
           : fallback.volumePerCssPixel,
       ghostHalfLifeMs:
         typeof parsed.ghostHalfLifeMs === "number" &&
-        Number.isFinite(parsed.ghostHalfLifeMs) &&
-        parsed.ghostHalfLifeMs > 0
+          Number.isFinite(parsed.ghostHalfLifeMs) &&
+          parsed.ghostHalfLifeMs > 0
           ? parsed.ghostHalfLifeMs
           : fallback.ghostHalfLifeMs,
     };
