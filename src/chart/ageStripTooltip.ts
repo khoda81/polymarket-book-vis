@@ -161,12 +161,7 @@ export class AgeStripTooltip {
     let hover: PressureHover | null = null;
     if (volume !== null) {
       const memory = this.host.getPressureMemory(sourceTokenId);
-      const band = memory
-        ?.bandsAtPrice(pressurePrice)
-        .find(
-          (candidate) =>
-            candidate.loVolume <= volume && volume < candidate.hiVolume,
-        );
+      const band = memory?.bandAtPoint(pressurePrice, volume);
 
       if (band) {
         const nowMs = Date.now();

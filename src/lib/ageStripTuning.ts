@@ -40,14 +40,7 @@ export function subscribeAgeStripTuning(
 }
 
 export function scaleAgeStripVolumePerCssPixel(factor: number): void {
-  if (!(factor > 0) || !Number.isFinite(factor)) return;
-
-  const next = Math.max(1e-3, tuning.volumePerCssPixel * factor);
-  if (next === tuning.volumePerCssPixel) return;
-
-  tuning = { ...tuning, volumePerCssPixel: next };
-  schedulePersist();
-  for (const listener of listeners) listener(tuning);
+  scaleAgeStripTuning(factor, 1);
 }
 
 /**
@@ -63,13 +56,32 @@ export function ghostRefreshDelayMs(halfLifeMs: number): number {
 }
 
 export function scaleAgeStripGhostHalfLife(factor: number): void {
-  if (!(factor > 0) || !Number.isFinite(factor)) return;
+  scaleAgeStripTuning(1, factor);
+}
 
-  const next = tuning.ghostHalfLifeMs * factor;
-  if (next === tuning.ghostHalfLifeMs || !(next > 0) || !Number.isFinite(next))
+export function scaleAgeStripTuning(
+  volumeFactor: number,
+  ghostFactor: number,
+): void {
+  const validVolumeFactor =
+    volumeFactor > 0 && Number.isFinite(volumeFactor) ? volumeFactor : 1;
+  const validGhostFactor =
+    ghostFactor > 0 && Number.isFinite(ghostFactor) ? ghostFactor : 1;
+
+  const volumePerCssPixel = Math.max(
+    1e-3,
+    tuning.volumePerCssPixel * validVolumeFactor,
+  );
+  const ghostHalfLifeMs = tuning.ghostHalfLifeMs * validGhostFactor;
+  if (!(ghostHalfLifeMs > 0) || !Number.isFinite(ghostHalfLifeMs)) return;
+
+  if (
+    volumePerCssPixel === tuning.volumePerCssPixel &&
+    ghostHalfLifeMs === tuning.ghostHalfLifeMs
+  )
     return;
 
-  tuning = { ...tuning, ghostHalfLifeMs: next };
+  tuning = { volumePerCssPixel, ghostHalfLifeMs };
   schedulePersist();
   for (const listener of listeners) listener(tuning);
 }

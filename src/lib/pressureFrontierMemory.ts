@@ -111,6 +111,10 @@ export class PressureFrontierMemory {
     return this.field.bandsAtPrice(price);
   }
 
+  bandAtPoint(price: Price, volume: number): PressureBand | undefined {
+    return this.field.bandAtPoint(price, volume);
+  }
+
   hasVisiblePressure(
     nowMs: number,
     halfLifeMs: number,

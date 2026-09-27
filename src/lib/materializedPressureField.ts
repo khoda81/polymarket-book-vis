@@ -68,17 +68,34 @@ export class MaterializedPressureField {
   }
 
   bandsAtPrice(price: Price): readonly PressureBand[] {
-    let lo = 0;
-    let hi = this.runs.length;
+    const run = this.runAtPrice(price);
+    return run ? materializeBands(run, this.currentValidThroughMs) : [];
+  }
 
+  bandAtPoint(price: Price, volume: number): PressureBand | undefined {
+    if (!Number.isFinite(volume) || volume < 0) return undefined;
+
+    const run = this.runAtPrice(price);
+    if (!run) return undefined;
+
+    let lo = 0;
+    let hi = run.bands.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
-      const run = this.runs[mid]!;
-      if (price < run.lo) hi = mid;
-      else if (price >= run.hi && mid + 1 < this.runs.length) lo = mid + 1;
-      else return materializeBands(run, this.currentValidThroughMs);
+      const band = run.bands[mid]!;
+      if (volume < band.loVolume) hi = mid;
+      else if (volume >= band.hiVolume) lo = mid + 1;
+      else
+        return {
+          ...band,
+          validThroughMs: effectiveValidThroughMs(
+            run,
+            band,
+            this.currentValidThroughMs,
+          ),
+        };
     }
-    return [];
+    return undefined;
   }
 
   applyDeltas(
@@ -174,6 +191,20 @@ export class MaterializedPressureField {
           "materialized pressure field does not match current frontier",
         );
     }
+  }
+
+  private runAtPrice(price: Price): MutableRun | undefined {
+    let lo = 0;
+    let hi = this.runs.length;
+
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      const run = this.runs[mid]!;
+      if (price < run.lo) hi = mid;
+      else if (price >= run.hi && mid + 1 < this.runs.length) lo = mid + 1;
+      else return run;
+    }
+    return undefined;
   }
 
   private splitAt(price: Price): void {
