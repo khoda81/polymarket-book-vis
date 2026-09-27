@@ -113,11 +113,12 @@ export class ChartController {
       },
       getTokenName: (tokenId) => {
         const control = this.controlForTokenValue(tokenId);
-        return control?.market.outcomes.yes.label;
-      },
-      getOppositeTokenName: (tokenId) => {
-        const control = this.controlForTokenValue(tokenId);
-        return control?.market.outcomes.no.label;
+        if (!control) return undefined;
+        if (control.tokenId === tokenId)
+          return control.market.outcomes.yes.label;
+        return control.market.outcomes.no.tokenId === tokenId
+          ? control.market.outcomes.no.label
+          : undefined;
       },
       getOppositeTokenId: (tokenId) => {
         const control = this.controlForTokenValue(tokenId);

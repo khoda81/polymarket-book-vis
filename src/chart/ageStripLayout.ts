@@ -91,7 +91,10 @@ export interface AgeStripGeometry {
     readonly height: number;
   };
   readonly rows: readonly {
+    /** Primary token for this displayed market row. */
     readonly tokenId: string;
+    /** Opposing token rendered on the other side of the row centerline. */
+    readonly oppositeTokenId?: string;
     /** Optional explicit screen-space geometry for moving/non-uniform rows. */
     readonly centerY?: number;
     readonly topY?: number;

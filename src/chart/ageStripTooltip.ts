@@ -1,28 +1,40 @@
-import type { TokenBook } from "@/lib/orderBook";
+import { AGE_ROW_BAND_PX, getAgeStripTuning } from "@/lib/ageStripTuning";
+import {
+  PRESSURE_MIN_VISIBLE_ALPHA,
+  stalenessAlpha,
+} from "@/lib/pressureField";
+import type { PressureFrontierMemory } from "@/lib/pressureFrontierMemory";
 import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
-import {
-  ageStripRowAtY,
-  ageStripRowCenterY,
-  type AgeStripGeometry,
-} from "./ageStripLayout";
 import type { ViewMode } from "@/lib/chartState";
 import {
   hideSharedTooltip,
   releaseSharedTooltip,
   showSharedTooltip,
 } from "@/lib/sharedTooltip";
-import { priceToNumber } from "@/lib/price";
+import {
+  ageStripRowAtY,
+  ageStripRowCenterY,
+  type AgeStripGeometry,
+} from "./ageStripLayout";
+import {
+  agePressurePerspective,
+  agePressureSideAtY,
+  pressurePriceAtDisplayX,
+  pressureVolumeAtY,
+  tokenPriceAtDisplayX,
+} from "./ageStripPressureProjection";
 
 export interface AgeStripTooltipHost {
   readonly canvas: HTMLCanvasElement;
   readonly getViewMode: () => ViewMode;
-  readonly getBook: (tokenId: string) => TokenBook | undefined;
+  readonly getPressureMemory: (
+    tokenId: string,
+  ) => PressureFrontierMemory | undefined;
+  /** Must resolve the label for the actual token id passed in. */
   readonly getTokenName: (tokenId: string) => string | undefined;
-  readonly getOppositeTokenName: (tokenId: string) => string | undefined;
-  readonly getOppositeTokenId: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
 }
 
@@ -33,10 +45,9 @@ interface HoverPointer {
   readonly canvasTop: number;
 }
 
-interface SupplyHover {
-  readonly price: number;
+interface PressureHover {
   readonly shares: number;
-  readonly effectivePrice: number;
+  readonly validThroughMs: number;
 }
 
 export class AgeStripTooltip {
@@ -115,70 +126,63 @@ export class AgeStripTooltip {
       return;
     }
 
-    const rowCenterCss = ageStripRowCenterY(geometry, row);
-    const rowCenterY = pointer.canvasTop + rowCenterCss;
-    const anchorX = pointer.canvasLeft + sx;
-
-    if (row.resolution) {
-      const resolution = row.resolution;
-      const signature = [
-        "resolved",
-        resolution.side,
-        resolution.outcome,
-        resolution.marketEndMs ?? "",
-      ].join("|");
-
-      showSharedTooltip(
-        this.tooltipOwner,
-        signature,
-        (overlay) =>
-          renderResolutionTooltip(
-            overlay,
-            resolution.side,
-            resolution.outcome,
-            resolution.marketEndMs,
-            this.host.getPressureColorScale(row.tokenId),
-          ),
-        anchorX,
-        rowCenterY,
-      );
-      return;
-    }
-
-    const primary = sy >= rowCenterCss;
-    const tokenId = primary
-      ? row.tokenId
-      : this.host.getOppositeTokenId(row.tokenId);
+    const centerCss = ageStripRowCenterY(geometry, row);
+    const side = agePressureSideAtY(sy, centerCss);
+    const perspective = agePressurePerspective(side);
+    const tokenId =
+      side === "primary" ? row.tokenId : (row.oppositeTokenId ?? null);
     if (!tokenId) {
       this.hide();
       return;
     }
 
-    const book = this.host.getBook(tokenId);
-    if (!book) {
-      this.hide();
-      return;
-    }
-
     const displayPrice = clamp01((sx - vp.l) / vp.width);
-    const tokenPrice = primary ? 1 - displayPrice : displayPrice;
-    const hover = supplyHoverAtPrice(book, tokenPrice);
-    if (!hover) {
-      this.hide();
-      return;
+    const tokenPrice = tokenPriceAtDisplayX(displayPrice, perspective);
+    const pressurePrice = pressurePriceAtDisplayX(displayPrice, perspective);
+    const tokenName = this.host.getTokenName(tokenId) ?? "(unknown)";
+    const color = signedVolumeColor(
+      perspective.colorSign,
+      this.host.getPressureColorScale(row.tokenId),
+    );
+
+    const rowHeightCss = rowHeight(geometry, row);
+    const volume = pressureVolumeAtY(
+      sy,
+      centerCss,
+      rowHeightCss,
+      getAgeStripTuning().volumePerCssPixel,
+    );
+
+    let hover: PressureHover | null = null;
+    if (volume !== null) {
+      const memory = this.host.getPressureMemory(tokenId);
+      const band = memory
+        ?.bandsAtPrice(pressurePrice)
+        .find(
+          (candidate) =>
+            candidate.loVolume <= volume && volume < candidate.hiVolume,
+        );
+
+      if (band) {
+        const nowMs = Date.now();
+        const alpha = stalenessAlpha(
+          band.validThroughMs,
+          nowMs,
+          getAgeStripTuning().ghostHalfLifeMs,
+        );
+        if (alpha > PRESSURE_MIN_VISIBLE_ALPHA)
+          hover = {
+            shares: volume,
+            validThroughMs: band.validThroughMs,
+          };
+      }
     }
 
-    const tokenName = primary
-      ? this.host.getTokenName(row.tokenId)
-      : this.host.getOppositeTokenName(row.tokenId);
-    const resolvedName = tokenName ?? "(unknown)";
-    const colorScale = this.host.getPressureColorScale(row.tokenId);
     const signature = [
-      resolvedName,
-      formatProbability(hover.price),
-      formatShares(hover.shares),
-      formatProbability(hover.effectivePrice),
-      primary ? "primary" : "opposite",
+      tokenId,
+      formatProbability(tokenPrice),
+      hover ? formatShares(hover.shares) : "",
+      hover ? formatAge(Date.now() - hover.validThroughMs) : "",
     ].join("|");
 
     showSharedTooltip(
@@ -187,12 +191,14 @@ export class AgeStripTooltip {
       (overlay) =>
         renderAgeTooltip(
           overlay,
-          resolvedName,
+          tokenName,
+          tokenPrice,
+          color,
           hover,
-          signedVolumeColor(primary ? 1 : -1, colorScale),
+          Date.now(),
         ),
-      anchorX,
-      rowCenterY,
+      pointer.canvasLeft + sx,
+      pointer.canvasTop + centerCss,
     );
   }
 
@@ -204,77 +210,34 @@ export class AgeStripTooltip {
 export function renderAgeTooltip(
   overlay: HTMLDivElement,
   tokenName: string,
-  hover: SupplyHover,
+  tokenPrice: number,
   color: string,
+  hover: PressureHover | null,
+  nowMs: number,
 ): void {
   overlay.replaceChildren();
 
   const title = document.createElement("div");
   title.className = "cpv-ov-label";
-  title.textContent = `${tokenName}@${formatProbability(hover.price)}`;
+  title.textContent = `${tokenName}@${formatProbability(tokenPrice)}`;
   title.style.color = color;
   overlay.appendChild(title);
+
+  if (!hover) return;
+
   overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
   overlay.appendChild(
-    tooltipRow("Effective", formatProbability(hover.effectivePrice)),
+    tooltipRow("Age", formatAge(nowMs - hover.validThroughMs)),
   );
 }
 
-export function renderResolutionTooltip(
-  overlay: HTMLDivElement,
-  side: "primary" | "opposite",
-  outcome: string,
-  marketEndMs: number | null,
-  colorScale: SignedVolumeColorScale,
-): void {
-  overlay.replaceChildren();
-
-  const title = document.createElement("div");
-  title.className = "cpv-ov-label";
-  title.textContent = "Resolved";
-  title.style.color = signedVolumeColor(
-    side === "primary" ? 1 : -1,
-    colorScale,
-  );
-  overlay.appendChild(title);
-
-  overlay.appendChild(tooltipRow("Winner", outcome || "(unknown)"));
-
-  if (marketEndMs !== null && Number.isFinite(marketEndMs))
-    overlay.appendChild(
-      tooltipRow("Market end", formatResolutionTime(marketEndMs)),
-    );
-}
-
-function supplyHoverAtPrice(
-  book: TokenBook,
-  limitPrice: number,
-): SupplyHover | null {
-  const price = clamp01(limitPrice);
-  let shares = 0;
-  let cost = 0;
-
-  for (const order of book.yesToUsd.asSellOrders()) {
-    if (!Number.isFinite(order.take) || order.take <= 0) continue;
-    const orderPrice = priceToNumber(order.price);
-    if (orderPrice > price) break;
-    shares += order.take;
-    cost += orderPrice * order.take;
-  }
-
-  if (!(shares > 0)) return null;
-  return { price, shares, effectivePrice: clamp01(cost / shares) };
-}
-
-const RESOLUTION_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-function formatResolutionTime(timestampMs: number): string {
-  return RESOLUTION_TIME_FORMATTER.format(new Date(timestampMs));
+function rowHeight(
+  geometry: AgeStripGeometry,
+  row: AgeStripGeometry["rows"][number],
+): number {
+  if (row.topY !== undefined && row.bottomY !== undefined)
+    return row.bottomY - row.topY;
+  return AGE_ROW_BAND_PX;
 }
 
 function tooltipRow(name: string, value: string): HTMLDivElement {
@@ -301,6 +264,20 @@ function formatShares(value: number): string {
     notation: "compact",
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatAge(ageMs: number): string {
+  const ms = Math.max(0, ageMs);
+  if (ms < 1_000) return "now";
+  if (ms < 60_000) return `${formatCompact(ms / 1_000)}s`;
+  if (ms < 3_600_000) return `${formatCompact(ms / 60_000)}m`;
+  if (ms < 86_400_000) return `${formatCompact(ms / 3_600_000)}h`;
+  return `${formatCompact(ms / 86_400_000)}d`;
+}
+
+function formatCompact(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
 function clamp01(value: number): number {

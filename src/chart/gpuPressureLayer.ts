@@ -1,4 +1,7 @@
-import { visibleSinceMs } from "@/lib/pressureField";
+import {
+  PRESSURE_MIN_VISIBLE_ALPHA,
+  visibleSinceMs,
+} from "@/lib/pressureField";
 import type { PressureRenderRun } from "@/lib/materializedPressureField";
 import { priceToNumber } from "@/lib/price";
 
@@ -36,7 +39,6 @@ export interface GpuPressureFrame {
 
 const INSTANCE_FLOATS = 13;
 const INSTANCE_STRIDE = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
-const MIN_ALPHA = 1 / 255;
 const MAX_SUPERSAMPLE_X = 2;
 const MAX_SUPERSAMPLE_Y = 4;
 
@@ -395,7 +397,7 @@ export class GpuPressureLayer {
     const oldestVisibleMs = visibleSinceMs(
       frame.nowMs,
       frame.ghostHalfLifeMs,
-      MIN_ALPHA,
+      PRESSURE_MIN_VISIBLE_ALPHA,
     );
     this.referenceTimeMs = frame.nowMs;
 

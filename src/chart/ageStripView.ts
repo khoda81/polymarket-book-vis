@@ -7,10 +7,7 @@ import {
 import type { TokenBook } from "@/lib/orderBook";
 import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
-import {
-  signedVolumeColor,
-  type SignedVolumeColorScale,
-} from "@/lib/signedVolume";
+import type { SignedVolumeColorScale } from "@/lib/signedVolume";
 import {
   AGE_TIME_GUTTER_PX,
   type AgeStripGeometry,
@@ -26,6 +23,7 @@ import { GpuPressureLayer, type GpuPressureRow } from "./gpuPressureLayer";
 import { AgeStripClock } from "./ageStripClock";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
 import { AgeStripPressureState } from "./ageStripPressureState";
+import { agePressureSurface } from "./ageStripPressureProjection";
 import type { LiveBookUpdate } from "./liveBookFeed";
 import { AgeStripTooltip } from "./ageStripTooltip";
 import type { ChartMarketControl } from "@/lib/chartDefinition";
@@ -39,7 +37,6 @@ export interface AgeStripHost {
   readonly activeTokens: Set<string>;
   readonly getBook: (tokenId: string) => TokenBook | undefined;
   readonly getTokenName: (tokenId: string) => string | undefined;
-  readonly getOppositeTokenName: (tokenId: string) => string | undefined;
   readonly getOppositeTokenId: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
   readonly getTheme: () => ChartTheme;
@@ -77,10 +74,8 @@ export class AgeStripView {
     this.tooltip = new AgeStripTooltip({
       canvas: host.canvas,
       getViewMode: host.getViewMode,
-      getBook: host.getBook,
+      getPressureMemory: (tokenId) => this.pressure.memory(tokenId),
       getTokenName: host.getTokenName,
-      getOppositeTokenName: host.getOppositeTokenName,
-      getOppositeTokenId: host.getOppositeTokenId,
       getPressureColorScale: host.getPressureColorScale,
     });
 
@@ -196,6 +191,7 @@ export class AgeStripView {
     positionRowControls(activeControls, frame, rowCount);
 
     const vp = frame.viewport;
+    const dpr = window.devicePixelRatio || 1;
     const geometry: AgeStripGeometry = {
       viewport: {
         l: vp.l,
@@ -215,8 +211,17 @@ export class AgeStripView {
                   this.pressure.timing(tokenId)?.resolutionMs ?? null,
               }
             : undefined;
+        const y = rowCount - 1 - index;
+        const raster = rowRasterGeometry(frame.toScreenY(0, y), dpr);
 
-        return { tokenId, resolution };
+        return {
+          tokenId,
+          oppositeTokenId: this.host.getOppositeTokenId(tokenId),
+          centerY: raster.centerCss,
+          topY: raster.topCss,
+          bottomY: raster.topCss + raster.heightCss,
+          resolution,
+        };
       }),
       canvasWidth: vp.l + vp.width + this.host.plotter.padding.r,
       canvasHeight: vp.t + vp.height + this.host.plotter.padding.b,
@@ -226,7 +231,6 @@ export class AgeStripView {
     this.tooltip.setGeometry(geometry);
 
     const gpuRows: GpuPressureRow[] = [];
-    const dpr = window.devicePixelRatio || 1;
 
     for (const [index, label] of activeControls.entries()) {
       const tokenId = label.dataset.tokenId;
@@ -260,22 +264,20 @@ export class AgeStripView {
         surfaces: [
           ...(primaryMemory
             ? [
-                {
-                  runs: primaryMemory.renderRuns(),
-                  color: signedVolumeColor(1, colorScale),
-                  mirrorPrice: true,
-                  yDirection: 1 as const,
-                },
+                agePressureSurface(
+                  primaryMemory.renderRuns(),
+                  colorScale,
+                  "primary",
+                ),
               ]
             : []),
           ...(oppositeMemory
             ? [
-                {
-                  runs: oppositeMemory.renderRuns(),
-                  color: signedVolumeColor(-1, colorScale),
-                  mirrorPrice: false,
-                  yDirection: -1 as const,
-                },
+                agePressureSurface(
+                  oppositeMemory.renderRuns(),
+                  colorScale,
+                  "opposite",
+                ),
               ]
             : []),
         ],

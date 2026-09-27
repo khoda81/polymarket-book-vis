@@ -1,5 +1,7 @@
 export type PressureSide = -1 | 1;
 
+export const PRESSURE_MIN_VISIBLE_ALPHA = 1 / 255;
+
 export interface PressureBand {
   readonly loVolume: number;
   readonly hiVolume: number;

@@ -7,6 +7,7 @@ import {
   type AgeStripGeometry,
 } from "./ageStripLayout";
 import { AgeStripPressureState } from "./ageStripPressureState";
+import { agePressureSurface } from "./ageStripPressureProjection";
 import { drawAgeRowRails, drawResolvedMarketStrip } from "./ageStripRendering";
 import { GpuPressureLayer, type GpuPressureRow } from "./gpuPressureLayer";
 import { LiveBookFeed } from "./liveBookFeed";
@@ -28,7 +29,6 @@ import { OrderBookPlotter, type ChartTheme, type Frame } from "@/lib/renderer";
 import { chartThemeForDarkMode } from "./chartTheme";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
 import {
@@ -165,21 +165,22 @@ export class SeriesTimelineView {
     this.tooltip = new AgeStripTooltip({
       canvas,
       getViewMode: () => "age",
-      getBook: (tokenId) => {
-        const canonical = this.marketByToken.get(tokenId)?.outcomes.yes.tokenId;
-        return (
-          this.bookCache.get(tokenId) ??
-          (canonical ? this.feed?.getBook(canonical) : undefined)
-        );
+      getPressureMemory: (tokenId) => this.pressure.memory(tokenId),
+      getTokenName: (tokenId) => {
+        const market = this.marketByToken.get(tokenId);
+        if (!market) return undefined;
+        if (market.outcomes.yes.tokenId === tokenId)
+          return market.outcomes.yes.label;
+        return market.outcomes.no.tokenId === tokenId
+          ? market.outcomes.no.label
+          : undefined;
       },
-      getTokenName: (tokenId) =>
-        this.marketByToken.get(tokenId)?.outcomes.yes.label,
-      getOppositeTokenName: (tokenId) =>
-        this.marketByToken.get(tokenId)?.outcomes.no.label,
-      getOppositeTokenId: (tokenId) =>
-        this.marketByToken.get(tokenId)?.outcomes.no.tokenId ?? undefined,
       getPressureColorScale: (tokenId) =>
-        this.scaleByToken.get(tokenId) ?? DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+        this.scaleByToken.get(tokenId) ??
+        this.scaleByToken.get(
+          String(this.marketByToken.get(tokenId)?.outcomes.yes.tokenId ?? ""),
+        ) ??
+        DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     });
 
     this.unsubscribeTuning = subscribeAgeStripTuning(() => {
@@ -496,23 +497,15 @@ export class SeriesTimelineView {
         heightCss: geometry.heightCss,
         surfaces: [
           ...(primaryMemory
-            ? [
-                {
-                  runs: primaryMemory.renderRuns(),
-                  color: signedVolumeColor(1, scale),
-                  mirrorPrice: true,
-                  yDirection: 1 as const,
-                },
-              ]
+            ? [agePressureSurface(primaryMemory.renderRuns(), scale, "primary")]
             : []),
           ...(oppositeMemory
             ? [
-                {
-                  runs: oppositeMemory.renderRuns(),
-                  color: signedVolumeColor(-1, scale),
-                  mirrorPrice: false,
-                  yDirection: -1 as const,
-                },
+                agePressureSurface(
+                  oppositeMemory.renderRuns(),
+                  scale,
+                  "opposite",
+                ),
               ]
             : []),
         ],
@@ -679,6 +672,9 @@ export class SeriesTimelineView {
         return [
           {
             tokenId: String(tokenId),
+            oppositeTokenId: market.outcomes.no.tokenId
+              ? String(market.outcomes.no.tokenId)
+              : undefined,
             centerY: raster.centerCss,
             topY: raster.topCss,
             bottomY: raster.topCss + raster.heightCss,
