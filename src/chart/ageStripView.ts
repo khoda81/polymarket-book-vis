@@ -80,8 +80,6 @@ export class AgeStripView {
     });
 
     this.unsubscribeTuning = subscribeAgeStripTuning(() => {
-      this.pressureRevision++;
-      this.pressureLayer?.invalidate();
       host.requestDraw();
     });
 

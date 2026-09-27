@@ -184,8 +184,6 @@ export class SeriesTimelineView {
     });
 
     this.unsubscribeTuning = subscribeAgeStripTuning(() => {
-      this.pressureRevision++;
-      this.pressureLayer.invalidate();
       this.requestDraw();
     });
 

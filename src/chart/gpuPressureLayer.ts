@@ -1,7 +1,4 @@
-import {
-  PRESSURE_MIN_VISIBLE_ALPHA,
-  visibleSinceMs,
-} from "@/lib/pressureField";
+import { PRESSURE_MIN_VISIBLE_ALPHA } from "@/lib/pressureField";
 import type { PressureRenderRun } from "@/lib/materializedPressureField";
 import { priceToNumber } from "@/lib/price";
 
@@ -39,7 +36,7 @@ export interface GpuPressureFrame {
   readonly background: string;
 }
 
-const INSTANCE_FLOATS = 13;
+const INSTANCE_FLOATS = 14;
 const INSTANCE_STRIDE = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
 const MAX_SUPERSAMPLE_X = 2;
 const MAX_SUPERSAMPLE_Y = 4;
@@ -51,21 +48,27 @@ layout(location = 0) in float aPriceLo;
 layout(location = 1) in float aPriceHi;
 layout(location = 2) in float aVolumeLo;
 layout(location = 3) in float aVolumeHi;
-layout(location = 4) in float aReferenceAlpha;
-layout(location = 5) in float aCenterCss;
-layout(location = 6) in float aRowHeightCss;
-layout(location = 7) in float aMirrorPrice;
-layout(location = 8) in float aYDirection;
-layout(location = 9) in vec3 aColor;
-layout(location = 10) in float aReserveShares;
+layout(location = 4) in float aBandValidThroughSec;
+layout(location = 5) in float aCurrentVolume;
+layout(location = 6) in float aCurrentValidThroughSec;
+layout(location = 7) in float aCenterCss;
+layout(location = 8) in float aRowHeightCss;
+layout(location = 9) in float aMirrorPrice;
+layout(location = 10) in float aYDirection;
+layout(location = 11) in vec3 aColor;
 
 uniform vec2 uCanvasCssSize;
 uniform vec2 uPriceViewport;
 uniform vec2 uRasterScale;
+uniform float uVolumePerCssPixel;
+uniform float uNowOffsetSec;
+uniform float uGhostHalfLifeSec;
 
 out vec3 vColor;
 flat out vec4 vRectPx;
 flat out float vReferenceAlpha;
+
+const float MIN_ALPHA = ${PRESSURE_MIN_VISIBLE_ALPHA};
 
 const vec2 CORNERS[6] = vec2[6](
   vec2(0.0, 0.0),
@@ -79,10 +82,19 @@ const vec2 CORNERS[6] = vec2[6](
 void main() {
   vec2 corner = CORNERS[gl_VertexID];
 
+  float validThroughSec = aBandValidThroughSec;
+  if (aVolumeLo < aCurrentVolume)
+    validThroughSec = max(validThroughSec, aCurrentValidThroughSec);
+
+  float halfLifeSec = max(uGhostHalfLifeSec, 1e-6);
+  float ageSec = max(0.0, uNowOffsetSec - validThroughSec);
+  float referenceAlpha = exp2(-ageSec / halfLifeSec);
+
+  float reserveShares = uVolumePerCssPixel * aRowHeightCss;
   float pressureLo =
-      aVolumeLo <= 0.0 ? 0.0 : aVolumeLo / (aVolumeLo + aReserveShares);
+      aVolumeLo <= 0.0 ? 0.0 : aVolumeLo / (aVolumeLo + reserveShares);
   float pressureHi =
-      aVolumeHi <= 0.0 ? 0.0 : aVolumeHi / (aVolumeHi + aReserveShares);
+      aVolumeHi <= 0.0 ? 0.0 : aVolumeHi / (aVolumeHi + reserveShares);
 
   float y0Css =
       aCenterCss + aYDirection * 0.5 * aRowHeightCss * pressureLo;
@@ -105,6 +117,16 @@ void main() {
     xMaxCss * uRasterScale.x,
     (uCanvasCssSize.y - yMinCss) * uRasterScale.y
   );
+  vColor = aColor;
+  vReferenceAlpha = referenceAlpha;
+
+  // Keep all history resident in the instance buffer so changing half-life can
+  // reveal old pressure without a CPU walk/upload. Invisible instances are
+  // clipped before fragment shading.
+  if (referenceAlpha <= MIN_ALPHA) {
+    gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
+    return;
+  }
 
   // Expand by half a raster pixel so partially covered edge pixels run.
   vec2 halfPixelCss = 0.5 / uRasterScale;
@@ -125,8 +147,6 @@ void main() {
   );
 
   gl_Position = vec4(clip, 0.0, 1.0);
-  vColor = aColor;
-  vReferenceAlpha = aReferenceAlpha;
 }
 `;
 
@@ -218,8 +238,10 @@ export class GpuPressureLayer {
   private targetHeight = 0;
   private supersampleX = 1;
   private supersampleY = 1;
-  private geometryKey = "";
+  private instanceDataKey = "";
+  private rasterKey = "";
   private instanceCount = 0;
+  private instanceTimeOriginMs = 0;
   private referenceTimeMs = 0;
   private visible = true;
 
@@ -249,7 +271,7 @@ export class GpuPressureLayer {
     gl.bindVertexArray(this.geometryVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer);
 
-    for (let location = 0; location <= 8; location++) {
+    for (let location = 0; location <= 10; location++) {
       gl.enableVertexAttribArray(location);
       gl.vertexAttribPointer(
         location,
@@ -262,27 +284,16 @@ export class GpuPressureLayer {
       gl.vertexAttribDivisor(location, 1);
     }
 
-    gl.enableVertexAttribArray(9);
+    gl.enableVertexAttribArray(11);
     gl.vertexAttribPointer(
-      9,
+      11,
       3,
       gl.FLOAT,
       false,
       INSTANCE_STRIDE,
-      9 * Float32Array.BYTES_PER_ELEMENT,
+      11 * Float32Array.BYTES_PER_ELEMENT,
     );
-    gl.vertexAttribDivisor(9, 1);
-
-    gl.enableVertexAttribArray(10);
-    gl.vertexAttribPointer(
-      10,
-      1,
-      gl.FLOAT,
-      false,
-      INSTANCE_STRIDE,
-      12 * Float32Array.BYTES_PER_ELEMENT,
-    );
-    gl.vertexAttribDivisor(10, 1);
+    gl.vertexAttribDivisor(11, 1);
 
     gl.bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
@@ -297,7 +308,8 @@ export class GpuPressureLayer {
   }
 
   invalidate(): void {
-    this.geometryKey = "";
+    this.instanceDataKey = "";
+    this.rasterKey = "";
   }
 
   render(frame: GpuPressureFrame): void {
@@ -318,11 +330,19 @@ export class GpuPressureLayer {
       supersampleY,
     );
 
-    const key = geometryKey(frame, targetWidth, targetHeight);
+    const nextInstanceDataKey = instanceDataKey(frame);
+    let instancesChanged = false;
+    if (nextInstanceDataKey !== this.instanceDataKey) {
+      this.uploadInstances(frame);
+      this.instanceDataKey = nextInstanceDataKey;
+      this.rasterKey = "";
+      instancesChanged = true;
+    }
 
-    if (resized || key !== this.geometryKey) {
-      this.rebuildGeometry(frame);
-      this.geometryKey = key;
+    const nextRasterKey = rasterProjectionKey(frame, targetWidth, targetHeight);
+    if (resized || instancesChanged || nextRasterKey !== this.rasterKey) {
+      this.rasterize(frame);
+      this.rasterKey = nextRasterKey;
     }
 
     this.drawDisplay(frame);
@@ -394,34 +414,24 @@ export class GpuPressureLayer {
     return true;
   }
 
-  private rebuildGeometry(frame: GpuPressureFrame): void {
+  private uploadInstances(frame: GpuPressureFrame): void {
     const gl = this.gl;
-    const oldestVisibleMs = visibleSinceMs(
-      frame.nowMs,
-      frame.ghostHalfLifeMs,
-      PRESSURE_MIN_VISIBLE_ALPHA,
-    );
-    this.referenceTimeMs = frame.nowMs;
+    this.instanceTimeOriginMs = frame.nowMs;
 
     const values: number[] = [];
-    for (const row of frame.rows) {
-      const reserveShares = frame.volumePerCssPixel * row.heightCss;
+    for (const row of frame.rows)
       for (const surface of row.surfaces)
-        appendRuns(
+        appendResidentRuns(
           values,
           surface.runs,
           row.centerCss,
           row.heightCss,
-          reserveShares,
           resolveCssColor(surface.color),
           surface.mirrorPrice,
           surface.yDirection,
           surface.currentValidThroughMs,
-          oldestVisibleMs,
-          this.referenceTimeMs,
-          frame.ghostHalfLifeMs,
+          this.instanceTimeOriginMs,
         );
-    }
 
     const instances = new Float32Array(values);
     this.instanceCount = instances.length / INSTANCE_FLOATS;
@@ -429,6 +439,11 @@ export class GpuPressureLayer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, instances, gl.DYNAMIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  }
+
+  private rasterize(frame: GpuPressureFrame): void {
+    const gl = this.gl;
+    this.referenceTimeMs = frame.nowMs;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
     gl.viewport(0, 0, this.targetWidth, this.targetHeight);
@@ -459,11 +474,28 @@ export class GpuPressureLayer {
         this.targetWidth / frame.cssWidth,
         this.targetHeight / frame.cssHeight,
       );
+      uniform1f(
+        gl,
+        this.geometryProgram,
+        "uVolumePerCssPixel",
+        frame.volumePerCssPixel,
+      );
+      uniform1f(
+        gl,
+        this.geometryProgram,
+        "uNowOffsetSec",
+        (frame.nowMs - this.instanceTimeOriginMs) / 1_000,
+      );
+      uniform1f(
+        gl,
+        this.geometryProgram,
+        "uGhostHalfLifeSec",
+        frame.ghostHalfLifeMs / 1_000,
+      );
 
-      // Materialized pressure runs already partition the price×volume surface:
-      // every continuous point has exactly one timestamp. Additive
-      // premultiplied blending therefore computes the exact box-filter integral
-      // across cell boundaries, including boundaries between different ages.
+      // Historical instances stay resident in the GPU buffer. Projection and
+      // decay parameters are uniforms, so rescaling only rerasterizes these
+      // existing instances instead of rebuilding/uploading them from JS.
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE);
@@ -514,44 +546,42 @@ export class GpuPressureLayer {
   }
 }
 
-function appendRuns(
+function appendResidentRuns(
   values: number[],
   runs: readonly PressureRenderRun[],
   centerCss: number,
   rowHeightCss: number,
-  reserveShares: number,
   color: readonly [number, number, number],
   mirrorPrice: boolean,
   yDirection: -1 | 1,
   currentValidThroughMs: number | undefined,
-  oldestVisibleMs: number,
-  referenceTimeMs: number,
-  halfLifeMs: number,
+  timeOriginMs: number,
 ): void {
+  const currentValidThroughSec =
+    currentValidThroughMs === undefined
+      ? -1e30
+      : (currentValidThroughMs - timeOriginMs) / 1_000;
+
   for (const run of runs) {
     const priceLo = priceToNumber(run.lo);
     const priceHi = priceToNumber(run.hi);
     if (!(priceHi > priceLo)) continue;
 
     for (const band of run.bands) {
-      const validThroughMs =
-        currentValidThroughMs !== undefined && band.loVolume < run.volume
-          ? Math.max(band.validThroughMs, currentValidThroughMs)
-          : band.validThroughMs;
-
-      if (!(band.hiVolume > band.loVolume) || validThroughMs <= oldestVisibleMs)
+      if (
+        !(band.hiVolume > band.loVolume) ||
+        !Number.isFinite(band.validThroughMs)
+      )
         continue;
-
-      const referenceAlpha =
-        2 ** (-Math.max(0, referenceTimeMs - validThroughMs) / halfLifeMs);
-      if (!(referenceAlpha > 0)) continue;
 
       values.push(
         priceLo,
         priceHi,
         band.loVolume,
         band.hiVolume,
-        referenceAlpha,
+        (band.validThroughMs - timeOriginMs) / 1_000,
+        run.volume,
+        currentValidThroughSec,
         centerCss,
         rowHeightCss,
         mirrorPrice ? 1 : 0,
@@ -559,38 +589,41 @@ function appendRuns(
         color[0],
         color[1],
         color[2],
-        reserveShares,
       );
     }
   }
 }
 
-function geometryKey(
-  frame: GpuPressureFrame,
-  width: number,
-  height: number,
-): string {
+function instanceDataKey(frame: GpuPressureFrame): string {
   const rows = frame.rows
     .map(
       (row) =>
         `${row.key}@${row.centerCss}:${row.heightCss}:${row.surfaces
           .map(
             (surface) =>
-              `${surface.color}:${surface.mirrorPrice ? 1 : 0}:${surface.yDirection}`,
+              `${surface.color}:${surface.mirrorPrice ? 1 : 0}:${surface.yDirection}:${surface.currentValidThroughMs ?? ""}`,
           )
           .join(",")}`,
     )
     .join("|");
 
+  return [frame.revision, rows].join(";");
+}
+
+function rasterProjectionKey(
+  frame: GpuPressureFrame,
+  width: number,
+  height: number,
+): string {
   return [
-    frame.revision,
     width,
     height,
+    frame.cssWidth,
+    frame.cssHeight,
     frame.viewport.l,
     frame.viewport.width,
     frame.volumePerCssPixel,
     frame.ghostHalfLifeMs,
-    rows,
   ].join(";");
 }
 
