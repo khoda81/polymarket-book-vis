@@ -64,7 +64,6 @@ test("RecorderStore persists timestamped pressure without temporal rewriting", (
   }
 });
 
-
 test("RecorderStore conservatively migrates ownership-era ask history", () => {
   const dir = mkdtempSync(join(tmpdir(), "recorder-store-v1-"));
   const dbPath = join(dir, "recorder.sqlite");
@@ -137,9 +136,7 @@ test("RecorderStore conservatively migrates ownership-era ask history", () => {
     const restored = new PressureFrontierMemory();
     restored.restore(record?.pressure);
 
-    expect(restored.currentLevels()).toEqual([
-      { key: p(0.5), weight: 40 },
-    ]);
+    expect(restored.currentLevels()).toEqual([{ key: p(0.5), weight: 40 }]);
     expect(restored.bandsAtPrice(p(0.75))).toEqual([
       {
         loVolume: 0,
