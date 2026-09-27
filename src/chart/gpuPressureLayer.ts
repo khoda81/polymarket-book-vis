@@ -7,6 +7,8 @@ import { priceToNumber } from "@/lib/price";
 
 export interface GpuPressureSurface {
   readonly runs: readonly PressureRenderRun[];
+  /** O(1) validity timestamp for the currently resting portion of every run. */
+  readonly currentValidThroughMs: number | undefined;
   readonly color: string;
   /** Mirror edge-local price p to display coordinate 1-p. */
   readonly mirrorPrice: boolean;
@@ -414,6 +416,7 @@ export class GpuPressureLayer {
           resolveCssColor(surface.color),
           surface.mirrorPrice,
           surface.yDirection,
+          surface.currentValidThroughMs,
           oldestVisibleMs,
           this.referenceTimeMs,
           frame.ghostHalfLifeMs,
@@ -520,6 +523,7 @@ function appendRuns(
   color: readonly [number, number, number],
   mirrorPrice: boolean,
   yDirection: -1 | 1,
+  currentValidThroughMs: number | undefined,
   oldestVisibleMs: number,
   referenceTimeMs: number,
   halfLifeMs: number,
@@ -530,14 +534,16 @@ function appendRuns(
     if (!(priceHi > priceLo)) continue;
 
     for (const band of run.bands) {
-      if (
-        !(band.hiVolume > band.loVolume) ||
-        band.validThroughMs <= oldestVisibleMs
-      )
+      const validThroughMs =
+        currentValidThroughMs !== undefined && band.loVolume < run.volume
+          ? Math.max(band.validThroughMs, currentValidThroughMs)
+          : band.validThroughMs;
+
+      if (!(band.hiVolume > band.loVolume) || validThroughMs <= oldestVisibleMs)
         continue;
 
       const referenceAlpha =
-        2 ** (-Math.max(0, referenceTimeMs - band.validThroughMs) / halfLifeMs);
+        2 ** (-Math.max(0, referenceTimeMs - validThroughMs) / halfLifeMs);
       if (!(referenceAlpha > 0)) continue;
 
       values.push(

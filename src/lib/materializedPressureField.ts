@@ -9,6 +9,9 @@ import { PRICE_ONE, PRICE_ZERO, type Price, priceFromTicks } from "./price";
 export interface PressureRenderRun {
   readonly lo: Price;
   readonly hi: Price;
+  /** Current cumulative resting volume for this price run. */
+  readonly volume: number;
+  /** Stored historical bands; current validity is applied lazily by consumers. */
   readonly bands: readonly PressureBand[];
 }
 
@@ -48,11 +51,14 @@ export class MaterializedPressureField {
   private currentValidThroughMs: number | undefined;
 
   renderRuns(): readonly PressureRenderRun[] {
-    return this.runs.map((run) => ({
-      lo: run.lo,
-      hi: run.hi,
-      bands: materializeBands(run, this.currentValidThroughMs),
-    }));
+    // MutableRun is structurally compatible with the readonly render view.
+    // Do not clone/materialize historical bands here: render-only decay frames
+    // are extremely frequent and the renderer can apply current validity lazily.
+    return this.runs;
+  }
+
+  renderCurrentValidThroughMs(): number | undefined {
+    return this.currentValidThroughMs;
   }
 
   priceBoundaries(): readonly Price[] {
@@ -238,14 +244,26 @@ function transitionRun(
     .sort((a, b) => a - b);
 
   const next: PressureBand[] = [];
+  let bandIndex = 0;
   for (let index = 0; index + 1 < sorted.length; index++) {
     const lo = sorted[index]!;
     const hi = sorted[index + 1]!;
     if (!(hi > lo)) continue;
 
+    // Both the generated intervals and stored bands are ordered by volume.
+    // Walk the bands once instead of rescanning from the beginning for every
+    // interval (the old bandAt/find path was O(B²)).
+    while (bandIndex < run.bands.length && run.bands[bandIndex]!.hiVolume <= lo)
+      bandIndex++;
+
+    const candidate = run.bands[bandIndex];
+    const existing =
+      candidate && candidate.loVolume <= lo && lo < candidate.hiVolume
+        ? candidate
+        : undefined;
+
     const wasCurrent = lo < oldVolume;
     const isCurrent = lo < nextVolume;
-    const existing = bandAt(run.bands, lo);
 
     if (isCurrent) {
       appendBand(next, {
@@ -272,15 +290,6 @@ function transitionRun(
   }
 
   run.bands = next;
-}
-
-function bandAt(
-  bands: readonly PressureBand[],
-  volume: number,
-): PressureBand | undefined {
-  return bands.find(
-    (band) => band.loVolume <= volume && volume < band.hiVolume,
-  );
 }
 
 function appendBand(bands: PressureBand[], band: PressureBand): void {

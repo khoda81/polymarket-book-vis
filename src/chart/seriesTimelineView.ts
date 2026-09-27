@@ -497,12 +497,20 @@ export class SeriesTimelineView {
         heightCss: geometry.heightCss,
         surfaces: [
           ...(primaryMemory
-            ? [agePressureSurface(primaryMemory.renderRuns(), scale, "primary")]
+            ? [
+                agePressureSurface(
+                  primaryMemory.renderRuns(),
+                  primaryMemory.renderCurrentValidThroughMs(),
+                  scale,
+                  "primary",
+                ),
+              ]
             : []),
           ...(oppositeMemory
             ? [
                 agePressureSurface(
                   oppositeMemory.renderRuns(),
+                  oppositeMemory.renderCurrentValidThroughMs(),
                   scale,
                   "opposite",
                 ),

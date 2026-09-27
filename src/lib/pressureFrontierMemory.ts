@@ -103,6 +103,10 @@ export class PressureFrontierMemory {
     return this.field.renderRuns();
   }
 
+  renderCurrentValidThroughMs(): number | undefined {
+    return this.field.renderCurrentValidThroughMs();
+  }
+
   bandsAtPrice(price: Price): readonly PressureBand[] {
     return this.field.bandsAtPrice(price);
   }

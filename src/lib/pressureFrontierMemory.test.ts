@@ -83,3 +83,29 @@ test("visibility depends only on timestamps and half-life", () => {
   expect(memory.hasVisiblePressure(20_000, 100_000)).toBe(true);
   expect(memory.bandsAtPrice(p(0.6))).toEqual(history);
 });
+
+test("render view keeps stored bands stable while current validity advances separately", () => {
+  const memory = new PressureFrontierMemory();
+  memory.updateLevels([{ price: p(0.5), shares: 100 }], 1_000);
+
+  const runs = memory.renderRuns();
+  const active = runs.find((run) => run.volume === 100);
+  expect(active?.bands).toEqual([
+    { loVolume: 0, hiVolume: 100, validThroughMs: 1_000 },
+  ]);
+
+  // Same book, newer observation: no historical bands should be cloned or
+  // rewritten just to advance the current surface's validity.
+  memory.updateLevels([{ price: p(0.5), shares: 100 }], 3_000);
+
+  expect(memory.renderRuns()).toBe(runs);
+  expect(active?.bands).toEqual([
+    { loVolume: 0, hiVolume: 100, validThroughMs: 1_000 },
+  ]);
+  expect(memory.renderCurrentValidThroughMs()).toBe(3_000);
+
+  // Materialized/query semantics are unchanged for non-render consumers.
+  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+    { loVolume: 0, hiVolume: 100, validThroughMs: 3_000 },
+  ]);
+});
