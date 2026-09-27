@@ -14,7 +14,7 @@ import type { TokenBook } from "../src/lib/orderBook";
 import {
   tokenPressureChanges,
   tokenPressureLevels,
-} from "../src/lib/pressureBookAdapter";
+} from "./legacyPressureV5/pressureBookAdapter";
 import { PressureFrontierMemory } from "./legacyPressureV5/pressureFrontierMemory";
 import type { PressureFrontierSnapshot } from "./legacyPressureV5/pressureFrontierSnapshot";
 
