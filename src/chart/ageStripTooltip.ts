@@ -189,9 +189,9 @@ export class AgeStripTooltip {
     const displayedShares = hover?.shares ?? volume;
     const ageDisplay = hover
       ? relativeTimeDisplay(
-          Math.max(0, nowMs - hover.validThroughMs) / 1_000,
-          "elapsed",
-        )
+        Math.max(0, nowMs - hover.validThroughMs) / 1_000,
+        "elapsed",
+      )
       : null;
     const ageText = ageDisplay?.text ?? (displayedShares === null ? null : "∞");
     const signature = [
@@ -215,7 +215,7 @@ export class AgeStripTooltip {
         ),
       pointer.canvasLeft + sx,
       pointer.canvasTop + centerCss,
-      perspective.yDirection < 0 ? "above" : "below",
+      perspective.yDirection < 0 ? "below" : "above",
     );
 
     if (ageDisplay?.nextChangeMs != null)
