@@ -188,8 +188,7 @@ function migratePressureSnapshot(
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
       current,
       field: {
-        currentValidThroughMs:
-          numeric(raw.field.currentValidThroughMs) ?? null,
+        currentValidThroughMs: numeric(raw.field.currentValidThroughMs) ?? null,
         runs: askField.runs as PressureFieldSnapshot["runs"],
       },
     };
@@ -220,9 +219,7 @@ function migratePressureSnapshot(
         if (!isRecord(band) || band.side !== -1) return [];
         const extent = numeric(band.hiVolume);
         const validThroughMs = numeric(band.validThroughMs);
-        return extent !== null &&
-          extent > 0 &&
-          validThroughMs !== null
+        return extent !== null && extent > 0 && validThroughMs !== null
           ? [{ extent, validThroughMs }]
           : [];
       });
@@ -257,11 +254,7 @@ function migratePressureSnapshot(
           lo: priceFromTicks(run.lo),
           hi: priceFromTicks(run.hi),
           volume: run.volume,
-          bands: conservativeBands(
-            run.volume,
-            run.evidence,
-            currentTime,
-          ),
+          bands: conservativeBands(run.volume, run.evidence, currentTime),
         })),
       },
     };
