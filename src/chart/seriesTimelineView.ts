@@ -74,7 +74,6 @@ export class SeriesTimelineView {
   private readonly themeQuery: MediaQueryList;
   private readonly pressure = new AgeStripPressureState();
   private readonly pressureLayer: GpuPressureLayer;
-  private pressureRevision = 0;
   private readonly ageClock: AgeStripClock;
   private readonly tooltip: AgeStripTooltip;
   private readonly unsubscribeTuning: () => void;
@@ -499,6 +498,7 @@ export class SeriesTimelineView {
                 agePressureSurface(
                   key,
                   primaryMemory.renderDataRevision(),
+                  primaryMemory.renderMaxPrice(),
                   primaryMemory.renderRuns(),
                   primaryMemory.renderCurrentValidThroughMs(),
                   scale,
@@ -511,6 +511,7 @@ export class SeriesTimelineView {
                 agePressureSurface(
                   oppositeKey!,
                   oppositeMemory.renderDataRevision(),
+                  oppositeMemory.renderMaxPrice(),
                   oppositeMemory.renderRuns(),
                   oppositeMemory.renderCurrentValidThroughMs(),
                   scale,
@@ -539,7 +540,6 @@ export class SeriesTimelineView {
       volumePerCssPixel: tuning.volumePerCssPixel,
       ghostHalfLifeMs: tuning.ghostHalfLifeMs,
       nowMs,
-      revision: this.pressureRevision,
       background: this.theme.bg,
     });
 
@@ -755,7 +755,6 @@ export class SeriesTimelineView {
         const key = String(tokenId);
         this.bookCache.set(key, book);
         this.pressure.applyBookUpdate(key, book, update);
-        this.pressureRevision++;
         this.requestDraw();
       },
       onMarketResolved: (resolution) => {
@@ -766,7 +765,6 @@ export class SeriesTimelineView {
           this.bookCache.delete(assetId);
           this.pressure.resolve(assetId);
         }
-        this.pressureRevision++;
         this.pressureLayer.invalidate();
         this.requestDraw();
       },
@@ -796,7 +794,6 @@ export class SeriesTimelineView {
       (tokenId) =>
         this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId as TokenId),
     );
-    this.pressureRevision++;
     this.pressureLayer.invalidate();
     this.ageClock.refresh();
     this.requestDraw();

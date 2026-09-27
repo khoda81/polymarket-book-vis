@@ -90,18 +90,14 @@ test("render view keeps stored bands stable while current validity advances sepa
 
   const runs = memory.renderRuns();
   const active = runs.find((run) => run.volume === 100);
-  expect(active?.bands).toEqual([
-    { loVolume: 0, hiVolume: 100, validThroughMs: 1_000 },
-  ]);
+  expect(active?.frozenBands).toEqual([]);
 
   // Same book, newer observation: no historical bands should be cloned or
   // rewritten just to advance the current surface's validity.
   memory.updateLevels([{ price: p(0.5), shares: 100 }], 3_000);
 
   expect(memory.renderRuns()).toBe(runs);
-  expect(active?.bands).toEqual([
-    { loVolume: 0, hiVolume: 100, validThroughMs: 1_000 },
-  ]);
+  expect(active?.frozenBands).toEqual([]);
   expect(memory.renderCurrentValidThroughMs()).toBe(3_000);
 
   // Materialized/query semantics are unchanged for non-render consumers.
@@ -125,4 +121,66 @@ test("render data revision changes only when pressure geometry changes", () => {
 
   memory.updateLevels([{ price: p(0.5), shares: 80 }], 3_000);
   expect(memory.renderDataRevision()).toBe(2);
+});
+
+test("pressure boundaries exclude the implicit disposal sentinel", () => {
+  const memory = new PressureFrontierMemory();
+  memory.updateLevels(
+    [
+      { price: p(0), shares: 123 },
+      { price: p(0.2), shares: 10 },
+      { price: p(0.5), shares: 20 },
+      { price: p(1), shares: 30 },
+    ],
+    1_000,
+  );
+
+  expect(memory.currentLevels()).toEqual([
+    { key: p(0.2), weight: 10 },
+    { key: p(0.5), weight: 20 },
+    { key: p(1), weight: 30 },
+  ]);
+  expect(memory.priceBoundaries()).toEqual([p(0.2), p(0.5), p(1)]);
+  expect(memory.bandsAtPrice(p(0))).toEqual([]);
+  expect(memory.bandsAtPrice(p(1)).at(-1)?.hiVolume).toBe(60);
+});
+
+test("frontier stack forgets history that becomes current again", () => {
+  const memory = new PressureFrontierMemory();
+  memory.updateLevels([{ price: p(0.5), shares: 100 }], 1_000);
+  memory.updateLevels([{ price: p(0.5), shares: 60 }], 2_000);
+  memory.updateLevels([{ price: p(0.5), shares: 30 }], 3_000);
+
+  expect(memory.renderRuns()[0]?.frozenBands).toEqual([
+    { loVolume: 60, hiVolume: 100, validThroughMs: 1_000 },
+    { loVolume: 30, hiVolume: 60, validThroughMs: 2_000 },
+  ]);
+
+  memory.updateLevels([{ price: p(0.5), shares: 80 }], 4_000);
+
+  expect(memory.renderRuns()[0]?.frozenBands).toEqual([
+    { loVolume: 80, hiVolume: 100, validThroughMs: 1_000 },
+  ]);
+  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+    { loVolume: 0, hiVolume: 80, validThroughMs: 4_000 },
+    { loVolume: 80, hiVolume: 100, validThroughMs: 1_000 },
+  ]);
+});
+
+test("snapshot stores current pressure implicitly", () => {
+  const memory = new PressureFrontierMemory();
+  memory.updateLevels([{ price: p(0.5), shares: 100 }], 1_000);
+  memory.updateLevels([{ price: p(0.5), shares: 60 }], 2_000);
+
+  expect(memory.snapshot().field).toEqual({
+    maxPrice: p(1),
+    currentValidThroughMs: 2_000,
+    runs: [
+      {
+        price: p(0.5),
+        volume: 60,
+        frozenBands: [{ loVolume: 60, hiVolume: 100, validThroughMs: 1_000 }],
+      },
+    ],
+  });
 });

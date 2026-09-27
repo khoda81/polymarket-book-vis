@@ -1,10 +1,11 @@
 import { PRESSURE_MIN_VISIBLE_ALPHA } from "@/lib/pressureField";
 import type { PressureRenderRun } from "@/lib/materializedPressureField";
-import { priceToNumber } from "@/lib/price";
+import { priceToNumber, type Price } from "@/lib/price";
 
 export interface GpuPressureSurface {
   readonly key: string;
   readonly dataRevision: number;
+  readonly maxPrice: Price;
   readonly runs: readonly PressureRenderRun[];
   /** O(1) validity timestamp for the currently resting portion of every run. */
   readonly currentValidThroughMs: number | undefined;
@@ -34,11 +35,10 @@ export interface GpuPressureFrame {
   readonly volumePerCssPixel: number;
   readonly ghostHalfLifeMs: number;
   readonly nowMs: number;
-  readonly revision: number;
   readonly background: string;
 }
 
-const INSTANCE_FLOATS = 14;
+const INSTANCE_FLOATS = 6;
 const INSTANCE_STRIDE = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
 const MAX_SUPERSAMPLE_X = 2;
 const MAX_SUPERSAMPLE_Y = 4;
@@ -51,13 +51,7 @@ layout(location = 1) in float aPriceHi;
 layout(location = 2) in float aVolumeLo;
 layout(location = 3) in float aVolumeHi;
 layout(location = 4) in float aBandValidThroughSec;
-layout(location = 5) in float aCurrentVolume;
-layout(location = 6) in float aCurrentValidThroughSec;
-layout(location = 7) in float aCenterCss;
-layout(location = 8) in float aRowHeightCss;
-layout(location = 9) in float aMirrorPrice;
-layout(location = 10) in float aYDirection;
-layout(location = 11) in vec3 aColor;
+layout(location = 5) in float aIsCurrent;
 
 uniform vec2 uCanvasCssSize;
 uniform vec2 uPriceViewport;
@@ -65,6 +59,13 @@ uniform vec2 uRasterScale;
 uniform float uVolumePerCssPixel;
 uniform float uNowOffsetSec;
 uniform float uGhostHalfLifeSec;
+uniform bool uHasCurrentValidThrough;
+uniform float uCurrentValidThroughSec;
+uniform float uCenterCss;
+uniform float uRowHeightCss;
+uniform float uMirrorPrice;
+uniform float uYDirection;
+uniform vec3 uColor;
 
 out vec3 vColor;
 flat out vec4 vRectPx;
@@ -84,53 +85,51 @@ const vec2 CORNERS[6] = vec2[6](
 void main() {
   vec2 corner = CORNERS[gl_VertexID];
 
-  float validThroughSec = aBandValidThroughSec;
-  if (aVolumeLo < aCurrentVolume)
-    validThroughSec = max(validThroughSec, aCurrentValidThroughSec);
+  if (aIsCurrent > 0.5 && !uHasCurrentValidThrough) {
+    gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
+    return;
+  }
 
+  float validThroughSec =
+      aIsCurrent > 0.5 ? uCurrentValidThroughSec : aBandValidThroughSec;
   float halfLifeSec = max(uGhostHalfLifeSec, 1e-6);
   float ageSec = max(0.0, uNowOffsetSec - validThroughSec);
   float referenceAlpha = exp2(-ageSec / halfLifeSec);
 
-  float reserveShares = uVolumePerCssPixel * aRowHeightCss;
+  float reserveShares = uVolumePerCssPixel * uRowHeightCss;
   float pressureLo =
       aVolumeLo <= 0.0 ? 0.0 : aVolumeLo / (aVolumeLo + reserveShares);
   float pressureHi =
       aVolumeHi <= 0.0 ? 0.0 : aVolumeHi / (aVolumeHi + reserveShares);
 
   float y0Css =
-      aCenterCss + aYDirection * 0.5 * aRowHeightCss * pressureLo;
+      uCenterCss + uYDirection * 0.5 * uRowHeightCss * pressureLo;
   float y1Css =
-      aCenterCss + aYDirection * 0.5 * aRowHeightCss * pressureHi;
+      uCenterCss + uYDirection * 0.5 * uRowHeightCss * pressureHi;
   float yMinCss = min(y0Css, y1Css);
   float yMaxCss = max(y0Css, y1Css);
 
-  float p0 = aMirrorPrice > 0.5 ? 1.0 - aPriceLo : aPriceLo;
-  float p1 = aMirrorPrice > 0.5 ? 1.0 - aPriceHi : aPriceHi;
+  float p0 = uMirrorPrice > 0.5 ? 1.0 - aPriceLo : aPriceLo;
+  float p1 = uMirrorPrice > 0.5 ? 1.0 - aPriceHi : aPriceHi;
   float x0Css = uPriceViewport.x + p0 * uPriceViewport.y;
   float x1Css = uPriceViewport.x + p1 * uPriceViewport.y;
   float xMinCss = min(x0Css, x1Css);
   float xMaxCss = max(x0Css, x1Css);
 
-  // Exact rectangle in bottom-left-origin raster pixels.
   vRectPx = vec4(
     xMinCss * uRasterScale.x,
     (uCanvasCssSize.y - yMaxCss) * uRasterScale.y,
     xMaxCss * uRasterScale.x,
     (uCanvasCssSize.y - yMinCss) * uRasterScale.y
   );
-  vColor = aColor;
+  vColor = uColor;
   vReferenceAlpha = referenceAlpha;
 
-  // Keep all history resident in the instance buffer so changing half-life can
-  // reveal old pressure without a CPU walk/upload. Invisible instances are
-  // clipped before fragment shading.
   if (referenceAlpha <= MIN_ALPHA) {
     gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
     return;
   }
 
-  // Expand by half a raster pixel so partially covered edge pixels run.
   vec2 halfPixelCss = 0.5 / uRasterScale;
   float xCss = mix(
     xMinCss - halfPixelCss.x,
@@ -227,7 +226,7 @@ void main() {
 interface CachedPressureSurface {
   readonly buffer: WebGLBuffer;
   readonly vao: WebGLVertexArrayObject;
-  signature: string;
+  dataRevision: number;
   instanceCount: number;
   timeOriginMs: number;
 }
@@ -236,9 +235,7 @@ export class GpuPressureLayer {
   private readonly gl: WebGL2RenderingContext;
   private readonly geometryProgram: WebGLProgram;
   private readonly displayProgram: WebGLProgram;
-  private readonly geometryVao: WebGLVertexArrayObject;
   private readonly displayVao: WebGLVertexArrayObject;
-  private readonly instanceBuffer: WebGLBuffer;
   private readonly framebuffer: WebGLFramebuffer;
   private readonly colorTexture: WebGLTexture;
   private readonly surfaceBuffers = new Map<string, CachedPressureSurface>();
@@ -250,10 +247,7 @@ export class GpuPressureLayer {
   private targetHeight = 0;
   private supersampleX = 1;
   private supersampleY = 1;
-  private instanceDataKey = "";
   private rasterKey = "";
-  private instanceCount = 0;
-  private instanceTimeOriginMs = 0;
   private referenceTimeMs = 0;
   private visible = true;
 
@@ -274,32 +268,9 @@ export class GpuPressureLayer {
       GEOMETRY_FRAGMENT,
     );
     this.displayProgram = createProgram(gl, DISPLAY_VERTEX, DISPLAY_FRAGMENT);
-    this.geometryVao = required(gl.createVertexArray(), "geometry VAO");
     this.displayVao = required(gl.createVertexArray(), "display VAO");
-    this.instanceBuffer = required(gl.createBuffer(), "instance buffer");
     this.framebuffer = required(gl.createFramebuffer(), "framebuffer");
     this.colorTexture = required(gl.createTexture(), "color texture");
-
-    gl.bindVertexArray(this.geometryVao);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer);
-
-    // Only token-local pressure data is resident. Presentation attributes are
-    // supplied as constant vertex attributes when the surface is drawn.
-    for (let location = 0; location <= 6; location++) {
-      gl.enableVertexAttribArray(location);
-      gl.vertexAttribPointer(
-        location,
-        1,
-        gl.FLOAT,
-        false,
-        INSTANCE_STRIDE,
-        location * Float32Array.BYTES_PER_ELEMENT,
-      );
-      gl.vertexAttribDivisor(location, 1);
-    }
-
-    gl.bindVertexArray(null);
-    gl.bindBuffer(gl.ARRAY_BUFFER, null);
 
     configureTexture(gl, this.colorTexture);
   }
@@ -349,8 +320,6 @@ export class GpuPressureLayer {
     this.clearSurfaceBuffers();
     gl.deleteTexture(this.colorTexture);
     gl.deleteFramebuffer(this.framebuffer);
-    gl.deleteBuffer(this.instanceBuffer);
-    gl.deleteVertexArray(this.geometryVao);
     gl.deleteVertexArray(this.displayVao);
     gl.deleteProgram(this.geometryProgram);
     gl.deleteProgram(this.displayProgram);
@@ -371,10 +340,9 @@ export class GpuPressureLayer {
           changed = true;
         }
 
-        const signature = surfaceBufferSignature(row, surface);
-        if (cached.signature !== signature) {
-          this.uploadSurfaceBuffer(cached, row, surface, frame.nowMs);
-          cached.signature = signature;
+        if (cached.dataRevision !== surface.dataRevision) {
+          this.uploadSurfaceBuffer(cached, surface, frame.nowMs);
+          cached.dataRevision = surface.dataRevision;
           changed = true;
         }
         totalInstances += cached.instanceCount;
@@ -400,7 +368,7 @@ export class GpuPressureLayer {
     gl.bindVertexArray(vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
 
-    for (let location = 0; location <= 10; location++) {
+    for (let location = 0; location < INSTANCE_FLOATS; location++) {
       gl.enableVertexAttribArray(location);
       gl.vertexAttribPointer(
         location,
@@ -413,26 +381,20 @@ export class GpuPressureLayer {
       gl.vertexAttribDivisor(location, 1);
     }
 
-    gl.enableVertexAttribArray(11);
-    gl.vertexAttribPointer(
-      11,
-      3,
-      gl.FLOAT,
-      false,
-      INSTANCE_STRIDE,
-      11 * Float32Array.BYTES_PER_ELEMENT,
-    );
-    gl.vertexAttribDivisor(11, 1);
-
     gl.bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
 
-    return { buffer, vao, signature: "", instanceCount: 0, timeOriginMs: 0 };
+    return {
+      buffer,
+      vao,
+      dataRevision: -1,
+      instanceCount: 0,
+      timeOriginMs: 0,
+    };
   }
 
   private uploadSurfaceBuffer(
     cached: CachedPressureSurface,
-    row: GpuPressureRow,
     surface: GpuPressureSurface,
     nowMs: number,
   ): void {
@@ -441,12 +403,7 @@ export class GpuPressureLayer {
     appendResidentRuns(
       values,
       surface.runs,
-      row.centerCss,
-      row.heightCss,
-      resolveCssColor(surface.color),
-      surface.mirrorPrice,
-      surface.yDirection,
-      surface.currentValidThroughMs,
+      surface.maxPrice,
       cached.timeOriginMs,
     );
 
@@ -526,33 +483,6 @@ export class GpuPressureLayer {
     return true;
   }
 
-  private uploadInstances(frame: GpuPressureFrame): void {
-    const gl = this.gl;
-    this.instanceTimeOriginMs = frame.nowMs;
-
-    const values: number[] = [];
-    for (const row of frame.rows)
-      for (const surface of row.surfaces)
-        appendResidentRuns(
-          values,
-          surface.runs,
-          row.centerCss,
-          row.heightCss,
-          resolveCssColor(surface.color),
-          surface.mirrorPrice,
-          surface.yDirection,
-          surface.currentValidThroughMs,
-          this.instanceTimeOriginMs,
-        );
-
-    const instances = new Float32Array(values);
-    this.instanceCount = instances.length / INSTANCE_FLOATS;
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, instances, gl.DYNAMIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, null);
-  }
-
   private rasterize(frame: GpuPressureFrame): void {
     const gl = this.gl;
     this.referenceTimeMs = frame.nowMs;
@@ -595,36 +525,67 @@ export class GpuPressureLayer {
       uniform1f(
         gl,
         this.geometryProgram,
-        "uNowOffsetSec",
-        (frame.nowMs - this.instanceTimeOriginMs) / 1_000,
-      );
-      uniform1f(
-        gl,
-        this.geometryProgram,
         "uGhostHalfLifeSec",
         frame.ghostHalfLifeMs / 1_000,
       );
 
-      // Historical instances stay resident in the GPU buffer. Projection and
-      // decay parameters are uniforms, so rescaling only rerasterizes these
-      // existing instances instead of rebuilding/uploading them from JS.
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE);
+
       for (const row of frame.rows) {
         for (const surface of row.surfaces) {
           const cached = this.surfaceBuffers.get(surface.key);
           if (!cached || cached.instanceCount === 0) continue;
+
           uniform1f(
             gl,
             this.geometryProgram,
             "uNowOffsetSec",
             (frame.nowMs - cached.timeOriginMs) / 1_000,
           );
+
+          const hasCurrent = surface.currentValidThroughMs !== undefined;
+          uniform1i(
+            gl,
+            this.geometryProgram,
+            "uHasCurrentValidThrough",
+            hasCurrent ? 1 : 0,
+          );
+          uniform1f(
+            gl,
+            this.geometryProgram,
+            "uCurrentValidThroughSec",
+            hasCurrent
+              ? (surface.currentValidThroughMs! - cached.timeOriginMs) / 1_000
+              : 0,
+          );
+          uniform1f(gl, this.geometryProgram, "uCenterCss", row.centerCss);
+          uniform1f(gl, this.geometryProgram, "uRowHeightCss", row.heightCss);
+          uniform1f(
+            gl,
+            this.geometryProgram,
+            "uMirrorPrice",
+            surface.mirrorPrice ? 1 : 0,
+          );
+          uniform1f(
+            gl,
+            this.geometryProgram,
+            "uYDirection",
+            surface.yDirection,
+          );
+          uniform3f(
+            gl,
+            this.geometryProgram,
+            "uColor",
+            resolveCssColor(surface.color),
+          );
+
           gl.bindVertexArray(cached.vao);
           gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, cached.instanceCount);
         }
       }
+
       gl.bindVertexArray(null);
       gl.disable(gl.BLEND);
     }
@@ -673,82 +634,37 @@ export class GpuPressureLayer {
 function appendResidentRuns(
   values: number[],
   runs: readonly PressureRenderRun[],
-  centerCss: number,
-  rowHeightCss: number,
-  color: readonly [number, number, number],
-  mirrorPrice: boolean,
-  yDirection: -1 | 1,
-  currentValidThroughMs: number | undefined,
+  maxPrice: Price,
   timeOriginMs: number,
 ): void {
-  const surfaceCurrentValidThroughSec =
-    currentValidThroughMs === undefined
-      ? undefined
-      : (currentValidThroughMs - timeOriginMs) / 1_000;
-
-  for (const run of runs) {
-    const priceLo = priceToNumber(run.lo);
-    const priceHi = priceToNumber(run.hi);
+  for (let index = 0; index < runs.length; index++) {
+    const run = runs[index]!;
+    const nextPrice = runs[index + 1]?.price ?? maxPrice;
+    const priceLo = priceToNumber(run.price);
+    const priceHi = priceToNumber(nextPrice);
     if (!(priceHi > priceLo)) continue;
 
-    for (const band of run.bands) {
+    if (run.volume > 0) {
+      values.push(priceLo, priceHi, 0, run.volume, 0, 1);
+    }
+
+    for (const band of run.frozenBands) {
       if (
         !(band.hiVolume > band.loVolume) ||
         !Number.isFinite(band.validThroughMs)
       )
         continue;
 
-      const bandValidThroughSec = (band.validThroughMs - timeOriginMs) / 1_000;
-
       values.push(
         priceLo,
         priceHi,
         band.loVolume,
         band.hiVolume,
-        bandValidThroughSec,
-        run.volume,
-        surfaceCurrentValidThroughSec ?? bandValidThroughSec,
-        centerCss,
-        rowHeightCss,
-        mirrorPrice ? 1 : 0,
-        yDirection,
-        color[0],
-        color[1],
-        color[2],
+        (band.validThroughMs - timeOriginMs) / 1_000,
+        0,
       );
     }
   }
-}
-
-function surfaceBufferSignature(
-  row: GpuPressureRow,
-  surface: GpuPressureSurface,
-): string {
-  return [
-    surface.dataRevision,
-    surface.currentValidThroughMs ?? "",
-    row.centerCss,
-    row.heightCss,
-    surface.color,
-    surface.mirrorPrice ? 1 : 0,
-    surface.yDirection,
-  ].join(":");
-}
-
-function instanceDataKey(frame: GpuPressureFrame): string {
-  const rows = frame.rows
-    .map(
-      (row) =>
-        `${row.key}@${row.centerCss}:${row.heightCss}:${row.surfaces
-          .map(
-            (surface) =>
-              `${surface.color}:${surface.mirrorPrice ? 1 : 0}:${surface.yDirection}:${surface.currentValidThroughMs ?? ""}`,
-          )
-          .join(",")}`,
-    )
-    .join("|");
-
-  return [frame.revision, rows].join(";");
 }
 
 function rasterProjectionKey(
@@ -756,6 +672,18 @@ function rasterProjectionKey(
   width: number,
   height: number,
 ): string {
+  const rows = frame.rows
+    .map(
+      (row) =>
+        `${row.key}@${row.centerCss}:${row.heightCss}:${row.surfaces
+          .map(
+            (surface) =>
+              `${surface.key}:${surface.dataRevision}:${surface.currentValidThroughMs ?? ""}:${surface.color}:${surface.mirrorPrice ? 1 : 0}:${surface.yDirection}`,
+          )
+          .join(",")}`,
+    )
+    .join("|");
+
   return [
     width,
     height,
@@ -765,6 +693,7 @@ function rasterProjectionKey(
     frame.viewport.width,
     frame.volumePerCssPixel,
     frame.ghostHalfLifeMs,
+    rows,
   ].join(";");
 }
 
@@ -877,6 +806,20 @@ function uniform2f(
   y: number,
 ): void {
   gl.uniform2f(required(gl.getUniformLocation(program, name), name), x, y);
+}
+
+function uniform3f(
+  gl: WebGL2RenderingContext,
+  program: WebGLProgram,
+  name: string,
+  value: readonly [number, number, number],
+): void {
+  gl.uniform3f(
+    required(gl.getUniformLocation(program, name), name),
+    value[0],
+    value[1],
+    value[2],
+  );
 }
 
 function supersampleFactors(dpr: number): readonly [number, number] {

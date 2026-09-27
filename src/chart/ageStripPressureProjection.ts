@@ -46,6 +46,7 @@ export function agePressurePerspective(
 export function agePressureSurface(
   key: string,
   dataRevision: number,
+  maxPrice: Price,
   runs: readonly PressureRenderRun[],
   currentValidThroughMs: number | undefined,
   colorScale: SignedVolumeColorScale,
@@ -55,6 +56,7 @@ export function agePressureSurface(
   return {
     key,
     dataRevision,
+    maxPrice,
     runs,
     currentValidThroughMs,
     color: signedVolumeColor(perspective.colorSign, colorScale),

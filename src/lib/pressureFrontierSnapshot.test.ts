@@ -43,7 +43,7 @@ test("snapshot persists exact token-local coordinates", () => {
 
   expect(snapshot.version).toBe(PRESSURE_FRONTIER_SNAPSHOT_VERSION);
   expect(snapshot.current[0]?.key).toBe(p(0.013));
-  expect(snapshot.field.runs.every((run) => Number.isInteger(run.lo))).toBe(
+  expect(snapshot.field.runs.every((run) => Number.isInteger(run.price))).toBe(
     true,
   );
 });
@@ -55,4 +55,104 @@ test("older snapshot versions are rejected by the canonical parser", () => {
       primaryToCollateral: { current: [], field: {} },
     }),
   ).toThrow(/unsupported pressure frontier snapshot version/);
+});
+
+test("version 4 snapshots migrate to frontier stacks", () => {
+  const parsed = parsePressureFrontierSnapshot({
+    version: 4,
+    current: [{ key: p(0.5), weight: 60 }],
+    field: {
+      currentValidThroughMs: 2_000,
+      runs: [
+        {
+          lo: p(0),
+          hi: p(0.5),
+          volume: 0,
+          bands: [],
+        },
+        {
+          lo: p(0.5),
+          hi: p(1),
+          volume: 60,
+          bands: [
+            { loVolume: 0, hiVolume: 60, validThroughMs: 2_000 },
+            { loVolume: 60, hiVolume: 100, validThroughMs: 1_000 },
+          ],
+        },
+      ],
+    },
+  });
+
+  expect(parsed.version).toBe(PRESSURE_FRONTIER_SNAPSHOT_VERSION);
+  expect(parsed.field).toEqual({
+    maxPrice: p(1),
+    currentValidThroughMs: 2_000,
+    runs: [
+      {
+        price: p(0.5),
+        volume: 60,
+        frozenBands: [{ loVolume: 60, hiVolume: 100, validThroughMs: 1_000 }],
+      },
+    ],
+  });
+});
+
+test("canonical snapshots reject explicit price-zero pressure", () => {
+  expect(() =>
+    parsePressureFrontierSnapshot({
+      version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
+      current: [{ key: p(0), weight: 1 }],
+      field: {
+        maxPrice: p(1),
+        currentValidThroughMs: 1,
+        runs: [],
+      },
+    }),
+  ).toThrow(/must be in/);
+});
+
+test("restore rejects detached frozen history", () => {
+  const memory = new PressureFrontierMemory();
+
+  expect(() =>
+    memory.restore({
+      version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
+      current: [{ key: p(0.5), weight: 60 }],
+      field: {
+        maxPrice: p(1),
+        currentValidThroughMs: 2_000,
+        runs: [
+          {
+            price: p(0.5),
+            volume: 60,
+            frozenBands: [
+              { loVolume: 70, hiVolume: 100, validThroughMs: 1_000 },
+            ],
+          },
+        ],
+      },
+    }),
+  ).toThrow(/must touch the current volume frontier/);
+});
+
+test("restore rejects current pressure without a current timestamp", () => {
+  const memory = new PressureFrontierMemory();
+
+  expect(() =>
+    memory.restore({
+      version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
+      current: [{ key: p(0.5), weight: 60 }],
+      field: {
+        maxPrice: p(1),
+        currentValidThroughMs: null,
+        runs: [
+          {
+            price: p(0.5),
+            volume: 60,
+            frozenBands: [],
+          },
+        ],
+      },
+    }),
+  ).toThrow(/requires a current valid-through timestamp/);
 });

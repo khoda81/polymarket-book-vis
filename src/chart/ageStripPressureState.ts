@@ -171,8 +171,16 @@ function oldestSnapshotPressureMs(
   snapshot: PressureFrontierSnapshot,
 ): number | null {
   let oldest = Number.POSITIVE_INFINITY;
+
+  if (
+    snapshot.field.currentValidThroughMs !== null &&
+    snapshot.field.runs.some((run) => run.volume > 0)
+  )
+    oldest = Math.min(oldest, snapshot.field.currentValidThroughMs);
+
   for (const run of snapshot.field.runs)
-    for (const band of run.bands)
+    for (const band of run.frozenBands)
       oldest = Math.min(oldest, band.validThroughMs);
+
   return Number.isFinite(oldest) ? oldest : null;
 }

@@ -59,7 +59,6 @@ export class AgeStripView {
   private readonly pressure = new AgeStripPressureState();
   private pressureLayer: GpuPressureLayer | null = null;
   private readonly visibilityInitialized = new Set<string>();
-  private pressureRevision = 0;
   private stalenessRefreshTimer: number | undefined;
   private layoutMode: "age" | "volume" | null = null;
 
@@ -91,7 +90,6 @@ export class AgeStripView {
 
   reset(): void {
     this.pressure.reset();
-    this.pressureRevision++;
     this.pressureLayer?.invalidate();
     this.visibilityInitialized.clear();
     this.cancelStalenessRefresh();
@@ -113,7 +111,6 @@ export class AgeStripView {
     this.pressure.hydrate(snapshotsByToken, (tokenId) =>
       this.host.getBook(tokenId),
     );
-    this.pressureRevision++;
     this.pressureLayer?.invalidate();
   }
 
@@ -136,7 +133,6 @@ export class AgeStripView {
         return rows;
       }),
     );
-    this.pressureRevision++;
     this.pressureLayer?.invalidate();
   }
 
@@ -145,7 +141,6 @@ export class AgeStripView {
     if (!book) return;
 
     this.pressure.applyBookUpdate(tokenId, book, update);
-    this.pressureRevision++;
 
     if (this.visibilityInitialized.has(tokenId)) return;
     this.visibilityInitialized.add(tokenId);
@@ -158,7 +153,6 @@ export class AgeStripView {
     this.pressure.resolve(tokenId);
     const oppositeTokenId = this.host.getOppositeTokenId(tokenId);
     if (oppositeTokenId) this.pressure.resolve(oppositeTokenId);
-    this.pressureRevision++;
     this.pressureLayer?.invalidate();
   }
 
@@ -265,6 +259,7 @@ export class AgeStripView {
                 agePressureSurface(
                   tokenId,
                   primaryMemory.renderDataRevision(),
+                  primaryMemory.renderMaxPrice(),
                   primaryMemory.renderRuns(),
                   primaryMemory.renderCurrentValidThroughMs(),
                   colorScale,
@@ -277,6 +272,7 @@ export class AgeStripView {
                 agePressureSurface(
                   oppositeTokenId!,
                   oppositeMemory.renderDataRevision(),
+                  oppositeMemory.renderMaxPrice(),
                   oppositeMemory.renderRuns(),
                   oppositeMemory.renderCurrentValidThroughMs(),
                   colorScale,
@@ -312,7 +308,6 @@ export class AgeStripView {
       volumePerCssPixel: tuning.volumePerCssPixel,
       ghostHalfLifeMs: tuning.ghostHalfLifeMs,
       nowMs,
-      revision: this.pressureRevision,
       background: theme.bg,
     });
 

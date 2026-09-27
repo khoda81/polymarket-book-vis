@@ -6,23 +6,33 @@ import {
 import type { PressureBand } from "./pressureField";
 import { PRICE_ONE, PRICE_ZERO, type Price, priceFromTicks } from "./price";
 
+/**
+ * One explicit price boundary in the materialized pressure field.
+ *
+ * The state applies from `price` through the next stored price boundary.
+ * There is deliberately no stored price-0 sentinel: disposing of an asset at
+ * zero is a semantic boundary condition, not mutable book state.
+ */
 export interface PressureRenderRun {
-  readonly lo: Price;
-  readonly hi: Price;
-  /** Current cumulative resting volume for this price run. */
+  readonly price: Price;
+  /** Current cumulative resting volume from this price onward. */
   readonly volume: number;
-  /** Stored historical bands; current validity is applied lazily by consumers. */
-  readonly bands: readonly PressureBand[];
+  /**
+   * Historical pressure above the current volume frontier, stored high-to-low.
+   * The final entry, when present, touches `volume`.
+   */
+  readonly frozenBands: readonly PressureBand[];
 }
 
 export interface PressureFieldRunSnapshot {
-  readonly lo: Price;
-  readonly hi: Price;
+  readonly price: Price;
   readonly volume: number;
-  readonly bands: readonly PressureBand[];
+  readonly frozenBands: readonly PressureBand[];
 }
 
 export interface PressureFieldSnapshot {
+  /** Semantic upper bound of this price domain. */
+  readonly maxPrice: Price;
   readonly currentValidThroughMs: number | null;
   readonly runs: readonly PressureFieldRunSnapshot[];
 }
@@ -32,39 +42,55 @@ export interface PressureLevelDelta {
   readonly delta: number;
 }
 
+interface MutableBand {
+  loVolume: number;
+  hiVolume: number;
+  validThroughMs: number;
+}
+
 interface MutableRun {
-  lo: Price;
-  hi: Price;
+  price: Price;
   volume: number;
-  bands: PressureBand[];
+  /** High-to-low; the last band is adjacent to the current volume frontier. */
+  frozenBands: MutableBand[];
 }
 
 /**
  * Historical pressure for one directed token -> collateral edge.
  *
- * Price coordinates are edge-local. A resting level at price p contributes to
- * cumulative pressure for every x >= p, so volume is monotone non-decreasing
- * across price. The field has no knowledge of YES/NO, bid/ask, or screen side.
+ * Only explicit non-zero price boundaries are stored. The implicit infinite
+ * disposal order at price zero belongs to the asset semantics and never enters
+ * this data structure.
+ *
+ * For each price run, current pressure is represented implicitly as
+ * [0, volume). Only pressure that has left the current book is retained in
+ * `frozenBands`. This makes a volume-frontier move a stack operation rather
+ * than a rebuild of the full historical partition.
  */
 export class MaterializedPressureField {
-  private runs: MutableRun[] = [emptyRun()];
+  private runs: MutableRun[] = [];
   private currentValidThroughMs: number | undefined;
 
+  constructor(private readonly maxPrice: Price = PRICE_ONE) {
+    if (!(maxPrice > PRICE_ZERO))
+      throw new RangeError("pressure max price must be positive");
+  }
+
   renderRuns(): readonly PressureRenderRun[] {
-    // MutableRun is structurally compatible with the readonly render view.
-    // Do not clone/materialize historical bands here: render-only decay frames
-    // are extremely frequent and the renderer can apply current validity lazily.
     return this.runs;
+  }
+
+  renderMaxPrice(): Price {
+    return this.maxPrice;
   }
 
   renderCurrentValidThroughMs(): number | undefined {
     return this.currentValidThroughMs;
   }
 
+  /** Explicit stored price boundaries only; the implicit price-zero sentinel is absent. */
   priceBoundaries(): readonly Price[] {
-    const result = this.runs.map((run) => run.lo);
-    result.push(this.runs[this.runs.length - 1]?.hi ?? PRICE_ONE);
-    return result;
+    return this.runs.map((run) => run.price);
   }
 
   bandsAtPrice(price: Price): readonly PressureBand[] {
@@ -78,48 +104,39 @@ export class MaterializedPressureField {
     const run = this.runAtPrice(price);
     if (!run) return undefined;
 
-    let lo = 0;
-    let hi = run.bands.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      const band = run.bands[mid]!;
-      if (volume < band.loVolume) hi = mid;
-      else if (volume >= band.hiVolume) lo = mid + 1;
-      else
-        return {
-          ...band,
-          validThroughMs: effectiveValidThroughMs(
-            run,
-            band,
-            this.currentValidThroughMs,
-          ),
-        };
+    if (volume < run.volume) {
+      const validThroughMs = this.currentValidThroughMs;
+      return validThroughMs === undefined
+        ? undefined
+        : {
+            loVolume: 0,
+            hiVolume: run.volume,
+            validThroughMs,
+          };
     }
-    return undefined;
+
+    const band = frozenBandAt(run.frozenBands, volume);
+    return band ? cloneBand(band) : undefined;
   }
 
   applyDeltas(
     deltas: readonly PressureLevelDelta[],
-    validThroughMs: number,
     nextFrontier: FrontierRoot,
   ): void {
-    const actual = validDeltas(deltas);
+    const actual = validDeltas(deltas, this.maxPrice);
     if (actual.length === 0) return;
 
+    actual.sort((a, b) => a.price - b.price);
     for (const { price } of actual) this.splitAt(price);
 
-    for (const run of this.runs) {
-      if (!actual.some(({ price }) => run.lo >= price)) continue;
+    const firstChangedPrice = actual[0]!.price;
+    const firstRun = this.findInsertIndex(firstChangedPrice);
 
-      const nextVolume = frontierVolumeThrough(nextFrontier, run.lo);
+    for (let index = firstRun; index < this.runs.length; index++) {
+      const run = this.runs[index]!;
+      const nextVolume = frontierVolumeThrough(nextFrontier, run.price);
       if (sameFrontierVolume(nextVolume, run.volume)) continue;
-
-      transitionRun(
-        run,
-        nextVolume,
-        validThroughMs,
-        this.currentValidThroughMs,
-      );
+      transitionRun(run, nextVolume, this.currentValidThroughMs);
     }
 
     this.mergeAdjacentRuns();
@@ -133,59 +150,65 @@ export class MaterializedPressureField {
   }
 
   hasVisiblePressure(visibleSinceMs: number): boolean {
+    if (
+      this.currentValidThroughMs !== undefined &&
+      this.currentValidThroughMs > visibleSinceMs &&
+      this.runs.some((run) => run.volume > 0)
+    )
+      return true;
+
     return this.runs.some((run) =>
-      run.bands.some(
-        (band) =>
-          effectiveValidThroughMs(run, band, this.currentValidThroughMs) >
-          visibleSinceMs,
-      ),
+      run.frozenBands.some((band) => band.validThroughMs > visibleSinceMs),
     );
   }
 
   clear(): void {
-    this.runs = [emptyRun()];
+    this.runs = [];
     this.currentValidThroughMs = undefined;
   }
 
   snapshot(): PressureFieldSnapshot {
     return {
+      maxPrice: this.maxPrice,
       currentValidThroughMs: this.currentValidThroughMs ?? null,
       runs: this.runs.map((run) => ({
-        lo: run.lo,
-        hi: run.hi,
+        price: run.price,
         volume: run.volume,
-        bands: materializeBands(run, this.currentValidThroughMs),
+        frozenBands: run.frozenBands.map(cloneBand),
       })),
     };
   }
 
   restore(snapshot: PressureFieldSnapshot): void {
+    const maxPrice = priceFromTicks(snapshot.maxPrice);
+    if (maxPrice !== this.maxPrice)
+      throw new RangeError(
+        `pressure max price mismatch: expected ${this.maxPrice}, got ${maxPrice}`,
+      );
+
     const currentValidThroughMs =
       snapshot.currentValidThroughMs === null
         ? undefined
         : finite(snapshot.currentValidThroughMs, "current valid-through");
-    if (!Array.isArray(snapshot.runs) || snapshot.runs.length === 0)
-      throw new RangeError("pressure field must contain at least one run");
 
-    const runs = snapshot.runs.map((run) => ({
-      lo: priceFromTicks(run.lo),
-      hi: priceFromTicks(run.hi),
+    if (!Array.isArray(snapshot.runs))
+      throw new TypeError("pressure field runs must be an array");
+
+    const runs: MutableRun[] = snapshot.runs.map((run) => ({
+      price: priceFromTicks(run.price),
       volume: nonNegative(run.volume, "pressure volume"),
-      bands: run.bands.map(cloneBand),
+      frozenBands: run.frozenBands.map(cloneBand),
     }));
 
-    validateRuns(runs);
+    validateRuns(runs, maxPrice, currentValidThroughMs);
     this.runs = runs;
     this.currentValidThroughMs = currentValidThroughMs;
     this.mergeAdjacentRuns();
   }
 
   validateAgainstFrontier(frontier: FrontierRoot): void {
-    const boundaries = new Set<Price>();
     for (const run of this.runs) {
-      boundaries.add(run.lo);
-      boundaries.add(run.hi);
-      const expected = frontierVolumeThrough(frontier, run.lo);
+      const expected = frontierVolumeThrough(frontier, run.price);
       if (!sameFrontierVolume(run.volume, expected))
         throw new RangeError(
           "materialized pressure field does not match current frontier",
@@ -194,49 +217,51 @@ export class MaterializedPressureField {
   }
 
   private runAtPrice(price: Price): MutableRun | undefined {
-    let lo = 0;
-    let hi = this.runs.length;
+    if (price <= PRICE_ZERO || price > this.maxPrice || this.runs.length === 0)
+      return undefined;
 
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      const run = this.runs[mid]!;
-      if (price < run.lo) hi = mid;
-      else if (price >= run.hi && mid + 1 < this.runs.length) lo = mid + 1;
-      else return run;
-    }
-    return undefined;
+    const index = this.findInsertIndex(price);
+    if (index < this.runs.length && this.runs[index]!.price === price)
+      return this.runs[index];
+    return index > 0 ? this.runs[index - 1] : undefined;
   }
 
   private splitAt(price: Price): void {
-    if (!(price > PRICE_ZERO && price < PRICE_ONE)) return;
+    if (!(price > PRICE_ZERO) || price > this.maxPrice) return;
 
-    for (let index = 0; index < this.runs.length; index++) {
-      const run = this.runs[index]!;
-      if (price <= run.lo || price >= run.hi) continue;
+    const index = this.findInsertIndex(price);
+    if (index < this.runs.length && this.runs[index]!.price === price) return;
 
-      const left = cloneRun(run);
-      left.hi = price;
-      const right = cloneRun(run);
-      right.lo = price;
-      this.runs.splice(index, 1, left, right);
-      return;
+    const source = index > 0 ? this.runs[index - 1] : undefined;
+    this.runs.splice(index, 0, {
+      price,
+      volume: source?.volume ?? 0,
+      frozenBands: source?.frozenBands.map(cloneBand) ?? [],
+    });
+  }
+
+  private findInsertIndex(price: Price): number {
+    let lo = 0;
+    let hi = this.runs.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this.runs[mid]!.price < price) lo = mid + 1;
+      else hi = mid;
     }
+    return lo;
   }
 
   private mergeAdjacentRuns(): void {
-    if (this.runs.length < 2) return;
+    if (this.runs.length === 0) return;
 
     const merged: MutableRun[] = [];
     for (const run of this.runs) {
       const previous = merged[merged.length - 1];
-      if (
-        previous &&
-        previous.hi === run.lo &&
-        sameFrontierVolume(previous.volume, run.volume) &&
-        bandsEqual(previous, run, this.currentValidThroughMs)
-      )
-        previous.hi = run.hi;
-      else merged.push(run);
+
+      if (!previous && emptyState(run)) continue;
+      if (previous && statesEqual(previous, run)) continue;
+
+      merged.push(run);
     }
     this.runs = merged;
   }
@@ -244,12 +269,13 @@ export class MaterializedPressureField {
 
 function validDeltas(
   deltas: readonly PressureLevelDelta[],
+  maxPrice: Price,
 ): PressureLevelDelta[] {
   return deltas.filter(
     ({ price, delta }) =>
       Number.isSafeInteger(price) &&
-      price >= PRICE_ZERO &&
-      price <= PRICE_ONE &&
+      price > PRICE_ZERO &&
+      price <= maxPrice &&
       Number.isFinite(delta) &&
       delta !== 0,
   );
@@ -258,178 +284,199 @@ function validDeltas(
 function transitionRun(
   run: MutableRun,
   nextVolume: number,
-  validThroughMs: number,
   currentValidThroughMs: number | undefined,
 ): void {
-  const oldVolume = run.volume;
-  run.volume = nextVolume;
+  nextVolume = nonNegative(nextVolume, "pressure volume");
 
-  const boundaries = new Set<number>([0, oldVolume, nextVolume]);
-  for (const band of run.bands) {
-    boundaries.add(band.loVolume);
-    boundaries.add(band.hiVolume);
+  const oldVolume = run.volume;
+  if (sameFrontierVolume(oldVolume, nextVolume)) {
+    run.volume = nextVolume;
+    return;
   }
 
-  const sorted = [...boundaries]
-    .filter((value) => Number.isFinite(value) && value >= 0)
-    .sort((a, b) => a - b);
+  if (nextVolume < oldVolume) {
+    if (currentValidThroughMs === undefined)
+      throw new RangeError(
+        "cannot freeze current pressure before it has a validity timestamp",
+      );
 
-  const next: PressureBand[] = [];
-  let bandIndex = 0;
-  for (let index = 0; index + 1 < sorted.length; index++) {
-    const lo = sorted[index]!;
-    const hi = sorted[index + 1]!;
-    if (!(hi > lo)) continue;
+    const last = run.frozenBands[run.frozenBands.length - 1];
+    if (last && !sameFrontierVolume(last.loVolume, oldVolume))
+      throw new RangeError(
+        "frozen pressure stack is detached from the current frontier",
+      );
 
-    // Both the generated intervals and stored bands are ordered by volume.
-    // Walk the bands once instead of rescanning from the beginning for every
-    // interval (the old bandAt/find path was O(B²)).
-    while (bandIndex < run.bands.length && run.bands[bandIndex]!.hiVolume <= lo)
-      bandIndex++;
-
-    const candidate = run.bands[bandIndex];
-    const existing =
-      candidate && candidate.loVolume <= lo && lo < candidate.hiVolume
-        ? candidate
-        : undefined;
-
-    const wasCurrent = lo < oldVolume;
-    const isCurrent = lo < nextVolume;
-
-    if (isCurrent) {
-      appendBand(next, {
-        loVolume: lo,
-        hiVolume: hi,
-        validThroughMs,
+    if (
+      last &&
+      last.validThroughMs === currentValidThroughMs &&
+      sameFrontierVolume(last.loVolume, oldVolume)
+    ) {
+      last.loVolume = nextVolume;
+    } else {
+      run.frozenBands.push({
+        loVolume: nextVolume,
+        hiVolume: oldVolume,
+        validThroughMs: currentValidThroughMs,
       });
-    } else if (wasCurrent) {
-      appendBand(next, {
-        loVolume: lo,
-        hiVolume: hi,
-        validThroughMs: Math.max(
-          existing?.validThroughMs ?? Number.NEGATIVE_INFINITY,
-          currentValidThroughMs ?? Number.NEGATIVE_INFINITY,
-        ),
-      });
-    } else if (existing) {
-      appendBand(next, {
-        ...existing,
-        loVolume: lo,
-        hiVolume: hi,
-      });
+    }
+  } else {
+    while (run.frozenBands.length > 0) {
+      const last = run.frozenBands[run.frozenBands.length - 1]!;
+      if (last.hiVolume <= nextVolume) {
+        run.frozenBands.pop();
+        continue;
+      }
+
+      if (last.loVolume < nextVolume) last.loVolume = nextVolume;
+      break;
     }
   }
 
-  run.bands = next;
+  run.volume = nextVolume;
 }
 
-function appendBand(bands: PressureBand[], band: PressureBand): void {
-  if (!Number.isFinite(band.validThroughMs)) return;
+function frozenBandAt(
+  frozenBands: readonly MutableBand[],
+  volume: number,
+): MutableBand | undefined {
+  // Bands are sorted high-to-low, so lower volumes live at larger indexes.
+  let lo = 0;
+  let hi = frozenBands.length;
 
-  const previous = bands[bands.length - 1];
-  if (
-    previous &&
-    previous.hiVolume === band.loVolume &&
-    previous.validThroughMs === band.validThroughMs
-  ) {
-    bands[bands.length - 1] = { ...previous, hiVolume: band.hiVolume };
-    return;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    const band = frozenBands[mid]!;
+    if (volume < band.loVolume) lo = mid + 1;
+    else if (volume >= band.hiVolume) hi = mid;
+    else return band;
   }
-  bands.push(band);
-}
-
-function bandsEqual(
-  a: MutableRun,
-  b: MutableRun,
-  currentValidThroughMs: number | undefined,
-): boolean {
-  return (
-    a.bands === b.bands ||
-    (a.bands.length === b.bands.length &&
-      a.bands.every((band, index) => {
-        const other = b.bands[index]!;
-        return (
-          band.loVolume === other.loVolume &&
-          band.hiVolume === other.hiVolume &&
-          effectiveValidThroughMs(a, band, currentValidThroughMs) ===
-            effectiveValidThroughMs(b, other, currentValidThroughMs)
-        );
-      }))
-  );
+  return undefined;
 }
 
 function materializeBands(
   run: MutableRun,
   currentValidThroughMs: number | undefined,
 ): PressureBand[] {
-  return run.bands.map((band) => ({
-    ...band,
-    validThroughMs: effectiveValidThroughMs(run, band, currentValidThroughMs),
-  }));
+  const result: MutableBand[] = [];
+
+  if (run.volume > 0) {
+    if (currentValidThroughMs === undefined)
+      throw new RangeError(
+        "current pressure is missing its validity timestamp",
+      );
+    appendBand(result, {
+      loVolume: 0,
+      hiVolume: run.volume,
+      validThroughMs: currentValidThroughMs,
+    });
+  }
+
+  for (let index = run.frozenBands.length - 1; index >= 0; index--)
+    appendBand(result, cloneBand(run.frozenBands[index]!));
+
+  return result;
 }
 
-function effectiveValidThroughMs(
-  run: MutableRun,
-  band: PressureBand,
+function appendBand(bands: MutableBand[], band: MutableBand): void {
+  if (!Number.isFinite(band.validThroughMs)) return;
+
+  const previous = bands[bands.length - 1];
+  if (
+    previous &&
+    sameFrontierVolume(previous.hiVolume, band.loVolume) &&
+    previous.validThroughMs === band.validThroughMs
+  ) {
+    previous.hiVolume = band.hiVolume;
+    return;
+  }
+  bands.push(band);
+}
+
+function statesEqual(a: MutableRun, b: MutableRun): boolean {
+  return (
+    sameFrontierVolume(a.volume, b.volume) &&
+    a.frozenBands.length === b.frozenBands.length &&
+    a.frozenBands.every((band, index) =>
+      bandsEqual(band, b.frozenBands[index]!),
+    )
+  );
+}
+
+function bandsEqual(a: MutableBand, b: MutableBand): boolean {
+  return (
+    sameFrontierVolume(a.loVolume, b.loVolume) &&
+    sameFrontierVolume(a.hiVolume, b.hiVolume) &&
+    a.validThroughMs === b.validThroughMs
+  );
+}
+
+function emptyState(run: MutableRun): boolean {
+  return sameFrontierVolume(run.volume, 0) && run.frozenBands.length === 0;
+}
+
+function validateRuns(
+  runs: readonly MutableRun[],
+  maxPrice: Price,
   currentValidThroughMs: number | undefined,
-): number {
-  if (currentValidThroughMs === undefined || !(band.loVolume < run.volume))
-    return band.validThroughMs;
-  return Math.max(band.validThroughMs, currentValidThroughMs);
-}
-
-function validateRuns(runs: readonly MutableRun[]): void {
-  if (runs[0]!.lo !== PRICE_ZERO || runs[runs.length - 1]!.hi !== PRICE_ONE)
-    throw new RangeError("pressure runs must cover [0, 1]");
-
+): void {
+  let previousPrice = PRICE_ZERO;
   let previousVolume = 0;
-  for (let index = 0; index < runs.length; index++) {
-    const run = runs[index]!;
-    if (!(run.hi > run.lo))
-      throw new RangeError("pressure run interval must be positive");
-    if (index > 0 && runs[index - 1]!.hi !== run.lo)
-      throw new RangeError("pressure runs must be contiguous");
+
+  for (const run of runs) {
+    if (!(run.price > previousPrice) || run.price > maxPrice)
+      throw new RangeError(
+        "pressure run prices must be strictly increasing non-zero boundaries",
+      );
+
     if (
       run.volume < previousVolume &&
       !sameFrontierVolume(run.volume, previousVolume)
     )
       throw new RangeError("edge pressure must be non-decreasing in price");
 
+    if (run.volume > 0 && currentValidThroughMs === undefined)
+      throw new RangeError(
+        "current pressure requires a current valid-through timestamp",
+      );
+
+    validateFrozenBands(run);
+    previousPrice = run.price;
     previousVolume = run.volume;
-    validateBands(run);
   }
+
+  if (runs[0] && emptyState(runs[0]))
+    throw new RangeError("pressure field must not store a leading empty run");
 }
 
-function validateBands(run: MutableRun): void {
-  let cursor = 0;
-  for (const band of run.bands) {
+function validateFrozenBands(run: MutableRun): void {
+  let lowerEdge: number | undefined;
+
+  for (const band of run.frozenBands) {
     if (
-      band.loVolume !== cursor ||
+      !Number.isFinite(band.loVolume) ||
+      !Number.isFinite(band.hiVolume) ||
+      band.loVolume < 0 ||
       !(band.hiVolume > band.loVolume) ||
       !Number.isFinite(band.validThroughMs)
     )
-      throw new RangeError("invalid pressure band");
-    cursor = band.hiVolume;
+      throw new RangeError("invalid frozen pressure band");
+
+    if (
+      lowerEdge !== undefined &&
+      !sameFrontierVolume(lowerEdge, band.hiVolume)
+    )
+      throw new RangeError("frozen pressure bands must be contiguous");
+
+    lowerEdge = band.loVolume;
   }
 
-  if (run.volume > 0 && cursor < run.volume)
-    throw new RangeError("pressure bands must contain current pressure");
+  if (lowerEdge !== undefined && !sameFrontierVolume(lowerEdge, run.volume))
+    throw new RangeError(
+      "frozen pressure bands must touch the current volume frontier",
+    );
 }
 
-function emptyRun(): MutableRun {
-  return {
-    lo: PRICE_ZERO,
-    hi: PRICE_ONE,
-    volume: 0,
-    bands: [],
-  };
-}
-
-function cloneRun(run: MutableRun): MutableRun {
-  return { ...run, bands: run.bands.map(cloneBand) };
-}
-
-function cloneBand(band: PressureBand): PressureBand {
+function cloneBand(band: PressureBand): MutableBand {
   return { ...band };
 }
 

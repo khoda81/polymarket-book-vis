@@ -80,7 +80,7 @@ export class PressureFrontierMemory {
   restore(snapshot: PressureFrontierSnapshot | unknown): void {
     const parsed = parsePressureFrontierSnapshot(snapshot);
     const current = restoreCurrent(parsed.current);
-    const field = new MaterializedPressureField();
+    const field = new MaterializedPressureField(parsed.field.maxPrice);
     field.restore(parsed.field);
     field.validateAgainstFrontier(current);
 
@@ -107,6 +107,10 @@ export class PressureFrontierMemory {
 
   renderCurrentValidThroughMs(): number | undefined {
     return this.field.renderCurrentValidThroughMs();
+  }
+
+  renderMaxPrice(): Price {
+    return this.field.renderMaxPrice();
   }
 
   renderDataRevision(): number {
@@ -154,7 +158,12 @@ export class PressureFrontierMemory {
       } catch {
         continue;
       }
-      if (!Number.isFinite(change.shares) || change.shares < 0) continue;
+      if (
+        price === PRICE_ZERO ||
+        !Number.isFinite(change.shares) ||
+        change.shares < 0
+      )
+        continue;
       finalByPrice.set(price, change.shares);
     }
     if (finalByPrice.size === 0)
@@ -197,7 +206,7 @@ export class PressureFrontierMemory {
   }
 
   private applyPlan(plan: UpdatePlan, validThroughMs: number): boolean {
-    this.field.applyDeltas(plan.deltas, validThroughMs, plan.next);
+    this.field.applyDeltas(plan.deltas, plan.next);
     if (plan.deltas.length === 0) return false;
     this.current = plan.next;
     return true;
@@ -218,7 +227,7 @@ function normalizeLevels(levels: readonly FrontierLevel[]): FrontierLevel[] {
   for (const { key, weight } of levels) {
     if (
       !Number.isSafeInteger(key) ||
-      key < PRICE_ZERO ||
+      key <= PRICE_ZERO ||
       key > PRICE_ONE ||
       !Number.isFinite(weight) ||
       !(weight > 0)
@@ -249,7 +258,7 @@ function newestValidThrough(
 ): number | undefined {
   let newest = field.currentValidThroughMs ?? Number.NEGATIVE_INFINITY;
   for (const run of field.runs)
-    for (const band of run.bands)
+    for (const band of run.frozenBands)
       newest = Math.max(newest, band.validThroughMs);
   return Number.isFinite(newest) ? newest : undefined;
 }
