@@ -79,6 +79,9 @@ export class ChartController {
     for (const control of definition.controls) {
       this.lifecycleByMarketId.set(control.market.id, control.lifecycle);
       this.controlByTokenValue.set(control.tokenId, control);
+      const oppositeTokenId = control.market.outcomes.no.tokenId;
+      if (oppositeTokenId)
+        this.controlByTokenValue.set(oppositeTokenId, control);
     }
 
     this.feed = new LiveBookFeed(polyMarketClient, {
@@ -115,6 +118,10 @@ export class ChartController {
       getOppositeTokenName: (tokenId) => {
         const control = this.controlForTokenValue(tokenId);
         return control?.market.outcomes.no.label;
+      },
+      getOppositeTokenId: (tokenId) => {
+        const control = this.controlForTokenValue(tokenId);
+        return control?.market.outcomes.no.tokenId ?? undefined;
       },
       getPressureColorScale: (tokenId) => {
         const id = this.knownTokenId(tokenId);
@@ -166,7 +173,16 @@ export class ChartController {
     const unresolvedControls = this.definition.controls.filter(
       (control) => control.lifecycle.kind !== "resolved",
     );
-    const tokenIds = unresolvedControls.map((control) => control.tokenId);
+    const tokenIds = [
+      ...new Set(
+        unresolvedControls.flatMap((control) => {
+          const oppositeTokenId = control.market.outcomes.no.tokenId;
+          return oppositeTokenId
+            ? [control.tokenId, oppositeTokenId]
+            : [control.tokenId];
+        }),
+      ),
+    ];
 
     for (const control of this.definition.controls)
       if (!hiddenMarketIds.has(control.market.id))
@@ -220,7 +236,11 @@ export class ChartController {
   }
 
   private knownTokenId(value: string): TokenId | null {
-    return this.controlByTokenValue.get(value)?.tokenId ?? null;
+    const control = this.controlByTokenValue.get(value);
+    if (!control) return null;
+    if (control.tokenId === value) return control.tokenId;
+    const oppositeTokenId = control.market.outcomes.no.tokenId;
+    return oppositeTokenId === value ? oppositeTokenId : null;
   }
 
   private controlForTokenValue(value: string): ChartMarketControl | undefined {
