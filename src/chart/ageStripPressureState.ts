@@ -1,10 +1,10 @@
 import type { TokenBook } from "@/lib/orderBook";
-import {
-  PressureFrontierMemory,
-  type PressureBookSide,
-} from "@/lib/pressureFrontierMemory";
+import { PressureFrontierMemory } from "@/lib/pressureFrontierMemory";
 import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
-import type { Price } from "@/lib/price";
+import {
+  pressureEdgeChanges,
+  pressureEdgeLevels,
+} from "@/lib/pressureBookAdapter";
 import type { LiveBookUpdate } from "./liveBookFeed";
 
 export interface AgeStripPressureTiming {
@@ -91,7 +91,7 @@ export class AgeStripPressureState {
       // A newer websocket book may have arrived before recorder hydration.
       const book = getBook(tokenId);
       if (book && state.validThroughMs !== null)
-        state.memory.observeBook(book, state.validThroughMs);
+        observeBookEdges(state.memory, book, state.validThroughMs);
     }
   }
 
@@ -111,24 +111,16 @@ export class AgeStripPressureState {
 
     const memory = state.memory;
     if (update.kind === "snapshot") {
-      memory.observeBook(book, update.validThroughMs);
+      observeBookEdges(memory, book, update.validThroughMs);
       return;
     }
 
-    const bySide: Record<
-      PressureBookSide,
-      Array<{ price: Price; shares: number }>
-    > = {
-      bid: [],
-      ask: [],
-    };
-    for (const change of update.changes)
-      bySide[change.side].push({
-        price: change.price,
-        shares: change.shares,
-      });
-
-    memory.updateBookLevels(bySide.bid, bySide.ask, update.validThroughMs);
+    const changes = pressureEdgeChanges(update.changes);
+    memory.updateEdges(
+      changes.primaryToCollateral,
+      changes.oppositeToCollateral,
+      update.validThroughMs,
+    );
   }
 
   resolve(tokenId: string): void {
@@ -153,4 +145,17 @@ export class AgeStripPressureState {
       false
     );
   }
+}
+
+function observeBookEdges(
+  memory: PressureFrontierMemory,
+  book: TokenBook,
+  validThroughMs: number,
+): void {
+  const edges = pressureEdgeLevels(book);
+  memory.observeEdges(
+    edges.primaryToCollateral,
+    edges.oppositeToCollateral,
+    validThroughMs,
+  );
 }

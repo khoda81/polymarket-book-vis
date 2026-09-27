@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import {
+  PRESSURE_FRONTIER_SNAPSHOT_VERSION,
   parsePressureFrontierSnapshot,
   type PressureFrontierSnapshot,
 } from "../src/lib/pressureFrontierSnapshot";
@@ -133,15 +134,28 @@ function decodeRow(row: DatabaseRow): RecorderStoreRecord {
     status: row.status,
     recordingSinceMs:
       row.recording_since_ms === null ? null : Number(row.recording_since_ms),
-    pressure:
-      value === null
-        ? null
-        : parsePressureFrontierSnapshot(
-            JSON.parse(
-              typeof value === "string"
-                ? value
-                : gunzipSync(value).toString("utf8"),
-            ),
-          ),
+    pressure: value === null ? null : decodePressure(value),
   };
+}
+
+function decodePressure(
+  value: string | Uint8Array,
+): PressureFrontierSnapshot | null {
+  const raw = JSON.parse(
+    typeof value === "string" ? value : gunzipSync(value).toString("utf8"),
+  ) as unknown;
+
+  // v1 encoded one radial field with bid/ask ownership. That representation
+  // irreversibly discarded the hidden side's history, so there is no truthful
+  // migration to the independent v2 surfaces.
+  if (
+    raw === null ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    (raw as { version?: unknown }).version !==
+      PRESSURE_FRONTIER_SNAPSHOT_VERSION
+  )
+    return null;
+
+  return parsePressureFrontierSnapshot(raw);
 }

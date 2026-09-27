@@ -1,118 +1,116 @@
-import type { TokenBook } from "./orderBook";
 import {
   MaterializedPressureField,
-  type PressureBookSide,
-  type PressureFieldRunSnapshot,
+  type PressureLevelDelta,
   type PressureRenderRun,
-  type PressureSideDelta,
 } from "./materializedPressureField";
 import {
   buildFrontier,
   frontierLevel,
   frontierLevels,
-  frontierVolumeOnInterval,
-  sameFrontierVolume,
   setFrontierLevel,
   type FrontierLevel,
   type FrontierRoot,
 } from "./monotoneFrontier";
 import { visibleSinceMs, type PressureBand } from "./pressureField";
+import { PRICE_ONE, PRICE_ZERO, type Price, priceFromTicks } from "./price";
 import {
-  PRICE_ONE,
-  PRICE_ZERO,
-  complementPrice,
-  type Price,
-  priceFromTicks,
-} from "./price";
-import {
+  PRESSURE_FRONTIER_SNAPSHOT_VERSION,
   parsePressureFrontierSnapshot,
-  restoreCurrentSide,
-  snapshotCurrentSide,
+  restoreEdgeCurrent,
+  snapshotEdge,
   type PressureFrontierSnapshot,
 } from "./pressureFrontierSnapshot";
 
-export type { PressureBookSide, PressureRenderRun };
+export type PressureEdge = "primaryToCollateral" | "oppositeToCollateral";
 
 export interface PressureLevelChange {
   readonly price: Price;
   readonly shares: number;
 }
 
-interface SideFrontierState {
+interface EdgeState {
   current: FrontierRoot;
+  field: MaterializedPressureField;
 }
 
-interface SideUpdatePlan {
+interface EdgeUpdatePlan {
   readonly observed: boolean;
   readonly next: FrontierRoot;
-  readonly deltas: readonly PressureSideDelta[];
+  readonly deltas: readonly PressureLevelDelta[];
 }
 
 /**
- * Current liquidity lives in two monotone frontiers used for incremental
- * updates. The materialized field is the complete rendered observation history:
- * current pressure is simply the newest timestamped observation.
+ * Timestamped pressure for the two outcome-token -> collateral edges of one
+ * binary market.
+ *
+ * Both edges have identical semantics and edge-local price coordinates. This
+ * class intentionally knows nothing about CLOB bid/ask sides or screen
+ * orientation; adapters and render perspectives live outside it.
  */
 export class PressureFrontierMemory {
-  private readonly bid: SideFrontierState = { current: null };
-  private readonly ask: SideFrontierState = { current: null };
-  private field = new MaterializedPressureField();
+  private readonly primaryToCollateral: EdgeState = {
+    current: null,
+    field: new MaterializedPressureField(),
+  };
+  private readonly oppositeToCollateral: EdgeState = {
+    current: null,
+    field: new MaterializedPressureField(),
+  };
   private lastUpdateMs: number | undefined;
 
-  observeBook(book: TokenBook, validThroughMs: number): void {
-    validThroughMs = this.normalizeTime(validThroughMs);
-
-    const bid = this.planReplacement(
-      "bid",
-      [...book.usdToYes.asOrders()]
-        .filter(validBookOrder)
-        .map((order) => ({ key: order.price, weight: order.take })),
-    );
-    const ask = this.planReplacement(
-      "ask",
-      [...book.yesToUsd.asSellOrders()].filter(validBookOrder).map((order) => ({
-        key: complementPrice(order.price),
-        weight: order.take,
-      })),
-    );
-
-    this.applyBookPlan(bid, ask, validThroughMs);
-    this.field.observeCurrent(validThroughMs);
-    this.lastUpdateMs = validThroughMs;
-  }
-
-  updateLevels(
-    side: PressureBookSide,
-    changes: readonly PressureLevelChange[],
-    validThroughMs: number,
-  ): void {
-    this.updateBookLevels(
-      side === "bid" ? changes : [],
-      side === "ask" ? changes : [],
-      validThroughMs,
-    );
-  }
-
-  updateBookLevels(
-    bidChanges: readonly PressureLevelChange[],
-    askChanges: readonly PressureLevelChange[],
+  observeEdges(
+    primaryLevels: readonly FrontierLevel[],
+    oppositeLevels: readonly FrontierLevel[],
     validThroughMs: number,
   ): void {
     validThroughMs = this.normalizeTime(validThroughMs);
-    const bid = this.planLevelChanges("bid", bidChanges);
-    const ask = this.planLevelChanges("ask", askChanges);
-    if (!bid.observed && !ask.observed) return;
 
-    this.applyBookPlan(bid, ask, validThroughMs);
-    this.field.observeCurrent(validThroughMs);
-    this.lastUpdateMs = validThroughMs;
+    const primary = this.planReplacement(
+      this.primaryToCollateral,
+      primaryLevels,
+    );
+    const opposite = this.planReplacement(
+      this.oppositeToCollateral,
+      oppositeLevels,
+    );
+
+    this.applyPlan(this.primaryToCollateral, primary, validThroughMs);
+    this.applyPlan(this.oppositeToCollateral, opposite, validThroughMs);
+    this.observeCurrent(validThroughMs);
+  }
+
+  updateEdges(
+    primaryChanges: readonly PressureLevelChange[],
+    oppositeChanges: readonly PressureLevelChange[],
+    validThroughMs: number,
+  ): void {
+    validThroughMs = this.normalizeTime(validThroughMs);
+    const primary = this.planLevelChanges(
+      this.primaryToCollateral,
+      primaryChanges,
+    );
+    const opposite = this.planLevelChanges(
+      this.oppositeToCollateral,
+      oppositeChanges,
+    );
+    if (!primary.observed && !opposite.observed) return;
+
+    this.applyPlan(this.primaryToCollateral, primary, validThroughMs);
+    this.applyPlan(this.oppositeToCollateral, opposite, validThroughMs);
+    this.observeCurrent(validThroughMs);
   }
 
   snapshot(): PressureFrontierSnapshot {
     return {
-      bid: snapshotCurrentSide(this.bid.current),
-      ask: snapshotCurrentSide(this.ask.current),
-      field: this.field.snapshot(),
+      version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
+      primaryToCollateral: snapshotEdge(
+        this.primaryToCollateral.current,
+        this.primaryToCollateral.field.snapshot(),
+      ),
+      oppositeToCollateral: snapshotEdge(
+        this.oppositeToCollateral.current,
+        this.oppositeToCollateral.field.snapshot(),
+      ),
     };
   }
 
@@ -120,29 +118,36 @@ export class PressureFrontierMemory {
     const parsed = parsePressureFrontierSnapshot(snapshot);
     const restored = new PressureFrontierMemory();
 
-    restored.bid.current = restoreCurrentSide(parsed.bid);
-    restored.ask.current = restoreCurrentSide(parsed.ask);
-    restored.field.restore(parsed.field);
-    restored.validateFieldAgainstFrontiers(parsed.field.runs);
-    restored.lastUpdateMs = newestValidThrough(parsed.field.runs);
+    restored.restoreEdge(
+      restored.primaryToCollateral,
+      parsed.primaryToCollateral,
+    );
+    restored.restoreEdge(
+      restored.oppositeToCollateral,
+      parsed.oppositeToCollateral,
+    );
+    restored.lastUpdateMs = newestValidThrough([
+      parsed.primaryToCollateral.field,
+      parsed.oppositeToCollateral.field,
+    ]);
 
-    // Commit only a fully validated snapshot.
-    this.bid.current = restored.bid.current;
-    this.ask.current = restored.ask.current;
-    this.field = restored.field;
+    this.primaryToCollateral.current = restored.primaryToCollateral.current;
+    this.primaryToCollateral.field = restored.primaryToCollateral.field;
+    this.oppositeToCollateral.current = restored.oppositeToCollateral.current;
+    this.oppositeToCollateral.field = restored.oppositeToCollateral.field;
     this.lastUpdateMs = restored.lastUpdateMs;
   }
 
-  priceBoundaries(): readonly Price[] {
-    return this.field.priceBoundaries();
+  priceBoundaries(edge: PressureEdge): readonly Price[] {
+    return this.edgeState(edge).field.priceBoundaries();
   }
 
-  renderRuns(): readonly PressureRenderRun[] {
-    return this.field.renderRuns();
+  renderRuns(edge: PressureEdge): readonly PressureRenderRun[] {
+    return this.edgeState(edge).field.renderRuns();
   }
 
-  shellsAtPrice(price: Price): readonly PressureBand[] {
-    return this.field.shellsAtPrice(price);
+  bandsAtPrice(edge: PressureEdge, price: Price): readonly PressureBand[] {
+    return this.edgeState(edge).field.bandsAtPrice(price);
   }
 
   hasVisiblePressure(
@@ -150,145 +155,118 @@ export class PressureFrontierMemory {
     halfLifeMs: number,
     minAlpha = 1 / 255,
   ): boolean {
-    return this.field.hasVisiblePressure(
-      visibleSinceMs(nowMs, halfLifeMs, minAlpha),
+    const since = visibleSinceMs(nowMs, halfLifeMs, minAlpha);
+    return (
+      this.primaryToCollateral.field.hasVisiblePressure(since) ||
+      this.oppositeToCollateral.field.hasVisiblePressure(since)
     );
   }
 
   clear(): void {
-    this.bid.current = null;
-    this.ask.current = null;
-    this.field.clear();
+    for (const edge of [this.primaryToCollateral, this.oppositeToCollateral]) {
+      edge.current = null;
+      edge.field.clear();
+    }
     this.lastUpdateMs = undefined;
   }
 
-  currentLevels(side: PressureBookSide): readonly FrontierLevel[] {
-    return frontierLevels(this.sideState(side).current);
+  currentLevels(edge: PressureEdge): readonly FrontierLevel[] {
+    return frontierLevels(this.edgeState(edge).current);
   }
 
   private planLevelChanges(
-    side: PressureBookSide,
+    state: EdgeState,
     changes: readonly PressureLevelChange[],
-  ): SideUpdatePlan {
-    const state = this.sideState(side);
-    const finalByKey = new Map<Price, number>();
+  ): EdgeUpdatePlan {
+    const finalByPrice = new Map<Price, number>();
 
     for (const change of changes) {
-      const key = localKey(side, change.price);
-      if (key === null) continue;
+      let price: Price;
+      try {
+        price = priceFromTicks(change.price);
+      } catch {
+        continue;
+      }
       if (!Number.isFinite(change.shares) || change.shares < 0) continue;
-      finalByKey.set(key, change.shares);
+      finalByPrice.set(price, change.shares);
     }
-    if (finalByKey.size === 0)
+    if (finalByPrice.size === 0)
       return { observed: false, next: state.current, deltas: [] };
 
     let next = state.current;
-    const deltas: PressureSideDelta[] = [];
-    for (const [key, shares] of finalByKey) {
-      const previousShares = frontierLevel(next, key);
+    const deltas: PressureLevelDelta[] = [];
+    for (const [price, shares] of finalByPrice) {
+      const previousShares = frontierLevel(next, price);
       if (shares === previousShares) continue;
-      next = setFrontierLevel(next, key, shares);
-      deltas.push({
-        price: side === "bid" ? key : complementPrice(key),
-        delta: shares - previousShares,
-      });
+      next = setFrontierLevel(next, price, shares);
+      deltas.push({ price, delta: shares - previousShares });
     }
 
     return { observed: true, next, deltas };
   }
 
   private planReplacement(
-    side: PressureBookSide,
+    state: EdgeState,
     levels: readonly FrontierLevel[],
-  ): SideUpdatePlan {
-    const state = this.sideState(side);
+  ): EdgeUpdatePlan {
     const normalized = normalizeLevels(levels);
     const previousLevels = frontierLevels(state.current);
     if (levelsEqual(previousLevels, normalized))
       return { observed: true, next: state.current, deltas: [] };
 
-    const previousByKey = new Map(
+    const previousByPrice = new Map(
       previousLevels.map((level) => [level.key, level.weight] as const),
     );
-    const nextByKey = new Map(
+    const nextByPrice = new Map(
       normalized.map((level) => [level.key, level.weight] as const),
     );
-    const keys = new Set([...previousByKey.keys(), ...nextByKey.keys()]);
-    const deltas: PressureSideDelta[] = [];
+    const prices = new Set([...previousByPrice.keys(), ...nextByPrice.keys()]);
+    const deltas: PressureLevelDelta[] = [];
 
-    for (const key of keys) {
-      const delta = (nextByKey.get(key) ?? 0) - (previousByKey.get(key) ?? 0);
-      if (delta === 0) continue;
-      deltas.push({
-        price: side === "bid" ? key : complementPrice(key),
-        delta,
-      });
+    for (const price of prices) {
+      const delta =
+        (nextByPrice.get(price) ?? 0) - (previousByPrice.get(price) ?? 0);
+      if (delta !== 0) deltas.push({ price, delta });
     }
 
-    const next = buildFrontier(normalized);
-    return { observed: true, next, deltas };
+    return { observed: true, next: buildFrontier(normalized), deltas };
   }
 
-  private applyBookPlan(
-    bid: SideUpdatePlan,
-    ask: SideUpdatePlan,
+  private applyPlan(
+    state: EdgeState,
+    plan: EdgeUpdatePlan,
     validThroughMs: number,
   ): void {
-    this.field.applyBookDeltas(
-      bid.deltas,
-      ask.deltas,
-      validThroughMs,
-      bid.next,
-      ask.next,
-    );
-    if (bid.deltas.length > 0) this.bid.current = bid.next;
-    if (ask.deltas.length > 0) this.ask.current = ask.next;
+    state.field.applyDeltas(plan.deltas, validThroughMs, plan.next);
+    if (plan.deltas.length > 0) state.current = plan.next;
   }
 
-  private validateFieldAgainstFrontiers(
-    runs: readonly PressureFieldRunSnapshot[],
+  private observeCurrent(validThroughMs: number): void {
+    this.primaryToCollateral.field.observeCurrent(validThroughMs);
+    this.oppositeToCollateral.field.observeCurrent(validThroughMs);
+    this.lastUpdateMs = validThroughMs;
+  }
+
+  private restoreEdge(
+    state: EdgeState,
+    snapshot: PressureFrontierSnapshot[PressureEdge],
   ): void {
-    const boundaries = new Set<Price>();
-    for (const run of runs) {
-      boundaries.add(run.lo);
-      boundaries.add(run.hi);
-    }
-    for (const { key } of frontierLevels(this.bid.current))
+    state.current = restoreEdgeCurrent(snapshot);
+    state.field.restore(snapshot.field);
+    state.field.validateAgainstFrontier(state.current);
+
+    const boundaries = new Set(state.field.priceBoundaries());
+    for (const { key } of frontierLevels(state.current))
       if (!boundaries.has(key))
         throw new RangeError(
-          "materialized pressure field is missing a bid frontier boundary",
+          "materialized pressure field is missing a frontier boundary",
         );
-    for (const { key } of frontierLevels(this.ask.current))
-      if (!boundaries.has(complementPrice(key)))
-        throw new RangeError(
-          "materialized pressure field is missing an ask frontier boundary",
-        );
-
-    for (const run of runs) {
-      const bidVolume = frontierVolumeOnInterval(
-        this.bid.current,
-        "bid",
-        run.lo,
-        run.hi,
-      );
-      const askVolume = frontierVolumeOnInterval(
-        this.ask.current,
-        "ask",
-        run.lo,
-        run.hi,
-      );
-      if (
-        !sameFrontierVolume(run.bidVolume, bidVolume) ||
-        !sameFrontierVolume(run.askVolume, askVolume)
-      )
-        throw new RangeError(
-          "materialized pressure field does not match current frontiers",
-        );
-    }
   }
 
-  private sideState(side: PressureBookSide): SideFrontierState {
-    return side === "bid" ? this.bid : this.ask;
+  private edgeState(edge: PressureEdge): EdgeState {
+    return edge === "primaryToCollateral"
+      ? this.primaryToCollateral
+      : this.oppositeToCollateral;
   }
 
   private normalizeTime(value: number): number {
@@ -301,30 +279,8 @@ export class PressureFrontierMemory {
   }
 }
 
-function validBookOrder(order: {
-  readonly price: Price;
-  readonly take: number;
-}): boolean {
-  return (
-    Number.isSafeInteger(order.price) &&
-    order.price >= PRICE_ZERO &&
-    order.price <= PRICE_ONE &&
-    Number.isFinite(order.take) &&
-    order.take > 0
-  );
-}
-
-function localKey(side: PressureBookSide, canonicalPrice: Price): Price | null {
-  try {
-    priceFromTicks(canonicalPrice);
-  } catch {
-    return null;
-  }
-  return side === "bid" ? canonicalPrice : complementPrice(canonicalPrice);
-}
-
 function normalizeLevels(levels: readonly FrontierLevel[]): FrontierLevel[] {
-  const byKey = new Map<Price, number>();
+  const byPrice = new Map<Price, number>();
   for (const { key, weight } of levels) {
     if (
       !Number.isSafeInteger(key) ||
@@ -334,9 +290,9 @@ function normalizeLevels(levels: readonly FrontierLevel[]): FrontierLevel[] {
       !(weight > 0)
     )
       continue;
-    byKey.set(key, (byKey.get(key) ?? 0) + weight);
+    byPrice.set(key, (byPrice.get(key) ?? 0) + weight);
   }
-  return [...byKey]
+  return [...byPrice]
     .sort(([a], [b]) => a - b)
     .map(([key, weight]) => ({ key, weight }));
 }
@@ -355,11 +311,18 @@ function levelsEqual(
 }
 
 function newestValidThrough(
-  runs: readonly { readonly bands: readonly PressureBand[] }[],
+  fields: readonly {
+    readonly currentValidThroughMs: number | null;
+    readonly runs: readonly { readonly bands: readonly PressureBand[] }[];
+  }[],
 ): number | undefined {
   let newest = Number.NEGATIVE_INFINITY;
-  for (const run of runs)
-    for (const band of run.bands)
-      newest = Math.max(newest, band.validThroughMs);
+  for (const field of fields) {
+    if (field.currentValidThroughMs !== null)
+      newest = Math.max(newest, field.currentValidThroughMs);
+    for (const run of field.runs)
+      for (const band of run.bands)
+        newest = Math.max(newest, band.validThroughMs);
+  }
   return Number.isFinite(newest) ? newest : undefined;
 }

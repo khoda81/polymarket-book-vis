@@ -51,6 +51,7 @@
   );
 
   let canvas: HTMLCanvasElement;
+  let pressureCanvas: HTMLCanvasElement;
   let canvasWrap: HTMLDivElement;
   let toggles: HTMLDivElement;
   let chart: ChartController | null = null;
@@ -114,6 +115,7 @@
     let alive = true;
     const surface: ChartSurfaceElements = {
       canvas,
+      pressureCanvas,
       canvasWrap,
       toggles,
     };
@@ -157,7 +159,12 @@
     hidden={visibleControls.length === 0}
     bind:this={canvasWrap}
   >
-    <canvas bind:this={canvas}></canvas>
+    <canvas
+      class="cpv-pressure-canvas"
+      aria-hidden="true"
+      bind:this={pressureCanvas}
+    ></canvas>
+    <canvas class="cpv-main-canvas" bind:this={canvas}></canvas>
   </div>
 
   <div

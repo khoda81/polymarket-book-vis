@@ -3,7 +3,6 @@ export type PressureSide = -1 | 1;
 export interface PressureBand {
   readonly loVolume: number;
   readonly hiVolume: number;
-  readonly side: PressureSide;
   /** Latest instant through which this observation is known to be valid. */
   readonly validThroughMs: number;
 }

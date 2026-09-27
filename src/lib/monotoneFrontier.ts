@@ -62,6 +62,30 @@ export function frontierVolumeAt(root: FrontierRoot, u: Price): number {
 }
 
 /**
+ * Cumulative weight of levels whose edge-local price is <= `price`.
+ *
+ * This is the natural sweep frontier for a directed token -> collateral edge:
+ * increasing the accepted edge price makes every cheaper resting level
+ * available as well.
+ */
+export function frontierVolumeThrough(
+  root: FrontierRoot,
+  price: Price,
+): number {
+  let node = root;
+  let sum = 0;
+  while (node) {
+    if (node.key <= price) {
+      sum += node.weight + (node.left?.sum ?? 0);
+      node = node.right;
+    } else {
+      node = node.left;
+    }
+  }
+  return sum;
+}
+
+/**
  * Constant pressure inside a canonical price interval bounded by book levels.
  * Use its edges: two adjacent floats need not have a representable midpoint.
  * Compare asks in canonical coordinates so 1 - (1 - price) cannot move a

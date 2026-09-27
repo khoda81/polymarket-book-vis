@@ -24,6 +24,7 @@ import type { MarketId, PublicClient, TokenId } from "@polymarket/client";
 
 export interface ChartSurfaceElements {
   readonly canvas: HTMLCanvasElement;
+  readonly pressureCanvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
   readonly toggles: HTMLElement;
 }
@@ -98,6 +99,7 @@ export class ChartController {
 
     this.ageView = new AgeStripView({
       canvas: surface.canvas,
+      pressureCanvas: surface.pressureCanvas,
       canvasWrap: surface.canvasWrap,
       toggles: surface.toggles,
       plotter: this.plotter,

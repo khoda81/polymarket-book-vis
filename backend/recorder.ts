@@ -9,6 +9,10 @@ import {
   type CanonicalBookChange,
 } from "../src/lib/bookIngestion";
 import type { TokenBook } from "../src/lib/orderBook";
+import {
+  pressureEdgeChanges,
+  pressureEdgeLevels,
+} from "../src/lib/pressureBookAdapter";
 import { PressureFrontierMemory } from "../src/lib/pressureFrontierMemory";
 import type { PressureFrontierSnapshot } from "../src/lib/pressureFrontierSnapshot";
 
@@ -390,15 +394,19 @@ class AgeRecorder {
     const memory = this.ensureMemory(tokenId) ?? new PressureFrontierMemory();
 
     if (changes === undefined) {
-      memory.observeBook(book, validThroughMs);
+      const edges = pressureEdgeLevels(book);
+      memory.observeEdges(
+        edges.primaryToCollateral,
+        edges.oppositeToCollateral,
+        validThroughMs,
+      );
     } else {
-      const bids: CanonicalBookChange[] = [];
-      const asks: CanonicalBookChange[] = [];
-      for (const change of changes) {
-        const target = change.side === "bid" ? bids : asks;
-        target.push(change);
-      }
-      memory.updateBookLevels(bids, asks, validThroughMs);
+      const edges = pressureEdgeChanges(changes);
+      memory.updateEdges(
+        edges.primaryToCollateral,
+        edges.oppositeToCollateral,
+        validThroughMs,
+      );
     }
 
     this.memories.set(tokenId, memory);
@@ -408,7 +416,10 @@ class AgeRecorder {
       debugLog(
         "first-snapshot",
         shortToken(tokenId),
-        `priceBoundaries=${memory.priceBoundaries().length}`,
+        `priceBoundaries=${
+          memory.priceBoundaries("primaryToCollateral").length +
+          memory.priceBoundaries("oppositeToCollateral").length
+        }`,
       );
     }
 
@@ -514,6 +525,9 @@ class AgeRecorder {
     const record = this.store.load(tokenId);
     if (!record || record.pressure === null) {
       this.storedPressureTokens.delete(tokenId);
+      this.recordingSince.delete(tokenId);
+      this.markDirty([tokenId]);
+      debugLog("discard-incompatible-pressure", shortToken(tokenId));
       return undefined;
     }
 

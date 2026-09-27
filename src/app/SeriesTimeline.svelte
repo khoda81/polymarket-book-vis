@@ -18,6 +18,7 @@
   export let onanchorevent: (event: Event | null) => void = () => undefined;
 
   let canvas: HTMLCanvasElement;
+  let pressureCanvas: HTMLCanvasElement;
   let canvasWrap: HTMLDivElement;
   let view: SeriesTimelineView | null = null;
   let following = true;
@@ -44,6 +45,7 @@
   onMount(() => {
     const timeline = new SeriesTimelineView(
       canvas,
+      pressureCanvas,
       canvasWrap,
       client,
       series,
@@ -121,7 +123,15 @@
 
 <div class="cpv-chart-stage">
   <div class="cpv-canvas-wrap series-canvas-wrap" bind:this={canvasWrap}>
-    <canvas bind:this={canvas} aria-label="Scrollable series market timeline"
+    <canvas
+      class="cpv-pressure-canvas"
+      aria-hidden="true"
+      bind:this={pressureCanvas}
+    ></canvas>
+    <canvas
+      class="cpv-main-canvas"
+      bind:this={canvas}
+      aria-label="Scrollable series market timeline"
     ></canvas>
   </div>
 </div>

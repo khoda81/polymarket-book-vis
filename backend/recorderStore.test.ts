@@ -13,7 +13,7 @@ test("RecorderStore persists timestamped pressure without temporal rewriting", (
 
   try {
     const memory = new PressureFrontierMemory();
-    memory.updateLevels("bid", [{ price: p(0.5), shares: 42 }], 500);
+    memory.updateEdges([{ price: p(0.5), shares: 42 }], [], 500);
 
     const store = new RecorderStore(dbPath);
     store.write([
@@ -51,11 +51,10 @@ test("RecorderStore persists timestamped pressure without temporal rewriting", (
 
     const restored = new PressureFrontierMemory();
     restored.restore(record?.pressure);
-    expect(restored.shellsAtPrice(p(0.4))).toEqual([
+    expect(restored.bandsAtPrice("primaryToCollateral", p(0.6))).toEqual([
       {
         loVolume: 0,
         hiVolume: 42,
-        side: 1,
         validThroughMs: 500,
       },
     ]);

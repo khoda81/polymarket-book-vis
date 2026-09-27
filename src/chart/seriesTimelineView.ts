@@ -7,11 +7,8 @@ import {
   type AgeStripGeometry,
 } from "./ageStripLayout";
 import { AgeStripPressureState } from "./ageStripPressureState";
-import {
-  drawAgeRowRails,
-  drawPressureMemoryStrip,
-  drawResolvedMarketStrip,
-} from "./ageStripRendering";
+import { drawAgeRowRails, drawResolvedMarketStrip } from "./ageStripRendering";
+import { GpuPressureLayer, type GpuPressureRow } from "./gpuPressureLayer";
 import { LiveBookFeed } from "./liveBookFeed";
 import { fetchRecorderHydration } from "@/lib/ageRecorderClient";
 import {
@@ -31,6 +28,7 @@ import { OrderBookPlotter, type ChartTheme, type Frame } from "@/lib/renderer";
 import { chartThemeForDarkMode } from "./chartTheme";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+  signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
 import {
@@ -75,6 +73,8 @@ export class SeriesTimelineView {
   private readonly resizeObserver: ResizeObserver;
   private readonly themeQuery: MediaQueryList;
   private readonly pressure = new AgeStripPressureState();
+  private readonly pressureLayer: GpuPressureLayer;
+  private pressureRevision = 0;
   private readonly ageClock: AgeStripClock;
   private readonly tooltip: AgeStripTooltip;
   private readonly unsubscribeTuning: () => void;
@@ -119,6 +119,7 @@ export class SeriesTimelineView {
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
+    pressureCanvas: HTMLCanvasElement,
     private readonly canvasWrap: HTMLElement,
     private readonly client: PublicClient,
     private readonly series: Series,
@@ -129,6 +130,7 @@ export class SeriesTimelineView {
     this.rows = seedEvents
       .map((event) => timedSeriesEvent(event, this.cadenceMs))
       .filter((row): row is TimedSeriesEvent => row !== null);
+    this.pressureLayer = new GpuPressureLayer(pressureCanvas);
     this.onConnectionStatus = options.onConnectionStatus ?? (() => undefined);
     this.onFollowingChanged = options.onFollowingChanged ?? (() => undefined);
     this.onWindowChanged = options.onWindowChanged ?? (() => undefined);
@@ -179,6 +181,8 @@ export class SeriesTimelineView {
     });
 
     this.unsubscribeTuning = subscribeAgeStripTuning(() => {
+      this.pressureRevision++;
+      this.pressureLayer.invalidate();
       this.requestDraw();
     });
 
@@ -235,6 +239,7 @@ export class SeriesTimelineView {
     this.unsubscribeTuning();
     this.ageClock.destroy();
     this.tooltip.destroy();
+    this.pressureLayer.destroy();
     if (this.clockTimer !== undefined) window.clearTimeout(this.clockTimer);
     if (this.stalenessRefreshTimer !== undefined)
       window.clearTimeout(this.stalenessRefreshTimer);
@@ -397,10 +402,14 @@ export class SeriesTimelineView {
     const minMs = centerMs - spanMs / 2;
     const maxMs = centerMs + spanMs / 2;
 
-    const frame = this.plotter.beginFrame(this.theme, {
-      xRange: { min: 0, max: 1 },
-      yRange: { min: minMs, max: maxMs },
-    });
+    const frame = this.plotter.beginFrame(
+      this.theme,
+      {
+        xRange: { min: 0, max: 1 },
+        yRange: { min: minMs, max: maxMs },
+      },
+      { transparentBackground: true },
+    );
 
     const subscriptionPaddingMs = SUBSCRIPTION_BUFFER_ROWS * this.cadenceMs;
     const bufferedRows = this.rows.filter(
@@ -429,6 +438,8 @@ export class SeriesTimelineView {
 
     const tuning = getAgeStripTuning();
     let hasVisiblePressure = false;
+    const gpuRows: GpuPressureRow[] = [];
+    const dpr = window.devicePixelRatio || 1;
 
     for (const row of visibleRows) {
       const market = primaryMarket(row.event);
@@ -456,22 +467,45 @@ export class SeriesTimelineView {
       const memory = this.pressure.memory(key);
       if (!memory) continue;
 
-      drawPressureMemoryStrip(
-        frame,
-        row.centerMs,
-        memory,
-        scale,
-        tuning.volumePerCssPixel,
-        tuning.ghostHalfLifeMs,
-        nowMs,
-        rowOffsetCss,
-      );
+      const geometry = seriesRowGeometry(frame, row.centerMs, dpr);
+      gpuRows.push({
+        key,
+        centerCss: geometry.centerCss,
+        heightCss: geometry.heightCss,
+        surfaces: [
+          {
+            runs: memory.renderRuns("primaryToCollateral"),
+            color: signedVolumeColor(1, scale),
+            mirrorPrice: true,
+            yDirection: 1,
+          },
+          {
+            runs: memory.renderRuns("oppositeToCollateral"),
+            color: signedVolumeColor(-1, scale),
+            mirrorPrice: false,
+            yDirection: -1,
+          },
+        ],
+      });
       hasVisiblePressure ||= this.pressure.hasVisiblePressure(
         key,
         nowMs,
         tuning.ghostHalfLifeMs,
       );
     }
+
+    this.pressureLayer.render({
+      rows: gpuRows,
+      viewport: { l: frame.viewport.l, width: frame.viewport.width },
+      cssWidth: this.plotter.width,
+      cssHeight: this.plotter.height,
+      dpr,
+      volumePerCssPixel: tuning.volumePerCssPixel,
+      ghostHalfLifeMs: tuning.ghostHalfLifeMs,
+      nowMs,
+      revision: this.pressureRevision,
+      background: this.theme.bg,
+    });
 
     this.drawTimeline(frame, visibleRows, nowMs);
     this.updateAgeOverlays(frame, visibleRows);
@@ -682,6 +716,7 @@ export class SeriesTimelineView {
         const key = String(tokenId);
         this.bookCache.set(key, book);
         this.pressure.applyBookUpdate(key, book, update);
+        this.pressureRevision++;
         this.requestDraw();
       },
       onMarketResolved: (resolution) => {
@@ -692,6 +727,8 @@ export class SeriesTimelineView {
           this.bookCache.delete(assetId);
           this.pressure.resolve(assetId);
         }
+        this.pressureRevision++;
+        this.pressureLayer.invalidate();
         this.requestDraw();
       },
     });
@@ -722,6 +759,8 @@ export class SeriesTimelineView {
         (canonical ? this.feed?.getBook(canonical) : undefined)
       );
     });
+    this.pressureRevision++;
+    this.pressureLayer.invalidate();
     this.ageClock.refresh();
     this.requestDraw();
   }

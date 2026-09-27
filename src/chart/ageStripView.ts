@@ -7,7 +7,10 @@ import {
 import type { TokenBook } from "@/lib/orderBook";
 import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
-import type { SignedVolumeColorScale } from "@/lib/signedVolume";
+import {
+  signedVolumeColor,
+  type SignedVolumeColorScale,
+} from "@/lib/signedVolume";
 import {
   AGE_TIME_GUTTER_PX,
   type AgeStripGeometry,
@@ -16,12 +19,10 @@ import {
   ageLabelGutterWidth,
   hasRealOrders,
   positionRowControls,
+  rowRasterGeometry,
 } from "./ageStripLayout";
-import {
-  drawAgeAxes,
-  drawPressureMemoryStrip,
-  drawResolvedMarketStrip,
-} from "./ageStripRendering";
+import { drawAgeAxes, drawResolvedMarketStrip } from "./ageStripRendering";
+import { GpuPressureLayer, type GpuPressureRow } from "./gpuPressureLayer";
 import { AgeStripClock } from "./ageStripClock";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
 import { AgeStripPressureState } from "./ageStripPressureState";
@@ -31,6 +32,7 @@ import type { ChartMarketControl } from "@/lib/chartDefinition";
 
 export interface AgeStripHost {
   readonly canvas: HTMLCanvasElement;
+  readonly pressureCanvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
   readonly toggles: HTMLElement;
   readonly plotter: OrderBookPlotter;
@@ -57,7 +59,9 @@ export class AgeStripView {
   private readonly tooltip: AgeStripTooltip;
   private readonly unsubscribeTuning: () => void;
   private readonly pressure = new AgeStripPressureState();
+  private pressureLayer: GpuPressureLayer | null = null;
   private readonly visibilityInitialized = new Set<string>();
+  private pressureRevision = 0;
   private stalenessRefreshTimer: number | undefined;
   private layoutMode: "age" | "volume" | null = null;
 
@@ -79,6 +83,8 @@ export class AgeStripView {
     });
 
     this.unsubscribeTuning = subscribeAgeStripTuning(() => {
+      this.pressureRevision++;
+      this.pressureLayer?.invalidate();
       host.requestDraw();
     });
 
@@ -90,6 +96,8 @@ export class AgeStripView {
 
   reset(): void {
     this.pressure.reset();
+    this.pressureRevision++;
+    this.pressureLayer?.invalidate();
     this.visibilityInitialized.clear();
     this.cancelStalenessRefresh();
     this.clock.reset();
@@ -110,6 +118,8 @@ export class AgeStripView {
     this.pressure.hydrate(snapshotsByToken, (tokenId) =>
       this.host.getBook(tokenId),
     );
+    this.pressureRevision++;
+    this.pressureLayer?.invalidate();
   }
 
   configureMarkets(controls: readonly ChartMarketControl[]): void {
@@ -120,6 +130,8 @@ export class AgeStripView {
         resolutionMs: control.resolutionMs,
       })),
     );
+    this.pressureRevision++;
+    this.pressureLayer?.invalidate();
   }
 
   onBookUpdate(tokenId: string, update: LiveBookUpdate): void {
@@ -127,6 +139,7 @@ export class AgeStripView {
     if (!book) return;
 
     this.pressure.applyBookUpdate(tokenId, book, update);
+    this.pressureRevision++;
 
     if (this.visibilityInitialized.has(tokenId)) return;
     this.visibilityInitialized.add(tokenId);
@@ -137,6 +150,8 @@ export class AgeStripView {
 
   resolveMarket(tokenId: string): void {
     this.pressure.resolve(tokenId);
+    this.pressureRevision++;
+    this.pressureLayer?.invalidate();
   }
 
   draw(): void {
@@ -154,10 +169,15 @@ export class AgeStripView {
 
     this.installAgeLayout(rowCount, activeControls);
 
-    const frame = this.host.plotter.beginFrame(this.host.getTheme(), {
-      xRange: { min: 0, max: 1 },
-      yRange: { min: -0.5, max: rowCount - 0.5 },
-    });
+    const theme = this.host.getTheme();
+    const frame = this.host.plotter.beginFrame(
+      theme,
+      {
+        xRange: { min: 0, max: 1 },
+        yRange: { min: -0.5, max: rowCount - 0.5 },
+      },
+      { transparentBackground: true },
+    );
     positionRowControls(activeControls, frame, rowCount);
 
     const vp = frame.viewport;
@@ -190,6 +210,9 @@ export class AgeStripView {
     this.clock.setGeometry(geometry);
     this.tooltip.setGeometry(geometry);
 
+    const gpuRows: GpuPressureRow[] = [];
+    const dpr = window.devicePixelRatio || 1;
+
     for (const [index, label] of activeControls.entries()) {
       const tokenId = label.dataset.tokenId;
       if (!tokenId) continue;
@@ -209,21 +232,49 @@ export class AgeStripView {
       }
 
       const y = rowCount - 1 - index;
-      drawPressureMemoryStrip(
-        frame,
-        y,
-        memory,
-        this.host.getPressureColorScale(tokenId),
-        tuning.volumePerCssPixel,
-        tuning.ghostHalfLifeMs,
-        nowMs,
-      );
+      const rowGeometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+      const colorScale = this.host.getPressureColorScale(tokenId);
+      gpuRows.push({
+        key: tokenId,
+        centerCss: rowGeometry.centerCss,
+        heightCss: rowGeometry.heightCss,
+        surfaces: [
+          {
+            runs: memory.renderRuns("primaryToCollateral"),
+            color: signedVolumeColor(1, colorScale),
+            mirrorPrice: true,
+            yDirection: 1,
+          },
+          {
+            runs: memory.renderRuns("oppositeToCollateral"),
+            color: signedVolumeColor(-1, colorScale),
+            mirrorPrice: false,
+            yDirection: -1,
+          },
+        ],
+      });
       hasVisiblePressure ||= this.pressure.hasVisiblePressure(
         tokenId,
         nowMs,
         tuning.ghostHalfLifeMs,
       );
     }
+
+    const pressureLayer =
+      this.pressureLayer ??
+      (this.pressureLayer = new GpuPressureLayer(this.host.pressureCanvas));
+    pressureLayer.render({
+      rows: gpuRows,
+      viewport: { l: vp.l, width: vp.width },
+      cssWidth: this.host.plotter.width,
+      cssHeight: this.host.plotter.height,
+      dpr,
+      volumePerCssPixel: tuning.volumePerCssPixel,
+      ghostHalfLifeMs: tuning.ghostHalfLifeMs,
+      nowMs,
+      revision: this.pressureRevision,
+      background: theme.bg,
+    });
 
     drawAgeAxes(frame, rowCount, activeControls, (tokenId) =>
       this.host.getPressureColorScale(tokenId),
@@ -236,6 +287,7 @@ export class AgeStripView {
   }
 
   prepareVolumeView(): void {
+    this.pressureLayer?.setVisible(false);
     this.clock.setGeometry(null);
     this.clock.setEnabled(false);
     this.tooltip.clear();
@@ -271,6 +323,7 @@ export class AgeStripView {
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.clock.destroy();
     this.tooltip.destroy();
+    this.pressureLayer?.destroy();
   }
 
   private readonly handleWheel = (event: WheelEvent) => {

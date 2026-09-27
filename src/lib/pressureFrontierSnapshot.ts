@@ -1,7 +1,4 @@
-import {
-  type PressureFieldRunSnapshot,
-  type PressureFieldSnapshot,
-} from "./materializedPressureField";
+import type { PressureFieldSnapshot } from "./materializedPressureField";
 import {
   buildFrontier,
   frontierLevels,
@@ -11,14 +8,17 @@ import {
 import type { PressureBand } from "./pressureField";
 import { priceFromTicks } from "./price";
 
-export interface PressureFrontierCurrentSideSnapshot {
+export const PRESSURE_FRONTIER_SNAPSHOT_VERSION = 3 as const;
+
+export interface PressureEdgeSnapshot {
   readonly current: readonly FrontierLevel[];
+  readonly field: PressureFieldSnapshot;
 }
 
 export interface PressureFrontierSnapshot {
-  readonly bid: PressureFrontierCurrentSideSnapshot;
-  readonly ask: PressureFrontierCurrentSideSnapshot;
-  readonly field: PressureFieldSnapshot;
+  readonly version: typeof PRESSURE_FRONTIER_SNAPSHOT_VERSION;
+  readonly primaryToCollateral: PressureEdgeSnapshot;
+  readonly oppositeToCollateral: PressureEdgeSnapshot;
 }
 
 export function parsePressureFrontierSnapshot(
@@ -26,83 +26,95 @@ export function parsePressureFrontierSnapshot(
 ): PressureFrontierSnapshot {
   if (!isRecord(value))
     throw new TypeError("pressure frontier snapshot must be an object");
+  if (value.version !== PRESSURE_FRONTIER_SNAPSHOT_VERSION)
+    throw new RangeError(
+      `unsupported pressure frontier snapshot version: ${String(value.version)}`,
+    );
 
   return {
-    bid: parseCurrentSide(value.bid, "bid"),
-    ask: parseCurrentSide(value.ask, "ask"),
-    field: parseField(value.field),
+    version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
+    primaryToCollateral: parseEdge(
+      value.primaryToCollateral,
+      "primaryToCollateral",
+    ),
+    oppositeToCollateral: parseEdge(
+      value.oppositeToCollateral,
+      "oppositeToCollateral",
+    ),
   };
 }
 
-export function snapshotCurrentSide(
+export function snapshotEdge(
   current: FrontierRoot,
-): PressureFrontierCurrentSideSnapshot {
-  return { current: frontierLevels(current) };
+  field: PressureFieldSnapshot,
+): PressureEdgeSnapshot {
+  return { current: frontierLevels(current), field };
 }
 
-export function restoreCurrentSide(
-  side: PressureFrontierCurrentSideSnapshot,
-): FrontierRoot {
-  return buildFrontier(side.current);
+export function restoreEdgeCurrent(edge: PressureEdgeSnapshot): FrontierRoot {
+  return buildFrontier(edge.current);
 }
 
-function parseCurrentSide(
+function parseEdge(value: unknown, label: string): PressureEdgeSnapshot {
+  if (!isRecord(value))
+    throw new TypeError(`pressure edge ${label} must be an object`);
+  if (!Array.isArray(value.current))
+    throw new TypeError(`pressure edge ${label}.current must be an array`);
+
+  return {
+    current: parseLevels(value.current, `${label}.current`),
+    field: parseField(value.field, label),
+  };
+}
+
+function parseField(value: unknown, label: string): PressureFieldSnapshot {
+  if (!isRecord(value))
+    throw new TypeError(`pressure edge ${label}.field must be an object`);
+  if (!Array.isArray(value.runs))
+    throw new TypeError(`pressure edge ${label}.field.runs must be an array`);
+
+  return {
+    currentValidThroughMs:
+      value.currentValidThroughMs === null
+        ? null
+        : finiteNumber(
+            value.currentValidThroughMs,
+            `${label}.field.currentValidThroughMs`,
+          ),
+    runs: value.runs.map((run, index) => parseRun(run, label, index)),
+  };
+}
+
+function parseRun(
   value: unknown,
   label: string,
-): PressureFrontierCurrentSideSnapshot {
+  index: number,
+): PressureFieldSnapshot["runs"][number] {
   if (!isRecord(value))
-    throw new TypeError(`pressure frontier ${label} side must be an object`);
-  if (!Array.isArray(value.current))
-    throw new TypeError(`pressure frontier ${label} current must be an array`);
-
-  return {
-    current: parseLevels(value.current, `${label} current`),
-  };
-}
-
-function parseField(value: unknown): PressureFieldSnapshot {
-  if (!isRecord(value))
-    throw new TypeError("pressure field snapshot must be an object");
-  const revision = finiteNumber(value.revision, "pressure field revision");
-  if (revision < 0)
-    throw new RangeError("pressure field revision must be non-negative");
-  if (!Array.isArray(value.runs))
-    throw new TypeError("pressure field runs must be an array");
-
-  return {
-    revision,
-    runs: value.runs.map(parseRun),
-  };
-}
-
-function parseRun(value: unknown, index: number): PressureFieldRunSnapshot {
-  if (!isRecord(value))
-    throw new TypeError(`pressure field run[${index}] must be an object`);
+    throw new TypeError(`${label}.field.run[${index}] must be an object`);
   if (!Array.isArray(value.bands))
-    throw new TypeError(`pressure field run[${index}].bands must be an array`);
+    throw new TypeError(`${label}.field.run[${index}].bands must be an array`);
 
   return {
-    lo: priceFromTicks(finiteNumber(value.lo, `run[${index}].lo`)),
-    hi: priceFromTicks(finiteNumber(value.hi, `run[${index}].hi`)),
-    bidVolume: finiteNumber(value.bidVolume, `run[${index}].bidVolume`),
-    askVolume: finiteNumber(value.askVolume, `run[${index}].askVolume`),
-    bidRevision: finiteNumber(value.bidRevision, `run[${index}].bidRevision`),
-    askRevision: finiteNumber(value.askRevision, `run[${index}].askRevision`),
+    lo: priceFromTicks(
+      finiteNumber(value.lo, `${label}.field.run[${index}].lo`),
+    ),
+    hi: priceFromTicks(
+      finiteNumber(value.hi, `${label}.field.run[${index}].hi`),
+    ),
+    volume: finiteNumber(value.volume, `${label}.field.run[${index}].volume`),
     bands: value.bands.map((band, bandIndex) =>
-      parseBand(band, `run[${index}].bands[${bandIndex}]`),
+      parseBand(band, `${label}.field.run[${index}].bands[${bandIndex}]`),
     ),
   };
 }
 
 function parseBand(value: unknown, label: string): PressureBand {
   if (!isRecord(value)) throw new TypeError(`${label} must be an object`);
-  if (value.side !== -1 && value.side !== 1)
-    throw new RangeError(`${label}.side must be -1 or 1`);
 
   return {
     loVolume: finiteNumber(value.loVolume, `${label}.loVolume`),
     hiVolume: finiteNumber(value.hiVolume, `${label}.hiVolume`),
-    side: value.side,
     validThroughMs: finiteNumber(
       value.validThroughMs,
       `${label}.validThroughMs`,

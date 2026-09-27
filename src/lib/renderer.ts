@@ -270,7 +270,11 @@ export class OrderBookPlotter {
    * The plotter owns canvas/ctx/padding; the frame is a dumb immutable
    * wrapper over {domain, transform, theme}.
    */
-  beginFrame(theme: ChartTheme, domain: Domain): Frame {
+  beginFrame(
+    theme: ChartTheme,
+    domain: Domain,
+    options: { readonly transparentBackground?: boolean } = {},
+  ): Frame {
     const dpr = window.devicePixelRatio || 1;
     const targetW = Math.floor(this.cssWidth * dpr);
     const targetH = Math.floor(this.cssHeight * dpr);
@@ -298,8 +302,10 @@ export class OrderBookPlotter {
     const width = this.cssWidth;
     const height = this.cssHeight;
     this.ctx.clearRect(0, 0, width, height);
-    this.ctx.fillStyle = theme.bg;
-    this.ctx.fillRect(0, 0, width, height);
+    if (!options.transparentBackground) {
+      this.ctx.fillStyle = theme.bg;
+      this.ctx.fillRect(0, 0, width, height);
+    }
 
     const viewport: Viewport = {
       l: this.padding.l,
