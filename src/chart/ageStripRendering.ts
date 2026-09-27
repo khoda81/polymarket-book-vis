@@ -38,16 +38,16 @@ export function drawAgeRowRails(
   const { ctx, viewport: vp } = frame;
   const colors = pressureColors(colorScale);
 
-  // Primary-token edge is mirrored onto the left; the complementary
-  // opposite-token edge is viewed directly on the right.
+  // Geometry is sourced from the complementary token field. Keep the
+  // rails aligned with the semantic token shown on each rendered half.
   ctx.lineWidth = 1;
-  ctx.strokeStyle = colors.positive;
+  ctx.strokeStyle = colors.negative;
   ctx.beginPath();
   ctx.moveTo(vp.l, geometry.topCss);
   ctx.lineTo(vp.l, geometry.topCss + geometry.heightCss);
   ctx.stroke();
 
-  ctx.strokeStyle = colors.negative;
+  ctx.strokeStyle = colors.positive;
   ctx.beginPath();
   ctx.moveTo(vp.l + vp.width, geometry.topCss);
   ctx.lineTo(vp.l + vp.width, geometry.topCss + geometry.heightCss);

@@ -1,39 +1,53 @@
 import { expect, test } from "bun:test";
 import {
   agePressurePerspective,
-  agePressureSideAtY,
+  agePressureSourceSideAtY,
   pressurePriceAtDisplayX,
   pressureVolumeAtY,
-  tokenPriceAtDisplayX,
+  semanticPriceAtDisplayX,
+  sourcePriceAtDisplayX,
 } from "./ageStripPressureProjection";
 import { PRICE_SCALE } from "@/lib/price";
 
-test("age pressure perspectives define token identity and projection together", () => {
+test("geometry source and displayed token semantics are complementary", () => {
   expect(agePressurePerspective("primary")).toMatchObject({
+    sourceSide: "primary",
+    semanticSide: "opposite",
     mirrorPrice: true,
     yDirection: 1,
-    colorSign: 1,
-  });
-  expect(agePressurePerspective("opposite")).toMatchObject({
-    mirrorPrice: false,
-    yDirection: -1,
     colorSign: -1,
   });
+  expect(agePressurePerspective("opposite")).toMatchObject({
+    sourceSide: "opposite",
+    semanticSide: "primary",
+    mirrorPrice: false,
+    yDirection: -1,
+    colorSign: 1,
+  });
 
-  expect(agePressureSideAtY(15, 14)).toBe("primary");
-  expect(agePressureSideAtY(13, 14)).toBe("opposite");
+  expect(agePressureSourceSideAtY(15, 14)).toBe("primary");
+  expect(agePressureSourceSideAtY(13, 14)).toBe("opposite");
 });
 
-test("screen x maps into each token's own price coordinate", () => {
-  const primary = agePressurePerspective("primary");
-  const opposite = agePressurePerspective("opposite");
+test("semantic price complements the source field without moving geometry", () => {
+  const primarySource = agePressurePerspective("primary");
+  const oppositeSource = agePressurePerspective("opposite");
 
-  expect(tokenPriceAtDisplayX(0.25, primary)).toBe(0.75);
-  expect(tokenPriceAtDisplayX(0.25, opposite)).toBe(0.25);
-  expect(Number(pressurePriceAtDisplayX(0.25, primary))).toBe(
+  // Primary-source geometry is mirrored: source YES@0.75 is drawn at x=.25,
+  // but that screen half is semantically the opposite token at .25.
+  expect(sourcePriceAtDisplayX(0.25, primarySource)).toBe(0.75);
+  expect(semanticPriceAtDisplayX(0.25, primarySource)).toBe(0.25);
+
+  // Opposite-source geometry is direct: source NO@0.25 stays at x=.25,
+  // while the displayed primary-token semantic price is .75.
+  expect(sourcePriceAtDisplayX(0.25, oppositeSource)).toBe(0.25);
+  expect(semanticPriceAtDisplayX(0.25, oppositeSource)).toBe(0.75);
+
+  // Field lookup remains in the original source coordinates, preserving shape.
+  expect(Number(pressurePriceAtDisplayX(0.25, primarySource))).toBe(
     Math.floor(0.75 * PRICE_SCALE),
   );
-  expect(Number(pressurePriceAtDisplayX(0.25, opposite))).toBe(
+  expect(Number(pressurePriceAtDisplayX(0.25, oppositeSource))).toBe(
     Math.floor(0.25 * PRICE_SCALE),
   );
 });

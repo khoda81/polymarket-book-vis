@@ -21,10 +21,10 @@ import {
 } from "./ageStripLayout";
 import {
   agePressurePerspective,
-  agePressureSideAtY,
+  agePressureSourceSideAtY,
   pressurePriceAtDisplayX,
   pressureVolumeAtY,
-  tokenPriceAtDisplayX,
+  semanticPriceAtDisplayX,
 } from "./ageStripPressureProjection";
 
 export interface AgeStripTooltipHost {
@@ -127,19 +127,24 @@ export class AgeStripTooltip {
     }
 
     const centerCss = ageStripRowCenterY(geometry, row);
-    const side = agePressureSideAtY(sy, centerCss);
-    const perspective = agePressurePerspective(side);
-    const tokenId =
-      side === "primary" ? row.tokenId : (row.oppositeTokenId ?? null);
-    if (!tokenId) {
+    const sourceSide = agePressureSourceSideAtY(sy, centerCss);
+    const perspective = agePressurePerspective(sourceSide);
+
+    const sourceTokenId =
+      sourceSide === "primary" ? row.tokenId : (row.oppositeTokenId ?? null);
+    const semanticTokenId =
+      perspective.semanticSide === "primary"
+        ? row.tokenId
+        : (row.oppositeTokenId ?? null);
+    if (!sourceTokenId || !semanticTokenId) {
       this.hide();
       return;
     }
 
     const displayPrice = clamp01((sx - vp.l) / vp.width);
-    const tokenPrice = tokenPriceAtDisplayX(displayPrice, perspective);
+    const semanticPrice = semanticPriceAtDisplayX(displayPrice, perspective);
     const pressurePrice = pressurePriceAtDisplayX(displayPrice, perspective);
-    const tokenName = this.host.getTokenName(tokenId) ?? "(unknown)";
+    const tokenName = this.host.getTokenName(semanticTokenId) ?? "(unknown)";
     const color = signedVolumeColor(
       perspective.colorSign,
       this.host.getPressureColorScale(row.tokenId),
@@ -155,7 +160,7 @@ export class AgeStripTooltip {
 
     let hover: PressureHover | null = null;
     if (volume !== null) {
-      const memory = this.host.getPressureMemory(tokenId);
+      const memory = this.host.getPressureMemory(sourceTokenId);
       const band = memory
         ?.bandsAtPrice(pressurePrice)
         .find(
@@ -179,8 +184,8 @@ export class AgeStripTooltip {
     }
 
     const signature = [
-      tokenId,
-      formatProbability(tokenPrice),
+      semanticTokenId,
+      formatProbability(semanticPrice),
       hover ? formatShares(hover.shares) : "",
       hover ? formatAge(Date.now() - hover.validThroughMs) : "",
     ].join("|");
@@ -192,7 +197,7 @@ export class AgeStripTooltip {
         renderAgeTooltip(
           overlay,
           tokenName,
-          tokenPrice,
+          semanticPrice,
           color,
           hover,
           Date.now(),

@@ -9,8 +9,11 @@ import type { GpuPressureSurface } from "./gpuPressureLayer";
 export type AgePressureSide = "primary" | "opposite";
 
 export interface AgePressurePerspective {
-  readonly side: AgePressureSide;
-  /** Whether edge-local token price p is displayed at x = 1 - p. */
+  /** Which token-local pressure field supplies the geometry. */
+  readonly sourceSide: AgePressureSide;
+  /** Which token the rendered half represents semantically. */
+  readonly semanticSide: AgePressureSide;
+  /** Whether source-token price p is displayed at x = 1 - p. */
   readonly mirrorPrice: boolean;
   /** CSS-space direction away from the row centerline. */
   readonly yDirection: -1 | 1;
@@ -19,17 +22,19 @@ export interface AgePressurePerspective {
 }
 
 const PRIMARY: AgePressurePerspective = {
-  side: "primary",
+  sourceSide: "primary",
+  semanticSide: "opposite",
   mirrorPrice: true,
   yDirection: 1,
-  colorSign: 1,
+  colorSign: -1,
 };
 
 const OPPOSITE: AgePressurePerspective = {
-  side: "opposite",
+  sourceSide: "opposite",
+  semanticSide: "primary",
   mirrorPrice: false,
   yDirection: -1,
-  colorSign: -1,
+  colorSign: 1,
 };
 
 export function agePressurePerspective(
@@ -41,9 +46,9 @@ export function agePressurePerspective(
 export function agePressureSurface(
   runs: readonly PressureRenderRun[],
   colorScale: SignedVolumeColorScale,
-  side: AgePressureSide,
+  sourceSide: AgePressureSide,
 ): GpuPressureSurface {
-  const perspective = agePressurePerspective(side);
+  const perspective = agePressurePerspective(sourceSide);
   return {
     runs,
     color: signedVolumeColor(perspective.colorSign, colorScale),
@@ -52,15 +57,15 @@ export function agePressureSurface(
   };
 }
 
-export function agePressureSideAtY(
+export function agePressureSourceSideAtY(
   yCss: number,
   centerCss: number,
 ): AgePressureSide {
   return yCss >= centerCss ? "primary" : "opposite";
 }
 
-/** Convert screen-space normalized x into this token's own price coordinate. */
-export function tokenPriceAtDisplayX(
+/** Convert screen-space normalized x into the source field's price coordinate. */
+export function sourcePriceAtDisplayX(
   displayPrice: number,
   perspective: AgePressurePerspective,
 ): number {
@@ -68,14 +73,25 @@ export function tokenPriceAtDisplayX(
   return perspective.mirrorPrice ? 1 - clamped : clamped;
 }
 
+/**
+ * Price shown to the user for the semantic token represented by this half.
+ * The semantic token is the binary complement of the source token.
+ */
+export function semanticPriceAtDisplayX(
+  displayPrice: number,
+  perspective: AgePressurePerspective,
+): number {
+  return 1 - sourcePriceAtDisplayX(displayPrice, perspective);
+}
+
 /** Exact-ish field lookup coordinate for a continuous screen-space price. */
 export function pressurePriceAtDisplayX(
   displayPrice: number,
   perspective: AgePressurePerspective,
 ): Price {
-  const tokenPrice = tokenPriceAtDisplayX(displayPrice, perspective);
+  const sourcePrice = sourcePriceAtDisplayX(displayPrice, perspective);
   return priceFromTicks(
-    Math.max(0, Math.min(PRICE_SCALE, Math.floor(tokenPrice * PRICE_SCALE))),
+    Math.max(0, Math.min(PRICE_SCALE, Math.floor(sourcePrice * PRICE_SCALE))),
   );
 }
 
