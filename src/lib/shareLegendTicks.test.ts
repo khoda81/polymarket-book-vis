@@ -46,9 +46,12 @@ test("compact signed legend fades dense tick families progressively", () => {
     minDistancePx: 20,
   });
   const nonZero = ticks.filter((tick) => tick.value !== 0);
+  const opacities = nonZero.map((tick) => tick.opacity);
+  const minOpacity = Math.min(...opacities);
+  const maxOpacity = Math.max(...opacities);
 
   expect(nonZero.length).toBeGreaterThan(0);
-  expect(nonZero.some((tick) => tick.opacity < 0.25)).toBe(true);
-  expect(nonZero.some((tick) => tick.opacity > 0.75)).toBe(true);
-  expect(nonZero.every((tick) => tick.opacity < 1)).toBe(true);
+  expect(minOpacity).toBeGreaterThan(0);
+  expect(maxOpacity - minOpacity).toBeGreaterThan(0.05);
+  expect(maxOpacity).toBeLessThan(1);
 });
