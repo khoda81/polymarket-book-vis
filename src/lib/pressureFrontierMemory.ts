@@ -230,8 +230,7 @@ function levelsEqual(
 function newestValidThrough(
   field: PressureFrontierSnapshot["field"],
 ): number | undefined {
-  let newest =
-    field.currentValidThroughMs ?? Number.NEGATIVE_INFINITY;
+  let newest = field.currentValidThroughMs ?? Number.NEGATIVE_INFINITY;
   for (const run of field.runs)
     for (const band of run.bands)
       newest = Math.max(newest, band.validThroughMs);
