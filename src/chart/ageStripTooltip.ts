@@ -1,4 +1,3 @@
-import { bookHoverAtPrice, type BookHoverSnapshot } from "@/lib/bookHover";
 import type { TokenBook } from "@/lib/orderBook";
 import {
   signedVolumeColor,
@@ -15,6 +14,7 @@ import {
   releaseSharedTooltip,
   showSharedTooltip,
 } from "@/lib/sharedTooltip";
+import { priceToNumber } from "@/lib/price";
 
 export interface AgeStripTooltipHost {
   readonly canvas: HTMLCanvasElement;
@@ -22,15 +22,21 @@ export interface AgeStripTooltipHost {
   readonly getBook: (tokenId: string) => TokenBook | undefined;
   readonly getTokenName: (tokenId: string) => string | undefined;
   readonly getOppositeTokenName: (tokenId: string) => string | undefined;
+  readonly getOppositeTokenId: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
 }
 
 interface HoverPointer {
   readonly sx: number;
   readonly sy: number;
-  /** Viewport-space origin of the canvas, derived from the pointer event. */
   readonly canvasLeft: number;
   readonly canvasTop: number;
+}
+
+interface SupplyHover {
+  readonly price: number;
+  readonly shares: number;
+  readonly effectivePrice: number;
 }
 
 export class AgeStripTooltip {
@@ -109,7 +115,8 @@ export class AgeStripTooltip {
       return;
     }
 
-    const rowCenterY = pointer.canvasTop + ageStripRowCenterY(geometry, row);
+    const rowCenterCss = ageStripRowCenterY(geometry, row);
+    const rowCenterY = pointer.canvasTop + rowCenterCss;
     const anchorX = pointer.canvasLeft + sx;
 
     if (row.resolution) {
@@ -138,26 +145,41 @@ export class AgeStripTooltip {
       return;
     }
 
-    const book = this.host.getBook(row.tokenId);
+    const primary = sy >= rowCenterCss;
+    const tokenId = primary
+      ? row.tokenId
+      : this.host.getOppositeTokenId(row.tokenId);
+    if (!tokenId) {
+      this.hide();
+      return;
+    }
+
+    const book = this.host.getBook(tokenId);
     if (!book) {
       this.hide();
       return;
     }
 
-    // Age view is mirrored: opposite liquidity left, primary right.
-    const displayPrice = (sx - vp.l) / vp.width;
-    const hover = bookHoverAtPrice(book, 1 - displayPrice);
-    if (hover.side === "spread") {
+    const displayPrice = clamp01((sx - vp.l) / vp.width);
+    const tokenPrice = primary ? 1 - displayPrice : displayPrice;
+    const hover = supplyHoverAtPrice(book, tokenPrice);
+    if (!hover) {
       this.hide();
       return;
     }
 
-    const tokenName =
-      hover.side === "bid"
-        ? this.host.getTokenName(row.tokenId)
-        : this.host.getOppositeTokenName(row.tokenId);
+    const tokenName = primary
+      ? this.host.getTokenName(row.tokenId)
+      : this.host.getOppositeTokenName(row.tokenId);
     const resolvedName = tokenName ?? "(unknown)";
-    const signature = tooltipSignature(resolvedName, hover);
+    const colorScale = this.host.getPressureColorScale(row.tokenId);
+    const signature = [
+      resolvedName,
+      formatProbability(hover.price),
+      formatShares(hover.shares),
+      formatProbability(hover.effectivePrice),
+      primary ? "primary" : "opposite",
+    ].join("|");
 
     showSharedTooltip(
       this.tooltipOwner,
@@ -167,7 +189,7 @@ export class AgeStripTooltip {
           overlay,
           resolvedName,
           hover,
-          this.host.getPressureColorScale(row.tokenId),
+          signedVolumeColor(primary ? 1 : -1, colorScale),
         ),
       anchorX,
       rowCenterY,
@@ -179,59 +201,23 @@ export class AgeStripTooltip {
   }
 }
 
-export function tooltipSignature(
-  tokenName: string,
-  hover: BookHoverSnapshot,
-): string {
-  const isBid = hover.side === "bid";
-  const tokenPrice = isBid ? hover.price : 1 - hover.price;
-  const effectivePrice =
-    hover.effectivePrice === null
-      ? ""
-      : formatProbability(
-          isBid ? hover.effectivePrice : 1 - hover.effectivePrice,
-        );
-
-  return [
-    tokenName,
-    hover.side,
-    formatProbability(tokenPrice),
-    formatShares(hover.shares),
-    effectivePrice,
-  ].join("|");
-}
-
 export function renderAgeTooltip(
   overlay: HTMLDivElement,
   tokenName: string,
-  hover: BookHoverSnapshot,
-  colorScale: SignedVolumeColorScale,
+  hover: SupplyHover,
+  color: string,
 ): void {
   overlay.replaceChildren();
 
-  const isBid = hover.side === "bid";
-  const tokenPrice = isBid ? hover.price : 1 - hover.price;
-  const effectivePrice =
-    hover.effectivePrice === null
-      ? null
-      : isBid
-        ? hover.effectivePrice
-        : 1 - hover.effectivePrice;
-
   const title = document.createElement("div");
   title.className = "cpv-ov-label";
-  title.textContent = `${tokenName}@${formatProbability(tokenPrice)}`;
-  // The pressure renderer interprets a primary-token bid as the
-  // complementary opposite-token -> collateral edge. Keep the original-order
-  // tooltip label, but color it with the edge that is actually rendered.
-  title.style.color = signedVolumeColor(isBid ? -1 : 1, colorScale);
+  title.textContent = `${tokenName}@${formatProbability(hover.price)}`;
+  title.style.color = color;
   overlay.appendChild(title);
   overlay.appendChild(tooltipRow("Shares", formatShares(hover.shares)));
-
-  if (effectivePrice !== null)
-    overlay.appendChild(
-      tooltipRow("Effective", formatProbability(effectivePrice)),
-    );
+  overlay.appendChild(
+    tooltipRow("Effective", formatProbability(hover.effectivePrice)),
+  );
 }
 
 export function renderResolutionTooltip(
@@ -258,6 +244,26 @@ export function renderResolutionTooltip(
     overlay.appendChild(
       tooltipRow("Market end", formatResolutionTime(marketEndMs)),
     );
+}
+
+function supplyHoverAtPrice(
+  book: TokenBook,
+  limitPrice: number,
+): SupplyHover | null {
+  const price = clamp01(limitPrice);
+  let shares = 0;
+  let cost = 0;
+
+  for (const order of book.yesToUsd.asSellOrders()) {
+    if (!Number.isFinite(order.take) || order.take <= 0) continue;
+    const orderPrice = priceToNumber(order.price);
+    if (orderPrice > price) break;
+    shares += order.take;
+    cost += orderPrice * order.take;
+  }
+
+  if (!(shares > 0)) return null;
+  return { price, shares, effectivePrice: clamp01(cost / shares) };
 }
 
 const RESOLUTION_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -295,4 +301,9 @@ function formatShares(value: number): string {
     notation: "compact",
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }
