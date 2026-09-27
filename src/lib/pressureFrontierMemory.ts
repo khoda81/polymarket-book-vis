@@ -214,10 +214,9 @@ export class PressureFrontierMemory {
     );
   }
 
-  private ensureObserved(validThroughMs: number): Extract<
-    MutablePressureState,
-    { kind: "observed" }
-  > {
+  private ensureObserved(
+    validThroughMs: number,
+  ): Extract<MutablePressureState, { kind: "observed" }> {
     if (this.state.kind === "observed") return this.state;
     const observed: Extract<MutablePressureState, { kind: "observed" }> = {
       kind: "observed",
@@ -235,8 +234,7 @@ export class PressureFrontierMemory {
   ): boolean {
     const changes = new Map<Price, number>();
     for (const run of runs)
-      if (run.shares > 0 && !desired.has(run.price))
-        changes.set(run.price, 0);
+      if (run.shares > 0 && !desired.has(run.price)) changes.set(run.price, 0);
     for (const [price, shares] of desired)
       if (this.exactSharesAt(runs, price) !== shares)
         changes.set(price, shares);

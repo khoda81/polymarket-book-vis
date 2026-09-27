@@ -4,7 +4,12 @@ import {
   type FrontierRoot,
 } from "./monotoneFrontier";
 import type { PressureBand } from "../../src/lib/pressureField";
-import { PRICE_ONE, PRICE_ZERO, type Price, priceFromTicks } from "../../src/lib/price";
+import {
+  PRICE_ONE,
+  PRICE_ZERO,
+  type Price,
+  priceFromTicks,
+} from "../../src/lib/price";
 
 /**
  * One explicit price boundary in the materialized pressure field.

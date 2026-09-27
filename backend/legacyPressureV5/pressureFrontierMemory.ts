@@ -12,7 +12,12 @@ import {
   type FrontierRoot,
 } from "./monotoneFrontier";
 import { visibleSinceMs, type PressureBand } from "../../src/lib/pressureField";
-import { PRICE_ONE, PRICE_ZERO, type Price, priceFromTicks } from "../../src/lib/price";
+import {
+  PRICE_ONE,
+  PRICE_ZERO,
+  type Price,
+  priceFromTicks,
+} from "../../src/lib/price";
 import {
   PRESSURE_FRONTIER_SNAPSHOT_VERSION,
   parsePressureFrontierSnapshot,

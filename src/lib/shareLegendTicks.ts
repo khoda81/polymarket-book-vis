@@ -156,8 +156,7 @@ function biggestNiceStepCrossing(
     for (const multiplier of SHARE_STEP_MULTIPLIERS) {
       const step = multiplier * 10 ** exponent;
       if (!(step > 0) || !Number.isFinite(step)) continue;
-      if (firstGridBoundaryAfter(start, step) <= end)
-        return { step, exponent };
+      if (firstGridBoundaryAfter(start, step) <= end) return { step, exponent };
     }
   }
   return null;

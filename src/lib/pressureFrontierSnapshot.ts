@@ -40,7 +40,8 @@ export function parsePressureFrontierSnapshot(
 
   if (value.version !== PRESSURE_FRONTIER_SNAPSHOT_VERSION)
     throw new RangeError(
-      "unsupported pressure frontier snapshot version: " + String(value.version),
+      "unsupported pressure frontier snapshot version: " +
+        String(value.version),
     );
 
   return {
@@ -59,7 +60,9 @@ function parseState(value: unknown): PressureFrontierState {
   }
 
   if (value.kind !== "observed")
-    throw new RangeError("pressure frontier state kind must be observed or unobserved");
+    throw new RangeError(
+      "pressure frontier state kind must be observed or unobserved",
+    );
 
   assertOnlyKeys(
     value,
@@ -132,11 +135,15 @@ function parseFrozenStep(value: unknown, label: string): FrozenStep {
   assertOnlyKeys(value, ["hiVolume", "validThroughMs"], label);
 
   const hiVolume = nonNegativeNumber(value.hiVolume, label + ".hiVolume");
-  if (!(hiVolume > 0)) throw new RangeError(label + ".hiVolume must be positive");
+  if (!(hiVolume > 0))
+    throw new RangeError(label + ".hiVolume must be positive");
 
   return {
     hiVolume,
-    validThroughMs: finiteNumber(value.validThroughMs, label + ".validThroughMs"),
+    validThroughMs: finiteNumber(
+      value.validThroughMs,
+      label + ".validThroughMs",
+    ),
   };
 }
 
@@ -153,19 +160,27 @@ function validateFrozenSteps(
     const step = run.frozenSteps[index]!;
     if (!(step.hiVolume > currentVolume))
       throw new RangeError(
-        "pressure run[" + runIndex + "] frozen steps must stay above current pressure",
+        "pressure run[" +
+          runIndex +
+          "] frozen steps must stay above current pressure",
       );
     if (!(step.hiVolume < previousHi))
       throw new RangeError(
-        "pressure run[" + runIndex + "] frozen upper edges must decrease high -> low",
+        "pressure run[" +
+          runIndex +
+          "] frozen upper edges must decrease high -> low",
       );
     if (!(step.validThroughMs > previousValidThrough))
       throw new RangeError(
-        "pressure run[" + runIndex + "] frozen timestamps must increase high -> low",
+        "pressure run[" +
+          runIndex +
+          "] frozen timestamps must increase high -> low",
       );
     if (step.validThroughMs > currentValidThroughMs)
       throw new RangeError(
-        "pressure run[" + runIndex + "] frozen timestamp exceeds current validity",
+        "pressure run[" +
+          runIndex +
+          "] frozen timestamp exceeds current validity",
       );
 
     previousHi = step.hiVolume;

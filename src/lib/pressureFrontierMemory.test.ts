@@ -261,10 +261,20 @@ test("pressure updates report whether canonical state changed", () => {
   expect(memory.updateLevels([], 1_000)).toBe(false);
   expect(memory.updateLevels([{ price: p(0), shares: 10 }], 1_000)).toBe(false);
 
-  expect(memory.updateLevels([{ price: p(0.5), shares: 10 }], 1_000)).toBe(true);
-  expect(memory.updateLevels([{ price: p(0.5), shares: 10 }], 1_000)).toBe(false);
-  expect(memory.updateLevels([{ price: p(0.5), shares: 10 }], 2_000)).toBe(true);
+  expect(memory.updateLevels([{ price: p(0.5), shares: 10 }], 1_000)).toBe(
+    true,
+  );
+  expect(memory.updateLevels([{ price: p(0.5), shares: 10 }], 1_000)).toBe(
+    false,
+  );
+  expect(memory.updateLevels([{ price: p(0.5), shares: 10 }], 2_000)).toBe(
+    true,
+  );
 
-  expect(memory.observeLevels([{ price: p(0.5), shares: 10 }], 2_000)).toBe(false);
-  expect(memory.observeLevels([{ price: p(0.5), shares: 10 }], 3_000)).toBe(true);
+  expect(memory.observeLevels([{ price: p(0.5), shares: 10 }], 2_000)).toBe(
+    false,
+  );
+  expect(memory.observeLevels([{ price: p(0.5), shares: 10 }], 3_000)).toBe(
+    true,
+  );
 });

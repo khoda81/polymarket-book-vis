@@ -652,7 +652,11 @@ function appendResidentRuns(
       values.push(priceLo, priceHi, 0, currentVolume, 0, 1);
 
     let lower = currentVolume;
-    for (let stepIndex = run.frozenSteps.length - 1; stepIndex >= 0; stepIndex--) {
+    for (
+      let stepIndex = run.frozenSteps.length - 1;
+      stepIndex >= 0;
+      stepIndex--
+    ) {
       const step = run.frozenSteps[stepIndex]!;
       values.push(
         priceLo,
