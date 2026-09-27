@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { applyPriceChange, bookFromSnapshot } from "./bookIngestion";
-import { tokenPressureChanges, tokenPressureLevels } from "./pressureBookAdapter";
+import {
+  tokenPressureChanges,
+  tokenPressureLevels,
+} from "./pressureBookAdapter";
 import { parsePrice } from "./price";
 
 test("token pressure uses only token-to-collateral asks", () => {
