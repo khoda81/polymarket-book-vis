@@ -261,6 +261,9 @@ export class AgeStripView {
                   primaryMemory.renderDataRevision(),
                   primaryMemory.renderMaxPrice(),
                   primaryMemory.renderRuns(),
+                  primaryMemory.renderCumulativeShares(),
+                  (revision) =>
+                    primaryMemory.renderFirstChangedRunSince(revision),
                   primaryMemory.renderCurrentValidThroughMs(),
                   colorScale,
                   "primary",
@@ -274,6 +277,9 @@ export class AgeStripView {
                   oppositeMemory.renderDataRevision(),
                   oppositeMemory.renderMaxPrice(),
                   oppositeMemory.renderRuns(),
+                  oppositeMemory.renderCumulativeShares(),
+                  (revision) =>
+                    oppositeMemory.renderFirstChangedRunSince(revision),
                   oppositeMemory.renderCurrentValidThroughMs(),
                   colorScale,
                   "opposite",

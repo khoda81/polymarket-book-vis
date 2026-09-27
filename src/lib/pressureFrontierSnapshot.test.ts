@@ -33,6 +33,18 @@ test("snapshot round trip preserves token-local history", () => {
     expect(restored.bandsAtPrice(price)).toEqual(source.bandsAtPrice(price));
 });
 
+test("already validated snapshots cross the restore boundary without reparsing", () => {
+  const source = new PressureFrontierMemory();
+  source.updateLevels([{ price: p(0.4), shares: 100 }], 1_000);
+
+  const parsed = parsePressureFrontierSnapshot(source.snapshot());
+  expect(parsePressureFrontierSnapshot(parsed)).toBe(parsed);
+
+  const restored = new PressureFrontierMemory();
+  restored.restore(parsed);
+  expect(restored.snapshot()).toEqual(source.snapshot());
+});
+
 test("snapshot persists exact token-local coordinates and shares", () => {
   const memory = new PressureFrontierMemory();
   memory.updateLevels([{ price: p(0.013), shares: 25 }], 1);

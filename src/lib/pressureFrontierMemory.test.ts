@@ -233,6 +233,30 @@ test("render revision changes only when pressure geometry changes", () => {
   expect(memory.renderDataRevision()).toBe(2);
 });
 
+test("render changes retain the earliest dirty suffix across revisions", () => {
+  const memory = new PressureFrontierMemory();
+  memory.updateLevels(
+    [
+      { price: p(0.1), shares: 10 },
+      { price: p(0.3), shares: 20 },
+      { price: p(0.5), shares: 30 },
+      { price: p(0.7), shares: 40 },
+    ],
+    1_000,
+  );
+  const initialRevision = memory.renderDataRevision();
+
+  memory.updateLevels([{ price: p(0.7), shares: 35 }], 2_000);
+  expect(memory.renderFirstChangedRunSince(initialRevision)).toBe(2);
+
+  memory.updateLevels([{ price: p(0.5), shares: 25 }], 3_000);
+  expect(memory.renderFirstChangedRunSince(initialRevision)).toBe(1);
+  expect(memory.renderCumulativeShares()).toEqual([10, 30, 55, 90]);
+  expect(memory.renderFirstChangedRunSince(memory.renderDataRevision())).toBe(
+    memory.renderRuns().length,
+  );
+});
+
 test("pressure boundaries exclude the implicit disposal sentinel", () => {
   const memory = new PressureFrontierMemory();
   memory.updateLevels(

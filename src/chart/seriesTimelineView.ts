@@ -500,6 +500,9 @@ export class SeriesTimelineView {
                   primaryMemory.renderDataRevision(),
                   primaryMemory.renderMaxPrice(),
                   primaryMemory.renderRuns(),
+                  primaryMemory.renderCumulativeShares(),
+                  (revision) =>
+                    primaryMemory.renderFirstChangedRunSince(revision),
                   primaryMemory.renderCurrentValidThroughMs(),
                   scale,
                   "primary",
@@ -513,6 +516,9 @@ export class SeriesTimelineView {
                   oppositeMemory.renderDataRevision(),
                   oppositeMemory.renderMaxPrice(),
                   oppositeMemory.renderRuns(),
+                  oppositeMemory.renderCumulativeShares(),
+                  (revision) =>
+                    oppositeMemory.renderFirstChangedRunSince(revision),
                   oppositeMemory.renderCurrentValidThroughMs(),
                   scale,
                   "opposite",

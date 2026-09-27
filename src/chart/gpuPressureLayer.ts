@@ -7,6 +7,8 @@ export interface GpuPressureSurface {
   readonly dataRevision: number;
   readonly maxPrice: Price;
   readonly runs: readonly PressureRun[];
+  readonly cumulativeShares: readonly number[];
+  readonly firstChangedRunSince: (revision: number) => number;
   /** O(1) validity timestamp for the currently resting portion of every run. */
   readonly currentValidThroughMs: number | undefined;
   readonly color: string;
@@ -42,6 +44,18 @@ const INSTANCE_FLOATS = 6;
 const INSTANCE_STRIDE = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
 const MAX_SUPERSAMPLE_X = 2;
 const MAX_SUPERSAMPLE_Y = 4;
+const MAX_TIME_ORIGIN_AGE_MS = 60 * 60 * 1_000;
+const PRESSURE_UPLOAD_DEBUG =
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("pressureDebug") === "1";
+const PRESSURE_UPLOAD_REPORT_INTERVAL_MS = 5_000;
+const pressureUploadStats = {
+  startedAtMs: 0,
+  uploadCount: 0,
+  fullUploadCount: 0,
+  serializedRunCount: 0,
+  uploadedBytes: 0,
+};
 
 const GEOMETRY_VERTEX = `#version 300 es
 precision highp float;
@@ -226,9 +240,11 @@ void main() {
 interface CachedPressureSurface {
   readonly buffer: WebGLBuffer;
   readonly vao: WebGLVertexArrayObject;
+  readonly resident: PressureResidentBuffer;
   dataRevision: number;
   instanceCount: number;
   timeOriginMs: number;
+  gpuCapacityFloats: number;
 }
 
 export class GpuPressureLayer {
@@ -341,7 +357,16 @@ export class GpuPressureLayer {
         }
 
         if (cached.dataRevision !== surface.dataRevision) {
-          this.uploadSurfaceBuffer(cached, surface, frame.nowMs);
+          const firstChangedRun =
+            cached.dataRevision < 0
+              ? 0
+              : surface.firstChangedRunSince(cached.dataRevision);
+          this.uploadSurfaceBuffer(
+            cached,
+            surface,
+            frame.nowMs,
+            firstChangedRun,
+          );
           cached.dataRevision = surface.dataRevision;
           changed = true;
         }
@@ -387,9 +412,11 @@ export class GpuPressureLayer {
     return {
       buffer,
       vao,
+      resident: new PressureResidentBuffer(),
       dataRevision: -1,
       instanceCount: 0,
       timeOriginMs: 0,
+      gpuCapacityFloats: 0,
     };
   }
 
@@ -397,23 +424,98 @@ export class GpuPressureLayer {
     cached: CachedPressureSurface,
     surface: GpuPressureSurface,
     nowMs: number,
+    requestedFirstRun: number,
   ): void {
-    cached.timeOriginMs = nowMs;
-    const values: number[] = [];
-    appendResidentRuns(
-      values,
+    let firstRun = Math.max(
+      0,
+      Math.min(surface.runs.length, requestedFirstRun),
+    );
+    if (
+      cached.timeOriginMs === 0 ||
+      nowMs - cached.timeOriginMs > MAX_TIME_ORIGIN_AGE_MS
+    ) {
+      cached.timeOriginMs = nowMs;
+      firstRun = 0;
+    }
+
+    const firstFloat = cached.resident.rebuildFrom(
       surface.runs,
+      surface.cumulativeShares,
       surface.maxPrice,
       cached.timeOriginMs,
+      firstRun,
     );
-
-    const instances = new Float32Array(values);
-    cached.instanceCount = instances.length / INSTANCE_FLOATS;
+    cached.instanceCount = cached.resident.instanceCount;
+    const serializedRuns = surface.runs.length - firstRun;
 
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, cached.buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, instances, gl.DYNAMIC_DRAW);
+    let uploadedFloats = 0;
+    let fullUpload = false;
+    if (cached.resident.capacityFloats > cached.gpuCapacityFloats) {
+      cached.gpuCapacityFloats = cached.resident.capacityFloats;
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        cached.gpuCapacityFloats * Float32Array.BYTES_PER_ELEMENT,
+        gl.DYNAMIC_DRAW,
+      );
+      if (cached.resident.usedFloats > 0) {
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, cached.resident.usedData());
+        uploadedFloats = cached.resident.usedFloats;
+      }
+      fullUpload = true;
+    } else if (firstFloat < cached.resident.usedFloats) {
+      gl.bufferSubData(
+        gl.ARRAY_BUFFER,
+        firstFloat * Float32Array.BYTES_PER_ELEMENT,
+        cached.resident.dataFrom(firstFloat),
+      );
+      uploadedFloats = cached.resident.usedFloats - firstFloat;
+      fullUpload = firstFloat === 0;
+    }
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    this.recordUploadStats(
+      serializedRuns,
+      uploadedFloats * Float32Array.BYTES_PER_ELEMENT,
+      fullUpload,
+    );
+  }
+
+  private recordUploadStats(
+    serializedRuns: number,
+    uploadedBytes: number,
+    fullUpload: boolean,
+  ): void {
+    if (!PRESSURE_UPLOAD_DEBUG) return;
+
+    const nowMs = performance.now();
+    if (pressureUploadStats.startedAtMs === 0)
+      pressureUploadStats.startedAtMs = nowMs;
+    pressureUploadStats.uploadCount++;
+    pressureUploadStats.fullUploadCount += fullUpload ? 1 : 0;
+    pressureUploadStats.serializedRunCount += serializedRuns;
+    pressureUploadStats.uploadedBytes += uploadedBytes;
+
+    const elapsedMs = nowMs - pressureUploadStats.startedAtMs;
+    if (elapsedMs < PRESSURE_UPLOAD_REPORT_INTERVAL_MS) return;
+
+    console.debug(
+      `[pressure:uploads] ${JSON.stringify({
+        seconds: elapsedMs / 1_000,
+        uploadsPerSecond: (pressureUploadStats.uploadCount * 1_000) / elapsedMs,
+        fullUploadShare:
+          pressureUploadStats.fullUploadCount / pressureUploadStats.uploadCount,
+        averageRunsSerialized:
+          pressureUploadStats.serializedRunCount /
+          pressureUploadStats.uploadCount,
+        bytesPerSecond: (pressureUploadStats.uploadedBytes * 1_000) / elapsedMs,
+      })}`,
+    );
+    pressureUploadStats.startedAtMs = nowMs;
+    pressureUploadStats.uploadCount = 0;
+    pressureUploadStats.fullUploadCount = 0;
+    pressureUploadStats.serializedRunCount = 0;
+    pressureUploadStats.uploadedBytes = 0;
   }
 
   private deleteSurfaceBuffer(cached: CachedPressureSurface): void {
@@ -631,43 +733,124 @@ export class GpuPressureLayer {
   }
 }
 
-function appendResidentRuns(
-  values: number[],
-  runs: readonly PressureRun[],
-  maxPrice: Price,
-  timeOriginMs: number,
-): void {
-  let currentVolume = 0;
+export class PressureResidentBuffer {
+  private values = new Float32Array(0);
+  private readonly runInstanceOffsets: number[] = [];
+  usedFloats = 0;
 
-  for (let index = 0; index < runs.length; index++) {
-    const run = runs[index]!;
-    currentVolume += run.shares;
+  get capacityFloats(): number {
+    return this.values.length;
+  }
 
-    const nextPrice = runs[index + 1]?.price ?? maxPrice;
-    const priceLo = priceToNumber(run.price);
-    const priceHi = priceToNumber(nextPrice);
-    if (!(priceHi > priceLo)) continue;
+  get instanceCount(): number {
+    return this.usedFloats / INSTANCE_FLOATS;
+  }
 
-    if (currentVolume > 0)
-      values.push(priceLo, priceHi, 0, currentVolume, 0, 1);
+  usedData(): Float32Array {
+    return this.values.subarray(0, this.usedFloats);
+  }
 
-    let lower = currentVolume;
-    for (
-      let stepIndex = run.frozenSteps.length - 1;
-      stepIndex >= 0;
-      stepIndex--
-    ) {
-      const step = run.frozenSteps[stepIndex]!;
-      values.push(
-        priceLo,
-        priceHi,
-        lower,
-        step.hiVolume,
-        (step.validThroughMs - timeOriginMs) / 1_000,
-        0,
-      );
-      lower = step.hiVolume;
+  dataFrom(firstFloat: number): Float32Array {
+    return this.values.subarray(firstFloat, this.usedFloats);
+  }
+
+  /**
+   * Rewrite the flattened resident representation from one canonical run
+   * onward. Prefix bytes and run offsets stay intact.
+   *
+   * Returns the first float whose GPU copy may have changed.
+   */
+  rebuildFrom(
+    runs: readonly PressureRun[],
+    cumulativeShares: readonly number[],
+    maxPrice: Price,
+    timeOriginMs: number,
+    requestedFirstRun: number,
+  ): number {
+    let firstRun = Math.max(0, Math.min(runs.length, requestedFirstRun));
+    if (
+      cumulativeShares.length !== runs.length ||
+      firstRun >= this.runInstanceOffsets.length
+    )
+      firstRun = 0;
+
+    let writeFloat =
+      firstRun === 0 ? 0 : this.runInstanceOffsets[firstRun]! * INSTANCE_FLOATS;
+    const firstFloat = writeFloat;
+    this.runInstanceOffsets.length = runs.length + 1;
+    for (let index = firstRun; index < runs.length; index++) {
+      const run = runs[index]!;
+      const currentVolume = cumulativeShares[index]!;
+      this.runInstanceOffsets[index] = writeFloat / INSTANCE_FLOATS;
+
+      const nextPrice = runs[index + 1]?.price ?? maxPrice;
+      const priceLo = priceToNumber(run.price);
+      const priceHi = priceToNumber(nextPrice);
+      if (!(priceHi > priceLo)) continue;
+
+      if (currentVolume > 0)
+        writeFloat = this.appendInstance(
+          writeFloat,
+          priceLo,
+          priceHi,
+          0,
+          currentVolume,
+          0,
+          1,
+        );
+
+      let lower = currentVolume;
+      for (
+        let stepIndex = run.frozenSteps.length - 1;
+        stepIndex >= 0;
+        stepIndex--
+      ) {
+        const step = run.frozenSteps[stepIndex]!;
+        writeFloat = this.appendInstance(
+          writeFloat,
+          priceLo,
+          priceHi,
+          lower,
+          step.hiVolume,
+          (step.validThroughMs - timeOriginMs) / 1_000,
+          0,
+        );
+        lower = step.hiVolume;
+      }
     }
+
+    this.runInstanceOffsets[runs.length] = writeFloat / INSTANCE_FLOATS;
+    this.usedFloats = writeFloat;
+    return firstFloat;
+  }
+
+  private appendInstance(
+    writeFloat: number,
+    priceLo: number,
+    priceHi: number,
+    volumeLo: number,
+    volumeHi: number,
+    validThroughSec: number,
+    isCurrent: number,
+  ): number {
+    this.ensureCapacity(writeFloat + INSTANCE_FLOATS, writeFloat);
+    this.values[writeFloat] = priceLo;
+    this.values[writeFloat + 1] = priceHi;
+    this.values[writeFloat + 2] = volumeLo;
+    this.values[writeFloat + 3] = volumeHi;
+    this.values[writeFloat + 4] = validThroughSec;
+    this.values[writeFloat + 5] = isCurrent;
+    return writeFloat + INSTANCE_FLOATS;
+  }
+
+  private ensureCapacity(requiredFloats: number, preserveFloats: number): void {
+    if (requiredFloats <= this.values.length) return;
+
+    let capacity = Math.max(INSTANCE_FLOATS * 16, this.values.length * 2);
+    while (capacity < requiredFloats) capacity *= 2;
+    const next = new Float32Array(capacity);
+    next.set(this.values.subarray(0, preserveFloats));
+    this.values = next;
   }
 }
 

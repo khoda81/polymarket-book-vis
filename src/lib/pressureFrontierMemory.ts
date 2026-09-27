@@ -32,6 +32,13 @@ type MutablePressureState =
     };
 
 const EMPTY_RUNS: readonly PressureRun[] = [];
+const EMPTY_CUMULATIVE_SHARES: readonly number[] = [];
+const MAX_RENDER_CHANGE_HISTORY = 64;
+
+interface RenderChange {
+  readonly revision: number;
+  readonly firstRunIndex: number;
+}
 
 /**
  * Canonical token-local pressure state.
@@ -44,6 +51,8 @@ const EMPTY_RUNS: readonly PressureRun[] = [];
 export class PressureFrontierMemory {
   private state: MutablePressureState = { kind: "unobserved" };
   private renderRevision = 0;
+  private cumulativeShares: number[] | null = null;
+  private readonly renderChanges: RenderChange[] = [];
 
   observeLevels(
     levels: readonly PressureLevel[],
@@ -52,14 +61,17 @@ export class PressureFrontierMemory {
     validThroughMs = this.normalizeTime(validThroughMs);
     const previousValidThroughMs = this.currentValidThroughMs();
     const observed = this.ensureObserved(validThroughMs);
-    const geometryChanged = this.applyReplacement(
+    const firstChangedRunIndex = this.applyReplacement(
       observed.runs,
       normalizeLevels(levels),
       previousValidThroughMs,
     );
     observed.validThroughMs = validThroughMs;
-    if (geometryChanged) this.renderRevision++;
-    return geometryChanged || validThroughMs !== previousValidThroughMs;
+    if (firstChangedRunIndex !== null)
+      this.recordRenderChange(firstChangedRunIndex);
+    return (
+      firstChangedRunIndex !== null || validThroughMs !== previousValidThroughMs
+    );
   }
 
   updateLevels(
@@ -72,14 +84,17 @@ export class PressureFrontierMemory {
     validThroughMs = this.normalizeTime(validThroughMs);
     const previousValidThroughMs = this.currentValidThroughMs();
     const observed = this.ensureObserved(validThroughMs);
-    const geometryChanged = this.applyChanges(
+    const firstChangedRunIndex = this.applyChanges(
       observed.runs,
       normalized,
       previousValidThroughMs,
     );
     observed.validThroughMs = validThroughMs;
-    if (geometryChanged) this.renderRevision++;
-    return geometryChanged || validThroughMs !== previousValidThroughMs;
+    if (firstChangedRunIndex !== null)
+      this.recordRenderChange(firstChangedRunIndex);
+    return (
+      firstChangedRunIndex !== null || validThroughMs !== previousValidThroughMs
+    );
   }
 
   /** Advance the current pressure validity without changing its geometry. */
@@ -118,7 +133,8 @@ export class PressureFrontierMemory {
             validThroughMs: parsed.state.validThroughMs,
             runs: parsed.state.runs.map(cloneRun),
           };
-    this.renderRevision++;
+    this.cumulativeShares = null;
+    this.recordRenderChange(0);
   }
 
   priceBoundaries(): readonly Price[] {
@@ -131,6 +147,13 @@ export class PressureFrontierMemory {
     return this.state.kind === "observed" ? this.state.runs : EMPTY_RUNS;
   }
 
+  /** Derived cumulative shares aligned one-to-one with renderRuns(). */
+  renderCumulativeShares(): readonly number[] {
+    return this.state.kind === "observed"
+      ? this.ensureCumulativeShares(this.state.runs)
+      : EMPTY_CUMULATIVE_SHARES;
+  }
+
   renderCurrentValidThroughMs(): number | undefined {
     return this.currentValidThroughMs();
   }
@@ -141,6 +164,28 @@ export class PressureFrontierMemory {
 
   renderDataRevision(): number {
     return this.renderRevision;
+  }
+
+  /**
+   * Earliest run whose flattened render data may differ from a cached
+   * revision. Falls back to zero when the renderer is older than our bounded
+   * derived change history.
+   */
+  renderFirstChangedRunSince(revision: number): number {
+    const runCount = this.renderRuns().length;
+    if (revision === this.renderRevision) return runCount;
+    if (revision < 0 || revision > this.renderRevision) return 0;
+
+    const first = this.renderChanges.find(
+      (change) => change.revision > revision,
+    );
+    if (!first || first.revision !== revision + 1) return 0;
+
+    let firstRunIndex = first.firstRunIndex;
+    for (const change of this.renderChanges)
+      if (change.revision > first.revision)
+        firstRunIndex = Math.min(firstRunIndex, change.firstRunIndex);
+    return Math.min(firstRunIndex, runCount);
   }
 
   bandsAtPrice(price: Price): readonly PressureBand[] {
@@ -167,19 +212,18 @@ export class PressureFrontierMemory {
         validThroughMs: this.state.validThroughMs,
       };
 
-    let lower = currentVolume;
-    for (let index = run.frozenSteps.length - 1; index >= 0; index--) {
-      const step = run.frozenSteps[index]!;
-      if (volume >= lower && volume < step.hiVolume)
-        return {
-          loVolume: lower,
-          hiVolume: step.hiVolume,
-          validThroughMs: step.validThroughMs,
-        };
-      lower = step.hiVolume;
-    }
+    const stepIndex = frozenStepIndexAt(run.frozenSteps, volume);
+    if (stepIndex === undefined) return undefined;
 
-    return undefined;
+    const step = run.frozenSteps[stepIndex]!;
+    return {
+      loVolume:
+        stepIndex + 1 < run.frozenSteps.length
+          ? run.frozenSteps[stepIndex + 1]!.hiVolume
+          : currentVolume,
+      hiVolume: step.hiVolume,
+      validThroughMs: step.validThroughMs,
+    };
   }
 
   hasVisiblePressure(
@@ -204,7 +248,8 @@ export class PressureFrontierMemory {
   clear(): void {
     if (this.state.kind === "unobserved") return;
     this.state = { kind: "unobserved" };
-    this.renderRevision++;
+    this.cumulativeShares = null;
+    this.recordRenderChange(0);
   }
 
   currentLevels(): readonly PressureLevel[] {
@@ -231,7 +276,7 @@ export class PressureFrontierMemory {
     runs: MutableRun[],
     desired: ReadonlyMap<Price, number>,
     previousValidThroughMs: number | undefined,
-  ): boolean {
+  ): number | null {
     const changes = new Map<Price, number>();
     for (const run of runs)
       if (run.shares > 0 && !desired.has(run.price)) changes.set(run.price, 0);
@@ -246,19 +291,28 @@ export class PressureFrontierMemory {
     runs: MutableRun[],
     requested: ReadonlyMap<Price, number>,
     previousValidThroughMs: number | undefined,
-  ): boolean {
+  ): number | null {
     const changes = new Map<Price, number>();
     for (const [price, shares] of requested)
       if (this.exactSharesAt(runs, price) !== shares)
         changes.set(price, shares);
-    if (changes.size === 0) return false;
+    if (changes.size === 0) return null;
 
-    for (const price of [...changes.keys()].sort((a, b) => a - b))
-      this.splitAt(runs, price);
+    const changedPrices = [...changes.keys()].sort((a, b) => a - b);
+    const firstPrice = changedPrices[0]!;
+    const firstOriginalIndex = findInsertIndex(runs, firstPrice);
+    const cumulativeShares = this.ensureCumulativeShares(runs);
+    const prefixVolume =
+      firstOriginalIndex > 0 ? cumulativeShares[firstOriginalIndex - 1]! : 0;
 
-    let oldVolume = 0;
-    let nextVolume = 0;
-    for (const run of runs) {
+    for (const price of changedPrices) this.splitAt(runs, price);
+
+    const firstChangedRunIndex = findInsertIndex(runs, firstPrice);
+
+    let oldVolume = prefixVolume;
+    let nextVolume = prefixVolume;
+    for (let index = firstChangedRunIndex; index < runs.length; index++) {
+      const run = runs[index]!;
       const oldShares = run.shares;
       const nextShares = changes.get(run.price) ?? oldShares;
       oldVolume += oldShares;
@@ -275,9 +329,10 @@ export class PressureFrontierMemory {
       run.shares = nextShares;
     }
 
-    const merged = mergeAdjacentRuns(runs);
-    runs.splice(0, runs.length, ...merged);
-    return true;
+    const firstPossiblyMergedRun = Math.max(0, firstChangedRunIndex - 1);
+    mergeAdjacentRunsFrom(runs, firstPossiblyMergedRun);
+    this.rebuildCumulativeSharesFrom(runs, firstPossiblyMergedRun);
+    return firstPossiblyMergedRun;
   }
 
   private exactSharesAt(runs: readonly MutableRun[], price: Price): number {
@@ -309,20 +364,57 @@ export class PressureFrontierMemory {
     )
       return undefined;
 
-    let currentVolume = 0;
-    let selected: MutableRun | undefined;
-    let selectedVolume = 0;
+    const runs = this.state.runs;
+    const insertion = findInsertIndex(runs, price);
+    const index =
+      insertion < runs.length && runs[insertion]!.price === price
+        ? insertion
+        : insertion - 1;
+    if (index < 0) return undefined;
 
-    for (const run of this.state.runs) {
-      if (run.price > price) break;
-      currentVolume += run.shares;
-      selected = run;
-      selectedVolume = currentVolume;
+    return {
+      run: runs[index]!,
+      currentVolume: this.ensureCumulativeShares(runs)[index]!,
+    };
+  }
+
+  private ensureCumulativeShares(runs: readonly MutableRun[]): number[] {
+    if (this.cumulativeShares !== null) return this.cumulativeShares;
+
+    const cumulativeShares = new Array<number>(runs.length);
+    let cumulative = 0;
+    for (let index = 0; index < runs.length; index++) {
+      cumulative += runs[index]!.shares;
+      cumulativeShares[index] = cumulative;
     }
+    this.cumulativeShares = cumulativeShares;
+    return cumulativeShares;
+  }
 
-    return selected
-      ? { run: selected, currentVolume: selectedVolume }
-      : undefined;
+  private rebuildCumulativeSharesFrom(
+    runs: readonly MutableRun[],
+    firstRunIndex: number,
+  ): void {
+    const cumulativeShares = this.cumulativeShares ?? [];
+    cumulativeShares.length = runs.length;
+
+    let cumulative =
+      firstRunIndex > 0 ? cumulativeShares[firstRunIndex - 1]! : 0;
+    for (let index = firstRunIndex; index < runs.length; index++) {
+      cumulative += runs[index]!.shares;
+      cumulativeShares[index] = cumulative;
+    }
+    this.cumulativeShares = cumulativeShares;
+  }
+
+  private recordRenderChange(firstRunIndex: number): void {
+    this.renderRevision++;
+    this.renderChanges.push({
+      revision: this.renderRevision,
+      firstRunIndex,
+    });
+    if (this.renderChanges.length > MAX_RENDER_CHANGE_HISTORY)
+      this.renderChanges.shift();
   }
 
   private currentValidThroughMs(): number | undefined {
@@ -416,10 +508,15 @@ function transitionFrozenSteps(
   }
 }
 
-function mergeAdjacentRuns(runs: readonly MutableRun[]): MutableRun[] {
-  const merged: MutableRun[] = [];
-  for (const run of runs) {
-    const previous = merged[merged.length - 1];
+function mergeAdjacentRunsFrom(
+  runs: MutableRun[],
+  firstRunIndex: number,
+): void {
+  let writeIndex = firstRunIndex;
+
+  for (let readIndex = firstRunIndex; readIndex < runs.length; readIndex++) {
+    const run = runs[readIndex]!;
+    const previous = writeIndex > 0 ? runs[writeIndex - 1] : undefined;
 
     if (!previous && run.shares === 0 && run.frozenSteps.length === 0) continue;
     if (
@@ -429,9 +526,27 @@ function mergeAdjacentRuns(runs: readonly MutableRun[]): MutableRun[] {
     )
       continue;
 
-    merged.push(run);
+    runs[writeIndex] = run;
+    writeIndex++;
   }
-  return merged;
+
+  runs.length = writeIndex;
+}
+
+function frozenStepIndexAt(
+  steps: readonly FrozenStep[],
+  volume: number,
+): number | undefined {
+  // Upper edges are strictly decreasing. Find the last (lowest) edge that is
+  // still above the point volume.
+  let lo = 0;
+  let hi = steps.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (steps[mid]!.hiVolume > volume) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo > 0 ? lo - 1 : undefined;
 }
 
 function materializeBands(

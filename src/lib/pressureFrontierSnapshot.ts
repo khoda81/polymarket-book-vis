@@ -31,11 +31,15 @@ export interface PressureFrontierSnapshot {
   readonly state: PressureFrontierState;
 }
 
+const validatedSnapshots = new WeakSet<object>();
+
 export function parsePressureFrontierSnapshot(
   value: unknown,
 ): PressureFrontierSnapshot {
   if (!isRecord(value))
     throw new TypeError("pressure frontier snapshot must be an object");
+  if (validatedSnapshots.has(value))
+    return value as unknown as PressureFrontierSnapshot;
   assertOnlyKeys(value, ["version", "state"], "pressure frontier snapshot");
 
   if (value.version !== PRESSURE_FRONTIER_SNAPSHOT_VERSION)
@@ -44,10 +48,12 @@ export function parsePressureFrontierSnapshot(
         String(value.version),
     );
 
-  return {
+  const parsed: PressureFrontierSnapshot = {
     version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
     state: parseState(value.state),
   };
+  validatedSnapshots.add(parsed);
+  return parsed;
 }
 
 function parseState(value: unknown): PressureFrontierState {
@@ -219,10 +225,9 @@ function assertOnlyKeys(
   allowed: readonly string[],
   label: string,
 ): void {
-  const allowedKeys = new Set(allowed);
-  const unexpected = Object.keys(value).filter((key) => !allowedKeys.has(key));
-  if (unexpected.length > 0)
-    throw new TypeError(label + " has unexpected field " + unexpected[0]);
+  for (const key of Object.keys(value))
+    if (!allowed.includes(key))
+      throw new TypeError(label + " has unexpected field " + key);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

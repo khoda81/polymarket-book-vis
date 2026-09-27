@@ -63,7 +63,7 @@ export function bookRefreshCoordinator(
 /**
  * Process-wide stale-book refresh scheduler for one PublicClient.
  *
- * Every LiveBookFeed reports its latest observed-through timestamp here.
+ * The shared LiveBookCoordinator reports each token's latest observation here.
  * Tokens live in one min-heap ordered by the next opacity-significant deadline,
  * so duplicate watches across charts collapse into one /books request.
  */
