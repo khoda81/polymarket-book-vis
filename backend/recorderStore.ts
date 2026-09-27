@@ -180,7 +180,7 @@ function migratePressureSnapshot(
     isRecord(raw.field) &&
     isRecord(raw.field.ask)
   ) {
-    const current = migrateComplementedCurrent(raw.ask.current);
+    const current = migrateComplementedCurrent(raw.ask);
     if (current === null) return null;
     const askField = raw.field.ask;
     if (!Array.isArray(askField.runs)) return null;
@@ -205,7 +205,7 @@ function migratePressureSnapshot(
     isRecord(raw.field) &&
     Array.isArray(raw.field.runs)
   ) {
-    const current = migrateComplementedCurrent(raw.ask.current);
+    const current = migrateComplementedCurrent(raw.ask);
     if (current === null) return null;
 
     const runs = raw.field.runs.flatMap((value) => {
