@@ -8,9 +8,7 @@ import type { PressureLevelChange } from "./pressureFrontierMemory";
  * Bids belong to the reverse edge and are deliberately not folded into this
  * token's persisted pressure history.
  */
-export function tokenPressureLevels(
-  book: TokenBook,
-): readonly FrontierLevel[] {
+export function tokenPressureLevels(book: TokenBook): readonly FrontierLevel[] {
   return [...book.yesToUsd.asSellOrders()].map((order) => ({
     key: order.price,
     weight: order.take,
