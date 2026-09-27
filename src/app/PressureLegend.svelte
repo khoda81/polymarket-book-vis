@@ -10,22 +10,17 @@
   import {
     formatDurationTick,
     ghostLegendTicks,
-    selectGhostLegendLabels,
   } from "../lib/ghostLegendTicks";
-  import {
-    selectShareLegendLabels,
-    shareLegendTicks,
-  } from "../lib/shareLegendTicks";
+  import { shareLegendTicks } from "../lib/shareLegendTicks";
   import {
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     signedVolumeColor,
   } from "../lib/signedVolume";
 
-  const MIN_LABEL_DISTANCE_PX = 40;
-  // Tick families may be denser than labels; labels get their own collision pass.
-  // Using the label distance here made every non-zero family fade out on the
-  // compact legend at realistic reserve sizes.
-  const MIN_TICK_FAMILY_DISTANCE_PX = 10;
+  const MIN_LABEL_DISTANCE_PX = 56;
+  // Ghost memory is one-sided; share pressure packs two mirrored scales into
+  // the same width, so use half the one-sided family spacing threshold.
+  const MIN_TICK_FAMILY_DISTANCE_PX = MIN_LABEL_DISTANCE_PX / 2;
   let shareBar: HTMLDivElement;
   let ghostBar: HTMLDivElement;
   let shareWidth = 0;
@@ -33,23 +28,12 @@
   let tuning: Readonly<AgeStripTuning> = getAgeStripTuning();
 
   $: reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
-  $: ghostHalfLife = formatDurationTick(tuning.ghostHalfLifeMs);
   $: ghostTicks = ghostLegendTicks(tuning.ghostHalfLifeMs, ghostWidth, {
     minDistancePx: MIN_LABEL_DISTANCE_PX,
   });
-  $: ghostLabels = selectGhostLegendLabels(
-    ghostTicks,
-    ghostWidth,
-    MIN_LABEL_DISTANCE_PX,
-  );
   $: shareTicks = shareLegendTicks(reserveShares, shareWidth, {
     minDistancePx: MIN_TICK_FAMILY_DISTANCE_PX,
   });
-  $: shareLabels = selectShareLegendLabels(
-    shareTicks,
-    shareWidth,
-    MIN_LABEL_DISTANCE_PX,
-  );
   $: negativeColor = signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
   $: positiveColor = signedVolumeColor(1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
 
@@ -105,7 +89,7 @@
       {/each}
     </div>
     <div class="volume-legend-ticks">
-      {#each shareLabels as tick (tick.value)}
+      {#each shareTicks as tick (tick.value)}
         <span
           style:left={`${tick.position * 100}%`}
           style:opacity={tick.opacity}
@@ -135,7 +119,7 @@
     </div>
     <div class="ghost-legend-ticks">
       <span class="ghost-legend-now">now</span>
-      {#each ghostLabels as tick (tick.ageMs)}
+      {#each ghostTicks as tick (tick.ageMs)}
         <span
           style:left={`${tick.position * 100}%`}
           style:opacity={tick.opacity}

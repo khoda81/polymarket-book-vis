@@ -4,7 +4,6 @@ import {
   formatDurationTick,
   ghostLegendTicks,
   ghostPositionForAge,
-  selectGhostLegendLabels,
 } from "./ghostLegendTicks";
 
 test("ghost age transform is invertible", () => {
@@ -28,12 +27,6 @@ test("duration ticks use human unit families and fade by local spacing", () => {
     ),
   ).toBe(true);
   expect(ticks.some((tick) => tick.opacity < 1)).toBe(true);
-
-  const labels = selectGhostLegendLabels(ticks, 430, 48);
-  for (let index = 1; index < labels.length; index++)
-    expect(
-      (labels[index]!.position - labels[index - 1]!.position) * 430,
-    ).toBeGreaterThanOrEqual(48);
 });
 
 test("duration labels remain readable below milliseconds and above months", () => {

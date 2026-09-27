@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-  selectShareLegendLabels,
   shareLegendPosition,
   shareLegendTicks,
   shareValueAtPosition,
@@ -20,23 +19,16 @@ test("share ticks are symmetric, adaptive, and fade by family spacing", () => {
   expect(ticks.some((tick) => tick.value < 0)).toBe(true);
   expect(ticks.some((tick) => tick.value > 0)).toBe(true);
   expect(ticks.some((tick) => tick.opacity < 1)).toBe(true);
-
-  const labels = selectShareLegendLabels(ticks, 720, 48);
-  for (let index = 1; index < labels.length; index++)
-    expect(
-      (labels[index]!.position - labels[index - 1]!.position) * 720,
-    ).toBeGreaterThanOrEqual(48);
 });
 
-test("realistic compact share legend keeps useful non-zero labels", () => {
+test("realistic compact share legend keeps useful non-zero ticks", () => {
   const ticks = shareLegendTicks(11_600, 720, {
     minDistancePx: 16,
   });
-  const labels = selectShareLegendLabels(ticks, 720, 48);
 
-  expect(labels.some((tick) => tick.value < 0)).toBe(true);
-  expect(labels.some((tick) => tick.value > 0)).toBe(true);
-  expect(labels.some((tick) => tick.value === 0)).toBe(true);
+  expect(ticks.some((tick) => tick.value < 0)).toBe(true);
+  expect(ticks.some((tick) => tick.value > 0)).toBe(true);
+  expect(ticks.some((tick) => tick.value === 0)).toBe(true);
 });
 
 test("realistic reserve produces visibly opaque share tick families", () => {
@@ -47,4 +39,16 @@ test("realistic reserve produces visibly opaque share tick families", () => {
   expect(ticks.some((tick) => tick.value !== 0 && tick.opacity >= 0.5)).toBe(
     true,
   );
+});
+
+test("compact signed legend fades dense tick families progressively", () => {
+  const ticks = shareLegendTicks(11_600, 430, {
+    minDistancePx: 20,
+  });
+  const nonZero = ticks.filter((tick) => tick.value !== 0);
+
+  expect(nonZero.length).toBeGreaterThan(0);
+  expect(nonZero.some((tick) => tick.opacity < 0.25)).toBe(true);
+  expect(nonZero.some((tick) => tick.opacity > 0.75)).toBe(true);
+  expect(nonZero.every((tick) => tick.opacity < 1)).toBe(true);
 });

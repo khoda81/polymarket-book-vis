@@ -1,3 +1,5 @@
+import { legendTickOpacity } from "./legendTickDensity";
+
 const SECOND_MS = 1_000;
 const MINUTE_MS = 60 * SECOND_MS;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -63,7 +65,7 @@ export function ghostLegendTicks(
     const tickPosition = ghostPositionForAge(ageMs, halfLifeMs);
     const nextPosition = ghostPositionForAge(ageMs + stepMs, halfLifeMs);
     const spacingPx = Math.abs(nextPosition - tickPosition) * widthPx;
-    const opacity = smoothstep(minDistancePx, fadeDistancePx, spacingPx);
+    const opacity = legendTickOpacity(spacingPx, minDistancePx, fadeDistancePx);
     if (opacity <= 1 / 255) continue;
 
     const tick: GhostLegendTick = {
@@ -77,30 +79,6 @@ export function ghostLegendTicks(
   }
 
   return [...byAge.values()].sort((a, b) => a.ageMs - b.ageMs);
-}
-
-export function selectGhostLegendLabels(
-  ticks: readonly GhostLegendTick[],
-  widthPx: number,
-  minDistancePx: number,
-  minOpacity = 0.55,
-): GhostLegendTick[] {
-  if (!(widthPx > 0) || !(minDistancePx > 0)) return [];
-
-  const selected: GhostLegendTick[] = [];
-  for (const tick of [...ticks]
-    .filter((candidate) => candidate.opacity >= minOpacity)
-    .sort((a, b) => b.opacity - a.opacity || b.ageMs - a.ageMs)) {
-    const x = tick.position * widthPx;
-    if (
-      selected.every(
-        (other) => Math.abs(x - other.position * widthPx) >= minDistancePx,
-      )
-    )
-      selected.push(tick);
-  }
-
-  return selected.sort((a, b) => a.ageMs - b.ageMs);
 }
 
 export function ghostPositionForAge(ageMs: number, halfLifeMs: number): number {
@@ -195,12 +173,6 @@ function firstGridBoundaryAfter(value: number, step: number): number {
   const index =
     Math.abs(quotient - nearest) <= epsilon ? nearest + 1 : Math.ceil(quotient);
   return index * step;
-}
-
-function smoothstep(edge0: number, edge1: number, value: number): number {
-  if (edge1 <= edge0) return value <= edge0 ? 0 : 1;
-  const x = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
-  return x * x * (3 - 2 * x);
 }
 
 function compact(value: number): string {

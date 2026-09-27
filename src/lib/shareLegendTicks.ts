@@ -1,3 +1,5 @@
+import { legendTickOpacity } from "./legendTickDensity";
+
 export interface ShareLegendTick {
   readonly value: number;
   readonly position: number;
@@ -77,7 +79,7 @@ export function shareLegendTicks(
         Math.abs(nextPosition - tickPosition),
         Math.abs(tickPosition - previousPosition),
       ) * widthPx;
-    const opacity = smoothstep(minDistancePx, fadeDistancePx, spacingPx);
+    const opacity = legendTickOpacity(spacingPx, minDistancePx, fadeDistancePx);
     if (opacity <= 1 / 255) continue;
 
     const tick: ShareLegendTick = {
@@ -91,32 +93,6 @@ export function shareLegendTicks(
   }
 
   return [...byValue.values()].sort((a, b) => a.value - b.value);
-}
-
-export function selectShareLegendLabels(
-  ticks: readonly ShareLegendTick[],
-  widthPx: number,
-  minDistancePx: number,
-  minOpacity = 0.55,
-): ShareLegendTick[] {
-  if (!(widthPx > 0) || !(minDistancePx > 0)) return [];
-
-  const selected: ShareLegendTick[] = [];
-  for (const tick of [...ticks]
-    .filter((candidate) => candidate.opacity >= minOpacity)
-    .sort(
-      (a, b) => b.opacity - a.opacity || Math.abs(b.value) - Math.abs(a.value),
-    )) {
-    const x = tick.position * widthPx;
-    if (
-      selected.every(
-        (other) => Math.abs(x - other.position * widthPx) >= minDistancePx,
-      )
-    )
-      selected.push(tick);
-  }
-
-  return selected.sort((a, b) => a.value - b.value);
 }
 
 export function shareLegendPosition(value: number, reserve: number): number {
@@ -154,9 +130,9 @@ function biggestNiceStepCrossing(start: number, end: number): number | null {
   let exponent = Math.floor(Math.log10(maxMagnitude));
 
   // Descending sequence across decades:
-  // 5eN, 2eN, 1eN, 5e(N-1), ...
+  // 5eN, 1eN, 5e(N-1), ...
   for (let guard = 0; guard < 700; guard++, exponent--) {
-    for (const multiplier of [5, 2, 1]) {
+    for (const multiplier of [5, 1]) {
       const step = multiplier * 10 ** exponent;
       if (!(step > 0) || !Number.isFinite(step)) continue;
       if (firstGridBoundaryAfter(start, step) <= end) return step;
@@ -172,12 +148,6 @@ function firstGridBoundaryAfter(value: number, step: number): number {
   const index =
     Math.abs(quotient - nearest) <= epsilon ? nearest + 1 : Math.ceil(quotient);
   return index * step;
-}
-
-function smoothstep(edge0: number, edge1: number, value: number): number {
-  if (edge1 <= edge0) return value <= edge0 ? 0 : 1;
-  const x = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
-  return x * x * (3 - 2 * x);
 }
 
 function normalizeZero(value: number): number {
