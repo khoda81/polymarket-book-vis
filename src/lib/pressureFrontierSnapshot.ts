@@ -35,13 +35,13 @@ export function parsePressureFrontierSnapshot(
   };
 }
 
-export function snapshotCurrent(current: FrontierRoot): readonly FrontierLevel[] {
+export function snapshotCurrent(
+  current: FrontierRoot,
+): readonly FrontierLevel[] {
   return frontierLevels(current);
 }
 
-export function restoreCurrent(
-  levels: readonly FrontierLevel[],
-): FrontierRoot {
+export function restoreCurrent(levels: readonly FrontierLevel[]): FrontierRoot {
   return buildFrontier(levels);
 }
 
@@ -70,9 +70,7 @@ function parseRun(
   if (!isRecord(value))
     throw new TypeError(`pressure field run[${index}] must be an object`);
   if (!Array.isArray(value.bands))
-    throw new TypeError(
-      `pressure field run[${index}].bands must be an array`,
-    );
+    throw new TypeError(`pressure field run[${index}].bands must be an array`);
 
   return {
     lo: priceFromTicks(finiteNumber(value.lo, `run[${index}].lo`)),
@@ -104,9 +102,7 @@ function parseLevels(
   const levels = value.map((raw, index) => {
     if (!isRecord(raw))
       throw new TypeError(`${label}[${index}] must be an object`);
-    const key = priceFromTicks(
-      finiteNumber(raw.key, `${label}[${index}].key`),
-    );
+    const key = priceFromTicks(finiteNumber(raw.key, `${label}[${index}].key`));
     const weight = finiteNumber(raw.weight, `${label}[${index}].weight`);
     if (!(weight > 0))
       throw new RangeError(`${label}[${index}].weight must be positive`);
