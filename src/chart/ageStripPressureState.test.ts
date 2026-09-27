@@ -16,7 +16,7 @@ test("token pressure follows only that token's asks", () => {
   });
 
   expect(state.memory("token")!.currentLevels()).toEqual([
-    { key: p(0.65), weight: 70 },
+    { price: p(0.65), shares: 70 },
   ]);
 });
 

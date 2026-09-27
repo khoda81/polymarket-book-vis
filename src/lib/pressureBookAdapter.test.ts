@@ -12,7 +12,7 @@ test("token pressure uses only token-to-collateral asks", () => {
     [{ price: "0.63", size: "8.25" }],
   );
   expect(tokenPressureLevels(book)).toEqual([
-    { key: parsePrice("0.63"), weight: 8.25 },
+    { price: parsePrice("0.63"), shares: 8.25 },
   ]);
 });
 
