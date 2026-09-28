@@ -1,3 +1,4 @@
+import type { FeeSchedule } from "@/lib/feeSchedule";
 import type { TokenBook } from "@/lib/orderBook";
 import {
   FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT,
@@ -142,6 +143,7 @@ export class AgeStripPressureState {
   hydrate(
     snapshotsByToken: Readonly<Record<string, PressureFrontierSnapshot>>,
     getBook: (tokenId: string) => TokenBook | undefined,
+    getFeeSchedule: (tokenId: string) => FeeSchedule,
   ): void {
     for (const [tokenId, snapshot] of Object.entries(snapshotsByToken)) {
       const state = this.ensure(tokenId);
@@ -171,7 +173,7 @@ export class AgeStripPressureState {
           state.validThroughMs >= restoredThrough)
       )
         state.memory.observeLevels(
-          tokenPressureLevels(book),
+          tokenPressureLevels(book, getFeeSchedule(tokenId)),
           state.validThroughMs,
         );
     }
@@ -180,6 +182,7 @@ export class AgeStripPressureState {
   applyBookUpdate(
     tokenId: string,
     book: TokenBook,
+    schedule: FeeSchedule,
     update: LiveBookUpdate,
   ): void {
     let state = this.ensure(tokenId);
@@ -204,11 +207,11 @@ export class AgeStripPressureState {
     }
 
     if (update.kind === "snapshot") {
-      state.memory.observeLevels(tokenPressureLevels(book), validThroughMs);
+      state.memory.observeLevels(tokenPressureLevels(book, schedule), validThroughMs);
       return;
     }
     if (update.kind === "replace") {
-      state.memory.replaceContinuous(tokenPressureLevels(book), validThroughMs);
+      state.memory.replaceContinuous(tokenPressureLevels(book, schedule), validThroughMs);
       return;
     }
     if (update.kind === "watermark") {
@@ -217,7 +220,7 @@ export class AgeStripPressureState {
     }
 
     state.memory.updateLevels(
-      tokenPressureChanges(update.changes),
+      tokenPressureChanges(book, update.changes, schedule),
       validThroughMs,
     );
   }
