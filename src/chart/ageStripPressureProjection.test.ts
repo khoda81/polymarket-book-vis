@@ -9,13 +9,15 @@ import {
 } from "./ageStripPressureProjection";
 import { PRICE_SCALE } from "@/lib/price";
 import {
-  DEFAULT_AGE_ROW_ORIENTATION,
+  defaultOrientation,
   inferAgeRowOrientation,
 } from "./ageStripOrientation";
 
+const defaultOrientation = DEFAULT_AGE_ROW_ORIENTATION;
+
 test("geometry source and displayed token semantics are complementary", () => {
   expect(
-    agePressurePerspective("primary", DEFAULT_AGE_ROW_ORIENTATION),
+    agePressurePerspective("primary", defaultOrientation),
   ).toMatchObject({
     sourceSide: "primary",
     semanticSide: "opposite",
@@ -24,7 +26,7 @@ test("geometry source and displayed token semantics are complementary", () => {
     colorSign: -1,
   });
   expect(
-    agePressurePerspective("opposite", DEFAULT_AGE_ROW_ORIENTATION),
+    agePressurePerspective("opposite", defaultOrientation),
   ).toMatchObject({
     sourceSide: "opposite",
     semanticSide: "primary",
@@ -34,10 +36,10 @@ test("geometry source and displayed token semantics are complementary", () => {
   });
 
   expect(
-    agePressureSourceSideAtY(13, 14, DEFAULT_AGE_ROW_ORIENTATION),
+    agePressureSourceSideAtY(13, 14, defaultOrientation),
   ).toBe("primary");
   expect(
-    agePressureSourceSideAtY(15, 14, DEFAULT_AGE_ROW_ORIENTATION),
+    agePressureSourceSideAtY(15, 14, defaultOrientation),
   ).toBe("opposite");
 });
 
@@ -84,17 +86,17 @@ test("event orientation inference only opts out for strong structural hints", ()
       sortBy: "ascending",
       title: "Unknown ascending grouped market",
     }),
-  ).toBe(DEFAULT_AGE_ROW_ORIENTATION);
+  ).toBe(defaultOrientation);
 });
 
 test("semantic price complements the source field without moving geometry", () => {
   const primarySource = agePressurePerspective(
     "primary",
-    DEFAULT_AGE_ROW_ORIENTATION,
+    defaultOrientation,
   );
   const oppositeSource = agePressurePerspective(
     "opposite",
-    DEFAULT_AGE_ROW_ORIENTATION,
+    defaultOrientation,
   );
 
   // Primary-source geometry is mirrored: source YES@0.75 is drawn at x=.25,
