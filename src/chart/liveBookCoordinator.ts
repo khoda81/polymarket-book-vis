@@ -566,7 +566,9 @@ export class LiveBookCoordinator {
 
     const requestedAtMs = token.subscriptionRequestedAtMs;
     const firstOnStream =
-      token.awaitingSnapshot === true || requestedAtMs !== undefined || !token.book;
+      token.awaitingSnapshot === true ||
+      requestedAtMs !== undefined ||
+      !token.book;
     const validThroughMs = causalMax(
       token.validThroughMs,
       marketWatermark,
@@ -634,10 +636,7 @@ export class LiveBookCoordinator {
       );
 
     for (const [token, changes] of changesByToken) {
-      const validThroughMs = causalMax(
-        token.validThroughMs,
-        marketWatermark,
-      );
+      const validThroughMs = causalMax(token.validThroughMs, marketWatermark);
       if (validThroughMs === undefined)
         throw new Error("price change has no causal watermark");
 
@@ -719,8 +718,7 @@ export class LiveBookCoordinator {
     marketKey: string | null,
     timestampMs: number | null,
   ): number | undefined {
-    if (!marketKey)
-      return timestampMs ?? undefined;
+    if (!marketKey) return timestampMs ?? undefined;
 
     const previous = subscription.marketWatermarks.get(marketKey);
     if (timestampMs === null) return previous;

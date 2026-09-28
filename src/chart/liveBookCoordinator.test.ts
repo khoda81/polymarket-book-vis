@@ -277,11 +277,13 @@ test("same-market events advance unchanged sibling tokens", async () => {
   );
   await flush();
 
-  expect(log.updates.map(({ tokenId, kind, validThroughMs }) => [
-    tokenId,
-    kind,
-    validThroughMs,
-  ])).toEqual([
+  expect(
+    log.updates.map(({ tokenId, kind, validThroughMs }) => [
+      tokenId,
+      kind,
+      validThroughMs,
+    ]),
+  ).toEqual([
     [TOKEN_B, "watermark", 1_500],
     [TOKEN_A, "levels", 1_500],
   ]);
@@ -312,11 +314,13 @@ test("same-market timestamp regressions are max-aggregated without reconnecting"
 
   expect(client.streams).toHaveLength(1);
   expect(log.statuses).toEqual(["connecting", "live"]);
-  expect(log.updates.map(({ tokenId, kind, validThroughMs }) => [
-    tokenId,
-    kind,
-    validThroughMs,
-  ])).toEqual([
+  expect(
+    log.updates.map(({ tokenId, kind, validThroughMs }) => [
+      tokenId,
+      kind,
+      validThroughMs,
+    ]),
+  ).toEqual([
     [TOKEN_B, "watermark", 1_001],
     [TOKEN_A, "levels", 1_001],
   ]);

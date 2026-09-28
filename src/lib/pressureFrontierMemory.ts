@@ -150,10 +150,7 @@ export class PressureFrontierMemory {
   resolveZeroFuture(resolvedAtMs: number | null): boolean {
     if (this.state.kind === "resolvedUnbounded") return false;
     if (resolvedAtMs !== null)
-      return this.replaceContinuous(
-        [],
-        this.requireMonotonicTime(resolvedAtMs),
-      );
+      return this.replaceContinuous([], this.requireMonotonicTime(resolvedAtMs));
 
     const current = this.currentValidThroughMs();
     return current === undefined ? false : this.replaceContinuous([], current);
@@ -508,7 +505,6 @@ export class PressureFrontierMemory {
       );
     return value;
   }
-
 }
 
 function normalizeLevels(
