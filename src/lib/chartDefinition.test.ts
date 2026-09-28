@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Event, MarketId } from "@polymarket/client";
-import type { EventDetails } from "./eventDetails";
+import { buildEventDetails, type EventDetails } from "./eventDetails";
 import { buildChartDefinition, pressureScaleForToken } from "./chartDefinition";
 import { signedVolumeColor } from "./signedVolume";
 import { buildThresholdPalette } from "./thresholdColors";
@@ -165,6 +165,68 @@ test("single-market wrapper metadata survives DOM recreation", () => {
     order: 0,
     resolutionMs: Date.parse(endDate),
   });
+});
+
+test("chart keeps explicit threshold order when Gamma deadlines disagree", () => {
+  // Live Gamma event 634802 currently arrives as September, December,
+  // October. September and December both carry a misleading January 26
+  // endDate, while the explicit display keys are the coherent 4, 5, 6 ladder.
+  const fixtures = [
+    {
+      id: "3128769",
+      title: "September 30",
+      threshold: "4",
+      endDate: "2027-01-26T04:59:00Z",
+    },
+    {
+      id: "3128768",
+      title: "December 31",
+      threshold: "6",
+      endDate: "2027-01-26T04:59:00Z",
+    },
+    {
+      id: "4620250",
+      title: "October 31",
+      threshold: "5",
+      endDate: "2026-11-01T03:59:00Z",
+    },
+  ] as const;
+  const event = {
+    id: "634802",
+    title: "Iran full airspace closure by...?",
+    display: { sortBy: "ascending" },
+    trading: { negRisk: false, negRiskAugmented: false },
+    markets: fixtures.map((market) => ({
+      id: market.id,
+      question: `Iran full airspace closure by ${market.title}?`,
+      groupItemTitle: market.title,
+      conditionId: null,
+      state: { active: true, closed: false, acceptingOrders: true },
+      resolution: { umaResolutionStatus: null },
+      outcomes: {
+        yes: { label: "Yes", tokenId: `yes-${market.id}`, price: "0.1" },
+        no: { label: "No", tokenId: `no-${market.id}`, price: "0.9" },
+      },
+    })),
+  } as unknown as Event;
+  const bundle = buildEventDetails(event, {
+    markets: fixtures.map((market) => ({
+      id: market.id,
+      groupItemThreshold: market.threshold,
+      endDate: market.endDate,
+    })),
+  });
+
+  expect(bundle.event.markets.map((market) => String(market.id))).toEqual([
+    "3128769",
+    "4620250",
+    "3128768",
+  ]);
+  expect(
+    buildChartDefinition(bundle)
+      .controls.toSorted((a, b) => a.order - b.order)
+      .map((control) => String(control.market.id)),
+  ).toEqual(["3128769", "4620250", "3128768"]);
 });
 
 interface GammaThresholdFixtureMarket {

@@ -12,7 +12,7 @@ export type MarketVisibility =
     };
 
 export type StoredMarketVisibility =
-  "hidden-user" | "visible-user" | "hidden-resolved";
+  "hidden-user" | "visible-user" | "hidden-empty" | "hidden-resolved";
 
 interface KeyValueStorage {
   getItem(key: string): string | null;
@@ -29,6 +29,8 @@ export function initialMarketVisibility(
 ): MarketVisibility {
   if (stored === "hidden-user") return { kind: "hidden", reason: "user" };
   if (stored === "visible-user") return { kind: "visible" };
+  if (stored === "hidden-empty")
+    return { kind: "hidden", reason: "empty-book" };
   if (stored === "hidden-resolved")
     return { kind: "hidden", reason: "resolved-default" };
 
@@ -59,6 +61,7 @@ export function loadStoredMarketVisibility(
           if (
             value === "hidden-user" ||
             value === "visible-user" ||
+            value === "hidden-empty" ||
             value === "hidden-resolved"
           )
             result.set(marketId, value);

@@ -55,7 +55,7 @@ export async function fetchRecorderHydration(
         attempt: attempt + 1,
         requested: remaining.map(shortToken),
         states: Object.keys(body.states).map(shortToken),
-        pending: (body.pendingTokenIds).map(shortToken),
+        pending: body.pendingTokenIds.map(shortToken),
         debug: body.debug,
       });
 
@@ -156,9 +156,7 @@ function mergeRecorderResponse(
   recordingSinceMsByToken: Record<string, number>,
   pressureSnapshotsByToken: Record<string, PressureFrontierSnapshot>,
 ): void {
-  for (const [tokenId, since] of Object.entries(
-    body.recordingSinceMsByToken,
-  )) {
+  for (const [tokenId, since] of Object.entries(body.recordingSinceMsByToken)) {
     if (typeof since === "number" && Number.isFinite(since))
       recordingSinceMsByToken[tokenId] = since;
   }
