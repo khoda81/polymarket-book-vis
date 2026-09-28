@@ -1,5 +1,6 @@
 import type { TokenBook } from "@/lib/orderBook";
 import {
+  FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT,
   PRESSURE_MIN_VISIBLE_ALPHA,
   pressureExtentContains,
   pressureValidityAlpha,
@@ -24,11 +25,8 @@ export interface AgeStripPressureTiming {
 interface PressureState extends AgeStripPressureTiming {
   readonly memory: PressureFrontierMemory;
   /**
-   * TODO(v7): This is a compatibility overlay for the v6 frontier format,
-   * which cannot canonically represent persistent/unbounded terminal pressure.
-   * Promote this state into PressureFrontierMemory/snapshots in v7 so a
-   * persistent unbounded frontier can dominate and prune superseded history,
-   * then remove extents and extentRevision.
+   * GPU/render projection of non-finite terminal geometry. The canonical
+   * terminal state lives in PressureFrontierMemory v7.
    */
   readonly extents: readonly PressureExtent[];
   readonly extentRevision: number;
@@ -156,9 +154,22 @@ export class AgeStripPressureState {
         );
       }
 
-      // A newer websocket book may have arrived before recorder hydration.
+      if (state.memory.isResolvedUnbounded()) {
+        this.setExtents(tokenId, [FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT]);
+        continue;
+      }
+
+      // A newer local websocket book may have arrived before recorder
+      // hydration. Only overlay it when its causal watermark is not older than
+      // the restored recorder frontier; never max-stamp a stale snapshot.
       const book = getBook(tokenId);
-      if (book && state.validThroughMs !== null)
+      const restoredThrough = state.memory.validThroughMs();
+      if (
+        book &&
+        state.validThroughMs !== null &&
+        (restoredThrough === undefined ||
+          state.validThroughMs >= restoredThrough)
+      )
         state.memory.observeLevels(
           tokenPressureLevels(book),
           state.validThroughMs,
@@ -172,27 +183,61 @@ export class AgeStripPressureState {
     update: LiveBookUpdate,
   ): void {
     let state = this.ensure(tokenId);
+    if (state.memory.isResolvedUnbounded()) return;
+
+    const currentThrough = state.memory.validThroughMs();
+    if (
+      update.kind === "snapshot" &&
+      currentThrough !== undefined &&
+      update.validThroughMs < currentThrough
+    )
+      return;
+
+    const validThroughMs =
+      update.kind === "snapshot"
+        ? update.validThroughMs
+        : Math.max(currentThrough ?? update.validThroughMs, update.validThroughMs);
+
     if (
       state.validThroughMs === null ||
-      update.validThroughMs > state.validThroughMs
+      validThroughMs > state.validThroughMs
     ) {
-      state = { ...state, validThroughMs: update.validThroughMs };
+      state = { ...state, validThroughMs };
       this.states.set(tokenId, state);
     }
 
     if (update.kind === "snapshot") {
-      state.memory.observeLevels(
-        tokenPressureLevels(book),
-        update.validThroughMs,
-      );
+      state.memory.observeLevels(tokenPressureLevels(book), validThroughMs);
+      return;
+    }
+    if (update.kind === "replace") {
+      state.memory.replaceContinuous(tokenPressureLevels(book), validThroughMs);
+      return;
+    }
+    if (update.kind === "watermark") {
+      state.memory.observeThrough(validThroughMs);
       return;
     }
 
     state.memory.updateLevels(
       tokenPressureChanges(update.changes),
-      update.validThroughMs,
+      validThroughMs,
     );
-    state.memory.observeThrough(update.validThroughMs);
+  }
+
+  resolveSource(
+    tokenId: string,
+    unbounded: boolean,
+    resolvedAtMs: number | null,
+  ): void {
+    const state = this.ensure(tokenId, resolvedAtMs);
+    if (unbounded) {
+      state.memory.resolveUnbounded(resolvedAtMs);
+      this.setExtents(tokenId, [FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT]);
+    } else {
+      state.memory.resolveZeroFuture(resolvedAtMs);
+      this.setExtents(tokenId, []);
+    }
   }
 
   memory(tokenId: string): PressureFrontierMemory | undefined {
