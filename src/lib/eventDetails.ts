@@ -77,7 +77,7 @@ export function buildEventDetails(
 
   const orderedEvent: Event = {
     ...event,
-    markets: orderMarkets(event, thresholdByMarketId),
+    markets: orderMarkets(event, thresholdByMarketId, resolutionMsByMarketId),
   };
 
   const iconUrl = artworkUrl(event.icon, event.image);

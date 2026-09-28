@@ -37,6 +37,10 @@ test("market visibility encodes stored overrides before lifecycle defaults", () 
     kind: "hidden",
     reason: "user",
   });
+  expect(initialMarketVisibility("hidden-empty", { kind: "live" })).toEqual({
+    kind: "hidden",
+    reason: "empty-book",
+  });
   expect(
     initialMarketVisibility(undefined, {
       kind: "resolved",
@@ -118,6 +122,21 @@ test("resolved auto-hide survives reload even before resolution metadata catches
   expect(visibility.get(marketId("market-a"))).toEqual({
     kind: "hidden",
     reason: "resolved-default",
+  });
+});
+
+test("empty-book auto-hide survives reload by market id", () => {
+  const storage = new MemoryStorage();
+  persistStoredMarketVisibility("market-a", "hidden-empty", storage);
+
+  const visibility = loadMarketVisibility(
+    [{ market: { id: marketId("market-a") }, lifecycle: { kind: "live" } }],
+    storage,
+  );
+
+  expect(visibility.get(marketId("market-a"))).toEqual({
+    kind: "hidden",
+    reason: "empty-book",
   });
 });
 

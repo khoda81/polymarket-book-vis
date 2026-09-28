@@ -3,7 +3,7 @@ import {
   initialMarketLifecycle,
   type MarketLifecycle,
 } from "./marketLifecycle";
-import { resolutionOrder, sameDisplayTitle } from "./marketMetadata";
+import { sameDisplayTitle } from "./marketMetadata";
 import { isActiveOrderMarket } from "./marketTradability";
 import { buildNegRiskPalette } from "./negRiskColors";
 import {
@@ -57,11 +57,6 @@ export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
     chartEvent,
     bundle.thresholdByMarketId,
   );
-  const orderByToken = resolutionOrder(
-    chartEvent,
-    bundle.resolutionMsByMarketId,
-  );
-
   const controls = eligible.map(({ market, tokenId, lifecycle }, index) => {
     const scale = pressureScales.get(tokenId);
     const primaryColor = scale
@@ -81,7 +76,7 @@ export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
       dotColor: primaryColor,
       primaryColor,
       oppositeColor,
-      order: orderByToken.get(tokenId) ?? index,
+      order: index,
       resolutionMs: bundle.resolutionMsByMarketId.get(market.id) ?? null,
       ageLabel: suppressAgeIdentity ? "" : title,
       suppressAgeIdentity,

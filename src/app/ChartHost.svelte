@@ -123,6 +123,7 @@
       kind: "hidden",
       reason,
     });
+    persistStoredMarketVisibility(marketId, "hidden-empty");
   }
 
   function initialHiddenMarketIds(): Set<MarketId> {

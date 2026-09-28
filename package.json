@@ -14,18 +14,18 @@
     "proto:check": "buf lint && buf generate && git diff --exit-code -- src/gen"
   },
   "devDependencies": {
+    "@bufbuild/buf": "1.73.0",
+    "@bufbuild/protoc-gen-es": "2.15.0",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@types/bun": "^1.4.2",
     "prettier": "3.9.8",
     "prettier-plugin-svelte": "4.1.1",
     "svelte": "^5.57.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.0",
-    "@bufbuild/buf": "1.73.0",
-    "@bufbuild/protoc-gen-es": "2.15.0"
+    "vite": "^8.3.1"
   },
   "dependencies": {
-    "@polymarket/client": "^0.11.0",
-    "@bufbuild/protobuf": "2.15.0"
+    "@bufbuild/protobuf": "2.15.0",
+    "@polymarket/client": "^0.11.0"
   }
 }
