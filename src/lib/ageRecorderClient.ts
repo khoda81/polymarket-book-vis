@@ -56,7 +56,6 @@ export async function fetchRecorderHydration(
         requested: remaining.map(shortToken),
         states: Object.keys(body.states).map(shortToken),
         pending: body.pendingTokenIds.map(shortToken),
-        debug: body.debug,
       });
 
       mergeRecorderResponse(
@@ -112,7 +111,6 @@ async function fetchRecorderState(
 ): Promise<RecorderStateResponse> {
   const params = new URLSearchParams();
   for (const tokenId of tokenIds) params.append("tokenId", tokenId);
-  if (RECORDER_DEBUG) params.set("debug", "1");
 
   return withRecorderRequestSlot(async () => {
     const startedAt = performance.now();
