@@ -789,7 +789,6 @@ export class LiveBookCoordinator {
     this.refreshContexts.set(tokenKey, {
       requestId,
       requestedAtMs,
-      buffered: [],
       superseded: false,
     });
   }
@@ -814,24 +813,11 @@ export class LiveBookCoordinator {
     )
       return;
 
-    const snapshotTimestampMs = eventTimeMs(
-      snapshot.timestamp,
-      requestedAtMs,
-      this.now(),
-    );
-    const book = bookFromSnapshot(snapshot.bids, snapshot.asks);
-    let validThroughMs = Math.max(requestedAtMs, snapshotTimestampMs);
-
-    for (const delta of context.buffered) {
-      if (delta.timestampMs <= snapshotTimestampMs) continue;
-      for (const change of delta.changes) applyPriceChange(book, change);
-      validThroughMs = Math.max(validThroughMs, delta.timestampMs);
-    }
-
-    token.book = book;
-    token.validThroughMs = validThroughMs;
-    this.notifyToken(token, { kind: "snapshot", validThroughMs });
-    this.observeBook(token, validThroughMs);
+    // REST can tell us the live websocket may be stale, but without a shared
+    // sequence/barrier it cannot be merged into that stream safely. Replace
+    // the stream instead and let its initial book establish a new causal base.
+    const active = this.active;
+    if (active) this.handleTerminalSubscription(active);
   }
 
   private finishBookRefresh(tokenId: TokenId, requestId: number): void {
@@ -950,28 +936,33 @@ function sameKeys(
   return true;
 }
 
-function snapshotValidThroughMs(
-  value: unknown,
-  snapshotRequestedAtMs: number,
-  nowMs: number,
-): number {
-  return Math.max(
-    snapshotRequestedAtMs,
-    eventTimeMs(value, snapshotRequestedAtMs, nowMs),
-  );
+function eventPayload(event: MarketEvent): Record<string, unknown> {
+  return event.payload as unknown as Record<string, unknown>;
 }
 
-function eventTimeMs(
-  value: unknown,
-  fallbackMs: number,
-  nowMs: number,
-): number {
+function eventMarketKey(event: MarketEvent): string | null {
+  const payload = eventPayload(event);
+  const value = payload.conditionId ?? payload.market;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function optionalEventTimeMs(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
   const timestamp = Number(value);
-  return Number.isFinite(timestamp) &&
-    timestamp >= 0 &&
-    timestamp <= nowMs + 60_000
-    ? timestamp
-    : fallbackMs;
+  return Number.isFinite(timestamp) && timestamp >= 0
+    ? Math.trunc(timestamp)
+    : null;
+}
+
+function causalMax(
+  ...values: readonly (number | undefined)[]
+): number | undefined {
+  let result: number | undefined;
+  for (const value of values) {
+    if (value === undefined) continue;
+    result = result === undefined ? value : Math.max(result, value);
+  }
+  return result;
 }
 
 function debugNow(): number {
