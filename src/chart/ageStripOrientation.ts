@@ -1,10 +1,13 @@
+import type { Event } from "@polymarket/client";
+
 export type AgeRowOrientation = "positive-above" | "negative-above";
 
-export const DEFAULT_AGE_ROW_ORIENTATION: AgeRowOrientation = "negative-above";
+export const DEFAULT_AGE_ROW_ORIENTATION =
+  "negative-above" satisfies AgeRowOrientation;
 
 export interface AgeRowOrientationHints {
-  readonly sortBy?: string | null;
-  readonly title?: string | null;
+  readonly sortBy: Event["display"]["sortBy"];
+  readonly title: Event["title"];
 }
 
 export function inferAgeRowOrientation({
@@ -17,6 +20,12 @@ export function inferAgeRowOrientation({
     return "positive-above";
 
   return DEFAULT_AGE_ROW_ORIENTATION;
+}
+
+export function isAgeRowOrientation(
+  value: unknown,
+): value is AgeRowOrientation {
+  return value === "positive-above" || value === "negative-above";
 }
 
 export function flipAgeRowOrientation(
