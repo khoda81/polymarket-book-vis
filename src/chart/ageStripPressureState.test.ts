@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
+import { NO_FEE_SCHEDULE } from "../lib/feeSchedule";
 import { emptyTokenBook } from "../lib/orderBook";
 import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "../lib/pressureField";
 import { PressureFrontierMemory } from "../lib/pressureFrontierMemory";
@@ -11,7 +12,7 @@ test("token pressure follows only that token's asks", () => {
   book.yesToUsd.setLevel(p(0.65), 70);
   book.usdToYes.setLevel(p(0.6), 100);
 
-  state.applyBookUpdate("token", book, {
+  state.applyBookUpdate("token", book, NO_FEE_SCHEDULE, {
     kind: "snapshot",
     validThroughMs: 1_000,
   });
@@ -26,13 +27,13 @@ test("opposite-side book updates advance token pressure validity", () => {
   const book = emptyTokenBook();
   book.yesToUsd.setLevel(p(0.65), 70);
 
-  state.applyBookUpdate("token", book, {
+  state.applyBookUpdate("token", book, NO_FEE_SCHEDULE, {
     kind: "snapshot",
     validThroughMs: 1_000,
   });
 
   book.usdToYes.setLevel(p(0.6), 100);
-  state.applyBookUpdate("token", book, {
+  state.applyBookUpdate("token", book, NO_FEE_SCHEDULE, {
     kind: "levels",
     validThroughMs: 2_500,
     changes: [{ side: "bid", price: p(0.6), shares: 100 }],
@@ -47,7 +48,7 @@ test("invalid recorder data preserves current pressure and does not abort later 
   const state = new AgeStripPressureState();
   const currentBook = emptyTokenBook();
   currentBook.yesToUsd.setLevel(p(0.6), 40_380);
-  state.applyBookUpdate("bad-token", currentBook, {
+  state.applyBookUpdate("bad-token", currentBook, NO_FEE_SCHEDULE, {
     kind: "snapshot",
     validThroughMs: 3_000,
   });
@@ -61,8 +62,10 @@ test("invalid recorder data preserves current pressure and does not abort later 
 
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
-    state.hydrate({ "bad-token": invalid, "good-token": valid }, (token) =>
-      token === "bad-token" ? currentBook : undefined,
+    state.hydrate(
+      { "bad-token": invalid, "good-token": valid },
+      (token) => (token === "bad-token" ? currentBook : undefined),
+      () => NO_FEE_SCHEDULE,
     );
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).toContain("bad-token");
@@ -80,7 +83,7 @@ test("late recorder hydration keeps websocket validity and older token history",
   const state = new AgeStripPressureState();
   const currentBook = emptyTokenBook();
   currentBook.yesToUsd.setLevel(p(0.6), 40_380);
-  state.applyBookUpdate("token", currentBook, {
+  state.applyBookUpdate("token", currentBook, NO_FEE_SCHEDULE, {
     kind: "snapshot",
     validThroughMs: 3_000,
   });
@@ -88,7 +91,11 @@ test("late recorder hydration keeps websocket validity and older token history",
   const recorded = new PressureFrontierMemory();
   recorded.updateLevels([{ price: p(0.6), shares: 80_000 }], 1_000);
 
-  state.hydrate({ token: recorded.snapshot() }, () => currentBook);
+  state.hydrate(
+    { token: recorded.snapshot() },
+    () => currentBook,
+    () => NO_FEE_SCHEDULE,
+  );
 
   expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
     {
@@ -109,7 +116,7 @@ test("runtime extents compose over pressure history without erasing it", () => {
   const book = emptyTokenBook();
   book.yesToUsd.setLevel(p(0.6), 40);
 
-  state.applyBookUpdate("token", book, {
+  state.applyBookUpdate("token", book, NO_FEE_SCHEDULE, {
     kind: "snapshot",
     validThroughMs: 1_000,
   });
@@ -131,7 +138,7 @@ test("removing a runtime extent reveals the historical field again", () => {
   const book = emptyTokenBook();
   book.yesToUsd.setLevel(p(0.6), 40);
 
-  state.applyBookUpdate("token", book, {
+  state.applyBookUpdate("token", book, NO_FEE_SCHEDULE, {
     kind: "snapshot",
     validThroughMs: 1_000,
   });
@@ -150,11 +157,11 @@ test("market watermark advances unchanged token pressure", () => {
   const book = emptyTokenBook();
   book.yesToUsd.setLevel(p(0.65), 70);
 
-  state.applyBookUpdate("token", book, {
+  state.applyBookUpdate("token", book, NO_FEE_SCHEDULE, {
     kind: "snapshot",
     validThroughMs: 1_000,
   });
-  state.applyBookUpdate("token", book, {
+  state.applyBookUpdate("token", book, NO_FEE_SCHEDULE, {
     kind: "watermark",
     validThroughMs: 2_500,
   });
@@ -169,7 +176,7 @@ test("unbounded terminal pressure discards dominated finite history", () => {
   const book = emptyTokenBook();
   book.yesToUsd.setLevel(p(0.6), 40);
 
-  state.applyBookUpdate("token", book, {
+  state.applyBookUpdate("token", book, NO_FEE_SCHEDULE, {
     kind: "snapshot",
     validThroughMs: 1_000,
   });
@@ -192,7 +199,7 @@ test("unknown resolution time never extends loser history", () => {
   const book = emptyTokenBook();
   book.yesToUsd.setLevel(p(0.6), 40);
 
-  state.applyBookUpdate("token", book, {
+  state.applyBookUpdate("token", book, NO_FEE_SCHEDULE, {
     kind: "snapshot",
     validThroughMs: 1_000,
   });
@@ -209,7 +216,7 @@ test("observed resolution time freezes loser history through resolution", () => 
   const book = emptyTokenBook();
   book.yesToUsd.setLevel(p(0.6), 40);
 
-  state.applyBookUpdate("token", book, {
+  state.applyBookUpdate("token", book, NO_FEE_SCHEDULE, {
     kind: "snapshot",
     validThroughMs: 1_000,
   });
