@@ -105,6 +105,7 @@ interface TokenState {
   book?: TokenBook;
   validThroughMs?: number;
   subscriptionRequestedAtMs?: number;
+  awaitingSnapshot?: boolean;
   marketKey?: string;
 }
 
@@ -371,9 +372,7 @@ export class LiveBookCoordinator {
         for (const [tokenKey] of desired) {
           const token = this.tokens.get(tokenKey);
           if (!token) continue;
-          token.book = undefined;
-          token.validThroughMs = undefined;
-          token.marketKey = undefined;
+          token.awaitingSnapshot = true;
           token.subscriptionRequestedAtMs = requestedAtMs;
         }
 
@@ -481,6 +480,7 @@ export class LiveBookCoordinator {
       token.book = undefined;
       token.validThroughMs = undefined;
       token.subscriptionRequestedAtMs = undefined;
+      token.awaitingSnapshot = true;
       token.marketKey = undefined;
     }
 
@@ -567,7 +567,8 @@ export class LiveBookCoordinator {
     }
 
     const requestedAtMs = token.subscriptionRequestedAtMs;
-    const firstOnStream = requestedAtMs !== undefined || !token.book;
+    const firstOnStream =
+      token.awaitingSnapshot === true || requestedAtMs !== undefined || !token.book;
     const validThroughMs = causalMax(
       token.validThroughMs,
       marketWatermark,
@@ -579,6 +580,7 @@ export class LiveBookCoordinator {
     token.book = bookFromSnapshot(event.payload.bids, event.payload.asks);
     token.validThroughMs = validThroughMs;
     token.subscriptionRequestedAtMs = undefined;
+    token.awaitingSnapshot = false;
     this.debugStats.routedTokenBatches++;
     this.notifyToken(token, {
       kind: firstOnStream ? "snapshot" : "replace",
@@ -609,7 +611,7 @@ export class LiveBookCoordinator {
 
       const refresh = this.refreshContexts.get(change.assetId);
       if (refresh) refresh.superseded = true;
-      if (!token.book) continue;
+      if (!token.book || token.awaitingSnapshot === true) continue;
 
       let changes = changesByToken.get(token);
       if (!changes) {
@@ -751,7 +753,8 @@ export class LiveBookCoordinator {
         excluded.has(tokenKey) ||
         !subscription.tokenKeys.has(tokenKey) ||
         token.marketKey !== marketKey ||
-        !token.book
+        !token.book ||
+        token.awaitingSnapshot === true
       )
         continue;
 
