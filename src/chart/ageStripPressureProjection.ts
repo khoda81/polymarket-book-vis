@@ -7,7 +7,6 @@ import {
 import type { GpuPressureSurface } from "./gpuPressureLayer";
 import {
   ageRowYDirection,
-  DEFAULT_AGE_ROW_ORIENTATION,
   type AgeRowOrientation,
 } from "./ageStripOrientation";
 
@@ -44,7 +43,7 @@ const OPPOSITE: AgePressurePerspectiveBase = {
 
 export function agePressurePerspective(
   side: AgePressureSide,
-  orientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
+  orientation: AgeRowOrientation,
 ): AgePressurePerspective {
   const base = side === "primary" ? PRIMARY : OPPOSITE;
   return {
@@ -63,7 +62,7 @@ export function agePressureSurface(
   currentValidThroughMs: number | undefined,
   colorScale: SignedVolumeColorScale,
   sourceSide: AgePressureSide,
-  orientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
+  orientation: AgeRowOrientation,
 ): GpuPressureSurface {
   const perspective = agePressurePerspective(sourceSide, orientation);
   return {
@@ -83,7 +82,7 @@ export function agePressureSurface(
 export function agePressureSourceSideAtY(
   yCss: number,
   centerCss: number,
-  orientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
+  orientation: AgeRowOrientation,
 ): AgePressureSide {
   const screenDirection = yCss >= centerCss ? 1 : -1;
   const primaryDirection = ageRowYDirection(-1, orientation);
