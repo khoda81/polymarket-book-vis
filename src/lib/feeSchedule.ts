@@ -3,10 +3,7 @@ import {
   fetchMarketInfo,
   resolveConditionByToken,
 } from "@polymarket/client/actions";
-import type {
-  PublicClient,
-  TokenId,
-} from "@polymarket/client";
+import type { PublicClient, TokenId } from "@polymarket/client";
 
 export interface FeeSchedule {
   readonly rateNumerator: bigint;
@@ -115,7 +112,11 @@ export function effectiveBidPrice(
 }
 
 function feeTicksCeil(rawPrice: Price, schedule: FeeSchedule): bigint {
-  if (rawPrice === 0 || rawPrice === PRICE_SCALE || schedule.rateNumerator === 0n)
+  if (
+    rawPrice === 0 ||
+    rawPrice === PRICE_SCALE ||
+    schedule.rateNumerator === 0n
+  )
     return 0n;
 
   const scale = BigInt(PRICE_SCALE);
