@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { emptyTokenBook } from "../lib/orderBook";
+import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "../lib/pressureField";
 import { PressureFrontierMemory } from "../lib/pressureFrontierMemory";
 import { priceFromLegacyNumber as p } from "../lib/price";
 import { AgeStripPressureState } from "./ageStripPressureState";
@@ -101,4 +102,45 @@ test("late recorder hydration keeps websocket validity and older token history",
       validThroughMs: 1_000,
     },
   ]);
+});
+
+test("runtime extents compose over pressure history without erasing it", () => {
+  const state = new AgeStripPressureState();
+  const book = emptyTokenBook();
+  book.yesToUsd.setLevel(p(0.6), 40);
+
+  state.applyBookUpdate("token", book, {
+    kind: "snapshot",
+    validThroughMs: 1_000,
+  });
+  const before = state.memory("token")!.snapshot();
+
+  state.setExtents("token", [FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT]);
+
+  expect(state.bandAtPoint("token", p(0.7), 1_000_000)).toEqual({
+    loVolume: 0,
+    hiVolume: { kind: "unbounded" },
+    validity: { kind: "persistent" },
+  });
+  expect(state.memory("token")!.snapshot()).toEqual(before);
+  expect(state.hasVisiblePressure("token", 1_000_000_000, 1_000)).toBe(true);
+});
+
+test("removing a runtime extent reveals the historical field again", () => {
+  const state = new AgeStripPressureState();
+  const book = emptyTokenBook();
+  book.yesToUsd.setLevel(p(0.6), 40);
+
+  state.applyBookUpdate("token", book, {
+    kind: "snapshot",
+    validThroughMs: 1_000,
+  });
+  state.setExtents("token", [FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT]);
+  state.setExtents("token", []);
+
+  expect(state.bandAtPoint("token", p(0.7), 20)).toEqual({
+    loVolume: 0,
+    hiVolume: { kind: "finite", shares: 40 },
+    validity: { kind: "through", validThroughMs: 1_000 },
+  });
 });

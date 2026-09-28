@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   agePressurePerspective,
   agePressureSourceSideAtY,
+  agePressureSourceTokenForSemanticToken,
   pressurePriceAtDisplayX,
   pressureVolumeAtY,
   semanticPriceAtDisplayX,
@@ -79,6 +80,14 @@ test("event orientation inference only opts out for strong structural hints", ()
       title: "Unknown ascending grouped market",
     }),
   ).toBe(defaultOrientation);
+});
+
+test("semantic token maps to the complementary pressure source", () => {
+  expect(agePressureSourceTokenForSemanticToken("yes", "no", "yes")).toBe("no");
+  expect(agePressureSourceTokenForSemanticToken("yes", "no", "no")).toBe("yes");
+  expect(
+    agePressureSourceTokenForSemanticToken("yes", "no", "other"),
+  ).toBeNull();
 });
 
 test("semantic price complements the source field without moving geometry", () => {

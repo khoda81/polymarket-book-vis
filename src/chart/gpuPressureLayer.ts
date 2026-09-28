@@ -1,4 +1,7 @@
-import { PRESSURE_MIN_VISIBLE_ALPHA } from "@/lib/pressureField";
+import {
+  PRESSURE_MIN_VISIBLE_ALPHA,
+  type PressureExtent,
+} from "@/lib/pressureField";
 import type { PressureRun } from "@/lib/pressureFrontierSnapshot";
 import { priceToNumber, type Price } from "@/lib/price";
 
@@ -11,6 +14,8 @@ export interface GpuPressureSurface {
   readonly firstChangedRunSince: (revision: number) => number;
   /** O(1) validity timestamp for the currently resting portion of every run. */
   readonly currentValidThroughMs: number | undefined;
+  readonly extents: readonly PressureExtent[];
+  readonly extentRevision: number;
   readonly color: string;
   /** Mirror edge-local price p to display coordinate 1-p. */
   readonly mirrorPrice: boolean;
@@ -40,7 +45,7 @@ export interface GpuPressureFrame {
   readonly background: string;
 }
 
-const INSTANCE_FLOATS = 6;
+const INSTANCE_FLOATS = 7;
 const INSTANCE_STRIDE = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
 const MAX_SUPERSAMPLE_X = 2;
 const MAX_SUPERSAMPLE_Y = 4;
@@ -64,8 +69,9 @@ layout(location = 0) in float aPriceLo;
 layout(location = 1) in float aPriceHi;
 layout(location = 2) in float aVolumeLo;
 layout(location = 3) in float aVolumeHi;
-layout(location = 4) in float aBandValidThroughSec;
-layout(location = 5) in float aIsCurrent;
+layout(location = 4) in float aVolumeHiUnbounded;
+layout(location = 5) in float aBandValidThroughSec;
+layout(location = 6) in float aValidityMode;
 
 uniform vec2 uCanvasCssSize;
 uniform vec2 uPriceViewport;
@@ -84,6 +90,7 @@ uniform vec3 uColor;
 out vec3 vColor;
 flat out vec4 vRectPx;
 flat out float vReferenceAlpha;
+flat out float vPersistent;
 
 const float MIN_ALPHA = ${PRESSURE_MIN_VISIBLE_ALPHA};
 
@@ -99,22 +106,31 @@ const vec2 CORNERS[6] = vec2[6](
 void main() {
   vec2 corner = CORNERS[gl_VertexID];
 
-  if (aIsCurrent > 0.5 && !uHasCurrentValidThrough) {
+  bool usesCurrentValidity = aValidityMode > 0.5 && aValidityMode < 1.5;
+  bool persistent = aValidityMode > 1.5;
+  if (usesCurrentValidity && !uHasCurrentValidThrough) {
     gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
     return;
   }
 
-  float validThroughSec =
-      aIsCurrent > 0.5 ? uCurrentValidThroughSec : aBandValidThroughSec;
-  float halfLifeSec = max(uGhostHalfLifeSec, 1e-6);
-  float ageSec = max(0.0, uNowOffsetSec - validThroughSec);
-  float referenceAlpha = exp2(-ageSec / halfLifeSec);
+  float referenceAlpha = 1.0;
+  if (!persistent) {
+    float validThroughSec =
+        usesCurrentValidity ? uCurrentValidThroughSec : aBandValidThroughSec;
+    float halfLifeSec = max(uGhostHalfLifeSec, 1e-6);
+    float ageSec = max(0.0, uNowOffsetSec - validThroughSec);
+    referenceAlpha = exp2(-ageSec / halfLifeSec);
+  }
 
   float reserveShares = uVolumePerCssPixel * uRowHeightCss;
   float pressureLo =
       aVolumeLo <= 0.0 ? 0.0 : aVolumeLo / (aVolumeLo + reserveShares);
   float pressureHi =
-      aVolumeHi <= 0.0 ? 0.0 : aVolumeHi / (aVolumeHi + reserveShares);
+      aVolumeHiUnbounded > 0.5
+        ? 1.0
+        : (aVolumeHi <= 0.0
+            ? 0.0
+            : aVolumeHi / (aVolumeHi + reserveShares));
 
   float y0Css =
       uCenterCss + uYDirection * 0.5 * uRowHeightCss * pressureLo;
@@ -138,6 +154,7 @@ void main() {
   );
   vColor = uColor;
   vReferenceAlpha = referenceAlpha;
+  vPersistent = persistent ? 1.0 : 0.0;
 
   if (referenceAlpha <= MIN_ALPHA) {
     gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
@@ -171,7 +188,9 @@ precision highp float;
 in vec3 vColor;
 flat in vec4 vRectPx;
 flat in float vReferenceAlpha;
-out vec4 outColor;
+flat in float vPersistent;
+layout(location = 0) out vec4 outDecaying;
+layout(location = 1) out vec4 outPersistent;
 
 void main() {
   vec2 pixelMin = gl_FragCoord.xy - 0.5;
@@ -184,7 +203,14 @@ void main() {
   if (coverage <= 0.0) discard;
 
   float alpha = coverage * vReferenceAlpha;
-  outColor = vec4(vColor * alpha, alpha);
+  vec4 value = vec4(vColor * alpha, alpha);
+  if (vPersistent > 0.5) {
+    outDecaying = vec4(0.0);
+    outPersistent = value;
+  } else {
+    outDecaying = value;
+    outPersistent = vec4(0.0);
+  }
 }
 `;
 
@@ -209,7 +235,8 @@ void main() {
 const DISPLAY_FRAGMENT = `#version 300 es
 precision highp float;
 
-uniform sampler2D uColor;
+uniform sampler2D uDecayingColor;
+uniform sampler2D uPersistentColor;
 uniform float uGlobalDecay;
 uniform ivec2 uSupersample;
 
@@ -223,16 +250,30 @@ void main() {
   for (int y = 0; y < 4; ++y) {
     for (int x = 0; x < 2; ++x) {
       if (x >= uSupersample.x || y >= uSupersample.y) continue;
-      sum += texelFetch(uColor, base + ivec2(x, y), 0);
+      sum += texelFetch(uDecayingColor, base + ivec2(x, y), 0);
     }
   }
 
   float sampleCount = float(uSupersample.x * uSupersample.y);
-  vec4 resolved = (sum / sampleCount) * uGlobalDecay;
+  vec4 decaying = (sum / sampleCount) * uGlobalDecay;
+
+  vec4 persistentSum = vec4(0.0);
+  for (int y = 0; y < 4; ++y) {
+    for (int x = 0; x < 2; ++x) {
+      if (x >= uSupersample.x || y >= uSupersample.y) continue;
+      persistentSum += texelFetch(
+        uPersistentColor,
+        base + ivec2(x, y),
+        0
+      );
+    }
+  }
+  vec4 persistent = persistentSum / sampleCount;
+  vec4 resolved = persistent + decaying * (1.0 - persistent.a);
   if (resolved.a <= 0.0039215686) discard;
 
-  // Geometry stored premultiplied color at a fixed reference time. Exponential
-  // decay factorizes, so advancing wall-clock time is one scalar multiply.
+  // Decaying geometry factorizes through one global time scalar; persistent
+  // geometry composes over it without inheriting that decay.
   outColor = resolved;
 }
 `;
@@ -242,6 +283,7 @@ interface CachedPressureSurface {
   readonly vao: WebGLVertexArrayObject;
   readonly resident: PressureResidentBuffer;
   dataRevision: number;
+  extentRevision: number;
   instanceCount: number;
   timeOriginMs: number;
   gpuCapacityFloats: number;
@@ -254,6 +296,7 @@ export class GpuPressureLayer {
   private readonly displayVao: WebGLVertexArrayObject;
   private readonly framebuffer: WebGLFramebuffer;
   private readonly colorTexture: WebGLTexture;
+  private readonly persistentTexture: WebGLTexture;
   private readonly surfaceBuffers = new Map<string, CachedPressureSurface>();
   private totalCachedInstanceCount = 0;
 
@@ -287,8 +330,13 @@ export class GpuPressureLayer {
     this.displayVao = required(gl.createVertexArray(), "display VAO");
     this.framebuffer = required(gl.createFramebuffer(), "framebuffer");
     this.colorTexture = required(gl.createTexture(), "color texture");
+    this.persistentTexture = required(
+      gl.createTexture(),
+      "persistent pressure texture",
+    );
 
     configureTexture(gl, this.colorTexture);
+    configureTexture(gl, this.persistentTexture);
   }
 
   setVisible(visible: boolean): void {
@@ -335,6 +383,7 @@ export class GpuPressureLayer {
     const gl = this.gl;
     this.clearSurfaceBuffers();
     gl.deleteTexture(this.colorTexture);
+    gl.deleteTexture(this.persistentTexture);
     gl.deleteFramebuffer(this.framebuffer);
     gl.deleteVertexArray(this.displayVao);
     gl.deleteProgram(this.geometryProgram);
@@ -356,9 +405,14 @@ export class GpuPressureLayer {
           changed = true;
         }
 
-        if (cached.dataRevision !== surface.dataRevision) {
+        if (
+          cached.dataRevision !== surface.dataRevision ||
+          cached.extentRevision !== surface.extentRevision
+        ) {
+          const extentsChanged =
+            cached.extentRevision !== surface.extentRevision;
           const firstChangedRun =
-            cached.dataRevision < 0
+            cached.dataRevision < 0 || extentsChanged
               ? 0
               : surface.firstChangedRunSince(cached.dataRevision);
           this.uploadSurfaceBuffer(
@@ -368,6 +422,7 @@ export class GpuPressureLayer {
             firstChangedRun,
           );
           cached.dataRevision = surface.dataRevision;
+          cached.extentRevision = surface.extentRevision;
           changed = true;
         }
         totalInstances += cached.instanceCount;
@@ -414,6 +469,7 @@ export class GpuPressureLayer {
       vao,
       resident: new PressureResidentBuffer(),
       dataRevision: -1,
+      extentRevision: -1,
       instanceCount: 0,
       timeOriginMs: 0,
       gpuCapacityFloats: 0,
@@ -442,6 +498,7 @@ export class GpuPressureLayer {
       surface.runs,
       surface.cumulativeShares,
       surface.maxPrice,
+      surface.extents,
       cached.timeOriginMs,
       firstRun,
     );
@@ -556,18 +613,20 @@ export class GpuPressureLayer {
     this.canvas.height = displayHeight;
 
     const gl = this.gl;
-    gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.RGBA8,
-      targetWidth,
-      targetHeight,
-      0,
-      gl.RGBA,
-      gl.UNSIGNED_BYTE,
-      null,
-    );
+    for (const texture of [this.colorTexture, this.persistentTexture]) {
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA8,
+        targetWidth,
+        targetHeight,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        null,
+      );
+    }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
     gl.framebufferTexture2D(
@@ -577,6 +636,14 @@ export class GpuPressureLayer {
       this.colorTexture,
       0,
     );
+    gl.framebufferTexture2D(
+      gl.FRAMEBUFFER,
+      gl.COLOR_ATTACHMENT1,
+      gl.TEXTURE_2D,
+      this.persistentTexture,
+      0,
+    );
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
     const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     if (status !== gl.FRAMEBUFFER_COMPLETE)
@@ -710,7 +777,10 @@ export class GpuPressureLayer {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
-    uniform1i(gl, this.displayProgram, "uColor", 0);
+    uniform1i(gl, this.displayProgram, "uDecayingColor", 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.persistentTexture);
+    uniform1i(gl, this.displayProgram, "uPersistentColor", 1);
 
     const elapsedMs = Math.max(0, frame.nowMs - this.referenceTimeMs);
     uniform1f(
@@ -764,6 +834,7 @@ export class PressureResidentBuffer {
     runs: readonly PressureRun[],
     cumulativeShares: readonly number[],
     maxPrice: Price,
+    extents: readonly PressureExtent[],
     timeOriginMs: number,
     requestedFirstRun: number,
   ): number {
@@ -796,6 +867,7 @@ export class PressureResidentBuffer {
           0,
           currentVolume,
           0,
+          0,
           1,
         );
 
@@ -812,6 +884,7 @@ export class PressureResidentBuffer {
           priceHi,
           lower,
           step.hiVolume,
+          0,
           (step.validThroughMs - timeOriginMs) / 1_000,
           0,
         );
@@ -820,6 +893,22 @@ export class PressureResidentBuffer {
     }
 
     this.runInstanceOffsets[runs.length] = writeFloat / INSTANCE_FLOATS;
+
+    for (const extent of extents) {
+      writeFloat = this.appendInstance(
+        writeFloat,
+        priceToNumber(extent.priceLo),
+        priceToNumber(extent.priceHi),
+        extent.loVolume,
+        extent.hiVolume.kind === "finite" ? extent.hiVolume.shares : 0,
+        extent.hiVolume.kind === "unbounded" ? 1 : 0,
+        extent.validity.kind === "through"
+          ? (extent.validity.validThroughMs - timeOriginMs) / 1_000
+          : 0,
+        extent.validity.kind === "persistent" ? 2 : 0,
+      );
+    }
+
     this.usedFloats = writeFloat;
     return firstFloat;
   }
@@ -830,16 +919,18 @@ export class PressureResidentBuffer {
     priceHi: number,
     volumeLo: number,
     volumeHi: number,
+    volumeHiUnbounded: number,
     validThroughSec: number,
-    isCurrent: number,
+    validityMode: number,
   ): number {
     this.ensureCapacity(writeFloat + INSTANCE_FLOATS, writeFloat);
     this.values[writeFloat] = priceLo;
     this.values[writeFloat + 1] = priceHi;
     this.values[writeFloat + 2] = volumeLo;
     this.values[writeFloat + 3] = volumeHi;
-    this.values[writeFloat + 4] = validThroughSec;
-    this.values[writeFloat + 5] = isCurrent;
+    this.values[writeFloat + 4] = volumeHiUnbounded;
+    this.values[writeFloat + 5] = validThroughSec;
+    this.values[writeFloat + 6] = validityMode;
     return writeFloat + INSTANCE_FLOATS;
   }
 
@@ -865,7 +956,7 @@ function rasterProjectionKey(
         `${row.key}@${row.centerCss}:${row.heightCss}:${row.surfaces
           .map(
             (surface) =>
-              `${surface.key}:${surface.dataRevision}:${surface.currentValidThroughMs ?? ""}:${surface.color}:${surface.mirrorPrice ? 1 : 0}:${surface.yDirection}`,
+              `${surface.key}:${surface.dataRevision}:${surface.extentRevision}:${surface.currentValidThroughMs ?? ""}:${surface.color}:${surface.mirrorPrice ? 1 : 0}:${surface.yDirection}`,
           )
           .join(",")}`,
     )

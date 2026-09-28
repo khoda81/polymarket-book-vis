@@ -5,6 +5,7 @@ import {
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
 import type { TokenBook } from "@/lib/orderBook";
+import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "@/lib/pressureField";
 import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import type { SignedVolumeColorScale } from "@/lib/signedVolume";
@@ -18,12 +19,15 @@ import {
   positionRowControls,
   rowRasterGeometry,
 } from "./ageStripLayout";
-import { drawAgeAxes, drawResolvedMarketStrip } from "./ageStripRendering";
+import { drawAgeAxes } from "./ageStripRendering";
 import { GpuPressureLayer, type GpuPressureRow } from "./gpuPressureLayer";
 import { AgeStripClock } from "./ageStripClock";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
 import { AgeStripPressureState } from "./ageStripPressureState";
-import { agePressureSurface } from "./ageStripPressureProjection";
+import {
+  agePressureSourceTokenForSemanticToken,
+  agePressureSurface,
+} from "./ageStripPressureProjection";
 import type { LiveBookUpdate } from "./liveBookFeed";
 import { AgeStripTooltip } from "./ageStripTooltip";
 import type { AgeRowOrientation } from "./ageStripOrientation";
@@ -76,7 +80,8 @@ export class AgeStripView {
       canvas: host.canvas,
       getViewMode: host.getViewMode,
       getRowOrientation: host.getRowOrientation,
-      getPressureMemory: (tokenId) => this.pressure.memory(tokenId),
+      getPressureBand: (tokenId, price, volume) =>
+        this.pressure.bandAtPoint(tokenId, price, volume),
       getTokenName: host.getTokenName,
       getPressureColorScale: host.getPressureColorScale,
     });
@@ -136,6 +141,16 @@ export class AgeStripView {
         return rows;
       }),
     );
+
+    for (const control of controls) {
+      if (control.lifecycle.kind !== "resolved") continue;
+      this.applyResolvedPressure(
+        control.tokenId,
+        control.market.outcomes.no.tokenId,
+        control.lifecycle.winningTokenId,
+      );
+    }
+
     this.pressureLayer?.invalidate();
   }
 
@@ -152,11 +167,32 @@ export class AgeStripView {
     if (this.host.activeTokens.has(tokenId)) this.host.hideToken(tokenId);
   }
 
-  resolveMarket(tokenId: string): void {
-    this.pressure.resolve(tokenId);
-    const oppositeTokenId = this.host.getOppositeTokenId(tokenId);
-    if (oppositeTokenId) this.pressure.resolve(oppositeTokenId);
+  resolveMarket(primaryTokenId: string, winningTokenId: string): void {
+    this.applyResolvedPressure(
+      primaryTokenId,
+      this.host.getOppositeTokenId(primaryTokenId),
+      winningTokenId,
+    );
     this.pressureLayer?.invalidate();
+  }
+
+  private applyResolvedPressure(
+    primaryTokenId: string,
+    oppositeTokenId: string | null | undefined,
+    winningTokenId: string,
+  ): void {
+    this.pressure.setExtents(primaryTokenId, []);
+    if (oppositeTokenId) this.pressure.setExtents(oppositeTokenId, []);
+
+    const sourceTokenId = agePressureSourceTokenForSemanticToken(
+      primaryTokenId,
+      oppositeTokenId,
+      winningTokenId,
+    );
+    if (sourceTokenId)
+      this.pressure.setExtents(sourceTokenId, [
+        FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT,
+      ]);
   }
 
   draw(): void {
@@ -197,16 +233,6 @@ export class AgeStripView {
       },
       rows: activeControls.map((label, index) => {
         const tokenId = label.dataset.tokenId ?? `missing-row-${index}`;
-        const side = label.dataset.ageResolutionSide;
-        const resolution =
-          side === "primary" || side === "opposite"
-            ? {
-                side: side as "primary" | "opposite",
-                outcome: label.dataset.ageResolutionOutcome ?? "",
-                marketEndMs:
-                  this.pressure.timing(tokenId)?.resolutionMs ?? null,
-              }
-            : undefined;
         const y = rowCount - 1 - index;
         const raster = rowRasterGeometry(frame.toScreenY(0, y), dpr);
 
@@ -216,7 +242,6 @@ export class AgeStripView {
           centerY: raster.centerCss,
           topY: raster.topCss,
           bottomY: raster.topCss + raster.heightCss,
-          resolution,
         };
       }),
       canvasWidth: vp.l + vp.width + this.host.plotter.padding.r,
@@ -238,18 +263,6 @@ export class AgeStripView {
         : undefined;
       if (!primaryMemory && !oppositeMemory) continue;
 
-      const resolutionSide = label.dataset.ageResolutionSide;
-      if (resolutionSide === "primary" || resolutionSide === "opposite") {
-        drawResolvedMarketStrip(
-          frame,
-          rowCount - 1 - index,
-          resolutionSide,
-          label.dataset.ageResolutionOutcome ?? "",
-          this.host.getPressureColorScale(tokenId),
-        );
-        continue;
-      }
-
       const y = rowCount - 1 - index;
       const rowGeometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
       const colorScale = this.host.getPressureColorScale(tokenId);
@@ -269,6 +282,8 @@ export class AgeStripView {
                   (revision) =>
                     primaryMemory.renderFirstChangedRunSince(revision),
                   primaryMemory.renderCurrentValidThroughMs(),
+                  this.pressure.renderExtents(tokenId),
+                  this.pressure.renderExtentRevision(tokenId),
                   colorScale,
                   "primary",
                   rowOrientation,
@@ -286,6 +301,8 @@ export class AgeStripView {
                   (revision) =>
                     oppositeMemory.renderFirstChangedRunSince(revision),
                   oppositeMemory.renderCurrentValidThroughMs(),
+                  this.pressure.renderExtents(oppositeTokenId!),
+                  this.pressure.renderExtentRevision(oppositeTokenId!),
                   colorScale,
                   "opposite",
                   rowOrientation,

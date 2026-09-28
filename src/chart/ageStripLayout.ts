@@ -76,13 +76,6 @@ export function positionRowControls(
   }
 }
 
-export interface AgeStripResolution {
-  readonly side: "primary" | "opposite";
-  readonly outcome: string;
-  /** Scheduled/event end time; not necessarily the oracle settlement instant. */
-  readonly marketEndMs: number | null;
-}
-
 export interface AgeStripGeometry {
   readonly viewport: {
     readonly l: number;
@@ -99,7 +92,6 @@ export interface AgeStripGeometry {
     readonly centerY?: number;
     readonly topY?: number;
     readonly bottomY?: number;
-    readonly resolution?: AgeStripResolution;
   }[];
   readonly canvasWidth: number;
   readonly canvasHeight: number;

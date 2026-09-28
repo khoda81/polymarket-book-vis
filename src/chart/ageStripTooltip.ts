@@ -2,9 +2,12 @@ import { AGE_ROW_BAND_PX, getAgeStripTuning } from "@/lib/ageStripTuning";
 import { relativeTimeDisplay } from "@/lib/math";
 import {
   PRESSURE_MIN_VISIBLE_ALPHA,
-  stalenessAlpha,
+  pressureValidityAlpha,
+  type PressureFieldBand,
+  type PressureValidity,
+  type PressureVolumeUpperBound,
 } from "@/lib/pressureField";
-import type { PressureFrontierMemory } from "@/lib/pressureFrontierMemory";
+import type { Price } from "@/lib/price";
 import {
   signedVolumeColor,
   type SignedVolumeColorScale,
@@ -33,9 +36,11 @@ export interface AgeStripTooltipHost {
   readonly canvas: HTMLCanvasElement;
   readonly getViewMode: () => ViewMode;
   readonly getRowOrientation: () => AgeRowOrientation;
-  readonly getPressureMemory: (
+  readonly getPressureBand: (
     tokenId: string,
-  ) => PressureFrontierMemory | undefined;
+    price: Price,
+    volume: number,
+  ) => PressureFieldBand | undefined;
   /** Must resolve the label for the actual token id passed in. */
   readonly getTokenName: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
@@ -49,8 +54,8 @@ interface HoverPointer {
 }
 
 interface PressureHover {
-  readonly shares: number;
-  readonly validThroughMs: number;
+  readonly volume: PressureVolumeUpperBound;
+  readonly validity: PressureValidity;
 }
 
 export class AgeStripTooltip {
@@ -170,37 +175,46 @@ export class AgeStripTooltip {
     const nowMs = Date.now();
     let hover: PressureHover | null = null;
     if (volume !== null) {
-      const memory = this.host.getPressureMemory(sourceTokenId);
-      const band = memory?.bandAtPoint(pressurePrice, volume);
+      const band = this.host.getPressureBand(
+        sourceTokenId,
+        pressurePrice,
+        volume,
+      );
 
       if (band) {
-        const alpha = stalenessAlpha(
-          band.validThroughMs,
+        const alpha = pressureValidityAlpha(
+          band.validity,
           nowMs,
           getAgeStripTuning().ghostHalfLifeMs,
         );
         if (alpha > PRESSURE_MIN_VISIBLE_ALPHA)
           hover = {
-            // This band is a slice of the cumulative rectangle that existed at
-            // this timestamp. Its upper edge is that rectangle's volume.
-            shares: band.hiVolume,
-            validThroughMs: band.validThroughMs,
+            // The hovered band supplies its own upper volume and validity.
+            // Either dimension may be unbounded/persistent.
+            volume: band.hiVolume,
+            validity: band.validity,
           };
       }
     }
 
-    const displayedShares = hover?.shares ?? volume;
-    const ageDisplay = hover
-      ? relativeTimeDisplay(
-          Math.max(0, nowMs - hover.validThroughMs) / 1_000,
-          "elapsed",
-        )
-      : null;
-    const ageText = ageDisplay?.text ?? (displayedShares === null ? null : "∞");
+    const displayedVolume: PressureVolumeUpperBound | null =
+      hover?.volume ??
+      (volume === null ? null : { kind: "finite", shares: volume });
+    const ageDisplay =
+      hover?.validity.kind === "through"
+        ? relativeTimeDisplay(
+            Math.max(0, nowMs - hover.validity.validThroughMs) / 1_000,
+            "elapsed",
+          )
+        : null;
+    const ageText =
+      hover?.validity.kind === "persistent"
+        ? "0s"
+        : (ageDisplay?.text ?? (displayedVolume === null ? null : "∞"));
     const signature = [
       semanticTokenId,
       formatProbability(semanticPrice),
-      displayedShares === null ? "" : formatShares(displayedShares),
+      displayedVolume === null ? "" : formatPressureVolume(displayedVolume),
       ageText ?? "",
     ].join("|");
 
@@ -213,7 +227,7 @@ export class AgeStripTooltip {
           tokenName,
           semanticPrice,
           color,
-          displayedShares,
+          displayedVolume,
           ageText,
         ),
       pointer.canvasLeft + sx,
@@ -265,7 +279,7 @@ export function renderAgeTooltip(
   tokenName: string,
   tokenPrice: number,
   color: string,
-  shares: number | null,
+  volume: PressureVolumeUpperBound | null,
   ageText: string | null,
 ): void {
   overlay.replaceChildren();
@@ -276,9 +290,9 @@ export function renderAgeTooltip(
   title.style.color = color;
   overlay.appendChild(title);
 
-  if (shares === null) return;
+  if (volume === null) return;
 
-  overlay.appendChild(tooltipRow("Shares", formatShares(shares)));
+  overlay.appendChild(tooltipRow("Shares", formatPressureVolume(volume)));
   overlay.appendChild(tooltipRow("Age", ageText ?? "∞"));
 }
 
@@ -307,6 +321,10 @@ function tooltipRow(name: string, value: string): HTMLDivElement {
 
 function formatProbability(value: number): string {
   return value.toFixed(3);
+}
+
+function formatPressureVolume(value: PressureVolumeUpperBound): string {
+  return value.kind === "unbounded" ? "∞" : formatShares(value.shares);
 }
 
 function formatShares(value: number): string {
