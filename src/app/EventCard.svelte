@@ -52,7 +52,7 @@
 
   let viewMode: ViewMode = "age";
   let ageRowOrientation: AgeRowOrientation =
-    loadStoredAgeRowOrientation(String(event.id)) ??
+    loadStoredAgeRowOrientation({ kind: "event", id: event.id }) ??
     inferAgeRowOrientation({
       sortBy: event.display.sortBy,
       title: event.title,
@@ -73,7 +73,10 @@
 
   function flipRows(): void {
     ageRowOrientation = flipAgeRowOrientation(ageRowOrientation);
-    persistAgeRowOrientation(String(event.id), ageRowOrientation);
+    persistAgeRowOrientation(
+      { kind: "event", id: event.id },
+      ageRowOrientation,
+    );
   }
 
   function chartConnectionChanged(status: ConnectionStatus): void {
