@@ -444,7 +444,12 @@ export class LiveBookCoordinator {
       this.notifyConnectionStatus(watch, "live");
       for (const tokenKey of watch.tokenIds.keys()) {
         const token = this.tokens.get(tokenKey);
-        if (!token?.book || token.validThroughMs === undefined) continue;
+        if (
+          !token?.book ||
+          token.awaitingSnapshot === true ||
+          token.validThroughMs === undefined
+        )
+          continue;
         this.notifyBookUpdated(watch, token, {
           kind: "snapshot",
           validThroughMs: token.validThroughMs,
