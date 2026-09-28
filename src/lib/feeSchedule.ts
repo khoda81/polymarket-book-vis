@@ -154,8 +154,7 @@ function ceilDiv(numerator: bigint, denominator: bigint): bigint {
 }
 
 function decimalRatio(value: string): readonly [bigint, bigint] {
-  const match =
-    /^([+]?)((?:\d+))(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(value);
+  const match = /^([+]?)((?:\d+))(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(value);
   if (!match) throw new RangeError(`invalid decimal fee rate: ${value}`);
 
   const integer = match[2]!;
