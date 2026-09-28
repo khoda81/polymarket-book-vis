@@ -288,6 +288,42 @@ test("same-market events advance unchanged sibling tokens", async () => {
   watch.close();
 });
 
+test("same-market timestamp regressions are max-aggregated without reconnecting", async () => {
+  const client = new FakeClient();
+  const coordinator = createCoordinator(client, new FakeRefreshScheduler());
+  const log = callbackLog();
+  const watch = coordinator.watch([TOKEN_A, TOKEN_B], log.callbacks);
+  await watch.ready;
+
+  const stream = client.latest();
+  stream.push(bookEvent(TOKEN_A, 1_001, "0.40", "0.60", MARKET_A));
+  stream.push(bookEvent(TOKEN_B, 1_001, "0.30", "0.70", MARKET_A));
+  await flush();
+  log.updates.length = 0;
+
+  stream.push(
+    priceChangeEvent(
+      1_000,
+      [{ tokenId: TOKEN_A, side: "BUY", price: "0.40", size: "12" }],
+      MARKET_A,
+    ),
+  );
+  await flush();
+
+  expect(client.streams).toHaveLength(1);
+  expect(log.statuses).toEqual(["connecting", "live"]);
+  expect(log.updates.map(({ tokenId, kind, validThroughMs }) => [
+    tokenId,
+    kind,
+    validThroughMs,
+  ])).toEqual([
+    [TOKEN_B, "watermark", 1_001],
+    [TOKEN_A, "levels", 1_001],
+  ]);
+
+  watch.close();
+});
+
 test("different markets never cross-advance their watermarks", async () => {
   const client = new FakeClient();
   const coordinator = createCoordinator(client, new FakeRefreshScheduler());
