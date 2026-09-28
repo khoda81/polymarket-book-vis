@@ -9,6 +9,15 @@
   } from "./cardReorderSurface";
   import type { ConnectionStatus } from "../lib/chartState";
   import {
+    DEFAULT_AGE_ROW_ORIENTATION,
+    flipAgeRowOrientation,
+    type AgeRowOrientation,
+  } from "../chart/ageStripOrientation";
+  import {
+    loadStoredAgeRowOrientation,
+    persistAgeRowOrientation,
+  } from "./ageRowOrientationStorage";
+  import {
     createPublicClient,
     type Event,
     type Series,
@@ -28,7 +37,18 @@
 
   let connection: ConnectionStatus = "connecting";
   let anchorEvent: Event | null = null;
+  let ageRowOrientation: AgeRowOrientation =
+    loadStoredAgeRowOrientation(`series:${String(series.id)}`) ??
+    DEFAULT_AGE_ROW_ORIENTATION;
   let ready = false;
+
+  function flipRows(): void {
+    ageRowOrientation = flipAgeRowOrientation(ageRowOrientation);
+    persistAgeRowOrientation(
+      `series:${String(series.id)}`,
+      ageRowOrientation,
+    );
+  }
 
   function timelineReady(): void {
     if (ready) return;
@@ -61,6 +81,32 @@
     </svg>
   </button>
   <div class="card-actions">
+    <button
+      type="button"
+      class="card-row-flip"
+      aria-pressed={ageRowOrientation === "negative-above"}
+      aria-label={ageRowOrientation === "negative-above"
+        ? "Put right-side book above the centerline"
+        : "Put left-side book above the centerline"}
+      title={ageRowOrientation === "negative-above"
+        ? "Left side is above — click to put right side above"
+        : "Right side is above — click to put left side above"}
+      onclick={flipRows}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d={ageRowOrientation === "negative-above"
+            ? "M4 12h16M8 9V5m0 0L6 7m2-2 2 2m8 6v4m0 0-2-2m2 2 2-2"
+            : "M4 12h16M16 9V5m0 0-2 2m2-2 2 2M8 15v4m0 0-2-2m2 2 2-2"}
+        />
+      </svg>
+    </button>
+
     <button
       type="button"
       class="card-pin"
@@ -123,6 +169,7 @@
     <SeriesTimeline
       {series}
       {client}
+      {ageRowOrientation}
       onready={timelineReady}
       {onfailure}
       onconnection={(status) => (connection = status)}

@@ -1,6 +1,26 @@
 export type AgeRowOrientation = "positive-above" | "negative-above";
 
-export const DEFAULT_AGE_ROW_ORIENTATION: AgeRowOrientation = "positive-above";
+export const DEFAULT_AGE_ROW_ORIENTATION: AgeRowOrientation = "negative-above";
+
+export interface AgeRowOrientationHints {
+  readonly sortBy?: string | null;
+  readonly title?: string | null;
+}
+
+export function inferAgeRowOrientation({
+  sortBy,
+  title,
+}: AgeRowOrientationHints): AgeRowOrientation {
+  if (sortBy === "price") return "positive-above";
+
+  if (
+    sortBy === "ascending" &&
+    /\bcontinues?\s+through\b/i.test(title ?? "")
+  )
+    return "positive-above";
+
+  return DEFAULT_AGE_ROW_ORIENTATION;
+}
 
 export function flipAgeRowOrientation(
   orientation: AgeRowOrientation,

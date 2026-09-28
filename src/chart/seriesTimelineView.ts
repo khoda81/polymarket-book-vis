@@ -8,6 +8,10 @@ import {
 } from "./ageStripLayout";
 import { AgeStripPressureState } from "./ageStripPressureState";
 import { agePressureSurface } from "./ageStripPressureProjection";
+import {
+  DEFAULT_AGE_ROW_ORIENTATION,
+  type AgeRowOrientation,
+} from "./ageStripOrientation";
 import { drawAgeRowRails, drawResolvedMarketStrip } from "./ageStripRendering";
 import { GpuPressureLayer, type GpuPressureRow } from "./gpuPressureLayer";
 import { LiveBookFeed } from "./liveBookFeed";
@@ -97,6 +101,8 @@ export class SeriesTimelineView {
   private readonly hydratedTokens = new Set<string>();
 
   private theme: ChartTheme;
+  private ageRowOrientation: AgeRowOrientation =
+    DEFAULT_AGE_ROW_ORIENTATION;
   private rows: TimedSeriesEvent[];
   private cadenceMs: number;
   private userOffsetMs = 0;
@@ -165,6 +171,7 @@ export class SeriesTimelineView {
       canvas,
       getViewMode: () => "age",
       getPressureMemory: (tokenId) => this.pressure.memory(tokenId),
+      getRowOrientation: () => this.ageRowOrientation,
       getTokenName: (tokenId) => {
         const market = this.marketByToken.get(tokenId);
         if (!market) return undefined;
@@ -227,6 +234,12 @@ export class SeriesTimelineView {
     this.userOffsetMs = 0;
     this.setFollowing(true);
     void this.ensureWindow(Date.now(), true);
+    this.requestDraw();
+  }
+
+  setAgeRowOrientation(orientation: AgeRowOrientation): void {
+    if (orientation === this.ageRowOrientation) return;
+    this.ageRowOrientation = orientation;
     this.requestDraw();
   }
 
@@ -506,6 +519,7 @@ export class SeriesTimelineView {
                   primaryMemory.renderCurrentValidThroughMs(),
                   scale,
                   "primary",
+                  this.ageRowOrientation,
                 ),
               ]
             : []),
@@ -522,6 +536,7 @@ export class SeriesTimelineView {
                   oppositeMemory.renderCurrentValidThroughMs(),
                   scale,
                   "opposite",
+                  this.ageRowOrientation,
                 ),
               ]
             : []),

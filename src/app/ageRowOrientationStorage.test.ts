@@ -16,16 +16,20 @@ class MemoryStorage {
   }
 }
 
-test("age row orientation persists independently per event", () => {
+test("age row orientation persists independently per card", () => {
   const storage = new MemoryStorage();
 
   expect(loadStoredAgeRowOrientation("a", storage)).toBeNull();
 
-  persistAgeRowOrientation("a", "negative-above", storage);
-  persistAgeRowOrientation("b", "positive-above", storage);
+  persistAgeRowOrientation("event-a", "negative-above", storage);
+  persistAgeRowOrientation("series:1", "positive-above", storage);
 
-  expect(loadStoredAgeRowOrientation("a", storage)).toBe("negative-above");
-  expect(loadStoredAgeRowOrientation("b", storage)).toBe("positive-above");
+  expect(loadStoredAgeRowOrientation("event-a", storage)).toBe(
+    "negative-above",
+  );
+  expect(loadStoredAgeRowOrientation("series:1", storage)).toBe(
+    "positive-above",
+  );
 });
 
 test("invalid stored orientation data is ignored", () => {
