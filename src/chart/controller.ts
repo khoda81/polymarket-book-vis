@@ -1,5 +1,6 @@
 import { fetchRecorderHydration } from "@/lib/ageRecorderClient";
 import type { ConnectionStatus, ViewMode } from "@/lib/chartState";
+import { ClobFeeScheduleResolver } from "@/lib/feeSchedule";
 import type { AutoHiddenReason } from "@/lib/marketVisibility";
 import {
   resolveMarketLifecycle,
@@ -47,6 +48,7 @@ export interface ChartControllerOptions {
 
 export class ChartController {
   private readonly feed: LiveBookFeed;
+  private readonly feeSchedules: ClobFeeScheduleResolver;
   private readonly onMarketAutoHidden: (
     marketId: MarketId,
     reason: AutoHiddenReason,
@@ -78,6 +80,7 @@ export class ChartController {
     options: ChartControllerOptions = {},
   ) {
     this.definition = definition;
+    this.feeSchedules = new ClobFeeScheduleResolver(polyMarketClient);
     this.onMarketAutoHidden = options.onMarketAutoHidden ?? (() => undefined);
     this.onMarketLifecycleChanged =
       options.onMarketLifecycleChanged ?? (() => undefined);
@@ -115,6 +118,11 @@ export class ChartController {
       getBook: (tokenId) => {
         const id = this.knownTokenId(tokenId);
         return id ? this.feed.getBook(id) : undefined;
+      },
+      getFeeSchedule: (tokenId) => {
+        const id = this.knownTokenId(tokenId);
+        if (!id) throw new Error(`unknown pressure token ${tokenId}`);
+        return this.feeSchedules.scheduleForToken(id);
       },
       getTokenName: (tokenId) => {
         const control = this.controlForTokenValue(tokenId);
@@ -216,7 +224,12 @@ export class ChartController {
         this.reqDraw();
       });
 
-    if (liveTokenIds.length > 0) await this.feed.start(liveTokenIds);
+    if (liveTokenIds.length > 0) {
+      // Fee metadata is part of the pressure snapshot barrier. Resolve it
+      // before subscribing so raw venue prices can never enter live pressure.
+      await this.feeSchedules.prepareTokens(liveTokenIds);
+      await this.feed.start(liveTokenIds);
+    }
     if (this.lifecycle === "started") this.reqDraw();
   }
 
