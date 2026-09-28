@@ -24,6 +24,8 @@ export interface MarketResolutionUpdate {
   readonly assetIds: readonly ClobAssetId[];
   readonly winningAssetId: ClobAssetId | null;
   readonly winningOutcome: string | null;
+  /** Latest market time justified by the resolution stream, if known. */
+  readonly resolvedAtMs: number | null;
 }
 
 export function initialMarketLifecycle(market: Market): MarketLifecycle {
