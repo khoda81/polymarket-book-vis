@@ -482,8 +482,8 @@ export class LiveBookCoordinator {
     this.refreshContexts.clear();
     this.refreshScheduler.unwatchAll(this.refreshSubscriber);
     for (const token of this.tokens.values()) {
-      token.book = undefined;
-      token.validThroughMs = undefined;
+      // Preserve the last book for display/cache consumers, but never mutate
+      // it from the next stream until that stream establishes a fresh snapshot.
       token.subscriptionRequestedAtMs = undefined;
       token.awaitingSnapshot = true;
       token.marketKey = undefined;
