@@ -13,10 +13,7 @@ export function inferAgeRowOrientation({
 }: AgeRowOrientationHints): AgeRowOrientation {
   if (sortBy === "price") return "positive-above";
 
-  if (
-    sortBy === "ascending" &&
-    /\bcontinues?\s+through\b/i.test(title ?? "")
-  )
+  if (sortBy === "ascending" && /\bcontinues?\s+through\b/i.test(title ?? ""))
     return "positive-above";
 
   return DEFAULT_AGE_ROW_ORIENTATION;
