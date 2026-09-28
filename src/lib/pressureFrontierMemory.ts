@@ -29,6 +29,10 @@ type MutablePressureState =
       kind: "observed";
       validThroughMs: number;
       runs: MutableRun[];
+    }
+  | {
+      kind: "resolvedUnbounded";
+      resolvedAtMs: number | null;
     };
 
 const EMPTY_RUNS: readonly PressureRun[] = [];
@@ -54,11 +58,13 @@ export class PressureFrontierMemory {
   private cumulativeShares: number[] | null = null;
   private readonly renderChanges: RenderChange[] = [];
 
+  /** Install a complete observation without bridging a continuity gap. */
   observeLevels(
     levels: readonly PressureLevel[],
     validThroughMs: number,
   ): boolean {
-    validThroughMs = this.normalizeTime(validThroughMs);
+    this.ensureMutable();
+    validThroughMs = this.requireMonotonicTime(validThroughMs);
     const previousValidThroughMs = this.currentValidThroughMs();
     const observed = this.ensureObserved(validThroughMs);
     const firstChangedRunIndex = this.applyReplacement(
@@ -74,20 +80,22 @@ export class PressureFrontierMemory {
     );
   }
 
+  /** Apply an ordered-stream delta; old liquidity survives through this time. */
   updateLevels(
     changes: readonly PressureLevelChange[],
     validThroughMs: number,
   ): boolean {
+    this.ensureMutable();
+    validThroughMs = this.requireMonotonicTime(validThroughMs);
     const normalized = normalizeChanges(changes);
-    if (normalized.size === 0) return false;
+    if (normalized.size === 0) return this.observeThrough(validThroughMs);
 
-    validThroughMs = this.normalizeTime(validThroughMs);
     const previousValidThroughMs = this.currentValidThroughMs();
     const observed = this.ensureObserved(validThroughMs);
     const firstChangedRunIndex = this.applyChanges(
       observed.runs,
       normalized,
-      previousValidThroughMs,
+      validThroughMs,
     );
     observed.validThroughMs = validThroughMs;
     if (firstChangedRunIndex !== null)
@@ -97,13 +105,68 @@ export class PressureFrontierMemory {
     );
   }
 
-  /** Advance the current pressure validity without changing its geometry. */
+  /** Replace the full book on a known-continuous ordered stream. */
+  replaceContinuous(
+    levels: readonly PressureLevel[],
+    validThroughMs: number,
+  ): boolean {
+    const advanced = this.observeThrough(validThroughMs);
+    const replaced = this.observeLevels(levels, validThroughMs);
+    return advanced || replaced;
+  }
+
+  /** Advance current pressure validity without changing geometry. */
   observeThrough(validThroughMs: number): boolean {
-    validThroughMs = this.normalizeTime(validThroughMs);
+    if (this.state.kind === "resolvedUnbounded") return false;
+    validThroughMs = this.requireMonotonicTime(validThroughMs);
     const previous = this.currentValidThroughMs();
     const observed = this.ensureObserved(validThroughMs);
     observed.validThroughMs = validThroughMs;
     return validThroughMs !== previous;
+  }
+
+  resolveUnbounded(resolvedAtMs: number | null): boolean {
+    if (resolvedAtMs !== null) this.requireMonotonicTime(resolvedAtMs);
+
+    if (this.state.kind === "resolvedUnbounded") {
+      const previous = this.state.resolvedAtMs;
+      const next =
+        previous === null
+          ? resolvedAtMs
+          : resolvedAtMs === null
+            ? previous
+            : Math.max(previous, resolvedAtMs);
+      if (next === previous) return false;
+      this.state = { kind: "resolvedUnbounded", resolvedAtMs: next };
+      return true;
+    }
+
+    this.state = { kind: "resolvedUnbounded", resolvedAtMs };
+    this.cumulativeShares = null;
+    this.recordRenderChange(0);
+    return true;
+  }
+
+  resolveZeroFuture(resolvedAtMs: number | null): boolean {
+    if (this.state.kind === "resolvedUnbounded") return false;
+    const current = this.currentValidThroughMs();
+    const watermark =
+      current === undefined
+        ? (resolvedAtMs ?? undefined)
+        : resolvedAtMs === null
+          ? current
+          : Math.max(current, resolvedAtMs);
+    return watermark === undefined
+      ? false
+      : this.replaceContinuous([], watermark);
+  }
+
+  isResolvedUnbounded(): boolean {
+    return this.state.kind === "resolvedUnbounded";
+  }
+
+  validThroughMs(): number | undefined {
+    return this.currentValidThroughMs();
   }
 
   snapshot(): PressureFrontierSnapshot {
