@@ -109,9 +109,9 @@
       jump();
     }}
   >
-    <label for={`series-jump-${String(series.id)}`}>Jump to</label>
+    <label for={`series-jump-${series.id}`}>Jump to</label>
     <input
-      id={`series-jump-${String(series.id)}`}
+      id={`series-jump-${series.id}`}
       type="datetime-local"
       bind:value={jumpValue}
     />
