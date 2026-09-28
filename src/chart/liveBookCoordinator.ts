@@ -459,7 +459,7 @@ export class LiveBookCoordinator {
     try {
       for await (const event of subscription.stream) {
         if (subscription.retired || this.active !== subscription) return;
-        this.routeEvent(event);
+        this.routeEvent(subscription, event);
       }
     } catch (error) {
       if (!subscription.retired && this.active === subscription)
@@ -481,6 +481,7 @@ export class LiveBookCoordinator {
       token.book = undefined;
       token.validThroughMs = undefined;
       token.subscriptionRequestedAtMs = undefined;
+      token.marketKey = undefined;
     }
 
     for (const watch of this.watches) {
@@ -509,7 +510,10 @@ export class LiveBookCoordinator {
     }
   }
 
-  private routeEvent(event: MarketEvent): void {
+  private routeEvent(
+    subscription: ActiveSubscription,
+    event: MarketEvent,
+  ): void {
     const object = event as object;
     if (this.seenEvents.has(object)) {
       this.debugStats.handoffDuplicates++;
@@ -519,9 +523,13 @@ export class LiveBookCoordinator {
 
     const startedAtMs = debugNow();
     this.debugStats.receivedEvents++;
-    if (event.type === "book") this.routeBook(event);
-    else if (event.type === "price_change") this.routePriceChanges(event);
-    else if (event.type === "market_resolved") this.routeResolution(event);
+
+    if (event.type === "book") this.routeBook(subscription, event);
+    else if (event.type === "price_change")
+      this.routePriceChanges(subscription, event);
+    else if (event.type === "market_resolved")
+      this.routeResolution(subscription, event);
+    else this.routeWatermark(subscription, event);
 
     this.debugStats.maxRouteMs = Math.max(
       this.debugStats.maxRouteMs,
@@ -530,7 +538,10 @@ export class LiveBookCoordinator {
     this.maybeReportDebugStats();
   }
 
-  private routeBook(event: Extract<MarketEvent, { type: "book" }>): void {
+  private routeBook(
+    subscription: ActiveSubscription,
+    event: Extract<MarketEvent, { type: "book" }>,
+  ): void {
     const tokenKey = event.payload.assetId;
     const token = this.tokens.get(tokenKey);
     if (!token) return;
@@ -538,33 +549,67 @@ export class LiveBookCoordinator {
     const refresh = this.refreshContexts.get(tokenKey);
     if (refresh) refresh.superseded = true;
 
-    token.book = bookFromSnapshot(event.payload.bids, event.payload.asks);
-    token.validThroughMs = snapshotValidThroughMs(
-      event.payload.timestamp,
-      token.subscriptionRequestedAtMs ?? this.now(),
-      this.now(),
+    const marketKey = eventMarketKey(event);
+    const timestampMs = optionalEventTimeMs(event.payload.timestamp);
+    const marketWatermark = this.recordMarketWatermark(
+      subscription,
+      marketKey,
+      timestampMs,
     );
+    if (marketKey) {
+      token.marketKey = marketKey;
+      this.advanceMarketThrough(
+        subscription,
+        marketKey,
+        marketWatermark,
+        new Set([tokenKey]),
+      );
+    }
+
+    const requestedAtMs = token.subscriptionRequestedAtMs;
+    const firstOnStream = requestedAtMs !== undefined || !token.book;
+    const validThroughMs = causalMax(
+      token.validThroughMs,
+      marketWatermark,
+      firstOnStream ? requestedAtMs : undefined,
+    );
+    if (validThroughMs === undefined)
+      throw new Error("book snapshot has no causal watermark");
+
+    token.book = bookFromSnapshot(event.payload.bids, event.payload.asks);
+    token.validThroughMs = validThroughMs;
+    token.subscriptionRequestedAtMs = undefined;
     this.debugStats.routedTokenBatches++;
     this.notifyToken(token, {
-      kind: "snapshot",
-      validThroughMs: token.validThroughMs,
+      kind: firstOnStream ? "snapshot" : "replace",
+      validThroughMs,
     });
-    this.observeBook(token, token.validThroughMs);
+    this.observeBook(token, validThroughMs);
   }
 
   private routePriceChanges(
+    subscription: ActiveSubscription,
     event: Extract<MarketEvent, { type: "price_change" }>,
   ): void {
-    const validThroughMs = eventTimeMs(
-      event.payload.timestamp,
-      this.now(),
-      this.now(),
+    const marketKey = eventMarketKey(event);
+    const timestampMs = optionalEventTimeMs(event.payload.timestamp);
+    const marketWatermark = this.recordMarketWatermark(
+      subscription,
+      marketKey,
+      timestampMs,
     );
     const changesByToken = new Map<TokenState, TokenChanges>();
+    const changedKeys = new Set<ClobAssetId>();
 
     for (const change of event.payload.priceChanges) {
       const token = this.tokens.get(change.assetId);
-      if (!token?.book) continue;
+      if (!token) continue;
+      changedKeys.add(change.assetId);
+      if (marketKey) token.marketKey = marketKey;
+
+      const refresh = this.refreshContexts.get(change.assetId);
+      if (refresh) refresh.superseded = true;
+      if (!token.book) continue;
 
       let changes = changesByToken.get(token);
       if (!changes) {
@@ -580,19 +625,23 @@ export class LiveBookCoordinator {
       changes.canonical.push(applyPriceChange(token.book, raw));
     }
 
-    for (const [token, changes] of changesByToken) {
-      const tokenKey = token.tokenId;
-      const refresh = this.refreshContexts.get(tokenKey);
-      if (refresh && !refresh.superseded)
-        refresh.buffered.push({
-          timestampMs: validThroughMs,
-          changes: changes.raw,
-        });
-
-      token.validThroughMs = Math.max(
-        token.validThroughMs ?? 0,
-        validThroughMs,
+    if (marketKey)
+      this.advanceMarketThrough(
+        subscription,
+        marketKey,
+        marketWatermark,
+        changedKeys,
       );
+
+    for (const [token, changes] of changesByToken) {
+      const validThroughMs = causalMax(
+        token.validThroughMs,
+        marketWatermark,
+      );
+      if (validThroughMs === undefined)
+        throw new Error("price change has no causal watermark");
+
+      token.validThroughMs = validThroughMs;
       this.debugStats.routedTokenBatches++;
       this.notifyToken(token, {
         kind: "levels",
@@ -603,12 +652,41 @@ export class LiveBookCoordinator {
     }
   }
 
+  private routeWatermark(
+    subscription: ActiveSubscription,
+    event: MarketEvent,
+  ): void {
+    const marketKey = eventMarketKey(event);
+    if (!marketKey) return;
+    const timestampMs = optionalEventTimeMs(eventPayload(event).timestamp);
+    const watermark = this.recordMarketWatermark(
+      subscription,
+      marketKey,
+      timestampMs,
+    );
+    this.advanceMarketThrough(subscription, marketKey, watermark, new Set());
+  }
+
   private routeResolution(
+    subscription: ActiveSubscription,
     event: Extract<MarketEvent, { type: "market_resolved" }>,
   ): void {
     const assetIds = event.payload.assetIds ?? [];
-    const affected = new Set<WatchState>();
+    const marketKey = eventMarketKey(event);
+    const resolvedAtMs = this.recordMarketWatermark(
+      subscription,
+      marketKey,
+      optionalEventTimeMs(event.payload.timestamp),
+    );
+    if (marketKey)
+      this.advanceMarketThrough(
+        subscription,
+        marketKey,
+        resolvedAtMs,
+        new Set(assetIds),
+      );
 
+    const affected = new Set<WatchState>();
     for (const assetId of assetIds) {
       const tokenKey = assetId;
       const token = this.tokens.get(tokenKey);
@@ -627,12 +705,68 @@ export class LiveBookCoordinator {
       assetIds,
       winningAssetId: event.payload.winningAssetId ?? null,
       winningOutcome: event.payload.winningOutcome ?? null,
+      resolvedAtMs: resolvedAtMs ?? null,
     };
     for (const watch of affected) {
       this.debugStats.downstreamDeliveries++;
       this.callSafely(() => watch.callbacks.onMarketResolved(resolution));
     }
     if (affected.size > 0) this.requestReconcile();
+  }
+
+  private recordMarketWatermark(
+    subscription: ActiveSubscription,
+    marketKey: string | null,
+    timestampMs: number | null,
+  ): number | undefined {
+    if (!marketKey)
+      return timestampMs ?? undefined;
+
+    const previous = subscription.marketWatermarks.get(marketKey);
+    if (timestampMs === null) return previous;
+    if (previous !== undefined && timestampMs < previous)
+      throw new Error(
+        "market timestamp regressed for " +
+          marketKey +
+          ": " +
+          timestampMs +
+          " < " +
+          previous,
+      );
+
+    subscription.marketWatermarks.set(marketKey, timestampMs);
+    return timestampMs;
+  }
+
+  private advanceMarketThrough(
+    subscription: ActiveSubscription,
+    marketKey: string,
+    watermarkMs: number | undefined,
+    excluded: ReadonlySet<ClobAssetId>,
+  ): void {
+    if (watermarkMs === undefined) return;
+
+    for (const [tokenKey, token] of this.tokens) {
+      if (
+        excluded.has(tokenKey) ||
+        !subscription.tokenKeys.has(tokenKey) ||
+        token.marketKey !== marketKey ||
+        !token.book
+      )
+        continue;
+
+      const validThroughMs = causalMax(token.validThroughMs, watermarkMs);
+      if (
+        validThroughMs === undefined ||
+        validThroughMs === token.validThroughMs
+      )
+        continue;
+
+      token.validThroughMs = validThroughMs;
+      this.debugStats.routedTokenBatches++;
+      this.notifyToken(token, { kind: "watermark", validThroughMs });
+      this.observeBook(token, validThroughMs);
+    }
   }
 
   private observeBook(token: TokenState, validThroughMs: number): void {
