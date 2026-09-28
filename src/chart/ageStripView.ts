@@ -4,6 +4,7 @@ import {
   ghostRefreshDelayMs,
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
+import type { FeeSchedule } from "@/lib/feeSchedule";
 import type { TokenBook } from "@/lib/orderBook";
 import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
@@ -40,6 +41,7 @@ export interface AgeStripHost {
   readonly plotter: OrderBookPlotter;
   readonly activeTokens: Set<string>;
   readonly getBook: (tokenId: string) => TokenBook | undefined;
+  readonly getFeeSchedule: (tokenId: string) => FeeSchedule;
   readonly getTokenName: (tokenId: string) => string | undefined;
   readonly getOppositeTokenId: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
@@ -116,8 +118,10 @@ export class AgeStripView {
   hydratePressureMemory(
     snapshotsByToken: Readonly<Record<string, PressureFrontierSnapshot>>,
   ): void {
-    this.pressure.hydrate(snapshotsByToken, (tokenId) =>
-      this.host.getBook(tokenId),
+    this.pressure.hydrate(
+      snapshotsByToken,
+      (tokenId) => this.host.getBook(tokenId),
+      (tokenId) => this.host.getFeeSchedule(tokenId),
     );
     this.pressureLayer?.invalidate();
   }
@@ -161,7 +165,12 @@ export class AgeStripView {
     const book = this.host.getBook(tokenId);
     if (!book) return;
 
-    this.pressure.applyBookUpdate(tokenId, book, update);
+    this.pressure.applyBookUpdate(
+      tokenId,
+      book,
+      this.host.getFeeSchedule(tokenId),
+      update,
+    );
 
     if (this.visibilityInitialized.has(tokenId)) return;
     this.visibilityInitialized.add(tokenId);
