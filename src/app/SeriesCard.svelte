@@ -38,13 +38,16 @@
   let connection: ConnectionStatus = "connecting";
   let anchorEvent: Event | null = null;
   let ageRowOrientation: AgeRowOrientation =
-    loadStoredAgeRowOrientation(`series:${String(series.id)}`) ??
+    loadStoredAgeRowOrientation({ kind: "series", id: series.id }) ??
     DEFAULT_AGE_ROW_ORIENTATION;
   let ready = false;
 
   function flipRows(): void {
     ageRowOrientation = flipAgeRowOrientation(ageRowOrientation);
-    persistAgeRowOrientation(`series:${String(series.id)}`, ageRowOrientation);
+    persistAgeRowOrientation(
+      { kind: "series", id: series.id },
+      ageRowOrientation,
+    );
   }
 
   function timelineReady(): void {
