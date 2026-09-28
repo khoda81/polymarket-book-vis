@@ -145,7 +145,10 @@ describe("nested threshold color geometry", () => {
     expect(
       (() => {
         const event = thresholdEvent([0.1, 0.5, 0.9]);
-        return buildThresholdPalette(event, thresholdMap(event, 3, { 1: 7 }));
+        return buildThresholdPalette(
+          event,
+          thresholdMap(event, 3, { 0: 2, 1: 2, 2: 9 }),
+        );
       })(),
     ).toBeNull();
 
@@ -159,6 +162,24 @@ describe("nested threshold color geometry", () => {
       },
     } as Event;
     expect(buildThresholdPalette(marked, thresholdMap(marked, 3))).toBeNull();
+  });
+
+  test("uses gapped non-zero threshold values only as ordering keys", () => {
+    const event = thresholdEvent([0.1, 0.5, 0.9]);
+    const palette = buildThresholdPalette(
+      event,
+      thresholdMap(event, 3, { 0: 10, 1: 30, 2: 70 }),
+    );
+
+    expect(palette?.direction).toBe("prefix");
+    expect(palette?.outcomes.map((outcome) => outcome.thresholdIndex)).toEqual([
+      0, 1, 2,
+    ]);
+    expect(palette?.outcomes.map((outcome) => outcome.yesAtomIndices)).toEqual([
+      [0],
+      [0, 1],
+      [0, 1, 2],
+    ]);
   });
 
   test("accepts threshold metadata inside ordinary negative-risk events", () => {
