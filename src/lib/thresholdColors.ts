@@ -47,14 +47,14 @@ export function buildThresholdPalette(
     return null;
 
   const rows = event.markets.map((market) => {
-    const thresholdIndex = parseThresholdIndex(
+    const thresholdOrder = parseThresholdIndex(
       thresholdByMarketId.get(market.id),
     );
     const yesTokenId = market.outcomes.yes.tokenId;
     const noTokenId = market.outcomes.no.tokenId;
     const yesPrice = parseProbability(market.outcomes.yes.price);
     if (
-      thresholdIndex === null ||
+      thresholdOrder === null ||
       !yesTokenId ||
       !noTokenId ||
       yesPrice === null
@@ -64,7 +64,7 @@ export function buildThresholdPalette(
       marketId: market.id,
       yesTokenId,
       noTokenId,
-      thresholdIndex,
+      thresholdOrder,
       yesPrice,
     };
   });
@@ -72,12 +72,13 @@ export function buildThresholdPalette(
   if (rows.some((row) => row === null)) return null;
   const ordered = rows
     .filter((row): row is NonNullable<typeof row> => row !== null)
-    .sort((a, b) => a.thresholdIndex - b.thresholdIndex);
+    .sort((a, b) => a.thresholdOrder - b.thresholdOrder);
 
-  if (
-    new Set(ordered.map((row) => row.thresholdIndex)).size !== ordered.length ||
-    ordered.some((row, index) => row.thresholdIndex !== index)
-  )
+  // Gamma's groupItemThreshold is an ordering key, not necessarily a dense
+  // zero-based index. Extended families can retain gaps as new markets are
+  // appended. We only need a complete, unambiguous ordering here; geometry is
+  // defined by each row's rank after sorting.
+  if (new Set(ordered.map((row) => row.thresholdOrder)).size !== ordered.length)
     return null;
 
   const direction = monotoneDirection(ordered.map((row) => row.yesPrice));
@@ -93,14 +94,14 @@ export function buildThresholdPalette(
   });
 
   const allAtomIndices = rangeInclusive(0, atomCount - 1);
-  const outcomes = ordered.map((row): ThresholdOutcomeColor => {
+  const outcomes = ordered.map((row, thresholdIndex): ThresholdOutcomeColor => {
     // Keep latent atom numbering aligned with threshold row order. A growing
     // family is A0 vs rest, then A0+A1 vs rest. A shrinking family is the
     // reverse nesting: all-but-last vs last, then all-but-last-two vs those two.
     const yesAtomIndices =
       direction === "prefix"
-        ? rangeInclusive(0, row.thresholdIndex)
-        : rangeInclusive(0, atomCount - row.thresholdIndex - 2);
+        ? rangeInclusive(0, thresholdIndex)
+        : rangeInclusive(0, atomCount - thresholdIndex - 2);
     const yesAtoms = new Set(yesAtomIndices);
     const noAtomIndices = allAtomIndices.filter(
       (index) => !yesAtoms.has(index),
@@ -117,7 +118,7 @@ export function buildThresholdPalette(
       marketId: row.marketId,
       yesTokenId: row.yesTokenId,
       noTokenId: row.noTokenId,
-      thresholdIndex: row.thresholdIndex,
+      thresholdIndex,
       hue,
       magnitude,
       noHue,

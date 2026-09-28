@@ -99,11 +99,19 @@ function buildPressureScales(
   event: Event,
   thresholdByMarketId: ReadonlyMap<MarketId, number>,
 ): ReadonlyMap<TokenId, SignedVolumeColorScale> {
-  const threshold = buildThresholdPalette(event, thresholdByMarketId);
-  if (threshold)
-    return new Map(
-      threshold.outcomes.map((outcome) => [outcome.yesTokenId, outcome.scale]),
-    );
+  const threshold =
+    buildThresholdPalette(event, thresholdByMarketId) ??
+    buildLiveThresholdPalette(event, thresholdByMarketId);
+  if (threshold) {
+    // A live-only palette deliberately omits resolved markets whose stale or
+    // reused Gamma threshold slots made the complete family ambiguous. Keep
+    // those controls usable with ordinary binary colors while preserving the
+    // coherent nested geometry for the markets that still trade.
+    const scales = buildDefaultPressureScales(event);
+    for (const outcome of threshold.outcomes)
+      scales.set(outcome.yesTokenId, outcome.scale);
+    return scales;
+  }
 
   const negRisk = buildNegRiskPalette(event);
   if (negRisk)
@@ -111,6 +119,24 @@ function buildPressureScales(
       negRisk.outcomes.map((outcome) => [outcome.yesTokenId, outcome.scale]),
     );
 
+  return buildDefaultPressureScales(event);
+}
+
+function buildLiveThresholdPalette(
+  event: Event,
+  thresholdByMarketId: ReadonlyMap<MarketId, number>,
+) {
+  const liveMarkets = event.markets.filter(isActiveOrderMarket);
+  if (liveMarkets.length === event.markets.length) return null;
+  return buildThresholdPalette(
+    { ...event, markets: liveMarkets },
+    thresholdByMarketId,
+  );
+}
+
+function buildDefaultPressureScales(
+  event: Event,
+): Map<TokenId, SignedVolumeColorScale> {
   const scales = new Map<TokenId, SignedVolumeColorScale>();
   for (const [index, market] of event.markets.entries()) {
     const tokenId = market.outcomes.yes.tokenId;
