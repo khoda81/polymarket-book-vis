@@ -3,23 +3,42 @@ import type { MarketId } from "@polymarket/client";
 import {
   initialMarketVisibility,
   isMarketVisible,
-  mergeUserHiddenMarketIds,
+  loadMarketVisibility,
+  loadStoredMarketVisibility,
   partitionMarketVisibility,
+  persistStoredMarketVisibility,
   setUserMarketVisible,
+  storedVisibilityForUserChoice,
 } from "./marketVisibility";
 
 const marketId = (value: string): MarketId => value as MarketId;
 
-test("market visibility encodes why a row is hidden", () => {
-  expect(initialMarketVisibility(false, { kind: "live" })).toEqual({
+class MemoryStorage {
+  private readonly values = new Map<string, string>();
+
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
+
+  seed(key: string, value: string): void {
+    this.values.set(key, value);
+  }
+}
+
+test("market visibility encodes stored overrides before lifecycle defaults", () => {
+  expect(initialMarketVisibility(undefined, { kind: "live" })).toEqual({
     kind: "visible",
   });
-  expect(initialMarketVisibility(true, { kind: "live" })).toEqual({
+  expect(initialMarketVisibility("hidden-user", { kind: "live" })).toEqual({
     kind: "hidden",
     reason: "user",
   });
   expect(
-    initialMarketVisibility(false, {
+    initialMarketVisibility(undefined, {
       kind: "resolved",
       winningTokenId: "winner" as never,
       winningOutcome: "Yes",
@@ -28,42 +47,38 @@ test("market visibility encodes why a row is hidden", () => {
     kind: "hidden",
     reason: "resolved-default",
   });
+  expect(
+    initialMarketVisibility("visible-user", {
+      kind: "resolved",
+      winningTokenId: "winner" as never,
+      winningOutcome: "Yes",
+    }),
+  ).toEqual({ kind: "visible" });
   expect(isMarketVisible({ kind: "visible" })).toBe(true);
   expect(isMarketVisible({ kind: "hidden", reason: "empty-book" })).toBe(false);
 });
 
-test("visibility partition reacts to a replaced visibility map", () => {
+test("visibility partition preserves the card order supplied by its caller", () => {
   const markets = [
+    { market: { id: marketId("c") } },
     { market: { id: marketId("a") } },
     { market: { id: marketId("b") } },
-    { market: { id: marketId("c") } },
   ];
 
-  const first = partitionMarketVisibility(
-    markets,
-    new Map([[marketId("b"), { kind: "hidden", reason: "empty-book" }]]),
-  );
-  expect(first.visible.map((market) => market.market.id)).toEqual([
-    marketId("a"),
-    marketId("c"),
-  ]);
-  expect(first.hidden.map((market) => market.market.id)).toEqual([
-    marketId("b"),
-  ]);
-
-  const second = partitionMarketVisibility(
+  const partition = partitionMarketVisibility(
     markets,
     new Map([
-      [marketId("a"), { kind: "hidden", reason: "empty-book" }],
-      [marketId("c"), { kind: "hidden", reason: "user" }],
+      [marketId("a"), { kind: "hidden", reason: "user" }],
+      [marketId("b"), { kind: "hidden", reason: "resolved-default" }],
     ]),
   );
-  expect(second.visible.map((market) => market.market.id)).toEqual([
-    marketId("b"),
-  ]);
-  expect(second.hidden.map((market) => market.market.id)).toEqual([
-    marketId("a"),
+
+  expect(partition.visible.map((market) => market.market.id)).toEqual([
     marketId("c"),
+  ]);
+  expect(partition.hidden.map((market) => market.market.id)).toEqual([
+    marketId("a"),
+    marketId("b"),
   ]);
 });
 
@@ -91,18 +106,66 @@ test("user visibility update replaces state without a second source of truth", (
   });
 });
 
-test("persisting one event preserves user-hidden markets from other events", () => {
-  const persisted = new Set(["country-fr", "country-de", "other-event-market"]);
-  const currentEvent = new Map<
-    MarketId,
-    import("./marketVisibility").MarketVisibility
-  >([
-    [marketId("country-fr"), { kind: "hidden", reason: "user" }],
-    [marketId("country-de"), { kind: "visible" }],
-    [marketId("country-jp"), { kind: "hidden", reason: "user" }],
-  ]);
+test("resolved auto-hide survives reload even before resolution metadata catches up", () => {
+  const storage = new MemoryStorage();
+  persistStoredMarketVisibility("market-a", "hidden-resolved", storage);
 
-  expect([...mergeUserHiddenMarketIds(persisted, currentEvent)].sort()).toEqual(
-    ["country-fr", "country-jp", "other-event-market"].sort(),
+  const visibility = loadMarketVisibility(
+    [{ market: { id: marketId("market-a") }, lifecycle: { kind: "live" } }],
+    storage,
   );
+
+  expect(visibility.get(marketId("market-a"))).toEqual({
+    kind: "hidden",
+    reason: "resolved-default",
+  });
+});
+
+test("explicitly showing a resolved market survives reload", () => {
+  const storage = new MemoryStorage();
+  persistStoredMarketVisibility("market-a", "visible-user", storage);
+
+  const visibility = loadMarketVisibility(
+    [
+      {
+        market: { id: marketId("market-a") },
+        lifecycle: {
+          kind: "resolved",
+          winningTokenId: "winner" as never,
+          winningOutcome: "Yes",
+        },
+      },
+    ],
+    storage,
+  );
+
+  expect(visibility.get(marketId("market-a"))).toEqual({ kind: "visible" });
+});
+
+test("live visible choice returns to default while resolved visible is explicit", () => {
+  expect(storedVisibilityForUserChoice(true, { kind: "live" })).toBeNull();
+  expect(storedVisibilityForUserChoice(false, { kind: "live" })).toBe(
+    "hidden-user",
+  );
+  expect(
+    storedVisibilityForUserChoice(true, {
+      kind: "resolved",
+      winningTokenId: "winner" as never,
+      winningOutcome: "Yes",
+    }),
+  ).toBe("visible-user");
+});
+
+test("v2 visibility storage preserves legacy user-hidden markets", () => {
+  const storage = new MemoryStorage();
+  storage.seed(
+    "polymarket-book-vis.age-strip-hidden-markets.v1",
+    JSON.stringify(["legacy-hidden"]),
+  );
+  persistStoredMarketVisibility("resolved-hidden", "hidden-resolved", storage);
+
+  expect(Object.fromEntries(loadStoredMarketVisibility(storage))).toEqual({
+    "legacy-hidden": "hidden-user",
+    "resolved-hidden": "hidden-resolved",
+  });
 });
