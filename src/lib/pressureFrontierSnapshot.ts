@@ -1,6 +1,10 @@
 import { PRICE_ONE, PRICE_ZERO, type Price, priceFromTicks } from "./price";
 
-export const PRESSURE_FRONTIER_SNAPSHOT_VERSION = 6 as const;
+export const LEGACY_PRESSURE_FRONTIER_SNAPSHOT_VERSION = 6 as const;
+export const PRESSURE_FRONTIER_SNAPSHOT_VERSION = 7 as const;
+export type PressureFrontierSnapshotVersion =
+  | typeof LEGACY_PRESSURE_FRONTIER_SNAPSHOT_VERSION
+  | typeof PRESSURE_FRONTIER_SNAPSHOT_VERSION;
 
 export interface FrozenStep {
   readonly hiVolume: number;
@@ -24,10 +28,14 @@ export type PressureFrontierState =
       readonly kind: "observed";
       readonly validThroughMs: number;
       readonly runs: readonly PressureRun[];
+    }
+  | {
+      readonly kind: "resolvedUnbounded";
+      readonly resolvedAtMs: number | null;
     };
 
 export interface PressureFrontierSnapshot {
-  readonly version: typeof PRESSURE_FRONTIER_SNAPSHOT_VERSION;
+  readonly version: PressureFrontierSnapshotVersion;
   readonly state: PressureFrontierState;
 }
 
@@ -42,21 +50,28 @@ export function parsePressureFrontierSnapshot(
     return value as unknown as PressureFrontierSnapshot;
   assertOnlyKeys(value, ["version", "state"], "pressure frontier snapshot");
 
-  if (value.version !== PRESSURE_FRONTIER_SNAPSHOT_VERSION)
+  if (
+    value.version !== LEGACY_PRESSURE_FRONTIER_SNAPSHOT_VERSION &&
+    value.version !== PRESSURE_FRONTIER_SNAPSHOT_VERSION
+  )
     throw new RangeError(
       "unsupported pressure frontier snapshot version: " +
         String(value.version),
     );
 
+  const version = value.version;
   const parsed: PressureFrontierSnapshot = {
-    version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-    state: parseState(value.state),
+    version,
+    state: parseState(value.state, version),
   };
   validatedSnapshots.add(parsed);
   return parsed;
 }
 
-function parseState(value: unknown): PressureFrontierState {
+function parseState(
+  value: unknown,
+  version: PressureFrontierSnapshotVersion,
+): PressureFrontierState {
   if (!isRecord(value))
     throw new TypeError("pressure frontier state must be an object");
 
@@ -65,9 +80,30 @@ function parseState(value: unknown): PressureFrontierState {
     return { kind: "unobserved" };
   }
 
+  if (value.kind === "resolvedUnbounded") {
+    if (version !== PRESSURE_FRONTIER_SNAPSHOT_VERSION)
+      throw new RangeError(
+        "resolved-unbounded pressure requires snapshot version " +
+          PRESSURE_FRONTIER_SNAPSHOT_VERSION,
+      );
+    assertOnlyKeys(
+      value,
+      ["kind", "resolvedAtMs"],
+      "resolved-unbounded pressure frontier state",
+    );
+    const resolvedAtMs =
+      value.resolvedAtMs === null
+        ? null
+        : nonNegativeNumber(
+            value.resolvedAtMs,
+            "pressure frontier resolution timestamp",
+          );
+    return { kind: "resolvedUnbounded", resolvedAtMs };
+  }
+
   if (value.kind !== "observed")
     throw new RangeError(
-      "pressure frontier state kind must be observed or unobserved",
+      "pressure frontier state kind must be observed, unobserved, or resolvedUnbounded",
     );
 
   assertOnlyKeys(
