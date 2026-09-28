@@ -39,6 +39,19 @@ test("age row orientation persists independently per typed card key", () => {
   expect(loadStoredAgeRowOrientation(series, storage)).toBe("positive-above");
 });
 
+test("event market groups persist row orientation independently", () => {
+  const storage = new MemoryStorage();
+  const eventId = mockEvent("event-a").id;
+  const high = { kind: "event-group", eventId, groupKey: "high" } as const;
+  const low = { kind: "event-group", eventId, groupKey: "low" } as const;
+
+  persistAgeRowOrientation(high, "negative-above", storage);
+  persistAgeRowOrientation(low, "positive-above", storage);
+
+  expect(loadStoredAgeRowOrientation(high, storage)).toBe("negative-above");
+  expect(loadStoredAgeRowOrientation(low, storage)).toBe("positive-above");
+});
+
 test("invalid stored orientation data is ignored at the storage boundary", () => {
   const storage = new MemoryStorage();
   const valid = { kind: "event", id: mockEvent("valid").id } as const;

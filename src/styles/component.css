@@ -389,7 +389,7 @@
   align-items: center;
   flex-wrap: nowrap;
   gap: 6px;
-  margin-top: 8px;
+  margin: 0 0 8px;
   padding-bottom: 4px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -434,6 +434,32 @@
   white-space: nowrap;
 }
 
+.cpv-chart-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.cpv-chart-group {
+  min-width: 0;
+}
+
+.cpv-chart-group-header {
+  margin: 0 0 7px;
+}
+
+.cpv-chart-group-title {
+  color: var(--color-text-secondary, #666);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.cpv-chart-group .cpv-canvas-wrap {
+  height: 320px;
+}
+
 .cpv-market-dot {
   width: 8px;
   height: 8px;
@@ -451,6 +477,22 @@
 
 .cpv-chart-stage {
   position: relative;
+}
+
+.cpv-chart-row-flip {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+}
+
+.cpv-chart-row-flip .chart-row-flip {
+  background: color-mix(
+    in srgb,
+    var(--color-background-secondary, #f2f2f2) 88%,
+    transparent
+  );
+  backdrop-filter: blur(3px);
 }
 
 .cpv-canvas-wrap[hidden],
