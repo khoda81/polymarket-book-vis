@@ -1,13 +1,17 @@
+import { fromBinary } from "@bufbuild/protobuf";
+import {
+  RecorderStateResponseSchema,
+  type PressureFrontierSnapshot as WirePressureFrontierSnapshot,
+} from "../gen/recorder_state_pb";
 import {
   parsePressureFrontierSnapshot,
   type PressureFrontierSnapshot,
 } from "./pressureFrontierSnapshot";
 
 interface RecorderStateResponse {
-  recordingSinceMsByToken?: Record<string, number>;
-  states?: Record<string, { pressure?: unknown }>;
-  pendingTokenIds?: string[];
-  debug?: unknown;
+  recordingSinceMsByToken: Record<string, number>;
+  states: Record<string, { pressure?: PressureFrontierSnapshot }>;
+  pendingTokenIds: string[];
 }
 
 export interface RecorderHydration {
@@ -50,8 +54,8 @@ export async function fetchRecorderHydration(
       recorderDebug("hydrate-response", {
         attempt: attempt + 1,
         requested: remaining.map(shortToken),
-        states: Object.keys(body.states ?? {}).map(shortToken),
-        pending: (body.pendingTokenIds ?? []).map(shortToken),
+        states: Object.keys(body.states).map(shortToken),
+        pending: (body.pendingTokenIds).map(shortToken),
         debug: body.debug,
       });
 
@@ -123,7 +127,11 @@ async function fetchRecorderState(
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`recorder returned ${response.status}`);
-      const body = (await response.json()) as RecorderStateResponse;
+      const body = recorderStateFromProto(
+        decodeRecorderStateResponse(
+          new Uint8Array(await response.arrayBuffer()),
+        ),
+      );
       recorderDebug("state-http", {
         requested: tokenIds.length,
         ms: Math.round(performance.now() - startedAt),
@@ -149,13 +157,13 @@ function mergeRecorderResponse(
   pressureSnapshotsByToken: Record<string, PressureFrontierSnapshot>,
 ): void {
   for (const [tokenId, since] of Object.entries(
-    body.recordingSinceMsByToken ?? {},
+    body.recordingSinceMsByToken,
   )) {
     if (typeof since === "number" && Number.isFinite(since))
       recordingSinceMsByToken[tokenId] = since;
   }
 
-  for (const [tokenId, state] of Object.entries(body.states ?? {})) {
+  for (const [tokenId, state] of Object.entries(body.states)) {
     if (state.pressure === undefined) continue;
     try {
       pressureSnapshotsByToken[tokenId] = parsePressureFrontierSnapshot(
@@ -168,6 +176,95 @@ function mergeRecorderResponse(
       );
     }
   }
+}
+
+function recorderStateFromProto(
+  body: ReturnType<typeof decodeRecorderStateResponse>,
+): RecorderStateResponse {
+  const recordingSinceMsByToken: Record<string, number> = {};
+  for (const [tokenId, since] of Object.entries(body.recordingSinceMsByToken))
+    recordingSinceMsByToken[tokenId] = timestampFromProto(
+      since,
+      "recordingSinceMsByToken",
+    );
+
+  const states: Record<string, { pressure?: PressureFrontierSnapshot }> = {};
+  for (const [tokenId, state] of Object.entries(body.states)) {
+    if (state.pressure === undefined) {
+      states[tokenId] = {};
+      continue;
+    }
+    states[tokenId] = { pressure: pressureSnapshotFromProto(state.pressure) };
+  }
+
+  return {
+    recordingSinceMsByToken,
+    states,
+    pendingTokenIds: [...body.pendingTokenIds],
+  };
+}
+
+function decodeRecorderStateResponse(bytes: Uint8Array) {
+  return fromBinary(RecorderStateResponseSchema, bytes);
+}
+
+function pressureSnapshotFromProto(
+  snapshot: WirePressureFrontierSnapshot,
+): PressureFrontierSnapshot {
+  const state = snapshot.state;
+  if (state.case === "unobserved")
+    return {
+      version: 7,
+      state: { kind: "unobserved" },
+    };
+
+  if (state.case === "resolvedUnbounded")
+    return {
+      version: 7,
+      state: { kind: "resolvedUnbounded" },
+    };
+
+  if (state.case !== "observed")
+    throw new RangeError("protobuf pressure snapshot state is missing");
+
+  const observed = state.value;
+  if (observed.validThroughMs === undefined)
+    throw new RangeError("protobuf observed pressure timestamp is missing");
+
+  return parsePressureFrontierSnapshot({
+    version: 7,
+    state: {
+      kind: "observed",
+      validThroughMs: timestampFromProto(
+        observed.validThroughMs,
+        "pressure validThroughMs",
+      ),
+      runs: observed.runs.map((run) => ({
+        price: run.price,
+        shares: run.shares,
+        frozenSteps: run.frozenSteps.map((step) => {
+          if (step.validThroughMs === undefined)
+            throw new RangeError(
+              "protobuf frozen pressure timestamp is missing",
+            );
+          return {
+            hiVolume: step.hiVolume,
+            validThroughMs: timestampFromProto(
+              step.validThroughMs,
+              "frozen pressure validThroughMs",
+            ),
+          };
+        }),
+      })),
+    },
+  });
+}
+
+function timestampFromProto(value: bigint, label: string): number {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 0)
+    throw new RangeError(label + " must be a non-negative safe integer");
+  return number;
 }
 
 function emptyHydration(): RecorderHydration {

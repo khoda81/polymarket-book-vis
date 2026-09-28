@@ -1,10 +1,6 @@
 import { PRICE_ONE, PRICE_ZERO, type Price, priceFromTicks } from "./price";
 
-export const LEGACY_PRESSURE_FRONTIER_SNAPSHOT_VERSION = 6 as const;
 export const PRESSURE_FRONTIER_SNAPSHOT_VERSION = 7 as const;
-export type PressureFrontierSnapshotVersion =
-  | typeof LEGACY_PRESSURE_FRONTIER_SNAPSHOT_VERSION
-  | typeof PRESSURE_FRONTIER_SNAPSHOT_VERSION;
 
 export interface FrozenStep {
   readonly hiVolume: number;
@@ -34,7 +30,7 @@ export type PressureFrontierState =
     };
 
 export interface PressureFrontierSnapshot {
-  readonly version: PressureFrontierSnapshotVersion;
+  readonly version: typeof PRESSURE_FRONTIER_SNAPSHOT_VERSION;
   readonly state: PressureFrontierState;
 }
 
@@ -49,10 +45,7 @@ export function parsePressureFrontierSnapshot(
     return value as unknown as PressureFrontierSnapshot;
   assertOnlyKeys(value, ["version", "state"], "pressure frontier snapshot");
 
-  if (
-    value.version !== LEGACY_PRESSURE_FRONTIER_SNAPSHOT_VERSION &&
-    value.version !== PRESSURE_FRONTIER_SNAPSHOT_VERSION
-  )
+  if (value.version !== PRESSURE_FRONTIER_SNAPSHOT_VERSION)
     throw new RangeError(
       "unsupported pressure frontier snapshot version: " +
         String(value.version),
@@ -61,16 +54,13 @@ export function parsePressureFrontierSnapshot(
   const version = value.version;
   const parsed: PressureFrontierSnapshot = {
     version,
-    state: parseState(value.state, version),
+    state: parseState(value.state),
   };
   validatedSnapshots.add(parsed);
   return parsed;
 }
 
-function parseState(
-  value: unknown,
-  version: PressureFrontierSnapshotVersion,
-): PressureFrontierState {
+function parseState(value: unknown): PressureFrontierState {
   if (!isRecord(value))
     throw new TypeError("pressure frontier state must be an object");
 
@@ -80,24 +70,11 @@ function parseState(
   }
 
   if (value.kind === "resolvedUnbounded") {
-    if (version !== PRESSURE_FRONTIER_SNAPSHOT_VERSION)
-      throw new RangeError(
-        "resolved-unbounded pressure requires snapshot version " +
-          PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-      );
-
-    // Transitional compatibility: early v7 snapshots carried resolvedAtMs.
-    // It never affected the unbounded field, so validate and discard it.
     assertOnlyKeys(
       value,
-      ["kind", "resolvedAtMs"],
+      ["kind"],
       "resolved-unbounded pressure frontier state",
     );
-    if (value.resolvedAtMs !== undefined && value.resolvedAtMs !== null)
-      nonNegativeNumber(
-        value.resolvedAtMs,
-        "pressure frontier resolution timestamp",
-      );
     return { kind: "resolvedUnbounded" };
   }
 
