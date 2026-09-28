@@ -99,14 +99,17 @@ function buildPressureScales(
   event: Event,
   thresholdByMarketId: ReadonlyMap<MarketId, number>,
 ): ReadonlyMap<TokenId, SignedVolumeColorScale> {
+  const completeThreshold = buildThresholdPalette(event, thresholdByMarketId);
+  const liveThreshold = buildLiveThresholdPalette(event, thresholdByMarketId);
   const threshold =
-    buildThresholdPalette(event, thresholdByMarketId) ??
-    buildLiveThresholdPalette(event, thresholdByMarketId);
+    liveThreshold && hasResolvedLiveTitleCollision(event)
+      ? liveThreshold
+      : (completeThreshold ?? liveThreshold);
   if (threshold) {
     // A live-only palette deliberately omits resolved markets whose stale or
-    // reused Gamma threshold slots made the complete family ambiguous. Keep
-    // those controls usable with ordinary binary colors while preserving the
-    // coherent nested geometry for the markets that still trade.
+    // reused Gamma rows either make the complete family ambiguous or duplicate
+    // a live semantic threshold. Keep those controls usable with ordinary
+    // binary colors while preserving the coherent geometry for live markets.
     const scales = buildDefaultPressureScales(event);
     for (const outcome of threshold.outcomes)
       scales.set(outcome.yesTokenId, outcome.scale);
@@ -120,6 +123,27 @@ function buildPressureScales(
     );
 
   return buildDefaultPressureScales(event);
+}
+
+function hasResolvedLiveTitleCollision(event: Event): boolean {
+  const liveTitles = new Set(
+    event.markets
+      .filter(isActiveOrderMarket)
+      .map(marketDisplayKey)
+      .filter(Boolean),
+  );
+  return event.markets.some(
+    (market) =>
+      !isActiveOrderMarket(market) && liveTitles.has(marketDisplayKey(market)),
+  );
+}
+
+function marketDisplayKey(market: Market): string {
+  return (market.groupItemTitle ?? market.question ?? "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 }
 
 function buildLiveThresholdPalette(

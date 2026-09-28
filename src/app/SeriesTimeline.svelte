@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import AgeRowFlipButton from "./AgeRowFlipButton.svelte";
   import { SeriesTimelineView } from "../chart/seriesTimelineView";
   import {
     DEFAULT_AGE_ROW_ORIENTATION,
@@ -21,6 +22,7 @@
   export let onfailure: (message: string) => void = () => undefined;
   export let onconnection: (status: ConnectionStatus) => void = () => undefined;
   export let onanchorevent: (event: Event | null) => void = () => undefined;
+  export let onrowflip: () => void = () => undefined;
 
   let canvas: HTMLCanvasElement;
   let pressureCanvas: HTMLCanvasElement;
@@ -130,6 +132,10 @@
 </div>
 
 <div class="cpv-chart-stage">
+  <div class="cpv-chart-row-flip">
+    <AgeRowFlipButton orientation={ageRowOrientation} onflip={onrowflip} />
+  </div>
+
   <div class="cpv-canvas-wrap series-canvas-wrap" bind:this={canvasWrap}>
     <canvas
       class="cpv-pressure-canvas"

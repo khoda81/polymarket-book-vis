@@ -8,6 +8,11 @@ const STORAGE_KEY = "polymarket-book-vis:age-row-orientation:v1";
 
 export type AgeRowOrientationStorageKey =
   | { readonly kind: "event"; readonly id: Event["id"] }
+  | {
+      readonly kind: "event-group";
+      readonly eventId: Event["id"];
+      readonly groupKey: string;
+    }
   | { readonly kind: "series"; readonly id: Series["id"] };
 
 interface KeyValueStorage {
@@ -33,6 +38,8 @@ export function persistAgeRowOrientation(
 }
 
 function storageKey(key: AgeRowOrientationStorageKey): string {
+  if (key.kind === "event-group")
+    return `${key.kind}:${key.eventId}:${key.groupKey}`;
   return `${key.kind}:${key.id}`;
 }
 

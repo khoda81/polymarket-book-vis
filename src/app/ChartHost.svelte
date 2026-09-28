@@ -30,6 +30,8 @@
     type AutoHiddenReason,
     type MarketVisibility,
   } from "../lib/marketVisibility";
+  import AgeRowFlipButton from "./AgeRowFlipButton.svelte";
+  import { hiddenMarketDisplayOrder } from "./hiddenMarketOrder";
   import MarketControl from "./MarketControl.svelte";
   import { createPublicClient, type MarketId } from "@polymarket/client";
 
@@ -44,6 +46,7 @@
   export let onconnection: (status: ConnectionStatus) => void = () => undefined;
   export let onmarketstatus: (status: EventMarketStatus) => void = () =>
     undefined;
+  export let onrowflip: () => void = () => undefined;
 
   const definition = buildChartDefinition(bundle);
   const VISIBLE_MARKET: MarketVisibility = { kind: "visible" };
@@ -71,6 +74,10 @@
   );
   $: visibleControls = controlPartition.visible;
   $: hiddenControls = controlPartition.hidden;
+  $: displayedHiddenControls = hiddenMarketDisplayOrder(
+    hiddenControls,
+    ageRowOrientation,
+  );
   $: toggledControls =
     viewMode === "age" ? visibleControls : definition.controls;
   $: onmarketstatus(summarizeEventMarketStatus(lifecycleByMarketId.values()));
@@ -171,7 +178,30 @@
   $: chart?.setAgeRowOrientation(ageRowOrientation);
 </script>
 
+<div
+  class="cpv-hidden-markets"
+  hidden={viewMode !== "age" || hiddenControls.length === 0}
+>
+  {#if viewMode === "age"}
+    {#each displayedHiddenControls as control (control.market.id)}
+      <MarketControl
+        {control}
+        checked={false}
+        lifecycle={lifecycleByMarketId.get(control.market.id) ??
+          control.lifecycle}
+        onchange={(checked) => userSetVisible(control, checked)}
+      />
+    {/each}
+  {/if}
+</div>
+
 <div class="cpv-chart-stage">
+  {#if viewMode === "age" && visibleControls.length > 0}
+    <div class="cpv-chart-row-flip">
+      <AgeRowFlipButton orientation={ageRowOrientation} onflip={onrowflip} />
+    </div>
+  {/if}
+
   <div
     class="cpv-canvas-wrap"
     hidden={visibleControls.length === 0}
@@ -203,21 +233,4 @@
       />
     {/each}
   </div>
-</div>
-
-<div
-  class="cpv-hidden-markets"
-  hidden={viewMode !== "age" || hiddenControls.length === 0}
->
-  {#if viewMode === "age"}
-    {#each hiddenControls as control (control.market.id)}
-      <MarketControl
-        {control}
-        checked={false}
-        lifecycle={lifecycleByMarketId.get(control.market.id) ??
-          control.lifecycle}
-        onchange={(checked) => userSetVisible(control, checked)}
-      />
-    {/each}
-  {/if}
 </div>

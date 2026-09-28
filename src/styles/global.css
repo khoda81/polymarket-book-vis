@@ -635,7 +635,7 @@ body {
 }
 
 .card-view,
-.card-row-flip,
+.chart-row-flip,
 .card-pin,
 .card-close {
   height: 28px;
@@ -651,7 +651,7 @@ body {
   font-size: 12px;
 }
 
-.card-row-flip,
+.chart-row-flip,
 .card-pin,
 .card-close {
   display: grid;
@@ -662,7 +662,7 @@ body {
   line-height: 1;
 }
 
-.card-row-flip svg,
+.chart-row-flip svg,
 .card-pin svg,
 .card-close svg {
   display: block;
@@ -676,7 +676,7 @@ body {
 }
 
 .card-view:hover,
-.card-row-flip:hover,
+.chart-row-flip:hover,
 .card-pin:hover,
 .card-close:hover {
   background: var(--color-background-hover, #e5e5e5);
@@ -746,16 +746,12 @@ body {
   padding-right: 160px;
 }
 
-.card.card--age-view .cpv-header {
-  padding-right: 194px;
-}
-
 .card-pin[aria-pressed="true"] {
   color: #d7a900;
 }
 
 .series-card .cpv-header {
-  padding-right: 116px;
+  padding-right: 82px;
 }
 
 .series-recurrence {

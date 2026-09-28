@@ -83,32 +83,6 @@
   <div class="card-actions">
     <button
       type="button"
-      class="card-row-flip"
-      aria-pressed={ageRowOrientation === "negative-above"}
-      aria-label={ageRowOrientation === "negative-above"
-        ? "Put right-side book above the centerline"
-        : "Put left-side book above the centerline"}
-      title={ageRowOrientation === "negative-above"
-        ? "Left side is above — click to put right side above"
-        : "Right side is above — click to put left side above"}
-      onclick={flipRows}
-    >
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d={ageRowOrientation === "negative-above"
-            ? "M4 12h16M8 9V5m0 0L6 7m2-2 2 2m8 6v4m0 0-2-2m2 2 2-2"
-            : "M4 12h16M16 9V5m0 0-2 2m2-2 2 2M8 15v4m0 0-2-2m2 2 2-2"}
-        />
-      </svg>
-    </button>
-
-    <button
-      type="button"
       class="card-pin"
       aria-pressed={pinned}
       aria-label={pinned ? "Unpin series" : "Pin series across reloads"}
@@ -170,6 +144,7 @@
       {series}
       {client}
       {ageRowOrientation}
+      onrowflip={flipRows}
       onready={timelineReady}
       {onfailure}
       onconnection={(status) => (connection = status)}
