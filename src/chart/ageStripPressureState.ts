@@ -23,6 +23,13 @@ export interface AgeStripPressureTiming {
 
 interface PressureState extends AgeStripPressureTiming {
   readonly memory: PressureFrontierMemory;
+  /**
+   * TODO(v7): This is a compatibility overlay for the v6 frontier format,
+   * which cannot canonically represent persistent/unbounded terminal pressure.
+   * Promote this state into PressureFrontierMemory/snapshots in v7 so a
+   * persistent unbounded frontier can dominate and prune superseded history,
+   * then remove extents and extentRevision.
+   */
   readonly extents: readonly PressureExtent[];
   readonly extentRevision: number;
 }
