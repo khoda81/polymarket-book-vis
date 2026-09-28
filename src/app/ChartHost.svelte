@@ -23,9 +23,10 @@
     isMarketVisible,
     loadMarketVisibility,
     partitionMarketVisibility,
-    persistUserVisibility,
+    persistStoredMarketVisibility,
     setMarketVisibility,
     setUserMarketVisible,
+    storedVisibilityForUserChoice,
     type AutoHiddenReason,
     type MarketVisibility,
   } from "../lib/marketVisibility";
@@ -61,8 +62,11 @@
   let toggles: HTMLDivElement;
   let chart: ChartController | null = null;
 
+  $: orderedAgeControls = [...definition.controls].sort(
+    (a, b) => a.order - b.order,
+  );
   $: controlPartition = partitionMarketVisibility(
-    definition.controls,
+    orderedAgeControls,
     visibilityByMarketId,
   );
   $: visibleControls = controlPartition.visible;
@@ -77,7 +81,13 @@
       control.market.id,
       visible,
     );
-    persistUserVisibility(visibilityByMarketId);
+
+    const lifecycle =
+      lifecycleByMarketId.get(control.market.id) ?? control.lifecycle;
+    persistStoredMarketVisibility(
+      control.market.id,
+      storedVisibilityForUserChoice(visible, lifecycle),
+    );
     chart?.setMarketVisible(control.market.id, visible);
   }
 
@@ -97,6 +107,7 @@
       kind: "hidden",
       reason: "resolved-default",
     });
+    persistStoredMarketVisibility(marketId, "hidden-resolved");
     chart?.setMarketVisible(marketId, false);
   }
 
