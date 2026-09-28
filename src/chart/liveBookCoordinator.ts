@@ -724,18 +724,15 @@ export class LiveBookCoordinator {
 
     const previous = subscription.marketWatermarks.get(marketKey);
     if (timestampMs === null) return previous;
-    if (previous !== undefined && timestampMs < previous)
-      throw new Error(
-        "market timestamp regressed for " +
-          marketKey +
-          ": " +
-          timestampMs +
-          " < " +
-          previous,
-      );
 
-    subscription.marketWatermarks.set(marketKey, timestampMs);
-    return timestampMs;
+    // Polymarket timestamps are causal evidence, not a strict sequence. The
+    // stream delivery order is authoritative within this market, so preserve
+    // the strongest lower bound we have seen rather than reconnecting on a
+    // small timestamp regression.
+    const watermarkMs =
+      previous === undefined ? timestampMs : Math.max(previous, timestampMs);
+    subscription.marketWatermarks.set(marketKey, watermarkMs);
+    return watermarkMs;
   }
 
   private advanceMarketThrough(
