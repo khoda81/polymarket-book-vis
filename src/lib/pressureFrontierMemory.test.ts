@@ -29,11 +29,11 @@ test("10 -> 4 -> 8 -> 12 freezes, trims, then submerges history", () => {
   expect(memory.renderRuns()[0]).toEqual({
     price: p(0.5),
     shares: 4,
-    frozenSteps: [{ hiVolume: 10, validThroughMs: 1_000 }],
+    frozenSteps: [{ hiVolume: 10, validThroughMs: 2_000 }],
   });
   expect(memory.bandsAtPrice(p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 4, validThroughMs: 2_000 },
-    { loVolume: 4, hiVolume: 10, validThroughMs: 1_000 },
+    { loVolume: 4, hiVolume: 10, validThroughMs: 2_000 },
   ]);
 
   memory.updateLevels([{ price: p(0.5), shares: 8 }], 3_000);
@@ -42,7 +42,7 @@ test("10 -> 4 -> 8 -> 12 freezes, trims, then submerges history", () => {
   ]);
   expect(memory.bandsAtPrice(p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 8, validThroughMs: 3_000 },
-    { loVolume: 8, hiVolume: 10, validThroughMs: 1_000 },
+    { loVolume: 8, hiVolume: 10, validThroughMs: 2_000 },
   ]);
 
   memory.updateLevels([{ price: p(0.5), shares: 12 }], 4_000);
@@ -60,17 +60,15 @@ test("same validity decreases coalesce while distinct validity creates steps", (
   memory.updateLevels([{ price: p(0.5), shares: 4 }], 2_000);
 
   expect(memory.renderRuns()[0]?.frozenSteps).toEqual([
-    { hiVolume: 10, validThroughMs: 1_000 },
-    { hiVolume: 8, validThroughMs: 2_000 },
+    { hiVolume: 10, validThroughMs: 2_000 },
   ]);
 
   memory.observeThrough(3_000);
   memory.updateLevels([{ price: p(0.5), shares: 2 }], 4_000);
 
   expect(memory.renderRuns()[0]?.frozenSteps).toEqual([
-    { hiVolume: 10, validThroughMs: 1_000 },
-    { hiVolume: 8, validThroughMs: 2_000 },
-    { hiVolume: 4, validThroughMs: 3_000 },
+    { hiVolume: 10, validThroughMs: 2_000 },
+    { hiVolume: 4, validThroughMs: 4_000 },
   ]);
 });
 
@@ -86,17 +84,26 @@ test("unchanged observations advance validity without rewriting geometry", () =>
     { loVolume: 0, hiVolume: 100, validThroughMs: 2_500 },
   ]);
 
-  expect(memory.observeThrough(2_000)).toBe(false);
+  expect(() => memory.observeThrough(2_000)).toThrow(/moved backward/);
   expect(memory.renderRuns()).toBe(runs);
 });
 
-test("out-of-order timestamps never move validity backward", () => {
+test("out-of-order timestamps are rejected", () => {
   const memory = new PressureFrontierMemory();
   memory.updateLevels([{ price: p(0.5), shares: 100 }], 2_000);
-  memory.updateLevels([{ price: p(0.5), shares: 60 }], 1_500);
+  expect(() =>
+    memory.updateLevels([{ price: p(0.5), shares: 60 }], 1_500),
+  ).toThrow(/moved backward/);
+});
+
+test("discontinuous snapshot does not bridge the missing interval", () => {
+  const memory = new PressureFrontierMemory();
+  memory.observeLevels([{ price: p(0.5), shares: 100 }], 1_000);
+  memory.observeLevels([{ price: p(0.5), shares: 60 }], 5_000);
 
   expect(memory.bandsAtPrice(p(0.6))).toEqual([
-    { loVolume: 0, hiVolume: 100, validThroughMs: 2_000 },
+    { loVolume: 0, hiVolume: 60, validThroughMs: 5_000 },
+    { loVolume: 60, hiVolume: 100, validThroughMs: 2_000 },
   ]);
 });
 
@@ -110,12 +117,12 @@ test("price-boundary splitting copies the canonical history stack", () => {
     {
       price: p(0.2),
       shares: 5,
-      frozenSteps: [{ hiVolume: 10, validThroughMs: 1_000 }],
+      frozenSteps: [{ hiVolume: 10, validThroughMs: 2_000 }],
     },
     {
       price: p(0.5),
       shares: 2,
-      frozenSteps: [{ hiVolume: 10, validThroughMs: 1_000 }],
+      frozenSteps: [{ hiVolume: 10, validThroughMs: 2_000 }],
     },
   ]);
   expect(memory.bandsAtPrice(p(0.3))).toEqual([
@@ -189,7 +196,7 @@ test("snapshot stores shares and steps without redundant geometry", () => {
   memory.updateLevels([{ price: p(0.5), shares: 60 }], 2_000);
 
   expect(memory.snapshot()).toEqual({
-    version: 6,
+    version: 7,
     state: {
       kind: "observed",
       validThroughMs: 2_000,
@@ -197,7 +204,7 @@ test("snapshot stores shares and steps without redundant geometry", () => {
         {
           price: p(0.5),
           shares: 60,
-          frozenSteps: [{ hiVolume: 100, validThroughMs: 1_000 }],
+          frozenSteps: [{ hiVolume: 100, validThroughMs: 2_000 }],
         },
       ],
     },
@@ -282,7 +289,7 @@ test("pressure boundaries exclude the implicit disposal sentinel", () => {
 test("pressure updates report whether canonical state changed", () => {
   const memory = new PressureFrontierMemory();
 
-  expect(memory.updateLevels([], 1_000)).toBe(false);
+  expect(memory.updateLevels([], 1_000)).toBe(true);
   expect(memory.updateLevels([{ price: p(0), shares: 10 }], 1_000)).toBe(false);
 
   expect(memory.updateLevels([{ price: p(0.5), shares: 10 }], 1_000)).toBe(
@@ -301,4 +308,26 @@ test("pressure updates report whether canonical state changed", () => {
   expect(memory.observeLevels([{ price: p(0.5), shares: 10 }], 3_000)).toBe(
     true,
   );
+});
+
+test("resolved unbounded pressure discards dominated finite history", () => {
+  const memory = new PressureFrontierMemory();
+  memory.observeLevels([{ price: p(0.5), shares: 100 }], 1_000);
+  expect(memory.resolveUnbounded(2_000)).toBe(true);
+  expect(memory.isResolvedUnbounded()).toBe(true);
+  expect(memory.currentLevels()).toEqual([]);
+  expect(memory.snapshot()).toEqual({
+    version: 7,
+    state: { kind: "resolvedUnbounded", resolvedAtMs: 2_000 },
+  });
+});
+
+test("zero-future resolution keeps historical pressure forever", () => {
+  const memory = new PressureFrontierMemory();
+  memory.observeLevels([{ price: p(0.5), shares: 100 }], 1_000);
+  memory.resolveZeroFuture(2_000);
+  expect(memory.currentLevels()).toEqual([]);
+  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+    { loVolume: 0, hiVolume: 100, validThroughMs: 2_000 },
+  ]);
 });
