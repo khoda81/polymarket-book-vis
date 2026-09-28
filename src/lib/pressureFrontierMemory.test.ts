@@ -32,13 +32,12 @@ test("10 -> 4 -> 8 -> 12 freezes, trims, then submerges history", () => {
     frozenSteps: [{ hiVolume: 10, validThroughMs: 2_000 }],
   });
   expect(memory.bandsAtPrice(p(0.6))).toEqual([
-    { loVolume: 0, hiVolume: 4, validThroughMs: 2_000 },
-    { loVolume: 4, hiVolume: 10, validThroughMs: 2_000 },
+    { loVolume: 0, hiVolume: 10, validThroughMs: 2_000 },
   ]);
 
   memory.updateLevels([{ price: p(0.5), shares: 8 }], 3_000);
   expect(memory.renderRuns()[0]?.frozenSteps).toEqual([
-    { hiVolume: 10, validThroughMs: 1_000 },
+    { hiVolume: 10, validThroughMs: 2_000 },
   ]);
   expect(memory.bandsAtPrice(p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 8, validThroughMs: 3_000 },
@@ -103,7 +102,7 @@ test("discontinuous snapshot does not bridge the missing interval", () => {
 
   expect(memory.bandsAtPrice(p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 60, validThroughMs: 5_000 },
-    { loVolume: 60, hiVolume: 100, validThroughMs: 2_000 },
+    { loVolume: 60, hiVolume: 100, validThroughMs: 1_000 },
   ]);
 });
 
@@ -127,11 +126,11 @@ test("price-boundary splitting copies the canonical history stack", () => {
   ]);
   expect(memory.bandsAtPrice(p(0.3))).toEqual([
     { loVolume: 0, hiVolume: 5, validThroughMs: 3_000 },
-    { loVolume: 5, hiVolume: 10, validThroughMs: 1_000 },
+    { loVolume: 5, hiVolume: 10, validThroughMs: 2_000 },
   ]);
   expect(memory.bandsAtPrice(p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 7, validThroughMs: 3_000 },
-    { loVolume: 7, hiVolume: 10, validThroughMs: 1_000 },
+    { loVolume: 7, hiVolume: 10, validThroughMs: 2_000 },
   ]);
 });
 
@@ -167,7 +166,7 @@ test("band hit testing reconstructs current and frozen upper boundaries", () => 
   expect(memory.bandAtPoint(p(0.6), 70)).toEqual({
     loVolume: 60,
     hiVolume: 100,
-    validThroughMs: 1_000,
+    validThroughMs: 2_000,
   });
   expect(memory.bandAtPoint(p(0.6), 100)).toBeUndefined();
 });

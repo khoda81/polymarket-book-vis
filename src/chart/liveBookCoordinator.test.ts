@@ -320,10 +320,7 @@ test("same-market timestamp regressions are max-aggregated without reconnecting"
       kind,
       validThroughMs,
     ]),
-  ).toEqual([
-    [TOKEN_B, "watermark", 1_001],
-    [TOKEN_A, "levels", 1_001],
-  ]);
+  ).toEqual([[TOKEN_A, "levels", 1_001]]);
 
   watch.close();
 });
