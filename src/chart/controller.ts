@@ -18,6 +18,10 @@ import {
 import { OrderBookPlotter, type ChartTheme } from "@/lib/renderer";
 import { chartThemeForDarkMode } from "./chartTheme";
 import { AgeStripView } from "./ageStripView";
+import {
+  DEFAULT_AGE_ROW_ORIENTATION,
+  type AgeRowOrientation,
+} from "./ageStripOrientation";
 import { LiveBookFeed } from "./liveBookFeed";
 import { VolumeBookView } from "./volumeBookView";
 import type { MarketId, PublicClient, TokenId } from "@polymarket/client";
@@ -64,6 +68,7 @@ export class ChartController {
   private raf: number | null = null;
   private readonly definition: ChartDefinition;
   private viewMode: ViewMode = "age";
+  private ageRowOrientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION;
   private lifecycle: "new" | "started" | "destroyed" = "new";
 
   constructor(
@@ -132,6 +137,7 @@ export class ChartController {
       },
       getTheme: () => this.theme,
       getViewMode: () => this.viewMode,
+      getRowOrientation: () => this.ageRowOrientation,
       hideToken: (tokenId) => {
         const id = this.knownTokenId(tokenId);
         if (id) this.autoHideToken(id, "empty-book");
@@ -211,6 +217,12 @@ export class ChartController {
   setViewMode(mode: ViewMode): void {
     if (mode === this.viewMode) return;
     this.viewMode = mode;
+    this.reqDraw();
+  }
+
+  setAgeRowOrientation(orientation: AgeRowOrientation): void {
+    if (orientation === this.ageRowOrientation) return;
+    this.ageRowOrientation = orientation;
     this.reqDraw();
   }
 

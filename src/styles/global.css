@@ -635,6 +635,7 @@ body {
 }
 
 .card-view,
+.card-row-flip,
 .card-pin,
 .card-close {
   height: 28px;
@@ -650,6 +651,7 @@ body {
   font-size: 12px;
 }
 
+.card-row-flip,
 .card-pin,
 .card-close {
   display: grid;
@@ -660,6 +662,7 @@ body {
   line-height: 1;
 }
 
+.card-row-flip svg,
 .card-pin svg,
 .card-close svg {
   display: block;
@@ -673,6 +676,7 @@ body {
 }
 
 .card-view:hover,
+.card-row-flip:hover,
 .card-pin:hover,
 .card-close:hover {
   background: var(--color-background-hover, #e5e5e5);
@@ -740,6 +744,10 @@ body {
 
 .card .cpv-header {
   padding-right: 160px;
+}
+
+.card.card--age-view .cpv-header {
+  padding-right: 194px;
 }
 
 .card-pin[aria-pressed="true"] {

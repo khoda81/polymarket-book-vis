@@ -21,6 +21,10 @@ import {
   type AgeStripGeometry,
 } from "./ageStripLayout";
 import {
+  DEFAULT_AGE_ROW_ORIENTATION,
+  type AgeRowOrientation,
+} from "./ageStripOrientation";
+import {
   agePressurePerspective,
   agePressureSourceSideAtY,
   pressurePriceAtDisplayX,
@@ -31,6 +35,7 @@ import {
 export interface AgeStripTooltipHost {
   readonly canvas: HTMLCanvasElement;
   readonly getViewMode: () => ViewMode;
+  readonly getRowOrientation?: () => AgeRowOrientation;
   readonly getPressureMemory: (
     tokenId: string,
   ) => PressureFrontierMemory | undefined;
@@ -133,8 +138,14 @@ export class AgeStripTooltip {
     }
 
     const centerCss = ageStripRowCenterY(geometry, row);
-    const sourceSide = agePressureSourceSideAtY(sy, centerCss);
-    const perspective = agePressurePerspective(sourceSide);
+    const rowOrientation =
+      this.host.getRowOrientation?.() ?? DEFAULT_AGE_ROW_ORIENTATION;
+    const sourceSide = agePressureSourceSideAtY(
+      sy,
+      centerCss,
+      rowOrientation,
+    );
+    const perspective = agePressurePerspective(sourceSide, rowOrientation);
 
     const sourceTokenId =
       sourceSide === "primary" ? row.tokenId : (row.oppositeTokenId ?? null);

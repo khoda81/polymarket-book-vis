@@ -8,6 +8,7 @@ import {
   sourcePriceAtDisplayX,
 } from "./ageStripPressureProjection";
 import { PRICE_SCALE } from "@/lib/price";
+import { DEFAULT_AGE_ROW_ORIENTATION } from "./ageStripOrientation";
 
 test("geometry source and displayed token semantics are complementary", () => {
   expect(agePressurePerspective("primary")).toMatchObject({
@@ -27,6 +28,25 @@ test("geometry source and displayed token semantics are complementary", () => {
 
   expect(agePressureSourceSideAtY(15, 14)).toBe("primary");
   expect(agePressureSourceSideAtY(13, 14)).toBe("opposite");
+});
+
+test("row orientation flips renderer and hover semantics together", () => {
+  expect(DEFAULT_AGE_ROW_ORIENTATION).toBe("positive-above");
+
+  const flipped = "negative-above" as const;
+  expect(agePressurePerspective("primary", flipped)).toMatchObject({
+    semanticSide: "opposite",
+    yDirection: -1,
+    colorSign: -1,
+  });
+  expect(agePressurePerspective("opposite", flipped)).toMatchObject({
+    semanticSide: "primary",
+    yDirection: 1,
+    colorSign: 1,
+  });
+
+  expect(agePressureSourceSideAtY(13, 14, flipped)).toBe("primary");
+  expect(agePressureSourceSideAtY(15, 14, flipped)).toBe("opposite");
 });
 
 test("semantic price complements the source field without moving geometry", () => {

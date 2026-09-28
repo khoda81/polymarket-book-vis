@@ -5,6 +5,11 @@ import {
   type SignedVolumeColorScale,
 } from "@/lib/signedVolume";
 import type { GpuPressureSurface } from "./gpuPressureLayer";
+import {
+  ageRowYDirection,
+  DEFAULT_AGE_ROW_ORIENTATION,
+  type AgeRowOrientation,
+} from "./ageStripOrientation";
 
 export type AgePressureSide = "primary" | "opposite";
 
@@ -21,26 +26,34 @@ export interface AgePressurePerspective {
   readonly colorSign: -1 | 1;
 }
 
-const PRIMARY: AgePressurePerspective = {
+type AgePressurePerspectiveBase = Omit<
+  AgePressurePerspective,
+  "yDirection"
+>;
+
+const PRIMARY: AgePressurePerspectiveBase = {
   sourceSide: "primary",
   semanticSide: "opposite",
   mirrorPrice: true,
-  yDirection: 1,
   colorSign: -1,
 };
 
-const OPPOSITE: AgePressurePerspective = {
+const OPPOSITE: AgePressurePerspectiveBase = {
   sourceSide: "opposite",
   semanticSide: "primary",
   mirrorPrice: false,
-  yDirection: -1,
   colorSign: 1,
 };
 
 export function agePressurePerspective(
   side: AgePressureSide,
+  orientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
 ): AgePressurePerspective {
-  return side === "primary" ? PRIMARY : OPPOSITE;
+  const base = side === "primary" ? PRIMARY : OPPOSITE;
+  return {
+    ...base,
+    yDirection: ageRowYDirection(base.colorSign, orientation),
+  };
 }
 
 export function agePressureSurface(
@@ -53,8 +66,9 @@ export function agePressureSurface(
   currentValidThroughMs: number | undefined,
   colorScale: SignedVolumeColorScale,
   sourceSide: AgePressureSide,
+  orientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
 ): GpuPressureSurface {
-  const perspective = agePressurePerspective(sourceSide);
+  const perspective = agePressurePerspective(sourceSide, orientation);
   return {
     key,
     dataRevision,
@@ -72,8 +86,13 @@ export function agePressureSurface(
 export function agePressureSourceSideAtY(
   yCss: number,
   centerCss: number,
+  orientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
 ): AgePressureSide {
-  return yCss >= centerCss ? "primary" : "opposite";
+  const screenDirection = yCss >= centerCss ? 1 : -1;
+  return agePressurePerspective("primary", orientation).yDirection ===
+    screenDirection
+    ? "primary"
+    : "opposite";
 }
 
 /** Convert screen-space normalized x into the source field's price coordinate. */

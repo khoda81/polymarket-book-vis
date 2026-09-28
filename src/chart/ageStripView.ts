@@ -26,6 +26,7 @@ import { AgeStripPressureState } from "./ageStripPressureState";
 import { agePressureSurface } from "./ageStripPressureProjection";
 import type { LiveBookUpdate } from "./liveBookFeed";
 import { AgeStripTooltip } from "./ageStripTooltip";
+import type { AgeRowOrientation } from "./ageStripOrientation";
 import type { ChartMarketControl } from "@/lib/chartDefinition";
 
 export interface AgeStripHost {
@@ -41,6 +42,7 @@ export interface AgeStripHost {
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
   readonly getTheme: () => ChartTheme;
   readonly getViewMode: () => "volume" | "age";
+  readonly getRowOrientation: () => AgeRowOrientation;
   readonly hideToken: (tokenId: string) => void;
   readonly requestDraw: () => void;
 }
@@ -73,6 +75,7 @@ export class AgeStripView {
     this.tooltip = new AgeStripTooltip({
       canvas: host.canvas,
       getViewMode: host.getViewMode,
+      getRowOrientation: host.getRowOrientation,
       getPressureMemory: (tokenId) => this.pressure.memory(tokenId),
       getTokenName: host.getTokenName,
       getPressureColorScale: host.getPressureColorScale,
@@ -163,6 +166,7 @@ export class AgeStripView {
 
     const tuning = getAgeStripTuning();
     const nowMs = Date.now();
+    const rowOrientation = this.host.getRowOrientation();
     let hasVisiblePressure = false;
 
     const controls = this.collectControls();
@@ -267,6 +271,7 @@ export class AgeStripView {
                   primaryMemory.renderCurrentValidThroughMs(),
                   colorScale,
                   "primary",
+                  rowOrientation,
                 ),
               ]
             : []),
@@ -283,6 +288,7 @@ export class AgeStripView {
                   oppositeMemory.renderCurrentValidThroughMs(),
                   colorScale,
                   "opposite",
+                  rowOrientation,
                 ),
               ]
             : []),
