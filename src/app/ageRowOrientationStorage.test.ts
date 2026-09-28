@@ -16,32 +16,32 @@ class MemoryStorage {
   }
 }
 
-test("age row orientation persists independently per card", () => {
+test("age row orientation persists independently per typed card key", () => {
   const storage = new MemoryStorage();
+  const event = { kind: "event", id: "event-a" } as const;
+  const series = { kind: "series", id: "1" } as const;
 
-  expect(loadStoredAgeRowOrientation("a", storage)).toBeNull();
+  expect(loadStoredAgeRowOrientation(event, storage)).toBeNull();
 
-  persistAgeRowOrientation("event-a", "negative-above", storage);
-  persistAgeRowOrientation("series:1", "positive-above", storage);
+  persistAgeRowOrientation(event, "negative-above", storage);
+  persistAgeRowOrientation(series, "positive-above", storage);
 
-  expect(loadStoredAgeRowOrientation("event-a", storage)).toBe(
-    "negative-above",
-  );
-  expect(loadStoredAgeRowOrientation("series:1", storage)).toBe(
-    "positive-above",
-  );
+  expect(loadStoredAgeRowOrientation(event, storage)).toBe("negative-above");
+  expect(loadStoredAgeRowOrientation(series, storage)).toBe("positive-above");
 });
 
-test("invalid stored orientation data is ignored", () => {
+test("invalid stored orientation data is ignored at the storage boundary", () => {
   const storage = new MemoryStorage();
+  const valid = { kind: "event", id: "valid" } as const;
+  const invalid = { kind: "event", id: "invalid" } as const;
   storage.setItem(
     "polymarket-book-vis:age-row-orientation:v1",
     JSON.stringify({
-      valid: "negative-above",
-      invalid: "sideways",
+      "event:valid": "negative-above",
+      "event:invalid": "sideways",
     }),
   );
 
-  expect(loadStoredAgeRowOrientation("valid", storage)).toBe("negative-above");
-  expect(loadStoredAgeRowOrientation("invalid", storage)).toBeNull();
+  expect(loadStoredAgeRowOrientation(valid, storage)).toBe("negative-above");
+  expect(loadStoredAgeRowOrientation(invalid, storage)).toBeNull();
 });
