@@ -233,11 +233,21 @@ test("terminal unbounded pressure is canonical only in v7", () => {
   expect(
     parsePressureFrontierSnapshot({
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-      state: { kind: "resolvedUnbounded", resolvedAtMs: null },
+      state: { kind: "resolvedUnbounded" },
     }),
   ).toEqual({
     version: 7,
-    state: { kind: "resolvedUnbounded", resolvedAtMs: null },
+    state: { kind: "resolvedUnbounded" },
+  });
+
+  expect(
+    parsePressureFrontierSnapshot({
+      version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
+      state: { kind: "resolvedUnbounded", resolvedAtMs: 2_000 },
+    }),
+  ).toEqual({
+    version: 7,
+    state: { kind: "resolvedUnbounded" },
   });
 
   expect(() =>

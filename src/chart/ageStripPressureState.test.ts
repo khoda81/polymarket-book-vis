@@ -178,7 +178,7 @@ test("unbounded terminal pressure discards dominated finite history", () => {
   expect(state.memory("token")!.isResolvedUnbounded()).toBe(true);
   expect(state.memory("token")!.snapshot()).toEqual({
     version: 7,
-    state: { kind: "resolvedUnbounded", resolvedAtMs: 2_000 },
+    state: { kind: "resolvedUnbounded" },
   });
   expect(state.bandAtPoint("token", p(0.7), 1_000_000)).toEqual({
     loVolume: 0,

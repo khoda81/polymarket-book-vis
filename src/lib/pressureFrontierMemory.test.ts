@@ -312,12 +312,12 @@ test("pressure updates report whether canonical state changed", () => {
 test("resolved unbounded pressure discards dominated finite history", () => {
   const memory = new PressureFrontierMemory();
   memory.observeLevels([{ price: p(0.5), shares: 100 }], 1_000);
-  expect(memory.resolveUnbounded(2_000)).toBe(true);
+  expect(memory.resolveUnbounded()).toBe(true);
   expect(memory.isResolvedUnbounded()).toBe(true);
   expect(memory.currentLevels()).toEqual([]);
   expect(memory.snapshot()).toEqual({
     version: 7,
-    state: { kind: "resolvedUnbounded", resolvedAtMs: 2_000 },
+    state: { kind: "resolvedUnbounded" },
   });
 });
 
