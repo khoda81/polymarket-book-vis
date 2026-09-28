@@ -143,11 +143,13 @@ export class AgeStripView {
 
     for (const control of controls) {
       if (control.lifecycle.kind !== "resolved") continue;
+      // Static market metadata gives us the terminal winner, but its
+      // end/closed timestamp is not causal pressure evidence.
       this.applyResolvedPressure(
         control.tokenId,
         control.market.outcomes.no.tokenId,
         control.lifecycle.winningTokenId,
-        control.resolutionMs,
+        null,
       );
     }
 

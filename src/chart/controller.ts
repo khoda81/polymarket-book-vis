@@ -316,7 +316,7 @@ export class ChartController {
         this.ageView.resolveMarket(
           control.tokenId,
           next.winningTokenId,
-          resolution.resolvedAtMs ?? control.resolutionMs,
+          resolution.resolvedAtMs,
         );
       this.onMarketLifecycleChanged(control.market.id, next);
     }
