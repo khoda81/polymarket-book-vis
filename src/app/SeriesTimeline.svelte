@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { SeriesTimelineView } from "../chart/seriesTimelineView";
+  import {
+    DEFAULT_AGE_ROW_ORIENTATION,
+    type AgeRowOrientation,
+  } from "../chart/ageStripOrientation";
   import type { ConnectionStatus } from "../lib/chartState";
   import {
     createPublicClient,
@@ -12,6 +16,8 @@
 
   export let series: Series;
   export let client: PublicClient;
+  export let ageRowOrientation: AgeRowOrientation =
+    DEFAULT_AGE_ROW_ORIENTATION;
   export let onready: () => void = () => undefined;
   export let onfailure: (message: string) => void = () => undefined;
   export let onconnection: (status: ConnectionStatus) => void = () => undefined;
@@ -42,6 +48,8 @@
     view?.followLive();
   }
 
+  $: view?.setAgeRowOrientation(ageRowOrientation);
+
   onMount(() => {
     const timeline = new SeriesTimelineView(
       canvas,
@@ -65,6 +73,7 @@
       },
     );
     view = timeline;
+    timeline.setAgeRowOrientation(ageRowOrientation);
 
     void timeline.start().then(
       () => onready(),

@@ -12,8 +12,8 @@
   } from "./cardReorderSurface";
   import type { ConnectionStatus, ViewMode } from "../lib/chartState";
   import {
-    DEFAULT_AGE_ROW_ORIENTATION,
     flipAgeRowOrientation,
+    inferAgeRowOrientation,
     type AgeRowOrientation,
   } from "../chart/ageStripOrientation";
   import { loadEventDetails, type EventDetails } from "../lib/eventDetails";
@@ -53,7 +53,10 @@
   let viewMode: ViewMode = "age";
   let ageRowOrientation: AgeRowOrientation =
     loadStoredAgeRowOrientation(String(event.id)) ??
-    DEFAULT_AGE_ROW_ORIENTATION;
+    inferAgeRowOrientation({
+      sortBy: event.display.sortBy,
+      title: event.title,
+    });
   let runtime: RuntimeState = { kind: "metadata-loading" };
   let marketStatus: EventMarketStatus = { kind: "trading" };
 

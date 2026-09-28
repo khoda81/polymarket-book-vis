@@ -8,45 +8,75 @@ import {
   sourcePriceAtDisplayX,
 } from "./ageStripPressureProjection";
 import { PRICE_SCALE } from "@/lib/price";
-import { DEFAULT_AGE_ROW_ORIENTATION } from "./ageStripOrientation";
+import {
+  DEFAULT_AGE_ROW_ORIENTATION,
+  inferAgeRowOrientation,
+} from "./ageStripOrientation";
 
 test("geometry source and displayed token semantics are complementary", () => {
   expect(agePressurePerspective("primary")).toMatchObject({
     sourceSide: "primary",
     semanticSide: "opposite",
     mirrorPrice: true,
-    yDirection: 1,
+    yDirection: -1,
     colorSign: -1,
   });
   expect(agePressurePerspective("opposite")).toMatchObject({
     sourceSide: "opposite",
     semanticSide: "primary",
     mirrorPrice: false,
-    yDirection: -1,
-    colorSign: 1,
-  });
-
-  expect(agePressureSourceSideAtY(15, 14)).toBe("primary");
-  expect(agePressureSourceSideAtY(13, 14)).toBe("opposite");
-});
-
-test("row orientation flips renderer and hover semantics together", () => {
-  expect(DEFAULT_AGE_ROW_ORIENTATION).toBe("positive-above");
-
-  const flipped = "negative-above" as const;
-  expect(agePressurePerspective("primary", flipped)).toMatchObject({
-    semanticSide: "opposite",
-    yDirection: -1,
-    colorSign: -1,
-  });
-  expect(agePressurePerspective("opposite", flipped)).toMatchObject({
-    semanticSide: "primary",
     yDirection: 1,
     colorSign: 1,
   });
 
-  expect(agePressureSourceSideAtY(13, 14, flipped)).toBe("primary");
-  expect(agePressureSourceSideAtY(15, 14, flipped)).toBe("opposite");
+  expect(agePressureSourceSideAtY(13, 14)).toBe("primary");
+  expect(agePressureSourceSideAtY(15, 14)).toBe("opposite");
+});
+
+test("row orientation flips renderer and hover semantics together", () => {
+  expect(DEFAULT_AGE_ROW_ORIENTATION).toBe("negative-above");
+
+  const flipped = "positive-above" as const;
+  expect(agePressurePerspective("primary", flipped)).toMatchObject({
+    semanticSide: "opposite",
+    yDirection: 1,
+    colorSign: -1,
+  });
+  expect(agePressurePerspective("opposite", flipped)).toMatchObject({
+    semanticSide: "primary",
+    yDirection: -1,
+    colorSign: 1,
+  });
+
+  expect(agePressureSourceSideAtY(15, 14, flipped)).toBe("primary");
+  expect(agePressureSourceSideAtY(13, 14, flipped)).toBe("opposite");
+});
+
+test("event orientation inference only opts out for strong structural hints", () => {
+  expect(
+    inferAgeRowOrientation({
+      sortBy: "ascending",
+      title: "US-Iran Final Nuclear Deal by…?",
+    }),
+  ).toBe("negative-above");
+  expect(
+    inferAgeRowOrientation({
+      sortBy: "ascending",
+      title: "Israel x Iran ceasefire continues through...?",
+    }),
+  ).toBe("positive-above");
+  expect(
+    inferAgeRowOrientation({
+      sortBy: "price",
+      title: "Where will the next meeting take place?",
+    }),
+  ).toBe("positive-above");
+  expect(
+    inferAgeRowOrientation({
+      sortBy: "ascending",
+      title: "Unknown ascending grouped market",
+    }),
+  ).toBe(DEFAULT_AGE_ROW_ORIENTATION);
 });
 
 test("semantic price complements the source field without moving geometry", () => {
