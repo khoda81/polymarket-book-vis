@@ -193,10 +193,7 @@ export class AgeStripPressureState {
     )
       return;
 
-    const validThroughMs =
-      update.kind === "snapshot"
-        ? update.validThroughMs
-        : Math.max(currentThrough ?? update.validThroughMs, update.validThroughMs);
+    const validThroughMs = update.validThroughMs;
 
     if (
       state.validThroughMs === null ||
