@@ -32,7 +32,6 @@ type MutablePressureState =
     }
   | {
       kind: "resolvedUnbounded";
-      resolvedAtMs: number | null;
     };
 
 const EMPTY_RUNS: readonly PressureRun[] = [];
@@ -125,23 +124,10 @@ export class PressureFrontierMemory {
     return validThroughMs !== previous;
   }
 
-  resolveUnbounded(resolvedAtMs: number | null): boolean {
-    if (resolvedAtMs !== null) this.requireMonotonicTime(resolvedAtMs);
+  resolveUnbounded(): boolean {
+    if (this.state.kind === "resolvedUnbounded") return false;
 
-    if (this.state.kind === "resolvedUnbounded") {
-      const previous = this.state.resolvedAtMs;
-      const next =
-        previous === null
-          ? resolvedAtMs
-          : resolvedAtMs === null
-            ? previous
-            : Math.max(previous, resolvedAtMs);
-      if (next === previous) return false;
-      this.state = { kind: "resolvedUnbounded", resolvedAtMs: next };
-      return true;
-    }
-
-    this.state = { kind: "resolvedUnbounded", resolvedAtMs };
+    this.state = { kind: "resolvedUnbounded" };
     this.cumulativeShares = null;
     this.recordRenderChange(0);
     return true;
@@ -172,10 +158,7 @@ export class PressureFrontierMemory {
       this.state.kind === "unobserved"
         ? ({ kind: "unobserved" } as const)
         : this.state.kind === "resolvedUnbounded"
-          ? ({
-              kind: "resolvedUnbounded",
-              resolvedAtMs: this.state.resolvedAtMs,
-            } as const)
+          ? ({ kind: "resolvedUnbounded" } as const)
           : ({
               kind: "observed",
               validThroughMs: this.state.validThroughMs,
@@ -194,10 +177,7 @@ export class PressureFrontierMemory {
       parsed.state.kind === "unobserved"
         ? { kind: "unobserved" }
         : parsed.state.kind === "resolvedUnbounded"
-          ? {
-              kind: "resolvedUnbounded",
-              resolvedAtMs: parsed.state.resolvedAtMs,
-            }
+          ? { kind: "resolvedUnbounded" }
           : {
               kind: "observed",
               validThroughMs: parsed.state.validThroughMs,
@@ -483,8 +463,7 @@ export class PressureFrontierMemory {
 
   private currentValidThroughMs(): number | undefined {
     if (this.state.kind === "observed") return this.state.validThroughMs;
-    if (this.state.kind === "resolvedUnbounded")
-      return this.state.resolvedAtMs ?? undefined;
+    if (this.state.kind === "resolvedUnbounded") return undefined;
     return undefined;
   }
 

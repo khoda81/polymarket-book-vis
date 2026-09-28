@@ -31,7 +31,6 @@ export type PressureFrontierState =
     }
   | {
       readonly kind: "resolvedUnbounded";
-      readonly resolvedAtMs: number | null;
     };
 
 export interface PressureFrontierSnapshot {
@@ -86,19 +85,20 @@ function parseState(
         "resolved-unbounded pressure requires snapshot version " +
           PRESSURE_FRONTIER_SNAPSHOT_VERSION,
       );
+
+    // Transitional compatibility: early v7 snapshots carried resolvedAtMs.
+    // It never affected the unbounded field, so validate and discard it.
     assertOnlyKeys(
       value,
       ["kind", "resolvedAtMs"],
       "resolved-unbounded pressure frontier state",
     );
-    const resolvedAtMs =
-      value.resolvedAtMs === null
-        ? null
-        : nonNegativeNumber(
-            value.resolvedAtMs,
-            "pressure frontier resolution timestamp",
-          );
-    return { kind: "resolvedUnbounded", resolvedAtMs };
+    if (value.resolvedAtMs !== undefined && value.resolvedAtMs !== null)
+      nonNegativeNumber(
+        value.resolvedAtMs,
+        "pressure frontier resolution timestamp",
+      );
+    return { kind: "resolvedUnbounded" };
   }
 
   if (value.kind !== "observed")

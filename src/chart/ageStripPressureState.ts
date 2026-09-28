@@ -229,7 +229,7 @@ export class AgeStripPressureState {
   ): void {
     const state = this.ensure(tokenId, resolvedAtMs);
     if (unbounded) {
-      state.memory.resolveUnbounded(resolvedAtMs);
+      state.memory.resolveUnbounded();
       this.setExtents(tokenId, [FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT]);
     } else {
       state.memory.resolveZeroFuture(resolvedAtMs);
