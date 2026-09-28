@@ -140,11 +140,7 @@ export class AgeStripTooltip {
     const centerCss = ageStripRowCenterY(geometry, row);
     const rowOrientation =
       this.host.getRowOrientation?.() ?? DEFAULT_AGE_ROW_ORIENTATION;
-    const sourceSide = agePressureSourceSideAtY(
-      sy,
-      centerCss,
-      rowOrientation,
-    );
+    const sourceSide = agePressureSourceSideAtY(sy, centerCss, rowOrientation);
     const perspective = agePressurePerspective(sourceSide, rowOrientation);
 
     const sourceTokenId =
