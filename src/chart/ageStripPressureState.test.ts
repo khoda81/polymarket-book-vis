@@ -220,3 +220,23 @@ test("observed resolution time freezes loser history through resolution", () => 
     { loVolume: 0, hiVolume: 40, validThroughMs: 2_000 },
   ]);
 });
+
+test("row timing uses history from either token", () => {
+  const state = new AgeStripPressureState();
+  state.configure([
+    { tokenId: "yes", resolutionMs: 10_000 },
+    { tokenId: "no", resolutionMs: 10_000 },
+  ]);
+
+  state.setRecordingCoverage({ no: 2_000 });
+  expect(state.rowTiming("yes", "no")).toMatchObject({
+    recordingSinceMs: 2_000,
+    resolutionMs: 10_000,
+  });
+
+  state.setRecordingCoverage({ yes: 1_000 });
+  expect(state.rowTiming("yes", "no")).toMatchObject({
+    recordingSinceMs: 1_000,
+    resolutionMs: 10_000,
+  });
+});
