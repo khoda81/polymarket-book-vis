@@ -9,7 +9,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "proto:generate": "buf generate",
+    "proto:check": "buf lint && buf generate && git diff --exit-code -- src/gen"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
@@ -18,9 +20,12 @@
     "prettier-plugin-svelte": "4.1.1",
     "svelte": "^5.57.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "@bufbuild/buf": "1.73.0",
+    "@bufbuild/protoc-gen-es": "2.15.0"
   },
   "dependencies": {
-    "@polymarket/client": "^0.11.0"
+    "@polymarket/client": "^0.11.0",
+    "@bufbuild/protobuf": "2.15.0"
   }
 }
