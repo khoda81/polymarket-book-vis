@@ -1,6 +1,14 @@
-import type { AgeRowOrientation } from "../chart/ageStripOrientation";
+import {
+  isAgeRowOrientation,
+  type AgeRowOrientation,
+} from "../chart/ageStripOrientation";
+import type { Event, Series } from "@polymarket/client";
 
 const STORAGE_KEY = "polymarket-book-vis:age-row-orientation:v1";
+
+export type AgeRowOrientationStorageKey =
+  | { readonly kind: "event"; readonly id: Event["id"] }
+  | { readonly kind: "series"; readonly id: Series["id"] };
 
 interface KeyValueStorage {
   getItem(key: string): string | null;
@@ -8,20 +16,24 @@ interface KeyValueStorage {
 }
 
 export function loadStoredAgeRowOrientation(
-  eventId: string,
+  key: AgeRowOrientationStorageKey,
   storage: KeyValueStorage = localStorage,
 ): AgeRowOrientation | null {
-  return readOrientations(storage)[eventId] ?? null;
+  return readOrientations(storage)[storageKey(key)] ?? null;
 }
 
 export function persistAgeRowOrientation(
-  eventId: string,
+  key: AgeRowOrientationStorageKey,
   orientation: AgeRowOrientation,
   storage: KeyValueStorage = localStorage,
 ): void {
   const orientations = readOrientations(storage);
-  orientations[eventId] = orientation;
+  orientations[storageKey(key)] = orientation;
   storage.setItem(STORAGE_KEY, JSON.stringify(orientations));
+}
+
+function storageKey(key: AgeRowOrientationStorageKey): string {
+  return `${key.kind}:${key.id}`;
 }
 
 function readOrientations(
@@ -36,10 +48,8 @@ function readOrientations(
       return {};
 
     const orientations: Record<string, AgeRowOrientation> = {};
-    for (const [eventId, value] of Object.entries(parsed)) {
-      if (value === "positive-above" || value === "negative-above")
-        orientations[eventId] = value;
-    }
+    for (const [key, value] of Object.entries(parsed))
+      if (isAgeRowOrientation(value)) orientations[key] = value;
     return orientations;
   } catch {
     return {};
