@@ -183,7 +183,7 @@ export class SeriesTimelineView {
       getPressureColorScale: (tokenId) =>
         this.scaleByToken.get(tokenId) ??
         this.scaleByToken.get(
-          String(this.marketByToken.get(tokenId)?.outcomes.yes.tokenId ?? ""),
+          this.marketByToken.get(tokenId)?.outcomes.yes.tokenId ?? "",
         ) ??
         DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     });
@@ -357,7 +357,7 @@ export class SeriesTimelineView {
         for (const [marketIndex, market] of row.event.markets.entries()) {
           const tokenId = market.outcomes.yes.tokenId;
           if (!tokenId) continue;
-          const key = String(tokenId);
+          const key = tokenId;
           keepTokens.add(key);
           this.scaleByToken.set(
             key,
@@ -368,7 +368,7 @@ export class SeriesTimelineView {
 
           const oppositeTokenId = market.outcomes.no.tokenId;
           if (oppositeTokenId) {
-            const oppositeKey = String(oppositeTokenId);
+            const oppositeKey = oppositeTokenId;
             keepTokens.add(oppositeKey);
             this.marketByToken.set(oppositeKey, market);
             this.pressure.ensure(oppositeKey, row.endMs);
@@ -453,8 +453,8 @@ export class SeriesTimelineView {
       const lifecycle = this.marketLifecycle(market);
       const oppositeTokenId = market.outcomes.no.tokenId;
       if (lifecycle.kind !== "resolved") {
-        hydratableTokens.push(String(tokenId));
-        if (oppositeTokenId) hydratableTokens.push(String(oppositeTokenId));
+        hydratableTokens.push(tokenId);
+        if (oppositeTokenId) hydratableTokens.push(oppositeTokenId);
       }
       if (lifecycle.kind === "live") {
         bufferedTokens.push(tokenId);
@@ -473,7 +473,7 @@ export class SeriesTimelineView {
       const tokenId = market?.outcomes.yes.tokenId;
       if (!market || !tokenId) continue;
 
-      const key = String(tokenId);
+      const key = tokenId;
       const scale = this.pressureScale(row.event, market);
       const lifecycle = this.marketLifecycle(market);
       const rowOffsetCss = seriesRowOffsetCss(frame, row.centerMs);
@@ -493,7 +493,7 @@ export class SeriesTimelineView {
 
       const primaryMemory = this.pressure.memory(key);
       const oppositeTokenId = market.outcomes.no.tokenId;
-      const oppositeKey = oppositeTokenId ? String(oppositeTokenId) : null;
+      const oppositeKey = oppositeTokenId ?? null;
       const oppositeMemory = oppositeKey
         ? this.pressure.memory(oppositeKey)
         : undefined;
@@ -701,9 +701,9 @@ export class SeriesTimelineView {
 
         return [
           {
-            tokenId: String(tokenId),
+            tokenId,
             oppositeTokenId: market.outcomes.no.tokenId
-              ? String(market.outcomes.no.tokenId)
+              ? market.outcomes.no.tokenId
               : undefined,
             centerY: raster.centerCss,
             topY: raster.topCss,
@@ -722,7 +722,7 @@ export class SeriesTimelineView {
   private pressureScale(event: Event, market: Market): SignedVolumeColorScale {
     const tokenId = market.outcomes.yes.tokenId;
     if (tokenId) {
-      const cached = this.scaleByToken.get(String(tokenId));
+      const cached = this.scaleByToken.get(tokenId);
       if (cached) return cached;
     }
 
@@ -772,7 +772,7 @@ export class SeriesTimelineView {
       },
       onBookUpdated: (tokenId, book, update) => {
         if (this.destroyed || generation !== this.feedGeneration) return;
-        const key = String(tokenId);
+        const key = tokenId;
         this.bookCache.set(key, book);
         this.pressure.applyBookUpdate(key, book, update);
         this.requestDraw();
@@ -836,7 +836,7 @@ export class SeriesTimelineView {
           : best,
       );
 
-    const id = String(anchor.event.id);
+    const id = anchor.event.id;
     if (id === this.lastAnchorEventId) return;
     this.lastAnchorEventId = id;
     this.onAnchorEventChanged(anchor.event);
