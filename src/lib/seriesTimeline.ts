@@ -160,7 +160,7 @@ export async function loadSeriesEventsAround(
 ): Promise<Event[]> {
   const seriesId = Number(series.id);
   if (!Number.isSafeInteger(seriesId) || seriesId <= 0)
-    throw new Error(`Series id ${String(series.id)} is not numeric`);
+    throw new Error(`Series id ${series.id} is not numeric`);
 
   const cadenceMs =
     Number.isFinite(cadenceHintMs) && cadenceHintMs > 0
