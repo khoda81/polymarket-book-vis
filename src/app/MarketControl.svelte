@@ -41,8 +41,6 @@
   data-market-order={control.order}
   data-age-label={control.ageLabel}
   data-age-status={ageStatus}
-  data-age-resolution-side={resolutionSide}
-  data-age-resolution-outcome={resolutionOutcome}
   data-age-suppress-market-identity={control.suppressAgeIdentity}
   title={control.title}
   style={resolutionColor

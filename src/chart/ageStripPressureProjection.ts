@@ -1,3 +1,4 @@
+import type { PressureExtent } from "@/lib/pressureField";
 import type { PressureRun } from "@/lib/pressureFrontierSnapshot";
 import { PRICE_SCALE, priceFromTicks, type Price } from "@/lib/price";
 import {
@@ -60,6 +61,8 @@ export function agePressureSurface(
   cumulativeShares: readonly number[],
   firstChangedRunSince: (revision: number) => number,
   currentValidThroughMs: number | undefined,
+  extents: readonly PressureExtent[],
+  extentRevision: number,
   colorScale: SignedVolumeColorScale,
   sourceSide: AgePressureSide,
   orientation: AgeRowOrientation,
@@ -73,10 +76,23 @@ export function agePressureSurface(
     cumulativeShares,
     firstChangedRunSince,
     currentValidThroughMs,
+    extents,
+    extentRevision,
     color: signedVolumeColor(perspective.colorSign, colorScale),
     mirrorPrice: perspective.mirrorPrice,
     yDirection: perspective.yDirection,
   };
+}
+
+export function agePressureSourceTokenForSemanticToken(
+  primaryTokenId: string,
+  oppositeTokenId: string | null | undefined,
+  semanticTokenId: string,
+): string | null {
+  if (semanticTokenId === primaryTokenId) return oppositeTokenId ?? null;
+  if (oppositeTokenId && semanticTokenId === oppositeTokenId)
+    return primaryTokenId;
+  return null;
 }
 
 export function agePressureSourceSideAtY(

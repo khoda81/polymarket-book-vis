@@ -177,17 +177,26 @@ export class ChartController {
       throw new Error(`ChartController cannot start from ${this.lifecycle}`);
     this.lifecycle = "started";
 
-    const unresolvedControls = this.definition.controls.filter(
-      (control) => control.lifecycle.kind !== "resolved",
-    );
-    const tokenIds = [
+    const allTokenIds = [
       ...new Set(
-        unresolvedControls.flatMap((control) => {
+        this.definition.controls.flatMap((control) => {
           const oppositeTokenId = control.market.outcomes.no.tokenId;
           return oppositeTokenId
             ? [control.tokenId, oppositeTokenId]
             : [control.tokenId];
         }),
+      ),
+    ];
+    const liveTokenIds = [
+      ...new Set(
+        this.definition.controls
+          .filter((control) => control.lifecycle.kind !== "resolved")
+          .flatMap((control) => {
+            const oppositeTokenId = control.market.outcomes.no.tokenId;
+            return oppositeTokenId
+              ? [control.tokenId, oppositeTokenId]
+              : [control.tokenId];
+          }),
       ),
     ];
 
@@ -197,20 +206,17 @@ export class ChartController {
 
     this.ageView.configureMarkets(this.definition.controls);
 
-    // Resolved rows have their own semantic rendering and tooltip; pulling
-    // their historical pressure into the browser only wastes memory/CPU.
-    if (tokenIds.length > 0) {
-      // Recorder registration/metadata is optional and must never gate the live
-      // websocket.
-      void fetchRecorderHydration(tokenIds).then((hydration) => {
+    // Historical pressure remains meaningful after resolution, so hydrate every
+    // displayed token. Only unresolved markets need a live websocket feed.
+    if (allTokenIds.length > 0)
+      void fetchRecorderHydration(allTokenIds).then((hydration) => {
         if (this.lifecycle === "destroyed") return;
         this.ageView.setRecordingCoverage(hydration.recordingSinceMsByToken);
         this.ageView.hydratePressureMemory(hydration.pressureSnapshotsByToken);
         this.reqDraw();
       });
 
-      await this.feed.start(tokenIds);
-    }
+    if (liveTokenIds.length > 0) await this.feed.start(liveTokenIds);
     if (this.lifecycle === "started") this.reqDraw();
   }
 
@@ -306,7 +312,8 @@ export class ChartController {
 
       this.lifecycleByMarketId.set(control.market.id, next);
       this.activeTokens.add(control.tokenId);
-      this.ageView.resolveMarket(control.tokenId);
+      if (next.kind === "resolved")
+        this.ageView.resolveMarket(control.tokenId, next.winningTokenId);
       this.onMarketLifecycleChanged(control.market.id, next);
     }
     this.reqDraw();

@@ -1,6 +1,14 @@
 import type { TokenBook } from "@/lib/orderBook";
+import {
+  PRESSURE_MIN_VISIBLE_ALPHA,
+  pressureExtentContains,
+  pressureValidityAlpha,
+  type PressureExtent,
+  type PressureFieldBand,
+} from "@/lib/pressureField";
 import { PressureFrontierMemory } from "@/lib/pressureFrontierMemory";
 import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
+import type { Price } from "@/lib/price";
 import {
   tokenPressureChanges,
   tokenPressureLevels,
@@ -15,6 +23,8 @@ export interface AgeStripPressureTiming {
 
 interface PressureState extends AgeStripPressureTiming {
   readonly memory: PressureFrontierMemory;
+  readonly extents: readonly PressureExtent[];
+  readonly extentRevision: number;
 }
 
 /** Token-local timestamped pressure histories used by age views. */
@@ -33,6 +43,8 @@ export class AgeStripPressureState {
         resolutionMs,
         validThroughMs: null,
         memory: new PressureFrontierMemory(),
+        extents: [],
+        extentRevision: 0,
       };
       this.states.set(tokenId, state);
     } else if (
@@ -59,6 +71,55 @@ export class AgeStripPressureState {
   retain(tokenIds: ReadonlySet<string>): void {
     for (const tokenId of this.states.keys())
       if (!tokenIds.has(tokenId)) this.states.delete(tokenId);
+  }
+
+  setExtents(tokenId: string, extents: readonly PressureExtent[]): void {
+    const current = this.ensure(tokenId);
+    if (pressureExtentsEqual(current.extents, extents)) return;
+    this.states.set(tokenId, {
+      ...current,
+      extents: [...extents],
+      extentRevision: current.extentRevision + 1,
+    });
+  }
+
+  renderExtents(tokenId: string): readonly PressureExtent[] {
+    return this.states.get(tokenId)?.extents ?? [];
+  }
+
+  renderExtentRevision(tokenId: string): number {
+    return this.states.get(tokenId)?.extentRevision ?? 0;
+  }
+
+  bandAtPoint(
+    tokenId: string,
+    price: Price,
+    volume: number,
+  ): PressureFieldBand | undefined {
+    const state = this.states.get(tokenId);
+    if (!state) return undefined;
+
+    for (let index = state.extents.length - 1; index >= 0; index--) {
+      const extent = state.extents[index]!;
+      if (!pressureExtentContains(extent, price, volume)) continue;
+      return {
+        loVolume: extent.loVolume,
+        hiVolume: extent.hiVolume,
+        validity: extent.validity,
+      };
+    }
+
+    const band = state.memory.bandAtPoint(price, volume);
+    return band
+      ? {
+          loVolume: band.loVolume,
+          hiVolume: { kind: "finite", shares: band.hiVolume },
+          validity: {
+            kind: "through",
+            validThroughMs: band.validThroughMs,
+          },
+        }
+      : undefined;
   }
 
   setRecordingCoverage(
@@ -127,10 +188,6 @@ export class AgeStripPressureState {
     state.memory.observeThrough(update.validThroughMs);
   }
 
-  resolve(tokenId: string): void {
-    this.states.get(tokenId)?.memory.clear();
-  }
-
   memory(tokenId: string): PressureFrontierMemory | undefined {
     return this.states.get(tokenId)?.memory;
   }
@@ -144,9 +201,43 @@ export class AgeStripPressureState {
     nowMs: number,
     halfLifeMs: number,
   ): boolean {
-    return (
-      this.states.get(tokenId)?.memory.hasVisiblePressure(nowMs, halfLifeMs) ??
-      false
-    );
+    const state = this.states.get(tokenId);
+    if (!state) return false;
+
+    if (
+      state.extents.some(
+        (extent) =>
+          pressureValidityAlpha(extent.validity, nowMs, halfLifeMs) >
+          PRESSURE_MIN_VISIBLE_ALPHA,
+      )
+    )
+      return true;
+
+    return state.memory.hasVisiblePressure(nowMs, halfLifeMs);
   }
+}
+
+function pressureExtentsEqual(
+  a: readonly PressureExtent[],
+  b: readonly PressureExtent[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every((extent, index) => {
+      const other = b[index]!;
+      return (
+        extent.priceLo === other.priceLo &&
+        extent.priceHi === other.priceHi &&
+        extent.loVolume === other.loVolume &&
+        extent.hiVolume.kind === other.hiVolume.kind &&
+        (extent.hiVolume.kind === "unbounded" ||
+          (other.hiVolume.kind === "finite" &&
+            extent.hiVolume.shares === other.hiVolume.shares)) &&
+        extent.validity.kind === other.validity.kind &&
+        (extent.validity.kind === "persistent" ||
+          (other.validity.kind === "through" &&
+            extent.validity.validThroughMs === other.validity.validThroughMs))
+      );
+    })
+  );
 }

@@ -7,12 +7,15 @@ import {
   type AgeStripGeometry,
 } from "./ageStripLayout";
 import { AgeStripPressureState } from "./ageStripPressureState";
-import { agePressureSurface } from "./ageStripPressureProjection";
+import {
+  agePressureSourceTokenForSemanticToken,
+  agePressureSurface,
+} from "./ageStripPressureProjection";
 import {
   DEFAULT_AGE_ROW_ORIENTATION,
   type AgeRowOrientation,
 } from "./ageStripOrientation";
-import { drawAgeRowRails, drawResolvedMarketStrip } from "./ageStripRendering";
+import { drawAgeRowRails } from "./ageStripRendering";
 import { GpuPressureLayer, type GpuPressureRow } from "./gpuPressureLayer";
 import { LiveBookFeed } from "./liveBookFeed";
 import { fetchRecorderHydration } from "@/lib/ageRecorderClient";
@@ -23,6 +26,7 @@ import {
 } from "@/lib/ageStripTuning";
 import { defaultPressureScaleForMarket } from "@/lib/chartDefinition";
 import type { TokenBook } from "@/lib/orderBook";
+import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "@/lib/pressureField";
 import {
   initialMarketLifecycle,
   resolveMarketLifecycle,
@@ -169,7 +173,8 @@ export class SeriesTimelineView {
     this.tooltip = new AgeStripTooltip({
       canvas,
       getViewMode: () => "age",
-      getPressureMemory: (tokenId) => this.pressure.memory(tokenId),
+      getPressureBand: (tokenId, price, volume) =>
+        this.pressure.bandAtPoint(tokenId, price, volume),
       getRowOrientation: () => this.ageRowOrientation,
       getTokenName: (tokenId) => {
         const market = this.marketByToken.get(tokenId);
@@ -373,6 +378,18 @@ export class SeriesTimelineView {
             this.marketByToken.set(oppositeKey, market);
             this.pressure.ensure(oppositeKey, row.endMs);
           }
+
+          const lifecycle = this.marketLifecycle(market);
+          if (lifecycle.kind === "resolved")
+            this.applyResolvedPressure(
+              tokenId,
+              oppositeTokenId,
+              lifecycle.winningTokenId,
+            );
+          else {
+            this.pressure.setExtents(tokenId, []);
+            if (oppositeTokenId) this.pressure.setExtents(oppositeTokenId, []);
+          }
         }
       }
 
@@ -452,10 +469,8 @@ export class SeriesTimelineView {
 
       const lifecycle = this.marketLifecycle(market);
       const oppositeTokenId = market.outcomes.no.tokenId;
-      if (lifecycle.kind !== "resolved") {
-        hydratableTokens.push(tokenId);
-        if (oppositeTokenId) hydratableTokens.push(oppositeTokenId);
-      }
+      hydratableTokens.push(tokenId);
+      if (oppositeTokenId) hydratableTokens.push(oppositeTokenId);
       if (lifecycle.kind === "live") {
         bufferedTokens.push(tokenId);
         if (oppositeTokenId) bufferedTokens.push(oppositeTokenId);
@@ -475,22 +490,6 @@ export class SeriesTimelineView {
 
       const key = tokenId;
       const scale = this.pressureScale(row.event, market);
-      const lifecycle = this.marketLifecycle(market);
-      const rowOffsetCss = seriesRowOffsetCss(frame, row.centerMs);
-
-      if (lifecycle.kind === "resolved") {
-        const primaryWon = lifecycle.winningTokenId === tokenId;
-        drawResolvedMarketStrip(
-          frame,
-          row.centerMs,
-          primaryWon ? "primary" : "opposite",
-          lifecycle.winningOutcome,
-          scale,
-          rowOffsetCss,
-        );
-        continue;
-      }
-
       const primaryMemory = this.pressure.memory(key);
       const oppositeTokenId = market.outcomes.no.tokenId;
       const oppositeKey = oppositeTokenId ?? null;
@@ -516,6 +515,8 @@ export class SeriesTimelineView {
                   (revision) =>
                     primaryMemory.renderFirstChangedRunSince(revision),
                   primaryMemory.renderCurrentValidThroughMs(),
+                  this.pressure.renderExtents(key),
+                  this.pressure.renderExtentRevision(key),
                   scale,
                   "primary",
                   this.ageRowOrientation,
@@ -533,6 +534,8 @@ export class SeriesTimelineView {
                   (revision) =>
                     oppositeMemory.renderFirstChangedRunSince(revision),
                   oppositeMemory.renderCurrentValidThroughMs(),
+                  this.pressure.renderExtents(oppositeKey!),
+                  this.pressure.renderExtentRevision(oppositeKey!),
                   scale,
                   "opposite",
                   this.ageRowOrientation,
@@ -686,18 +689,6 @@ export class SeriesTimelineView {
         if (!tokenId) return [];
 
         const raster = seriesRowGeometry(frame, row.centerMs, dpr);
-        const lifecycle = this.marketLifecycle(market);
-        const resolution =
-          lifecycle.kind === "resolved"
-            ? {
-                side:
-                  lifecycle.winningTokenId === tokenId
-                    ? ("primary" as const)
-                    : ("opposite" as const),
-                outcome: lifecycle.winningOutcome,
-                marketEndMs: row.endMs,
-              }
-            : undefined;
 
         return [
           {
@@ -708,7 +699,6 @@ export class SeriesTimelineView {
             centerY: raster.centerCss,
             topY: raster.topCss,
             bottomY: raster.topCss + raster.heightCss,
-            resolution,
           },
         ];
       }),
@@ -753,6 +743,25 @@ export class SeriesTimelineView {
     );
   }
 
+  private applyResolvedPressure(
+    primaryTokenId: string,
+    oppositeTokenId: string | null,
+    winningTokenId: string,
+  ): void {
+    this.pressure.setExtents(primaryTokenId, []);
+    if (oppositeTokenId) this.pressure.setExtents(oppositeTokenId, []);
+
+    const sourceTokenId = agePressureSourceTokenForSemanticToken(
+      primaryTokenId,
+      oppositeTokenId,
+      winningTokenId,
+    );
+    if (sourceTokenId)
+      this.pressure.setExtents(sourceTokenId, [
+        FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT,
+      ]);
+  }
+
   private refreshFeed(tokenIds: readonly TokenId[]): void {
     const unique = [...new Set(tokenIds)].sort();
     const key = unique.join(",");
@@ -783,8 +792,21 @@ export class SeriesTimelineView {
         for (const assetId of resolution.assetIds) {
           this.resolutionByAsset.set(assetId, resolution);
           this.bookCache.delete(assetId);
-          this.pressure.resolve(assetId);
         }
+
+        for (const row of this.rows) {
+          const market = primaryMarket(row.event);
+          const tokenId = market?.outcomes.yes.tokenId;
+          if (!market || !tokenId) continue;
+          const lifecycle = this.marketLifecycle(market);
+          if (lifecycle.kind !== "resolved") continue;
+          this.applyResolvedPressure(
+            tokenId,
+            market.outcomes.no.tokenId,
+            lifecycle.winningTokenId,
+          );
+        }
+
         this.pressureLayer.invalidate();
         this.requestDraw();
       },
@@ -938,13 +960,6 @@ function relativeCadenceLabel(offset: number, cadenceMs: number): string {
 function formatCompactDuration(value: number): string {
   const rounded = Math.round(value * 10) / 10;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
-}
-
-function seriesRowOffsetCss(frame: Frame, y: number): number {
-  const dpr = window.devicePixelRatio || 1;
-  const desiredCenter = frame.toScreenY(0, y);
-  const snapped = rowRasterGeometry(desiredCenter, dpr);
-  return desiredCenter - snapped.centerCss;
 }
 
 function seriesRowGeometry(frame: Frame, y: number, dpr: number) {
