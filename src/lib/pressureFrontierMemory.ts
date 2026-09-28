@@ -170,19 +170,23 @@ export class PressureFrontierMemory {
   }
 
   snapshot(): PressureFrontierSnapshot {
-    if (this.state.kind === "unobserved")
-      return {
-        version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-        state: { kind: "unobserved" },
-      };
+    const state =
+      this.state.kind === "unobserved"
+        ? ({ kind: "unobserved" } as const)
+        : this.state.kind === "resolvedUnbounded"
+          ? ({
+              kind: "resolvedUnbounded",
+              resolvedAtMs: this.state.resolvedAtMs,
+            } as const)
+          : ({
+              kind: "observed",
+              validThroughMs: this.state.validThroughMs,
+              runs: this.state.runs.map(cloneRun),
+            } as const);
 
     return {
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-      state: {
-        kind: "observed",
-        validThroughMs: this.state.validThroughMs,
-        runs: this.state.runs.map(cloneRun),
-      },
+      state,
     };
   }
 
@@ -191,11 +195,16 @@ export class PressureFrontierMemory {
     this.state =
       parsed.state.kind === "unobserved"
         ? { kind: "unobserved" }
-        : {
-            kind: "observed",
-            validThroughMs: parsed.state.validThroughMs,
-            runs: parsed.state.runs.map(cloneRun),
-          };
+        : parsed.state.kind === "resolvedUnbounded"
+          ? {
+              kind: "resolvedUnbounded",
+              resolvedAtMs: parsed.state.resolvedAtMs,
+            }
+          : {
+              kind: "observed",
+              validThroughMs: parsed.state.validThroughMs,
+              runs: parsed.state.runs.map(cloneRun),
+            };
     this.cumulativeShares = null;
     this.recordRenderChange(0);
   }
@@ -294,7 +303,7 @@ export class PressureFrontierMemory {
     halfLifeMs: number,
     minAlpha = 1 / 255,
   ): boolean {
-    if (this.state.kind === "unobserved") return false;
+    if (this.state.kind !== "observed") return false;
     const visibleSince = visibleSinceMs(nowMs, halfLifeMs, minAlpha);
 
     if (
@@ -308,15 +317,8 @@ export class PressureFrontierMemory {
     );
   }
 
-  clear(): void {
-    if (this.state.kind === "unobserved") return;
-    this.state = { kind: "unobserved" };
-    this.cumulativeShares = null;
-    this.recordRenderChange(0);
-  }
-
   currentLevels(): readonly PressureLevel[] {
-    if (this.state.kind === "unobserved") return [];
+    if (this.state.kind !== "observed") return [];
     return this.state.runs.flatMap((run) =>
       run.shares > 0 ? [{ price: run.price, shares: run.shares }] : [],
     );
@@ -326,6 +328,7 @@ export class PressureFrontierMemory {
     validThroughMs: number,
   ): Extract<MutablePressureState, { kind: "observed" }> {
     if (this.state.kind === "observed") return this.state;
+    this.ensureMutable();
     const observed: Extract<MutablePressureState, { kind: "observed" }> = {
       kind: "observed",
       validThroughMs,
@@ -421,7 +424,7 @@ export class PressureFrontierMemory {
     price: Price,
   ): { run: MutableRun; currentVolume: number } | undefined {
     if (
-      this.state.kind === "unobserved" ||
+      this.state.kind !== "observed" ||
       price <= PRICE_ZERO ||
       price > PRICE_ONE
     )
@@ -481,17 +484,33 @@ export class PressureFrontierMemory {
   }
 
   private currentValidThroughMs(): number | undefined {
-    return this.state.kind === "observed"
-      ? this.state.validThroughMs
-      : undefined;
+    if (this.state.kind === "observed") return this.state.validThroughMs;
+    if (this.state.kind === "resolvedUnbounded")
+      return this.state.resolvedAtMs ?? undefined;
+    return undefined;
   }
 
-  private normalizeTime(value: number): number {
-    if (!Number.isFinite(value))
-      throw new RangeError("pressure frontier timestamp must be finite");
-    const previous = this.currentValidThroughMs();
-    return previous === undefined ? value : Math.max(value, previous);
+  private ensureMutable(): void {
+    if (this.state.kind === "resolvedUnbounded")
+      throw new RangeError("resolved unbounded pressure is terminal");
   }
+
+  private requireMonotonicTime(value: number): number {
+    if (!Number.isFinite(value) || value < 0)
+      throw new RangeError(
+        "pressure frontier timestamp must be finite and non-negative",
+      );
+    const previous = this.currentValidThroughMs();
+    if (previous !== undefined && value < previous)
+      throw new RangeError(
+        "pressure frontier timestamp moved backward: " +
+          value +
+          " < " +
+          previous,
+      );
+    return value;
+  }
+
 }
 
 function normalizeLevels(
