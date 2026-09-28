@@ -74,10 +74,7 @@ export class AgeStripView {
       getViewMode: host.getViewMode,
       getTheme: host.getTheme,
       getTiming: (tokenId) =>
-        this.pressure.rowTiming(
-          tokenId,
-          this.host.getOppositeTokenId(tokenId),
-        ),
+        this.pressure.rowTiming(tokenId, this.host.getOppositeTokenId(tokenId)),
     });
     this.tooltip = new AgeStripTooltip({
       canvas: host.canvas,
