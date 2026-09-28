@@ -2,7 +2,7 @@ import { fromBinary } from "@bufbuild/protobuf";
 import {
   RecorderStateResponseSchema,
   type PressureFrontierSnapshot as WirePressureFrontierSnapshot,
-} from "../gen/polymarket_book_recorder/pressure/v7/recorder_state_pb";
+} from "../gen/polymarket_book_recorder/pressure/v8/recorder_state_pb";
 import {
   parsePressureFrontierSnapshot,
   type PressureFrontierSnapshot,
