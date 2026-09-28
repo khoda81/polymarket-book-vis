@@ -26,10 +26,7 @@ export interface AgePressurePerspective {
   readonly colorSign: -1 | 1;
 }
 
-type AgePressurePerspectiveBase = Omit<
-  AgePressurePerspective,
-  "yDirection"
->;
+type AgePressurePerspectiveBase = Omit<AgePressurePerspective, "yDirection">;
 
 const PRIMARY: AgePressurePerspectiveBase = {
   sourceSide: "primary",
@@ -89,10 +86,8 @@ export function agePressureSourceSideAtY(
   orientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
 ): AgePressureSide {
   const screenDirection = yCss >= centerCss ? 1 : -1;
-  return agePressurePerspective("primary", orientation).yDirection ===
-    screenDirection
-    ? "primary"
-    : "opposite";
+  const primaryDirection = ageRowYDirection(-1, orientation);
+  return screenDirection === primaryDirection ? "primary" : "opposite";
 }
 
 /** Convert screen-space normalized x into the source field's price coordinate. */
