@@ -144,3 +144,79 @@ test("removing a runtime extent reveals the historical field again", () => {
     validity: { kind: "through", validThroughMs: 1_000 },
   });
 });
+
+test("market watermark advances unchanged token pressure", () => {
+  const state = new AgeStripPressureState();
+  const book = emptyTokenBook();
+  book.yesToUsd.setLevel(p(0.65), 70);
+
+  state.applyBookUpdate("token", book, {
+    kind: "snapshot",
+    validThroughMs: 1_000,
+  });
+  state.applyBookUpdate("token", book, {
+    kind: "watermark",
+    validThroughMs: 2_500,
+  });
+
+  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+    { loVolume: 0, hiVolume: 70, validThroughMs: 2_500 },
+  ]);
+});
+
+test("unbounded terminal pressure discards dominated finite history", () => {
+  const state = new AgeStripPressureState();
+  const book = emptyTokenBook();
+  book.yesToUsd.setLevel(p(0.6), 40);
+
+  state.applyBookUpdate("token", book, {
+    kind: "snapshot",
+    validThroughMs: 1_000,
+  });
+  state.resolveSource("token", true, 2_000);
+
+  expect(state.memory("token")!.isResolvedUnbounded()).toBe(true);
+  expect(state.memory("token")!.snapshot()).toEqual({
+    version: 7,
+    state: { kind: "resolvedUnbounded", resolvedAtMs: 2_000 },
+  });
+  expect(state.bandAtPoint("token", p(0.7), 1_000_000)).toEqual({
+    loVolume: 0,
+    hiVolume: { kind: "unbounded" },
+    validity: { kind: "persistent" },
+  });
+});
+
+test("unknown resolution time never extends loser history", () => {
+  const state = new AgeStripPressureState();
+  const book = emptyTokenBook();
+  book.yesToUsd.setLevel(p(0.6), 40);
+
+  state.applyBookUpdate("token", book, {
+    kind: "snapshot",
+    validThroughMs: 1_000,
+  });
+  state.resolveSource("token", false, null);
+
+  expect(state.memory("token")!.currentLevels()).toEqual([]);
+  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+    { loVolume: 0, hiVolume: 40, validThroughMs: 1_000 },
+  ]);
+});
+
+test("observed resolution time freezes loser history through resolution", () => {
+  const state = new AgeStripPressureState();
+  const book = emptyTokenBook();
+  book.yesToUsd.setLevel(p(0.6), 40);
+
+  state.applyBookUpdate("token", book, {
+    kind: "snapshot",
+    validThroughMs: 1_000,
+  });
+  state.resolveSource("token", false, 2_000);
+
+  expect(state.memory("token")!.currentLevels()).toEqual([]);
+  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+    { loVolume: 0, hiVolume: 40, validThroughMs: 2_000 },
+  ]);
+});
