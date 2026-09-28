@@ -484,7 +484,9 @@
       if (
         records.some(
           (record) =>
-            record.type === "childList" || record.attributeName === "hidden",
+            record.type === "childList" ||
+            record.attributeName === "hidden" ||
+            record.attributeName === "open",
         ) ||
         nextCanvasHeight !== canvasHeight
       ) {
@@ -494,7 +496,7 @@
     });
     mutations.observe(node, {
       attributes: true,
-      attributeFilter: ["style", "hidden"],
+      attributeFilter: ["style", "hidden", "open"],
       childList: true,
       subtree: true,
     });
