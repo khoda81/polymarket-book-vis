@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { Event, Series } from "@polymarket/client";
 import {
   loadStoredAgeRowOrientation,
   persistAgeRowOrientation,
@@ -16,10 +17,18 @@ class MemoryStorage {
   }
 }
 
+function mockEvent(id: string): Event {
+  return { id } as unknown as Event;
+}
+
+function mockSeries(id: string): Series {
+  return { id } as unknown as Series;
+}
+
 test("age row orientation persists independently per typed card key", () => {
   const storage = new MemoryStorage();
-  const event = { kind: "event", id: "event-a" } as const;
-  const series = { kind: "series", id: "1" } as const;
+  const event = { kind: "event", id: mockEvent("event-a").id } as const;
+  const series = { kind: "series", id: mockSeries("1").id } as const;
 
   expect(loadStoredAgeRowOrientation(event, storage)).toBeNull();
 
@@ -32,8 +41,8 @@ test("age row orientation persists independently per typed card key", () => {
 
 test("invalid stored orientation data is ignored at the storage boundary", () => {
   const storage = new MemoryStorage();
-  const valid = { kind: "event", id: "valid" } as const;
-  const invalid = { kind: "event", id: "invalid" } as const;
+  const valid = { kind: "event", id: mockEvent("valid").id } as const;
+  const invalid = { kind: "event", id: mockEvent("invalid").id } as const;
   storage.setItem(
     "polymarket-book-vis:age-row-orientation:v1",
     JSON.stringify({
