@@ -22,7 +22,7 @@ export const NO_FEE_SCHEDULE: FeeSchedule = Object.freeze({
 
 export interface FeeScheduleResolver {
   prepareTokens(tokenIds: readonly TokenId[]): Promise<void>;
-  scheduleForToken(tokenId: TokenId): FeeSchedule | undefined;
+  scheduleForToken(tokenId: TokenId): FeeSchedule;
 }
 
 interface CachedMarketFee {
@@ -70,8 +70,11 @@ export class ClobFeeScheduleResolver implements FeeScheduleResolver {
     }
   }
 
-  scheduleForToken(tokenId: TokenId): FeeSchedule | undefined {
-    return this.marketByToken.get(tokenId)?.schedule;
+  scheduleForToken(tokenId: TokenId): FeeSchedule {
+    const schedule = this.marketByToken.get(tokenId)?.schedule;
+    if (!schedule)
+      throw new Error(`fee schedule was not prepared for token ${tokenId}`);
+    return schedule;
   }
 }
 
