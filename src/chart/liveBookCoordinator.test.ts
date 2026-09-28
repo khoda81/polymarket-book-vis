@@ -23,6 +23,8 @@ import type {
 const TOKEN_A = "1001" as TokenId;
 const TOKEN_B = "1002" as TokenId;
 const TOKEN_C = "1003" as TokenId;
+const MARKET_A = "market-a";
+const MARKET_B = "market-b";
 
 test("coalesces watches into one steady subscription and replays cached books", async () => {
   const client = new FakeClient();
@@ -176,74 +178,142 @@ test("hands subscription ownership over without replaying overlap events", async
   secondWatch.close();
 });
 
-test("reconciles REST snapshots with buffered websocket deltas once", async () => {
-  let nowMs = 1_000;
+test("identical REST snapshot safely confirms freshness without reconnecting", async () => {
   const client = new FakeClient();
   const refresh = new FakeRefreshScheduler();
-  const coordinator = createCoordinator(client, refresh, {
-    now: () => nowMs,
-  });
+  const coordinator = createCoordinator(client, refresh);
   const log = callbackLog();
   const watch = coordinator.watch([TOKEN_A], log.callbacks);
   await watch.ready;
-  const stream = client.latest();
-  stream.push(bookEvent(TOKEN_A, 900, "0.40", "0.60"));
+
+  client.latest().push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
   await flush();
+  log.updates.length = 0;
 
   refresh.start(TOKEN_A, 1, 2_000);
-  nowMs = 2_100;
-  stream.push(
-    priceChangeEvent(2_040, [
-      { tokenId: TOKEN_A, side: "BUY", price: "0.40", size: "12" },
-    ]),
-  );
-  stream.push(
-    priceChangeEvent(2_100, [
-      { tokenId: TOKEN_A, side: "BUY", price: "0.40", size: "20" },
-    ]),
-  );
-  await flush();
   refresh.snapshot(
     TOKEN_A,
     1,
     2_000,
     refreshSnapshot(TOKEN_A, 2_050, "0.40", "0.60", "10"),
   );
-  expect([...coordinator.getBook(TOKEN_A)!.usdToYes.asOrders()][0]?.take).toBe(
-    20,
-  );
+  await flush();
+
+  expect(client.streams).toHaveLength(1);
   expect(log.updates.at(-1)).toMatchObject({
     kind: "snapshot",
-    validThroughMs: 2_100,
+    validThroughMs: 2_000,
   });
+  watch.close();
+});
 
-  refresh.start(TOKEN_A, 2, 3_000);
-  nowMs = 3_100;
-  stream.push(bookEvent(TOKEN_A, 3_100, "0.45", "0.65"));
+test("differing REST snapshot forces a fresh websocket barrier", async () => {
+  const client = new FakeClient();
+  const refresh = new FakeRefreshScheduler();
+  const coordinator = createCoordinator(client, refresh);
+  const log = callbackLog();
+  const watch = coordinator.watch([TOKEN_A], log.callbacks);
+  await watch.ready;
+
+  client.latest().push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
   await flush();
+  const staleBook = coordinator.getBook(TOKEN_A);
+  if (!staleBook) throw new Error("expected cached book");
+
+  refresh.start(TOKEN_A, 1, 2_000);
   refresh.snapshot(
     TOKEN_A,
-    2,
-    3_000,
-    refreshSnapshot(TOKEN_A, 3_050, "0.30", "0.70", "100"),
+    1,
+    2_000,
+    refreshSnapshot(TOKEN_A, 2_050, "0.30", "0.70", "100"),
   );
+  await waitFor(() => client.streams.length === 2);
+
+  // The old book remains displayable but is inert on the new stream.
+  expect(coordinator.getBook(TOKEN_A)).toBe(staleBook);
+  const replacement = client.latest();
+  replacement.push(
+    priceChangeEvent(2_100, [
+      { tokenId: TOKEN_A, side: "BUY", price: "0.40", size: "99" },
+    ]),
+  );
+  await flush();
+  expect([...coordinator.getBook(TOKEN_A)!.usdToYes.asOrders()][0]?.take).toBe(
+    10,
+  );
+
+  replacement.push(bookEvent(TOKEN_A, 2_200, "0.45", "0.65"));
+  await flush();
   expect(canonicalSpread(coordinator.getBook(TOKEN_A)!)).toEqual({
     bid: parsePrice("0.45"),
     ask: parsePrice("0.65"),
   });
-
-  refresh.start(TOKEN_A, 3, 4_000);
-  const updatesBeforeClose = log.updates.length;
+  expect(log.updates.at(-1)).toMatchObject({
+    kind: "snapshot",
+    validThroughMs: 2_200,
+  });
   watch.close();
-  refresh.snapshot(
-    TOKEN_A,
-    3,
-    4_000,
-    refreshSnapshot(TOKEN_A, 4_050, "0.20", "0.80", "50"),
+});
+
+test("same-market events advance unchanged sibling tokens", async () => {
+  const client = new FakeClient();
+  const coordinator = createCoordinator(client, new FakeRefreshScheduler());
+  const log = callbackLog();
+  const watch = coordinator.watch([TOKEN_A, TOKEN_B], log.callbacks);
+  await watch.ready;
+
+  const stream = client.latest();
+  stream.push(bookEvent(TOKEN_A, 1_000, "0.40", "0.60", MARKET_A));
+  stream.push(bookEvent(TOKEN_B, 1_000, "0.30", "0.70", MARKET_A));
+  await flush();
+  log.updates.length = 0;
+
+  stream.push(
+    priceChangeEvent(
+      1_500,
+      [{ tokenId: TOKEN_A, side: "BUY", price: "0.40", size: "12" }],
+      MARKET_A,
+    ),
   );
   await flush();
-  expect(log.updates).toHaveLength(updatesBeforeClose);
-  expect(refresh.unwatched).toContain(TOKEN_A);
+
+  expect(log.updates.map(({ tokenId, kind, validThroughMs }) => [
+    tokenId,
+    kind,
+    validThroughMs,
+  ])).toEqual([
+    [TOKEN_B, "watermark", 1_500],
+    [TOKEN_A, "levels", 1_500],
+  ]);
+  watch.close();
+});
+
+test("different markets never cross-advance their watermarks", async () => {
+  const client = new FakeClient();
+  const coordinator = createCoordinator(client, new FakeRefreshScheduler());
+  const log = callbackLog();
+  const watch = coordinator.watch([TOKEN_A, TOKEN_B], log.callbacks);
+  await watch.ready;
+
+  const stream = client.latest();
+  stream.push(bookEvent(TOKEN_A, 1_000, "0.40", "0.60", MARKET_A));
+  stream.push(bookEvent(TOKEN_B, 1_000, "0.30", "0.70", MARKET_B));
+  await flush();
+  log.updates.length = 0;
+
+  stream.push(
+    priceChangeEvent(
+      1_500,
+      [{ tokenId: TOKEN_A, side: "BUY", price: "0.40", size: "12" }],
+      MARKET_A,
+    ),
+  );
+  await flush();
+
+  expect(log.updates.map(({ tokenId, kind }) => [tokenId, kind])).toEqual([
+    [TOKEN_A, "levels"],
+  ]);
+  watch.close();
 });
 
 test("resolves each subscriber once and removes resolved token state", async () => {
@@ -287,7 +357,10 @@ test("retries transport failures and reconnects a terminal stream", async () => 
     "connecting",
     "live",
   ]);
-  expect(coordinator.getBook(TOKEN_A)).toBeUndefined();
+  expect(canonicalSpread(coordinator.getBook(TOKEN_A)!)).toEqual({
+    bid: parsePrice("0.40"),
+    ask: parsePrice("0.60"),
+  });
 
   client.latest().push(bookEvent(TOKEN_A, 1_200, "0.42", "0.62"));
   await flush();
@@ -493,11 +566,13 @@ function bookEvent(
   timestamp: number,
   bid: string,
   ask: string,
+  market = MARKET_A,
 ): MarketEvent {
   return {
     type: "book",
     payload: {
       assetId: tokenId,
+      market,
       timestamp: String(timestamp),
       bids: [{ price: bid, size: "10" }],
       asks: [{ price: ask, size: "10" }],
@@ -513,10 +588,12 @@ function priceChangeEvent(
     readonly price: string;
     readonly size: string;
   }[],
+  market = MARKET_A,
 ): MarketEvent {
   return {
     type: "price_change",
     payload: {
+      market,
       timestamp: String(timestamp),
       priceChanges: changes.map((change) => ({
         assetId: change.tokenId,
@@ -536,6 +613,7 @@ function resolutionEvent(assetIds: readonly TokenId[]): MarketEvent {
       assetIds,
       winningAssetId: assetIds[0],
       winningOutcome: "Yes",
+      timestamp: "1500",
     },
   } as unknown as MarketEvent;
 }
