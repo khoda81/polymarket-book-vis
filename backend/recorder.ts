@@ -268,7 +268,7 @@ class AgeRecorder {
     snapshotRequestedAtMs: number,
   ): void {
     if (stream.type === "book") {
-      const tokenId = String(stream.payload.tokenId);
+      const tokenId = stream.payload.assetId;
       if (!this.watched.has(tokenId)) return;
 
       const book = bookFromSnapshot(stream.payload.bids, stream.payload.asks);
@@ -297,7 +297,7 @@ class AgeRecorder {
       >();
 
       for (const change of stream.payload.priceChanges) {
-        const tokenId = String(change.tokenId);
+        const tokenId = change.assetId;
         if (!this.watched.has(tokenId)) continue;
 
         const changes = changesByToken.get(tokenId) ?? [];
@@ -330,7 +330,7 @@ class AgeRecorder {
       const resolvedTokenIds: string[] = [];
 
       for (const tokenIdValue of stream.payload.assetIds ?? []) {
-        const tokenId = String(tokenIdValue);
+        const tokenId = tokenIdValue;
         const memory = this.ensureMemory(tokenId);
         if (memory) {
           memory.clear();
@@ -369,7 +369,7 @@ class AgeRecorder {
       );
 
       for (const snapshot of snapshots) {
-        const tokenId = String(snapshot.assetId);
+        const tokenId = snapshot.assetId;
         if (
           !this.watched.has(tokenId) ||
           this.completed.has(tokenId) ||

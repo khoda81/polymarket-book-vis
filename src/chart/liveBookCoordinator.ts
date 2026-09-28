@@ -14,6 +14,7 @@ import {
 } from "./bookRefreshCoordinator";
 import {
   TransportError,
+  type ClobAssetId,
   type PublicClient,
   type TokenId,
 } from "@polymarket/client";
@@ -82,7 +83,7 @@ interface Deferred {
 
 interface WatchState {
   readonly callbacks: LiveBookFeedCallbacks;
-  readonly tokenIds: Map<string, TokenId>;
+  readonly tokenIds: Map<ClobAssetId, TokenId>;
   readonly ready: Deferred;
   status: "connecting" | "live" | "failed" | "closed";
 }
@@ -109,7 +110,7 @@ interface BookRefreshContext {
 
 interface ActiveSubscription {
   readonly stream: SubscriptionHandle<MarketEvent>;
-  readonly tokenKeys: ReadonlySet<string>;
+  readonly tokenKeys: ReadonlySet<ClobAssetId>;
   retired: boolean;
   closed: boolean;
 }
@@ -146,9 +147,9 @@ export function liveBookCoordinator(client: PublicClient): LiveBookCoordinator {
  * REST reconciliation, and current order books.
  */
 export class LiveBookCoordinator {
-  private readonly tokens = new Map<string, TokenState>();
+  private readonly tokens = new Map<ClobAssetId, TokenState>();
   private readonly watches = new Set<WatchState>();
-  private readonly refreshContexts = new Map<string, BookRefreshContext>();
+  private readonly refreshContexts = new Map<ClobAssetId, BookRefreshContext>();
   private readonly seenEvents = new WeakSet<object>();
   private readonly refreshScheduler: RefreshScheduler;
   private readonly retryDelayMs: number;
@@ -199,8 +200,8 @@ export class LiveBookCoordinator {
     tokenIds: readonly TokenId[],
     callbacks: LiveBookFeedCallbacks,
   ): LiveBookWatch {
-    const unique = new Map<string, TokenId>();
-    for (const tokenId of tokenIds) unique.set(String(tokenId), tokenId);
+    const unique = new Map<ClobAssetId, TokenId>();
+    for (const tokenId of tokenIds) unique.set(tokenId, tokenId);
 
     const state: WatchState = {
       callbacks,
@@ -235,7 +236,7 @@ export class LiveBookCoordinator {
   }
 
   getBook(tokenId: TokenId): TokenBook | undefined {
-    return this.tokens.get(String(tokenId))?.book;
+    return this.tokens.get(tokenId)?.book;
   }
 
   private closeWatch(watch: WatchState): void {
@@ -258,7 +259,7 @@ export class LiveBookCoordinator {
     watch.tokenIds.clear();
   }
 
-  private dropToken(tokenKey: string, token: TokenState): void {
+  private dropToken(tokenKey: ClobAssetId, token: TokenState): void {
     this.tokens.delete(tokenKey);
     this.refreshContexts.delete(tokenKey);
     this.refreshScheduler.unwatch(this.refreshSubscriber, token.tokenId);
@@ -379,14 +380,14 @@ export class LiveBookCoordinator {
     }
   }
 
-  private desiredTokens(): [string, TokenId][] {
+  private desiredTokens(): [ClobAssetId, TokenId][] {
     return [...this.tokens.entries()]
       .filter(([, token]) => token.watchers.size > 0)
-      .map(([key, token]) => [key, token.tokenId] as [string, TokenId])
+      .map(([key, token]) => [key, token.tokenId] as [ClobAssetId, TokenId])
       .sort(([left], [right]) => left.localeCompare(right));
   }
 
-  private desiredTokenKeys(): ReadonlySet<string> {
+  private desiredTokenKeys(): ReadonlySet<ClobAssetId> {
     return new Set(this.desiredTokens().map(([key]) => key));
   }
 
@@ -516,7 +517,7 @@ export class LiveBookCoordinator {
   }
 
   private routeBook(event: Extract<MarketEvent, { type: "book" }>): void {
-    const tokenKey = String(event.payload.assetId);
+    const tokenKey = event.payload.assetId;
     const token = this.tokens.get(tokenKey);
     if (!token) return;
 
@@ -548,7 +549,7 @@ export class LiveBookCoordinator {
     const changesByToken = new Map<TokenState, TokenChanges>();
 
     for (const change of event.payload.priceChanges) {
-      const token = this.tokens.get(String(change.assetId));
+      const token = this.tokens.get(change.assetId);
       if (!token?.book) continue;
 
       let changes = changesByToken.get(token);
@@ -566,7 +567,7 @@ export class LiveBookCoordinator {
     }
 
     for (const [token, changes] of changesByToken) {
-      const tokenKey = String(token.tokenId);
+      const tokenKey = token.tokenId;
       const refresh = this.refreshContexts.get(tokenKey);
       if (refresh && !refresh.superseded)
         refresh.buffered.push({
@@ -595,7 +596,7 @@ export class LiveBookCoordinator {
     const affected = new Set<WatchState>();
 
     for (const assetId of assetIds) {
-      const tokenKey = String(assetId);
+      const tokenKey = assetId;
       const token = this.tokens.get(tokenKey);
       if (!token) continue;
 
@@ -633,7 +634,7 @@ export class LiveBookCoordinator {
     requestId: number,
     requestedAtMs: number,
   ): void {
-    const tokenKey = String(tokenId);
+    const tokenKey = tokenId;
     const token = this.tokens.get(tokenKey);
     if (!token?.book || token.watchers.size === 0) return;
 
@@ -651,7 +652,7 @@ export class LiveBookCoordinator {
     requestedAtMs: number,
     snapshot: BookRefreshSnapshot,
   ): void {
-    const tokenKey = String(tokenId);
+    const tokenKey = tokenId;
     const context = this.refreshContexts.get(tokenKey);
     const token = this.tokens.get(tokenKey);
     if (
@@ -661,7 +662,7 @@ export class LiveBookCoordinator {
       context.requestId !== requestId ||
       context.requestedAtMs !== requestedAtMs ||
       context.superseded ||
-      String(snapshot.assetId) !== tokenKey
+      snapshot.assetId !== tokenKey
     )
       return;
 
@@ -686,7 +687,7 @@ export class LiveBookCoordinator {
   }
 
   private finishBookRefresh(tokenId: TokenId, requestId: number): void {
-    const tokenKey = String(tokenId);
+    const tokenKey = tokenId;
     if (this.refreshContexts.get(tokenKey)?.requestId === requestId)
       this.refreshContexts.delete(tokenKey);
   }
@@ -783,7 +784,7 @@ function createDeferred(): Deferred {
 
 function isWatchCovered(
   watch: WatchState,
-  tokenKeys: ReadonlySet<string> | undefined,
+  tokenKeys: ReadonlySet<ClobAssetId> | undefined,
 ): boolean {
   if (!tokenKeys) return watch.tokenIds.size === 0;
   for (const tokenKey of watch.tokenIds.keys())
@@ -792,8 +793,8 @@ function isWatchCovered(
 }
 
 function sameKeys(
-  left: ReadonlySet<string> | undefined,
-  right: ReadonlySet<string>,
+  left: ReadonlySet<ClobAssetId> | undefined,
+  right: ReadonlySet<ClobAssetId>,
 ): boolean {
   if (!left) return right.size === 0;
   if (left.size !== right.size) return false;
