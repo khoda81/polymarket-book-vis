@@ -21,7 +21,7 @@ type FeedState =
 export class LiveBookFeed {
   private readonly coordinator: ReturnType<typeof liveBookCoordinator>;
   private state: FeedState = { kind: "idle" };
-  private readonly tokenKeys = new Set<string>();
+  private readonly tokenKeys = new Set<TokenId>();
 
   constructor(
     client: PublicClient,
@@ -31,7 +31,7 @@ export class LiveBookFeed {
   }
 
   getBook(tokenId: TokenId): TokenBook | undefined {
-    if (!this.tokenKeys.has(String(tokenId))) return undefined;
+    if (!this.tokenKeys.has(tokenId)) return undefined;
     return this.coordinator.getBook(tokenId);
   }
 
@@ -40,7 +40,7 @@ export class LiveBookFeed {
       throw new Error(`LiveBookFeed cannot start from ${this.state.kind}`);
 
     this.tokenKeys.clear();
-    for (const tokenId of tokenIds) this.tokenKeys.add(String(tokenId));
+    for (const tokenId of tokenIds) this.tokenKeys.add(tokenId);
     const watch = this.coordinator.watch(tokenIds, this.callbacks);
     this.state = { kind: "starting", watch };
 

@@ -37,12 +37,12 @@ interface TokenRefreshState {
 }
 
 interface RefreshHeapNode {
-  readonly tokenKey: string;
+  readonly tokenKey: TokenId;
   readonly deadlineMs: number;
 }
 
 interface BatchToken {
-  readonly tokenKey: string;
+  readonly tokenKey: TokenId;
   readonly tokenId: TokenId;
   readonly watchers: readonly BookRefreshSubscriber[];
 }
@@ -68,10 +68,10 @@ export function bookRefreshCoordinator(
  * so duplicate watches across charts collapse into one /books request.
  */
 export class BookRefreshCoordinator {
-  private readonly states = new Map<string, TokenRefreshState>();
+  private readonly states = new Map<TokenId, TokenRefreshState>();
   private readonly tokensBySubscriber = new Map<
     BookRefreshSubscriber,
-    Set<string>
+    Set<TokenId>
   >();
   private readonly heap = new IndexedDeadlineHeap();
   private timer: number | undefined;
@@ -93,7 +93,7 @@ export class BookRefreshCoordinator {
   ): void {
     if (!Number.isFinite(validThroughMs) || validThroughMs < 0) return;
 
-    const tokenKey = String(tokenId);
+    const tokenKey = tokenId;
     let state = this.states.get(tokenKey);
     if (!state) {
       state = {
@@ -119,7 +119,7 @@ export class BookRefreshCoordinator {
   }
 
   unwatch(subscriber: BookRefreshSubscriber, tokenId: TokenId): void {
-    this.unwatchKey(subscriber, String(tokenId));
+    this.unwatchKey(subscriber, tokenId);
     this.schedulePump();
   }
 
@@ -135,7 +135,7 @@ export class BookRefreshCoordinator {
 
   private unwatchKey(
     subscriber: BookRefreshSubscriber,
-    tokenKey: string,
+    tokenKey: TokenId,
   ): void {
     const state = this.states.get(tokenKey);
     if (!state) return;
@@ -167,7 +167,7 @@ export class BookRefreshCoordinator {
     const maxAgeMs = ghostOpacityStepDelayMs(
       getAgeStripTuning().ghostHalfLifeMs,
     );
-    this.heap.set(String(state.tokenId), oldestObservationMs + maxAgeMs);
+    this.heap.set(state.tokenId, oldestObservationMs + maxAgeMs);
   }
 
   private schedulePump(): void {
@@ -230,7 +230,7 @@ export class BookRefreshCoordinator {
         batch.map(({ tokenId }) => ({ assetId: tokenId })),
       );
       const snapshotByToken = new Map(
-        snapshots.map((snapshot) => [String(snapshot.assetId), snapshot]),
+        snapshots.map((snapshot) => [snapshot.assetId, snapshot]),
       );
 
       for (const token of batch) {
@@ -328,7 +328,7 @@ export class BookRefreshCoordinator {
 
 class IndexedDeadlineHeap {
   private readonly nodes: RefreshHeapNode[] = [];
-  private readonly indexByToken = new Map<string, number>();
+  private readonly indexByToken = new Map<TokenId, number>();
 
   clear(): void {
     this.nodes.length = 0;
@@ -339,7 +339,7 @@ class IndexedDeadlineHeap {
     return this.nodes[0];
   }
 
-  set(tokenKey: string, deadlineMs: number): void {
+  set(tokenKey: TokenId, deadlineMs: number): void {
     const existingIndex = this.indexByToken.get(tokenKey);
     if (existingIndex === undefined) {
       const index = this.nodes.length;
@@ -355,7 +355,7 @@ class IndexedDeadlineHeap {
     else if (deadlineMs > previousDeadlineMs) this.bubbleDown(existingIndex);
   }
 
-  delete(tokenKey: string): boolean {
+  delete(tokenKey: TokenId): boolean {
     const index = this.indexByToken.get(tokenKey);
     if (index === undefined) return false;
 
