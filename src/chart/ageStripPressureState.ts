@@ -245,6 +245,31 @@ export class AgeStripPressureState {
     return this.states.get(tokenId);
   }
 
+  /** Timing metadata for one rendered market row, which combines both tokens. */
+  rowTiming(
+    primaryTokenId: string,
+    oppositeTokenId: string | null | undefined,
+  ): AgeStripPressureTiming | undefined {
+    const primary = this.states.get(primaryTokenId);
+    const opposite = oppositeTokenId
+      ? this.states.get(oppositeTokenId)
+      : undefined;
+    if (!primary) return opposite;
+    if (!opposite) return primary;
+
+    return {
+      recordingSinceMs: earliestNonNull(
+        primary.recordingSinceMs,
+        opposite.recordingSinceMs,
+      ),
+      resolutionMs: primary.resolutionMs ?? opposite.resolutionMs,
+      validThroughMs: latestNonNull(
+        primary.validThroughMs,
+        opposite.validThroughMs,
+      ),
+    };
+  }
+
   hasVisiblePressure(
     tokenId: string,
     nowMs: number,
@@ -289,4 +314,16 @@ function pressureExtentsEqual(
       );
     })
   );
+}
+
+function earliestNonNull(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.min(a, b);
+}
+
+function latestNonNull(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.max(a, b);
 }
