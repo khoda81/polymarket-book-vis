@@ -149,16 +149,14 @@ export class PressureFrontierMemory {
 
   resolveZeroFuture(resolvedAtMs: number | null): boolean {
     if (this.state.kind === "resolvedUnbounded") return false;
+    if (resolvedAtMs !== null)
+      return this.replaceContinuous(
+        [],
+        this.requireMonotonicTime(resolvedAtMs),
+      );
+
     const current = this.currentValidThroughMs();
-    const watermark =
-      current === undefined
-        ? (resolvedAtMs ?? undefined)
-        : resolvedAtMs === null
-          ? current
-          : Math.max(current, resolvedAtMs);
-    return watermark === undefined
-      ? false
-      : this.replaceContinuous([], watermark);
+    return current === undefined ? false : this.replaceContinuous([], current);
   }
 
   isResolvedUnbounded(): boolean {
