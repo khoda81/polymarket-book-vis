@@ -157,8 +157,13 @@
 
 .cpv-event-description-body {
   max-width: 90ch;
+  max-height: min(9rem, 30vh);
   margin-top: 7px;
   padding: 8px 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
   border-left: 2px solid var(--color-border-secondary, #ccc);
   line-height: 1.45;
   white-space: pre-wrap;
@@ -179,8 +184,14 @@
 
 .cpv-market-rules-list {
   max-width: 90ch;
+  max-height: min(9rem, 30vh);
   margin-top: 6px;
   padding-left: 10px;
+  padding-right: 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
   border-left: 2px solid var(--color-border-secondary, #ccc);
 }
 
