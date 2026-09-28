@@ -306,7 +306,7 @@ export class ChartController {
 
       this.lifecycleByMarketId.set(control.market.id, next);
       this.activeTokens.add(control.tokenId);
-      this.ageView.resolveMarket(String(control.tokenId));
+      this.ageView.resolveMarket(control.tokenId);
       this.onMarketLifecycleChanged(control.market.id, next);
     }
     this.reqDraw();
