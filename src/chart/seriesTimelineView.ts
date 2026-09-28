@@ -25,6 +25,7 @@ import {
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
 import { defaultPressureScaleForMarket } from "@/lib/chartDefinition";
+import { ClobFeeScheduleResolver } from "@/lib/feeSchedule";
 import type { TokenBook } from "@/lib/orderBook";
 import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "@/lib/pressureField";
 import {
@@ -81,6 +82,7 @@ export class SeriesTimelineView {
   private readonly resizeObserver: ResizeObserver;
   private readonly themeQuery: MediaQueryList;
   private readonly pressure = new AgeStripPressureState();
+  private readonly feeSchedules: ClobFeeScheduleResolver;
   private readonly pressureLayer: GpuPressureLayer;
   private readonly ageClock: AgeStripClock;
   private readonly tooltip: AgeStripTooltip;
@@ -133,6 +135,7 @@ export class SeriesTimelineView {
     private readonly series: Series,
     options: SeriesTimelineViewOptions = {},
   ) {
+    this.feeSchedules = new ClobFeeScheduleResolver(client);
     const seedEvents = [...(series.events ?? [])];
     this.cadenceMs = inferSeriesCadenceMs(seedEvents, series.recurrence);
     this.rows = seedEvents
@@ -783,7 +786,12 @@ export class SeriesTimelineView {
         if (this.destroyed || generation !== this.feedGeneration) return;
         const key = tokenId;
         this.bookCache.set(key, book);
-        this.pressure.applyBookUpdate(key, book, update);
+        this.pressure.applyBookUpdate(
+          key,
+          book,
+          this.feeSchedules.scheduleForToken(tokenId),
+          update,
+        );
         this.requestDraw();
       },
       onMarketResolved: (resolution) => {
@@ -813,11 +821,20 @@ export class SeriesTimelineView {
     });
     this.feed = feed;
 
-    void feed.start(unique).catch((error) => {
-      if (this.destroyed || generation !== this.feedGeneration) return;
-      this.onConnectionStatus("disconnected");
-      this.onError(error instanceof Error ? error.message : String(error));
-    });
+    void this.feeSchedules
+      .prepareTokens(unique)
+      .then(async () => {
+        if (this.destroyed || generation !== this.feedGeneration) {
+          feed.destroy();
+          return;
+        }
+        await feed.start(unique);
+      })
+      .catch((error) => {
+        if (this.destroyed || generation !== this.feedGeneration) return;
+        this.onConnectionStatus("disconnected");
+        this.onError(error instanceof Error ? error.message : String(error));
+      });
   }
 
   private async hydrateTokens(tokenIds: readonly string[]): Promise<void> {
@@ -835,6 +852,7 @@ export class SeriesTimelineView {
       hydration.pressureSnapshotsByToken,
       (tokenId) =>
         this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId as TokenId),
+      (tokenId) => this.feeSchedules.scheduleForToken(tokenId as TokenId),
     );
     this.pressureLayer.invalidate();
     this.ageClock.refresh();
