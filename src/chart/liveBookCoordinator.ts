@@ -28,7 +28,13 @@ const DEBUG_REPORT_INTERVAL_MS = 5_000;
 
 export type LiveBookUpdate =
   | {
+      /** Complete observation after a stream discontinuity. */
       readonly kind: "snapshot";
+      readonly validThroughMs: number;
+    }
+  | {
+      /** Complete replacement on one continuous ordered stream. */
+      readonly kind: "replace";
       readonly validThroughMs: number;
     }
   | {
@@ -39,6 +45,11 @@ export type LiveBookUpdate =
         readonly price: import("@/lib/price").Price;
         readonly shares: number;
       }[];
+    }
+  | {
+      /** Same-market ordered evidence with no token-local geometry change. */
+      readonly kind: "watermark";
+      readonly validThroughMs: number;
     };
 
 export interface LiveBookFeedCallbacks {
@@ -94,23 +105,19 @@ interface TokenState {
   book?: TokenBook;
   validThroughMs?: number;
   subscriptionRequestedAtMs?: number;
-}
-
-interface BufferedBookDelta {
-  readonly timestampMs: number;
-  readonly changes: readonly RawPriceChange[];
+  marketKey?: string;
 }
 
 interface BookRefreshContext {
   readonly requestId: number;
   readonly requestedAtMs: number;
-  readonly buffered: BufferedBookDelta[];
   superseded: boolean;
 }
 
 interface ActiveSubscription {
   readonly stream: SubscriptionHandle<MarketEvent>;
   readonly tokenKeys: ReadonlySet<ClobAssetId>;
+  readonly marketWatermarks: Map<string, number>;
   retired: boolean;
   closed: boolean;
 }
@@ -144,7 +151,7 @@ export function liveBookCoordinator(client: PublicClient): LiveBookCoordinator {
 /**
  * One canonical live-book store and one logical market subscription per client.
  * Views retain independent pressure histories but share transport, ingestion,
- * REST reconciliation, and current order books.
+ * market-local causal watermarking, stale-book detection, and current books.
  */
 export class LiveBookCoordinator {
   private readonly tokens = new Map<ClobAssetId, TokenState>();
@@ -333,6 +340,7 @@ export class LiveBookCoordinator {
         const next: ActiveSubscription = {
           stream,
           tokenKeys: desiredKeys,
+          marketWatermarks: new Map(),
           retired: false,
           closed: false,
         };
@@ -344,11 +352,6 @@ export class LiveBookCoordinator {
         }
 
         const previous = this.active;
-        for (const [tokenKey] of desired) {
-          if (previous?.tokenKeys.has(tokenKey)) continue;
-          const token = this.tokens.get(tokenKey);
-          if (token) token.subscriptionRequestedAtMs = requestedAtMs;
-        }
 
         if (previous) {
           // The replacement queue starts collecting as soon as subscribe()
@@ -361,6 +364,17 @@ export class LiveBookCoordinator {
             continue;
           }
           previous.retired = true;
+        }
+
+        // A replacement subscription is a new causal stream. Every token must
+        // bootstrap from a fresh book snapshot; no state crosses this barrier.
+        for (const [tokenKey] of desired) {
+          const token = this.tokens.get(tokenKey);
+          if (!token) continue;
+          token.book = undefined;
+          token.validThroughMs = undefined;
+          token.marketKey = undefined;
+          token.subscriptionRequestedAtMs = requestedAtMs;
         }
 
         this.active = next;
