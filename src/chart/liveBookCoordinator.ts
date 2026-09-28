@@ -3,7 +3,6 @@ import {
   applyPriceChange,
   bookFromSnapshot,
   type CanonicalBookChange,
-  type RawPriceChange,
 } from "@/lib/bookIngestion";
 import type { MarketResolutionUpdate } from "@/lib/marketLifecycle";
 import type { TokenBook } from "@/lib/orderBook";
@@ -124,7 +123,6 @@ interface ActiveSubscription {
 }
 
 interface TokenChanges {
-  readonly raw: RawPriceChange[];
   readonly canonical: CanonicalBookChange[];
 }
 
@@ -444,12 +442,7 @@ export class LiveBookCoordinator {
       this.notifyConnectionStatus(watch, "live");
       for (const tokenKey of watch.tokenIds.keys()) {
         const token = this.tokens.get(tokenKey);
-        if (
-          !token?.book ||
-          token.awaitingSnapshot === true ||
-          token.validThroughMs === undefined
-        )
-          continue;
+        if (!token?.book || token.validThroughMs === undefined) continue;
         this.notifyBookUpdated(watch, token, {
           kind: "snapshot",
           validThroughMs: token.validThroughMs,
@@ -620,16 +613,16 @@ export class LiveBookCoordinator {
 
       let changes = changesByToken.get(token);
       if (!changes) {
-        changes = { raw: [], canonical: [] };
+        changes = { canonical: [] };
         changesByToken.set(token, changes);
       }
-      const raw: RawPriceChange = {
-        side: change.side,
-        price: change.price,
-        size: change.size,
-      };
-      changes.raw.push(raw);
-      changes.canonical.push(applyPriceChange(token.book, raw));
+      changes.canonical.push(
+        applyPriceChange(token.book, {
+          side: change.side,
+          price: change.price,
+          size: change.size,
+        }),
+      );
     }
 
     if (marketKey)
@@ -683,7 +676,7 @@ export class LiveBookCoordinator {
     const resolvedAtMs = this.recordMarketWatermark(
       subscription,
       marketKey,
-      optionalEventTimeMs(event.payload.timestamp),
+      optionalEventTimeMs(eventPayload(event).timestamp),
     );
     if (marketKey)
       this.advanceMarketThrough(
@@ -821,9 +814,21 @@ export class LiveBookCoordinator {
     )
       return;
 
-    // REST can tell us the live websocket may be stale, but without a shared
-    // sequence/barrier it cannot be merged into that stream safely. Replace
-    // the stream instead and let its initial book establish a new causal base.
+    const refreshed = bookFromSnapshot(snapshot.bids, snapshot.asks);
+    if (token.book && booksEqual(token.book, refreshed)) {
+      const validThroughMs = Math.max(
+        token.validThroughMs ?? requestedAtMs,
+        requestedAtMs,
+      );
+      token.validThroughMs = validThroughMs;
+      this.notifyToken(token, { kind: "snapshot", validThroughMs });
+      this.observeBook(token, validThroughMs);
+      return;
+    }
+
+    // A differing REST book proves the live websocket may be stale, but
+    // without a shared sequence/barrier it cannot be merged into that stream.
+    // Replace the stream and let its initial book establish a new causal base.
     const active = this.active;
     if (active) this.handleTerminalSubscription(active);
   }
@@ -942,6 +947,28 @@ function sameKeys(
   if (left.size !== right.size) return false;
   for (const key of left) if (!right.has(key)) return false;
   return true;
+}
+
+function booksEqual(left: TokenBook, right: TokenBook): boolean {
+  return (
+    ordersEqual(left.usdToYes.asOrders(), right.usdToYes.asOrders()) &&
+    ordersEqual(left.yesToUsd.asSellOrders(), right.yesToUsd.asSellOrders())
+  );
+}
+
+function ordersEqual(
+  left: Iterable<{ readonly price: unknown; readonly take: number }>,
+  right: Iterable<{ readonly price: unknown; readonly take: number }>,
+): boolean {
+  const a = [...left];
+  const b = [...right];
+  return (
+    a.length === b.length &&
+    a.every(
+      (order, index) =>
+        order.price === b[index]!.price && order.take === b[index]!.take,
+    )
+  );
 }
 
 function eventPayload(event: MarketEvent): Record<string, unknown> {
