@@ -9,25 +9,21 @@ import {
 } from "./ageStripPressureProjection";
 import { PRICE_SCALE } from "@/lib/price";
 import {
-  defaultOrientation,
+  DEFAULT_AGE_ROW_ORIENTATION,
   inferAgeRowOrientation,
 } from "./ageStripOrientation";
 
 const defaultOrientation = DEFAULT_AGE_ROW_ORIENTATION;
 
 test("geometry source and displayed token semantics are complementary", () => {
-  expect(
-    agePressurePerspective("primary", defaultOrientation),
-  ).toMatchObject({
+  expect(agePressurePerspective("primary", defaultOrientation)).toMatchObject({
     sourceSide: "primary",
     semanticSide: "opposite",
     mirrorPrice: true,
     yDirection: -1,
     colorSign: -1,
   });
-  expect(
-    agePressurePerspective("opposite", defaultOrientation),
-  ).toMatchObject({
+  expect(agePressurePerspective("opposite", defaultOrientation)).toMatchObject({
     sourceSide: "opposite",
     semanticSide: "primary",
     mirrorPrice: false,
@@ -35,12 +31,8 @@ test("geometry source and displayed token semantics are complementary", () => {
     colorSign: 1,
   });
 
-  expect(
-    agePressureSourceSideAtY(13, 14, defaultOrientation),
-  ).toBe("primary");
-  expect(
-    agePressureSourceSideAtY(15, 14, defaultOrientation),
-  ).toBe("opposite");
+  expect(agePressureSourceSideAtY(13, 14, defaultOrientation)).toBe("primary");
+  expect(agePressureSourceSideAtY(15, 14, defaultOrientation)).toBe("opposite");
 });
 
 test("row orientation flips renderer and hover semantics together", () => {
@@ -90,14 +82,8 @@ test("event orientation inference only opts out for strong structural hints", ()
 });
 
 test("semantic price complements the source field without moving geometry", () => {
-  const primarySource = agePressurePerspective(
-    "primary",
-    defaultOrientation,
-  );
-  const oppositeSource = agePressurePerspective(
-    "opposite",
-    defaultOrientation,
-  );
+  const primarySource = agePressurePerspective("primary", defaultOrientation);
+  const oppositeSource = agePressurePerspective("opposite", defaultOrientation);
 
   // Primary-source geometry is mirrored: source YES@0.75 is drawn at x=.25,
   // but that screen half is semantically the opposite token at .25.
