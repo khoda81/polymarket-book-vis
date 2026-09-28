@@ -207,11 +207,17 @@ export class AgeStripPressureState {
     }
 
     if (update.kind === "snapshot") {
-      state.memory.observeLevels(tokenPressureLevels(book, schedule), validThroughMs);
+      state.memory.observeLevels(
+        tokenPressureLevels(book, schedule),
+        validThroughMs,
+      );
       return;
     }
     if (update.kind === "replace") {
-      state.memory.replaceContinuous(tokenPressureLevels(book, schedule), validThroughMs);
+      state.memory.replaceContinuous(
+        tokenPressureLevels(book, schedule),
+        validThroughMs,
+      );
       return;
     }
     if (update.kind === "watermark") {
