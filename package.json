@@ -10,8 +10,8 @@
     "format:check": "prettier --check .",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "proto:generate": "buf generate",
-    "proto:check": "buf lint && buf generate && git diff --exit-code -- src/gen"
+    "proto:generate": "buf generate && prettier --write src/gen",
+    "proto:check": "buf lint && bun run proto:generate && git diff --exit-code -- src/gen"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.73.0",
