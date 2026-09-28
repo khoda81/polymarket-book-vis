@@ -123,14 +123,14 @@ export class AgeStripView {
       controls.flatMap((control) => {
         const rows = [
           {
-            tokenId: String(control.tokenId),
+            tokenId: control.tokenId,
             resolutionMs: control.resolutionMs,
           },
         ];
         const oppositeTokenId = control.market.outcomes.no.tokenId;
         if (oppositeTokenId)
           rows.push({
-            tokenId: String(oppositeTokenId),
+            tokenId: oppositeTokenId,
             resolutionMs: control.resolutionMs,
           });
         return rows;
