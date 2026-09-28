@@ -5,6 +5,10 @@
     type ChartSurfaceElements,
   } from "../chart/controller";
   import {
+    DEFAULT_AGE_ROW_ORIENTATION,
+    type AgeRowOrientation,
+  } from "../chart/ageStripOrientation";
+  import {
     buildChartDefinition,
     type ChartMarketControl,
   } from "../lib/chartDefinition";
@@ -33,6 +37,8 @@
   export let bundle: EventDetails;
   export let client: PublicClient;
   export let viewMode: ViewMode;
+  export let ageRowOrientation: AgeRowOrientation =
+    DEFAULT_AGE_ROW_ORIENTATION;
   export let onready: () => void = () => undefined;
   export let onfailure: (message: string) => void = () => undefined;
   export let onconnection: (status: ConnectionStatus) => void = () => undefined;
@@ -132,6 +138,7 @@
     });
     chart = next;
     next.setViewMode(viewMode);
+    next.setAgeRowOrientation(ageRowOrientation);
 
     void next.start(initialHiddenMarketIds()).then(
       () => {
@@ -151,6 +158,7 @@
   });
 
   $: chart?.setViewMode(viewMode);
+  $: chart?.setAgeRowOrientation(ageRowOrientation);
 </script>
 
 <div class="cpv-chart-stage">

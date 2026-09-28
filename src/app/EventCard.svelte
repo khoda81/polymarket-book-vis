@@ -11,6 +11,11 @@
     type CardReorderStart,
   } from "./cardReorderSurface";
   import type { ConnectionStatus, ViewMode } from "../lib/chartState";
+  import {
+    DEFAULT_AGE_ROW_ORIENTATION,
+    flipAgeRowOrientation,
+    type AgeRowOrientation,
+  } from "../chart/ageStripOrientation";
   import { loadEventDetails, type EventDetails } from "../lib/eventDetails";
   import type { EventMarketStatus } from "../lib/marketLifecycle";
   import { createPublicClient, type Event } from "@polymarket/client";
@@ -42,6 +47,7 @@
   export let onreorderstep: (direction: -1 | 1) => void;
 
   let viewMode: ViewMode = "age";
+  let ageRowOrientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION;
   let runtime: RuntimeState = { kind: "metadata-loading" };
   let marketStatus: EventMarketStatus = { kind: "trading" };
 
@@ -104,6 +110,7 @@
 <article
   class="card"
   class:card--pinned={pinned}
+  class:card--age-view={viewMode === "age"}
   data-event-id={event.id}
   data-event-slug={slug ?? ""}
   use:cardReorderSurface={onreorderstart}
@@ -134,6 +141,35 @@
       <option value="age">age</option>
       <option value="volume">volume</option>
     </select>
+
+    {#if viewMode === "age"}
+      <button
+        type="button"
+        class="card-row-flip"
+        aria-pressed={ageRowOrientation === "negative-above"}
+        aria-label={ageRowOrientation === "negative-above"
+          ? "Put right-side book above the centerline"
+          : "Put left-side book above the centerline"}
+        title={ageRowOrientation === "negative-above"
+          ? "Left side is above — click to put right side above"
+          : "Right side is above — click to put left side above"}
+        onclick={() =>
+          (ageRowOrientation = flipAgeRowOrientation(ageRowOrientation))}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d={ageRowOrientation === "negative-above"
+              ? "M4 12h16M8 9V5m0 0L6 7m2-2 2 2m8 6v4m0 0-2-2m2 2 2-2"
+              : "M4 12h16M16 9V5m0 0-2 2m2-2 2 2M8 15v4m0 0-2-2m2 2 2-2"}
+          />
+        </svg>
+      </button>
+    {/if}
 
     <button
       type="button"
@@ -207,6 +243,7 @@
         {bundle}
         {client}
         {viewMode}
+        {ageRowOrientation}
         onready={chartReady}
         onfailure={fail}
         onconnection={chartConnectionChanged}
