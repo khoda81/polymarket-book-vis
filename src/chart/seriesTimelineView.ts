@@ -101,8 +101,7 @@ export class SeriesTimelineView {
   private readonly hydratedTokens = new Set<string>();
 
   private theme: ChartTheme;
-  private ageRowOrientation: AgeRowOrientation =
-    DEFAULT_AGE_ROW_ORIENTATION;
+  private ageRowOrientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION;
   private rows: TimedSeriesEvent[];
   private cadenceMs: number;
   private userOffsetMs = 0;

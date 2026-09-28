@@ -44,10 +44,7 @@
 
   function flipRows(): void {
     ageRowOrientation = flipAgeRowOrientation(ageRowOrientation);
-    persistAgeRowOrientation(
-      `series:${String(series.id)}`,
-      ageRowOrientation,
-    );
+    persistAgeRowOrientation(`series:${String(series.id)}`, ageRowOrientation);
   }
 
   function timelineReady(): void {

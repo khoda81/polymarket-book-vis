@@ -16,8 +16,7 @@
 
   export let series: Series;
   export let client: PublicClient;
-  export let ageRowOrientation: AgeRowOrientation =
-    DEFAULT_AGE_ROW_ORIENTATION;
+  export let ageRowOrientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION;
   export let onready: () => void = () => undefined;
   export let onfailure: (message: string) => void = () => undefined;
   export let onconnection: (status: ConnectionStatus) => void = () => undefined;
