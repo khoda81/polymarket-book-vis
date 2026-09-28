@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { PressureFrontierMemory } from "./pressureFrontierMemory";
 import { priceFromLegacyNumber as p } from "./price";
 import {
-  LEGACY_PRESSURE_FRONTIER_SNAPSHOT_VERSION,
   PRESSURE_FRONTIER_SNAPSHOT_VERSION,
   parsePressureFrontierSnapshot,
 } from "./pressureFrontierSnapshot";
@@ -210,26 +209,7 @@ test("old v5 geometry fields are rejected instead of silently normalized", () =>
   ).toThrow(/unexpected field loVolume/);
 });
 
-test("v6 observed snapshots remain readable during the v7 transition", () => {
-  const parsed = parsePressureFrontierSnapshot({
-    version: LEGACY_PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-    state: {
-      kind: "observed",
-      validThroughMs: 2_000,
-      runs: [
-        {
-          price: p(0.5),
-          shares: 60,
-          frozenSteps: [{ hiVolume: 100, validThroughMs: 1_000 }],
-        },
-      ],
-    },
-  });
-  expect(parsed.version).toBe(6);
-  expect(parsed.state.kind).toBe("observed");
-});
-
-test("terminal unbounded pressure is canonical only in v7", () => {
+test("terminal unbounded pressure is a timeless v7 state", () => {
   expect(
     parsePressureFrontierSnapshot({
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
@@ -240,20 +220,10 @@ test("terminal unbounded pressure is canonical only in v7", () => {
     state: { kind: "resolvedUnbounded" },
   });
 
-  expect(
+  expect(() =>
     parsePressureFrontierSnapshot({
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
       state: { kind: "resolvedUnbounded", resolvedAtMs: 2_000 },
     }),
-  ).toEqual({
-    version: 7,
-    state: { kind: "resolvedUnbounded" },
-  });
-
-  expect(() =>
-    parsePressureFrontierSnapshot({
-      version: LEGACY_PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-      state: { kind: "resolvedUnbounded", resolvedAtMs: 2_000 },
-    }),
-  ).toThrow(/requires snapshot version/);
+  ).toThrow(/unexpected field resolvedAtMs/);
 });
