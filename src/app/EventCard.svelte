@@ -17,6 +17,10 @@
     type AgeRowOrientation,
   } from "../chart/ageStripOrientation";
   import { loadEventDetails, type EventDetails } from "../lib/eventDetails";
+  import {
+    loadStoredAgeRowOrientation,
+    persistAgeRowOrientation,
+  } from "./ageRowOrientationStorage";
   import type { EventMarketStatus } from "../lib/marketLifecycle";
   import { createPublicClient, type Event } from "@polymarket/client";
 
@@ -47,7 +51,9 @@
   export let onreorderstep: (direction: -1 | 1) => void;
 
   let viewMode: ViewMode = "age";
-  let ageRowOrientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION;
+  let ageRowOrientation: AgeRowOrientation =
+    loadStoredAgeRowOrientation(String(event.id)) ??
+    DEFAULT_AGE_ROW_ORIENTATION;
   let runtime: RuntimeState = { kind: "metadata-loading" };
   let marketStatus: EventMarketStatus = { kind: "trading" };
 
@@ -61,6 +67,11 @@
     runtime.kind === "chart-loading" || runtime.kind === "ready"
       ? runtime.connection
       : "connecting";
+
+  function flipRows(): void {
+    ageRowOrientation = flipAgeRowOrientation(ageRowOrientation);
+    persistAgeRowOrientation(String(event.id), ageRowOrientation);
+  }
 
   function chartConnectionChanged(status: ConnectionStatus): void {
     if (runtime.kind === "chart-loading" || runtime.kind === "ready")
@@ -153,8 +164,7 @@
         title={ageRowOrientation === "negative-above"
           ? "Left side is above — click to put right side above"
           : "Right side is above — click to put left side above"}
-        onclick={() =>
-          (ageRowOrientation = flipAgeRowOrientation(ageRowOrientation))}
+        onclick={flipRows}
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path
