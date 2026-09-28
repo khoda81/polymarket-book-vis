@@ -1,7 +1,7 @@
 import type { Market, MarketId } from "@polymarket/client";
 import type { MarketLifecycle } from "./marketLifecycle";
-export type HiddenMarketReason = "user" | "empty-book" | "resolved-default";
 
+export type HiddenMarketReason = "user" | "empty-book" | "resolved-default";
 export type AutoHiddenReason = Extract<HiddenMarketReason, "empty-book">;
 
 export type MarketVisibility =
@@ -11,13 +11,27 @@ export type MarketVisibility =
       readonly reason: HiddenMarketReason;
     };
 
-const STORAGE_KEY = "polymarket-book-vis.age-strip-hidden-markets.v1";
+export type StoredMarketVisibility =
+  "hidden-user" | "visible-user" | "hidden-resolved";
+
+interface KeyValueStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+const STORAGE_KEY = "polymarket-book-vis.market-visibility.v2";
+const LEGACY_HIDDEN_STORAGE_KEY =
+  "polymarket-book-vis.age-strip-hidden-markets.v1";
 
 export function initialMarketVisibility(
-  userHidden: boolean,
+  stored: StoredMarketVisibility | undefined,
   lifecycle: MarketLifecycle,
 ): MarketVisibility {
-  if (userHidden) return { kind: "hidden", reason: "user" };
+  if (stored === "hidden-user") return { kind: "hidden", reason: "user" };
+  if (stored === "visible-user") return { kind: "visible" };
+  if (stored === "hidden-resolved")
+    return { kind: "hidden", reason: "resolved-default" };
+
   if (lifecycle.kind === "resolved")
     return { kind: "hidden", reason: "resolved-default" };
   return { kind: "visible" };
@@ -27,29 +41,64 @@ export function isMarketVisible(visibility: MarketVisibility): boolean {
   return visibility.kind === "visible";
 }
 
-export function loadUserHiddenMarketIds(): Set<string> {
+export function loadStoredMarketVisibility(
+  storage: KeyValueStorage = window.localStorage,
+): Map<string, StoredMarketVisibility> {
+  const result = new Map<string, StoredMarketVisibility>();
+
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? new Set(
-          parsed.filter((value): value is string => typeof value === "string"),
-        )
-      : new Set();
+    const raw = storage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed)
+      )
+        for (const [marketId, value] of Object.entries(parsed))
+          if (
+            value === "hidden-user" ||
+            value === "visible-user" ||
+            value === "hidden-resolved"
+          )
+            result.set(marketId, value);
+    }
   } catch (error) {
-    console.warn("Could not restore hidden market preferences:", error);
-    return new Set();
+    console.warn("Could not restore market visibility preferences:", error);
   }
+
+  // Preserve existing user-hidden choices when upgrading from the v1 array.
+  try {
+    const raw = storage.getItem(LEGACY_HIDDEN_STORAGE_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed))
+        for (const marketId of parsed)
+          if (typeof marketId === "string" && !result.has(marketId))
+            result.set(marketId, "hidden-user");
+    }
+  } catch (error) {
+    console.warn("Could not restore legacy hidden market preferences:", error);
+  }
+
+  return result;
 }
 
-export function persistUserHiddenMarketIds(
-  marketIds: ReadonlySet<string>,
+export function persistStoredMarketVisibility(
+  marketId: string,
+  visibility: StoredMarketVisibility | null,
+  storage: KeyValueStorage = window.localStorage,
 ): void {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...marketIds]));
+    const stored = loadStoredMarketVisibility(storage);
+    if (visibility === null) stored.delete(marketId);
+    else stored.set(marketId, visibility);
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(stored.entries())),
+    );
   } catch (error) {
-    console.warn("Could not persist hidden market preferences:", error);
+    console.warn("Could not persist market visibility preference:", error);
   }
 }
 
@@ -85,15 +134,13 @@ export interface VisibilityInitializableMarket extends MarketIdentified {
 
 export function loadMarketVisibility(
   markets: readonly VisibilityInitializableMarket[],
+  storage: KeyValueStorage = window.localStorage,
 ): Map<MarketId, MarketVisibility> {
-  const userHidden = loadUserHiddenMarketIds();
+  const stored = loadStoredMarketVisibility(storage);
   return new Map(
     markets.map((market) => [
       market.market.id,
-      initialMarketVisibility(
-        userHidden.has(market.market.id),
-        market.lifecycle,
-      ),
+      initialMarketVisibility(stored.get(market.market.id), market.lifecycle),
     ]),
   );
 }
@@ -120,27 +167,10 @@ export function setUserMarketVisible(
   );
 }
 
-export function mergeUserHiddenMarketIds(
-  persisted: ReadonlySet<string>,
-  visibilityByMarketId: ReadonlyMap<MarketId, MarketVisibility>,
-): Set<string> {
-  const userHidden = new Set(persisted);
-
-  // Each ChartHost only owns the markets in one event. Update those entries
-  // without discarding user preferences belonging to every other chart.
-  for (const [marketId, visibility] of visibilityByMarketId) {
-    if (visibility.kind === "hidden" && visibility.reason === "user")
-      userHidden.add(marketId);
-    else userHidden.delete(marketId);
-  }
-
-  return userHidden;
-}
-
-export function persistUserVisibility(
-  visibilityByMarketId: ReadonlyMap<MarketId, MarketVisibility>,
-): void {
-  persistUserHiddenMarketIds(
-    mergeUserHiddenMarketIds(loadUserHiddenMarketIds(), visibilityByMarketId),
-  );
+export function storedVisibilityForUserChoice(
+  visible: boolean,
+  lifecycle: MarketLifecycle,
+): StoredMarketVisibility | null {
+  if (!visible) return "hidden-user";
+  return lifecycle.kind === "resolved" ? "visible-user" : null;
 }
