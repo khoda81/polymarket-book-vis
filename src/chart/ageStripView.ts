@@ -5,7 +5,6 @@ import {
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
 import type { TokenBook } from "@/lib/orderBook";
-import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "@/lib/pressureField";
 import type { PressureFrontierSnapshot } from "@/lib/pressureFrontierSnapshot";
 import type { ChartTheme, OrderBookPlotter } from "@/lib/renderer";
 import type { SignedVolumeColorScale } from "@/lib/signedVolume";
@@ -148,6 +147,7 @@ export class AgeStripView {
         control.tokenId,
         control.market.outcomes.no.tokenId,
         control.lifecycle.winningTokenId,
+        control.resolutionMs,
       );
     }
 
@@ -167,11 +167,16 @@ export class AgeStripView {
     if (this.host.activeTokens.has(tokenId)) this.host.hideToken(tokenId);
   }
 
-  resolveMarket(primaryTokenId: string, winningTokenId: string): void {
+  resolveMarket(
+    primaryTokenId: string,
+    winningTokenId: string,
+    resolvedAtMs: number | null,
+  ): void {
     this.applyResolvedPressure(
       primaryTokenId,
       this.host.getOppositeTokenId(primaryTokenId),
       winningTokenId,
+      resolvedAtMs,
     );
     this.pressureLayer?.invalidate();
   }
@@ -180,19 +185,25 @@ export class AgeStripView {
     primaryTokenId: string,
     oppositeTokenId: string | null | undefined,
     winningTokenId: string,
+    resolvedAtMs: number | null,
   ): void {
-    this.pressure.setExtents(primaryTokenId, []);
-    if (oppositeTokenId) this.pressure.setExtents(oppositeTokenId, []);
-
-    const sourceTokenId = agePressureSourceTokenForSemanticToken(
+    const unboundedSourceTokenId = agePressureSourceTokenForSemanticToken(
       primaryTokenId,
       oppositeTokenId,
       winningTokenId,
     );
-    if (sourceTokenId)
-      this.pressure.setExtents(sourceTokenId, [
-        FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT,
-      ]);
+
+    this.pressure.resolveSource(
+      primaryTokenId,
+      primaryTokenId === unboundedSourceTokenId,
+      resolvedAtMs,
+    );
+    if (oppositeTokenId)
+      this.pressure.resolveSource(
+        oppositeTokenId,
+        oppositeTokenId === unboundedSourceTokenId,
+        resolvedAtMs,
+      );
   }
 
   draw(): void {

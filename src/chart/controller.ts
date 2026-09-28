@@ -313,7 +313,11 @@ export class ChartController {
       this.lifecycleByMarketId.set(control.market.id, next);
       this.activeTokens.add(control.tokenId);
       if (next.kind === "resolved")
-        this.ageView.resolveMarket(control.tokenId, next.winningTokenId);
+        this.ageView.resolveMarket(
+          control.tokenId,
+          next.winningTokenId,
+          resolution.resolvedAtMs ?? control.resolutionMs,
+        );
       this.onMarketLifecycleChanged(control.market.id, next);
     }
     this.reqDraw();
