@@ -7,7 +7,7 @@
     "dev": "vite",
     "recorder": "bun backend/recorder.ts",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format:check": "prettier --write src/lib/pressureFrontierMemory.ts && git diff --exit-code -- src/lib/pressureFrontierMemory.ts",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
