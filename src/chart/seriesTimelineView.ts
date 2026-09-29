@@ -171,7 +171,6 @@ export class SeriesTimelineView {
       getViewMode: () => "age",
       getTheme: () => this.theme,
       getTiming: (tokenId) => this.pressure.timing(tokenId),
-      refreshMode: "frame",
     });
     this.tooltip = new AgeStripTooltip({
       canvas,
