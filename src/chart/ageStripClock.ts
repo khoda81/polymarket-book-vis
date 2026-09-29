@@ -16,55 +16,30 @@ export interface AgeStripClockHost {
   readonly getViewMode: () => ViewMode;
   readonly getTheme: () => ChartTheme;
   readonly getTiming: (tokenId: string) => AgeStripTiming | undefined;
-  /**
-   * "scheduled" lets the clock canvas refresh itself when label text changes.
-   * "frame" redraws only when its host supplies fresh geometry, keeping moving
-   * timelines and their gutter on the exact same render cadence.
-   */
-  readonly refreshMode?: "scheduled" | "frame";
 }
 
+/**
+ * Pure annotation layer for age-view time labels.
+ *
+ * Scheduling belongs to the owning render loop. A refresh returns the wall-clock
+ * delay until its currently rendered text can next change, allowing the caller
+ * to fold clock deadlines into the same invalidation stream as pressure decay.
+ */
 export class AgeStripClock {
   private readonly canvas: HTMLCanvasElement;
-  private readonly intersectionObserver: IntersectionObserver | null;
-  private readonly scheduledRefresh: boolean;
   private geometry: AgeStripGeometry | null = null;
-  private viewportVisible = true;
   private enabled = true;
-  private timer: number | undefined;
-  private raf: number | undefined;
 
   constructor(private readonly host: AgeStripClockHost) {
     this.canvas = document.createElement("canvas");
     this.canvas.className = "cpv-clock-canvas";
     this.canvas.setAttribute("aria-hidden", "true");
     host.canvasWrap.appendChild(this.canvas);
-
-    this.scheduledRefresh = host.refreshMode !== "frame";
-    if (this.scheduledRefresh) {
-      this.intersectionObserver = new IntersectionObserver(
-        ([entry]) => {
-          const visible = entry?.isIntersecting ?? false;
-          if (visible === this.viewportVisible) return;
-          this.viewportVisible = visible;
-
-          if (!visible) {
-            this.cancelRefresh();
-            return;
-          }
-          this.refresh();
-        },
-        { root: null, rootMargin: "160px 0px" },
-      );
-      this.intersectionObserver.observe(host.canvasWrap);
-    } else {
-      this.intersectionObserver = null;
-    }
   }
 
-  setGeometry(geometry: AgeStripGeometry | null): void {
+  setGeometry(geometry: AgeStripGeometry | null): number | null {
     this.geometry = geometry;
-    this.refresh();
+    return this.refresh();
   }
 
   setEnabled(enabled: boolean): void {
@@ -72,24 +47,18 @@ export class AgeStripClock {
     this.enabled = enabled;
     this.canvas.style.display = enabled ? "block" : "none";
     if (enabled) this.refresh();
-    else {
-      this.cancelRefresh();
-      this.clear();
-    }
+    else this.clear();
   }
 
-  refresh(): void {
-    this.cancelRefresh();
-
+  refresh(): number | null {
     const geometry = this.geometry;
     if (
       !this.enabled ||
       !geometry ||
       geometry.rows.length === 0 ||
-      (this.scheduledRefresh && !this.viewportVisible) ||
       this.host.getViewMode() !== "age"
     )
-      return;
+      return null;
 
     const dpr = window.devicePixelRatio || 1;
     const width = Math.max(1, Math.round(geometry.canvasWidth * dpr));
@@ -98,7 +67,7 @@ export class AgeStripClock {
     if (this.canvas.height !== height) this.canvas.height = height;
 
     const ctx = this.canvas.getContext("2d");
-    if (!ctx) return;
+    if (!ctx) return null;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, geometry.canvasWidth, geometry.canvasHeight);
@@ -151,8 +120,7 @@ export class AgeStripClock {
     }
 
     ctx.globalAlpha = 1;
-    if (this.scheduledRefresh && Number.isFinite(nextChangeMs))
-      this.scheduleRefresh(nextChangeMs);
+    return Number.isFinite(nextChangeMs) ? nextChangeMs : null;
   }
 
   clear(): void {
@@ -162,44 +130,11 @@ export class AgeStripClock {
   }
 
   reset(): void {
-    this.cancelRefresh();
     this.geometry = null;
     this.clear();
   }
 
   destroy(): void {
-    this.cancelRefresh();
-    this.intersectionObserver?.disconnect();
     this.canvas.remove();
-  }
-
-  private scheduleRefresh(delayMs: number): void {
-    // Millisecond labels are meaningful, but a 1ms timeout is not.
-    if (delayMs <= 34) {
-      this.raf = requestAnimationFrame(() => {
-        this.raf = undefined;
-        this.refresh();
-      });
-      return;
-    }
-
-    this.timer = window.setTimeout(
-      () => {
-        this.timer = undefined;
-        this.refresh();
-      },
-      Math.max(1, Math.ceil(delayMs) + 1),
-    );
-  }
-
-  private cancelRefresh(): void {
-    if (this.timer !== undefined) {
-      clearTimeout(this.timer);
-      this.timer = undefined;
-    }
-    if (this.raf !== undefined) {
-      cancelAnimationFrame(this.raf);
-      this.raf = undefined;
-    }
   }
 }
