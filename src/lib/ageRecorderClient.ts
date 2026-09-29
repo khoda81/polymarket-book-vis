@@ -23,6 +23,24 @@ export interface RecorderHydration {
 
 export type RecorderHydrationProgress = (hydration: RecorderHydration) => void;
 
+export interface RecorderNetworkState {
+  readonly activeHydrations: number;
+  readonly pendingTokens: number;
+  readonly activeRequests: number;
+  readonly queuedRequests: number;
+  readonly retryingHydrations: number;
+  readonly maxAttempt: number;
+  readonly nextRetryAtMs: number | null;
+}
+
+export type RecorderNetworkSubscriber = (state: RecorderNetworkState) => void;
+
+interface HydrationRunNetworkState {
+  remaining: Set<string>;
+  attempt: number;
+  retryAtMs: number | null;
+}
+
 const RECORDER_FETCH_TIMEOUT_MS = 5_000;
 const MAX_CONCURRENT_RECORDER_REQUESTS = 4;
 const HYDRATION_RETRY_DELAYS_MS = [
@@ -31,6 +49,9 @@ const HYDRATION_RETRY_DELAYS_MS = [
 
 let activeRecorderRequests = 0;
 const recorderRequestWaiters: Array<() => void> = [];
+let nextHydrationRunId = 0;
+const hydrationRuns = new Map<number, HydrationRunNetworkState>();
+const recorderNetworkSubscribers = new Set<RecorderNetworkSubscriber>();
 const RECORDER_DEBUG =
   new URLSearchParams(window.location.search).get("recorderDebug") === "1";
 
@@ -46,68 +67,89 @@ export async function fetchRecorderHydration(
 
   let remaining = requested;
   let lastError: unknown = null;
+  const runId = ++nextHydrationRunId;
+  const run: HydrationRunNetworkState = {
+    remaining: new Set(remaining),
+    attempt: 0,
+    retryAtMs: null,
+  };
+  hydrationRuns.set(runId, run);
+  emitRecorderNetworkState();
 
   recorderDebug("hydrate-start", requested.map(shortToken));
 
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const body = await fetchRecorderState(remaining);
-      lastError = null;
+  try {
+    for (let attempt = 0; ; attempt++) {
+      run.attempt = attempt + 1;
+      run.retryAtMs = null;
+      emitRecorderNetworkState();
 
-      recorderDebug("hydrate-response", {
-        attempt: attempt + 1,
-        requested: remaining.map(shortToken),
-        states: Object.keys(body.states).map(shortToken),
-        pending: body.pendingTokenIds.map(shortToken),
-      });
+      try {
+        const body = await fetchRecorderState(remaining);
+        lastError = null;
 
-      const progress = mergeRecorderResponse(
-        body,
-        recordingSinceMsByToken,
-        pressureSnapshotsByToken,
-      );
-      if (hasHydration(progress)) onProgress(progress);
+        recorderDebug("hydrate-response", {
+          attempt: attempt + 1,
+          requested: remaining.map(shortToken),
+          states: Object.keys(body.states).map(shortToken),
+          pending: body.pendingTokenIds.map(shortToken),
+        });
 
-      const explicitPending = new Set(
-        Array.isArray(body.pendingTokenIds)
-          ? body.pendingTokenIds.map(String)
-          : [],
-      );
+        const progress = mergeRecorderResponse(
+          body,
+          recordingSinceMsByToken,
+          pressureSnapshotsByToken,
+        );
+        if (hasHydration(progress)) onProgress(progress);
 
-      remaining = remaining.filter(
-        (tokenId) =>
-          pressureSnapshotsByToken[tokenId] === undefined &&
-          explicitPending.has(tokenId),
-      );
-      if (remaining.length === 0) break;
-    } catch (error) {
-      lastError = error;
-      recorderDebug("hydrate-error", {
-        attempt: attempt + 1,
-        requested: remaining.map(shortToken),
-        error: debugError(error),
-      });
+        const explicitPending = new Set(
+          Array.isArray(body.pendingTokenIds)
+            ? body.pendingTokenIds.map(String)
+            : [],
+        );
+
+        remaining = remaining.filter(
+          (tokenId) =>
+            pressureSnapshotsByToken[tokenId] === undefined &&
+            explicitPending.has(tokenId),
+        );
+        run.remaining = new Set(remaining);
+        emitRecorderNetworkState();
+        if (remaining.length === 0) break;
+      } catch (error) {
+        lastError = error;
+        recorderDebug("hydrate-error", {
+          attempt: attempt + 1,
+          requested: remaining.map(shortToken),
+          error: debugError(error),
+        });
+      }
+
+      const delayMs = HYDRATION_RETRY_DELAYS_MS[attempt];
+      if (delayMs === undefined) break;
+      run.retryAtMs = Date.now() + delayMs;
+      emitRecorderNetworkState();
+      await delay(delayMs);
     }
 
-    const delayMs = HYDRATION_RETRY_DELAYS_MS[attempt];
-    if (delayMs === undefined) break;
-    await delay(delayMs);
+    if (lastError) console.warn("Age recorder unavailable", lastError);
+
+    if (remaining.length > 0)
+      recorderDebug("hydrate-gave-up", remaining.map(shortToken));
+    else
+      recorderDebug("hydrate-complete", {
+        coverage: Object.keys(recordingSinceMsByToken).length,
+        states: Object.keys(pressureSnapshotsByToken).length,
+      });
+
+    return {
+      recordingSinceMsByToken,
+      pressureSnapshotsByToken,
+    };
+  } finally {
+    hydrationRuns.delete(runId);
+    emitRecorderNetworkState();
   }
-
-  if (lastError) console.warn("Age recorder unavailable", lastError);
-
-  if (remaining.length > 0)
-    recorderDebug("hydrate-gave-up", remaining.map(shortToken));
-  else
-    recorderDebug("hydrate-complete", {
-      coverage: Object.keys(recordingSinceMsByToken).length,
-      states: Object.keys(pressureSnapshotsByToken).length,
-    });
-
-  return {
-    recordingSinceMsByToken,
-    pressureSnapshotsByToken,
-  };
 }
 
 async function fetchRecorderState(
@@ -293,19 +335,72 @@ function emptyHydration(): RecorderHydration {
   };
 }
 
+export function subscribeRecorderNetworkState(
+  subscriber: RecorderNetworkSubscriber,
+): () => void {
+  recorderNetworkSubscribers.add(subscriber);
+  subscriber(recorderNetworkState());
+  return () => {
+    recorderNetworkSubscribers.delete(subscriber);
+  };
+}
+
+function recorderNetworkState(): RecorderNetworkState {
+  const pending = new Set<string>();
+  let retryingHydrations = 0;
+  let maxAttempt = 0;
+  let nextRetryAtMs: number | null = null;
+
+  for (const run of hydrationRuns.values()) {
+    for (const tokenId of run.remaining) pending.add(tokenId);
+    maxAttempt = Math.max(maxAttempt, run.attempt);
+    if (run.retryAtMs === null) continue;
+    retryingHydrations++;
+    nextRetryAtMs =
+      nextRetryAtMs === null
+        ? run.retryAtMs
+        : Math.min(nextRetryAtMs, run.retryAtMs);
+  }
+
+  return {
+    activeHydrations: hydrationRuns.size,
+    pendingTokens: pending.size,
+    activeRequests: activeRecorderRequests,
+    queuedRequests: recorderRequestWaiters.length,
+    retryingHydrations,
+    maxAttempt,
+    nextRetryAtMs,
+  };
+}
+
+function emitRecorderNetworkState(): void {
+  if (recorderNetworkSubscribers.size === 0) return;
+  const state = recorderNetworkState();
+  for (const subscriber of [...recorderNetworkSubscribers]) {
+    try {
+      subscriber(state);
+    } catch (error) {
+      console.error("Recorder network subscriber failed", error);
+    }
+  }
+}
+
 async function withRecorderRequestSlot<T>(task: () => Promise<T>): Promise<T> {
   if (activeRecorderRequests >= MAX_CONCURRENT_RECORDER_REQUESTS) {
     await new Promise<void>((resolve) => {
       recorderRequestWaiters.push(resolve);
+      emitRecorderNetworkState();
     });
   }
 
   activeRecorderRequests++;
+  emitRecorderNetworkState();
   try {
     return await task();
   } finally {
     activeRecorderRequests--;
     recorderRequestWaiters.shift()?.();
+    emitRecorderNetworkState();
   }
 }
 
