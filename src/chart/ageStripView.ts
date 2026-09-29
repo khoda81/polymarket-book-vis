@@ -33,6 +33,8 @@ import { AgeStripTooltip } from "./ageStripTooltip";
 import type { AgeRowOrientation } from "./ageStripOrientation";
 import type { ChartMarketControl } from "@/lib/chartDefinition";
 
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 export interface AgeStripHost {
   readonly canvas: HTMLCanvasElement;
   readonly pressureCanvas: HTMLCanvasElement;
@@ -433,10 +435,13 @@ export class AgeStripView {
     )
       return;
 
-    this.timedRefreshTimer = window.setTimeout(() => {
-      this.timedRefreshTimer = undefined;
-      this.host.requestDraw();
-    }, Math.max(1, Math.ceil(delayMs) + 1));
+    this.timedRefreshTimer = window.setTimeout(
+      () => {
+        this.timedRefreshTimer = undefined;
+        this.host.requestDraw();
+      },
+      Math.min(MAX_TIMER_DELAY_MS, Math.max(1, Math.ceil(delayMs) + 1)),
+    );
   }
 
   private cancelTimedRefresh(): void {
