@@ -4,6 +4,7 @@ import {
   effectiveAskPrice,
   effectiveBidPrice,
   feeSchedule,
+  feeScheduleFromMarket,
   NO_FEE_SCHEDULE,
 } from "./feeSchedule";
 
@@ -43,4 +44,27 @@ test("production-like fee curves remain monotone", () => {
   ] as const) {
     expect(() => feeSchedule(rate, exponent)).not.toThrow();
   }
+});
+
+
+test("market trading metadata supplies fee schedules without CLOB lookup", () => {
+  expect(
+    feeScheduleFromMarket({ trading: { feesEnabled: false } }),
+  ).toBe(NO_FEE_SCHEDULE);
+
+  const schedule = feeScheduleFromMarket({
+    trading: {
+      feesEnabled: true,
+      feeSchedule: {
+        rate: "0.04",
+        exponent: 1,
+        takerOnly: true,
+        rebateRate: "0",
+      },
+    },
+  });
+  expect(schedule).not.toBeNull();
+  expect(effectiveAskPrice(parsePrice("0.5"), schedule!)).toBe(
+    parsePrice("0.51"),
+  );
 });
