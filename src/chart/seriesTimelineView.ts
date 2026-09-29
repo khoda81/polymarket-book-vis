@@ -346,6 +346,9 @@ export class SeriesTimelineView {
         );
 
       this.cadenceMs = inferSeriesCadenceMs(compatible, this.series.recurrence);
+      this.feeSchedules.primeMarkets(
+        compatible.flatMap((event) => event.markets),
+      );
       this.rows = compatible
         .map((event) => timedSeriesEvent(event, this.cadenceMs))
         .filter((row): row is TimedSeriesEvent => row !== null);
@@ -843,19 +846,20 @@ export class SeriesTimelineView {
     if (fresh.length === 0) return;
 
     for (const tokenId of fresh) this.hydratedTokens.add(tokenId);
-    const hydration = await fetchRecorderHydration(fresh);
-    if (this.destroyed) return;
+    await fetchRecorderHydration(fresh, (hydration) => {
+      if (this.destroyed) return;
 
-    this.pressure.setRecordingCoverage(hydration.recordingSinceMsByToken);
-    this.pressure.hydrate(
-      hydration.pressureSnapshotsByToken,
-      (tokenId) =>
-        this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId as TokenId),
-      (tokenId) => this.feeSchedules.scheduleForToken(tokenId as TokenId),
-    );
-    this.pressureLayer.invalidate();
-    this.ageClock.refresh();
-    this.requestDraw();
+      this.pressure.setRecordingCoverage(hydration.recordingSinceMsByToken);
+      this.pressure.hydrate(
+        hydration.pressureSnapshotsByToken,
+        (tokenId) =>
+          this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId as TokenId),
+        (tokenId) => this.feeSchedules.scheduleForToken(tokenId as TokenId),
+      );
+      this.pressureLayer.invalidate();
+      this.ageClock.refresh();
+      this.requestDraw();
+    });
   }
 
   private updateAnchorEvent(nowMs: number): void {
