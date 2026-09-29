@@ -89,7 +89,9 @@
     if (liveState.desiredTokens === 0) {
       if (recorderState.activeHydrations > 0)
         return `loading history · ${recorderState.pendingTokens} pending`;
-      return liveState.transport === "closing" ? "closing stream" : "network idle";
+      return liveState.transport === "closing"
+        ? "closing stream"
+        : "network idle";
     }
 
     if (liveState.transport === "retrying")
@@ -117,10 +119,7 @@
       recorderState.activeHydrations === 0
     )
       return "good";
-    if (
-      liveState.transport !== "idle" ||
-      recorderState.activeHydrations > 0
-    )
+    if (liveState.transport !== "idle" || recorderState.activeHydrations > 0)
       return "working";
     return "idle";
   }
@@ -159,9 +158,8 @@
         <div>
           <dt>snapshot barrier</dt>
           <dd>
-            {live.synchronizedBooks}/{live.desiredTokens} synchronized
-            · {live.awaitingSnapshots} awaiting
-            · {live.cachedBooks} cached
+            {live.synchronizedBooks}/{live.desiredTokens} synchronized · {live.awaitingSnapshots}
+            awaiting · {live.cachedBooks} cached
           </dd>
         </div>
         <div>
