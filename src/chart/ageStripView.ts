@@ -66,7 +66,7 @@ export class AgeStripView {
   private readonly pressure = new AgeStripPressureState();
   private pressureLayer: GpuPressureLayer | null = null;
   private readonly visibilityInitialized = new Set<string>();
-  private stalenessRefreshTimer: number | undefined;
+  private timedRefreshTimer: number | undefined;
   private layoutMode: "age" | "volume" | null = null;
 
   constructor(host: AgeStripHost) {
@@ -102,7 +102,7 @@ export class AgeStripView {
     this.pressure.reset();
     this.pressureLayer?.invalidate();
     this.visibilityInitialized.clear();
-    this.cancelStalenessRefresh();
+    this.cancelTimedRefresh();
     this.clock.reset();
     this.tooltip.clear();
     this.layoutMode = null;
@@ -112,7 +112,7 @@ export class AgeStripView {
     recordingSinceMsByToken: Readonly<Record<string, number>>,
   ): void {
     this.pressure.setRecordingCoverage(recordingSinceMsByToken);
-    this.clock.refresh();
+    this.host.requestDraw();
   }
 
   hydratePressureMemory(
@@ -221,7 +221,7 @@ export class AgeStripView {
   draw(): void {
     // A book-driven redraw advances validity. Reset the decay timer so the
     // next staleness-only frame happens only after the chart goes quiet.
-    this.cancelStalenessRefresh();
+    this.cancelTimedRefresh();
 
     const tuning = getAgeStripTuning();
     const nowMs = Date.now();
@@ -271,7 +271,7 @@ export class AgeStripView {
       canvasHeight: vp.t + vp.height + this.host.plotter.padding.b,
     };
     this.clock.setEnabled(true);
-    this.clock.setGeometry(geometry);
+    const clockRefreshDelayMs = this.clock.setGeometry(geometry);
     this.tooltip.setGeometry(geometry);
 
     const gpuRows: GpuPressureRow[] = [];
@@ -367,13 +367,18 @@ export class AgeStripView {
       this.host.getPressureColorScale(tokenId),
     );
 
+    let nextRefreshDelayMs = clockRefreshDelayMs ?? Infinity;
     if (hasVisiblePressure)
-      this.scheduleStalenessRefresh(
+      nextRefreshDelayMs = Math.min(
+        nextRefreshDelayMs,
         ghostRefreshDelayMs(tuning.ghostHalfLifeMs),
       );
+    if (Number.isFinite(nextRefreshDelayMs))
+      this.scheduleTimedRefresh(nextRefreshDelayMs);
   }
 
   prepareVolumeView(): void {
+    this.cancelTimedRefresh();
     this.pressureLayer?.setVisible(false);
     this.clock.setGeometry(null);
     this.clock.setEnabled(false);
@@ -406,7 +411,7 @@ export class AgeStripView {
 
   destroy(): void {
     this.unsubscribeTuning();
-    this.cancelStalenessRefresh();
+    this.cancelTimedRefresh();
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.clock.destroy();
     this.tooltip.destroy();
@@ -421,23 +426,23 @@ export class AgeStripView {
     event.stopImmediatePropagation();
   };
 
-  private scheduleStalenessRefresh(delayMs: number): void {
+  private scheduleTimedRefresh(delayMs: number): void {
     if (
-      this.stalenessRefreshTimer !== undefined ||
+      this.timedRefreshTimer !== undefined ||
       this.host.getViewMode() !== "age"
     )
       return;
 
-    this.stalenessRefreshTimer = window.setTimeout(() => {
-      this.stalenessRefreshTimer = undefined;
+    this.timedRefreshTimer = window.setTimeout(() => {
+      this.timedRefreshTimer = undefined;
       this.host.requestDraw();
-    }, delayMs);
+    }, Math.max(1, Math.ceil(delayMs) + 1));
   }
 
-  private cancelStalenessRefresh(): void {
-    if (this.stalenessRefreshTimer === undefined) return;
-    clearTimeout(this.stalenessRefreshTimer);
-    this.stalenessRefreshTimer = undefined;
+  private cancelTimedRefresh(): void {
+    if (this.timedRefreshTimer === undefined) return;
+    clearTimeout(this.timedRefreshTimer);
+    this.timedRefreshTimer = undefined;
   }
 
   private installAgeLayout(
