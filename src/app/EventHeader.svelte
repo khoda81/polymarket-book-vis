@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { ConnectionStatus } from "../lib/chartState";
   import type { EventMarketStatus } from "../lib/marketLifecycle";
   import type { Event } from "@polymarket/client";
   import CopySlug from "./CopySlug.svelte";
@@ -7,7 +6,6 @@
   export let event: Event;
   export let slug: string | null | undefined;
   export let iconUrl: string | null;
-  export let connection: ConnectionStatus;
   export let marketStatus: EventMarketStatus;
 
   let iconFailed = false;
@@ -15,25 +13,9 @@
   $: if (iconUrl) iconFailed = false;
 
   $: statusClass =
-    marketStatus.kind === "resolved"
-      ? "cpv-dot--resolved"
-      : marketStatus.kind === "awaiting-resolution"
-        ? "cpv-dot--conn"
-        : connection === "live"
-          ? "cpv-dot--live"
-          : connection === "connecting"
-            ? "cpv-dot--conn"
-            : "cpv-dot--err";
+    marketStatus.kind === "resolved" ? "cpv-dot--resolved" : "cpv-dot--conn";
   $: statusText =
-    marketStatus.kind === "resolved"
-      ? "resolved"
-      : marketStatus.kind === "awaiting-resolution"
-        ? "awaiting resolution"
-        : connection === "live"
-          ? "live"
-          : connection === "connecting"
-            ? "connecting…"
-            : "disconnected";
+    marketStatus.kind === "resolved" ? "resolved" : "awaiting resolution";
 </script>
 
 <div class="cpv-header">
@@ -71,8 +53,10 @@
     </div>
   </div>
 
-  <div class="cpv-status">
-    <div class={`cpv-dot ${statusClass}`}></div>
-    <span class="cpv-stxt">{statusText}</span>
-  </div>
+  {#if marketStatus.kind !== "trading"}
+    <div class="cpv-status">
+      <div class={`cpv-dot ${statusClass}`}></div>
+      <span class="cpv-stxt">{statusText}</span>
+    </div>
+  {/if}
 </div>
