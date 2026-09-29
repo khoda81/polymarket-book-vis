@@ -24,7 +24,7 @@ body {
 
 .dashboard-primary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: end;
   gap: 1rem;
   min-width: 0;
@@ -34,6 +34,137 @@ body {
   display: grid;
   gap: 0.375rem;
   min-width: 0;
+}
+
+
+.network-state {
+  position: relative;
+  align-self: end;
+  min-width: 0;
+  color: var(--color-text-secondary, #666);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.network-state > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  height: 2.375rem;
+  padding: 0 0.75rem;
+  list-style: none;
+  color: inherit;
+  background: var(--color-background-secondary, #f2f2f2);
+  border: 1px solid var(--color-border-secondary, #ccc);
+  border-radius: 0.375rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.network-state > summary::-webkit-details-marker {
+  display: none;
+}
+
+.network-state > summary:focus-visible {
+  outline: 2px solid #1d9e75;
+  outline-offset: 2px;
+}
+
+.network-state-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: #888;
+}
+
+.network-state--good .network-state-dot {
+  background: #1d9e75;
+}
+
+.network-state--working .network-state-dot {
+  background: #ba7517;
+}
+
+.network-state-summary {
+  max-width: min(32vw, 27rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.network-state-panel {
+  position: absolute;
+  top: calc(100% + 0.375rem);
+  right: 0;
+  z-index: 2000;
+  display: grid;
+  width: min(34rem, calc(100vw - 2rem));
+  overflow: hidden;
+  color: var(--color-text-primary, #222);
+  background: var(--color-background-primary, #fff);
+  border: 1px solid var(--color-border-secondary, #ccc);
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 18%);
+}
+
+.network-state-panel section {
+  padding: 0.75rem;
+}
+
+.network-state-panel section + section {
+  border-top: 1px solid var(--color-border-secondary, #ccc);
+}
+
+.network-state-panel h6 {
+  margin-bottom: 0.375rem;
+  font-size: 0.75rem;
+}
+
+.network-state-panel dl {
+  display: grid;
+}
+
+.network-state-panel dl > div {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+}
+
+.network-state-panel dt {
+  color: var(--color-text-secondary, #666);
+}
+
+.network-state-panel dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.6875rem;
+}
+
+@media (max-width: 900px) {
+  .dashboard-primary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .network-state {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .network-state > summary {
+    width: 100%;
+  }
+
+  .network-state-summary {
+    max-width: none;
+  }
+
+  .network-state-panel {
+    left: 0;
+    right: auto;
+  }
 }
 
 .dashboard-add-heading {
