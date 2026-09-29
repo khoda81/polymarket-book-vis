@@ -7,7 +7,6 @@
     reorderHandleKeydown,
     type CardReorderStart,
   } from "./cardReorderSurface";
-  import type { ConnectionStatus } from "../lib/chartState";
   import {
     DEFAULT_AGE_ROW_ORIENTATION,
     flipAgeRowOrientation,
@@ -35,7 +34,6 @@
   export let onreorderstart: (start: CardReorderStart) => void;
   export let onreorderstep: (direction: -1 | 1) => void;
 
-  let connection: ConnectionStatus = "connecting";
   let anchorEvent: Event | null = null;
   let ageRowOrientation: AgeRowOrientation =
     loadStoredAgeRowOrientation({ kind: "series", id: series.id }) ??
@@ -132,7 +130,7 @@
   </div>
 
   <div class="cpv-wrap">
-    <SeriesHeader {series} event={anchorEvent} {connection} />
+    <SeriesHeader {series} event={anchorEvent} />
 
     {#if series.description?.trim()}
       <p class="cpv-event-description series-description">
@@ -147,7 +145,6 @@
       onrowflip={flipRows}
       onready={timelineReady}
       {onfailure}
-      onconnection={(status) => (connection = status)}
       onanchorevent={(event) => (anchorEvent = event)}
     />
   </div>
