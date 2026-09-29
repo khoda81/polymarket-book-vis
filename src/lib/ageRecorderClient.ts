@@ -21,9 +21,7 @@ export interface RecorderHydration {
   >;
 }
 
-export type RecorderHydrationProgress = (
-  hydration: RecorderHydration,
-) => void;
+export type RecorderHydrationProgress = (hydration: RecorderHydration) => void;
 
 const RECORDER_FETCH_TIMEOUT_MS = 5_000;
 const MAX_CONCURRENT_RECORDER_REQUESTS = 4;
