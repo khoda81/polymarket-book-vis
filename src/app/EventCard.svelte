@@ -10,7 +10,7 @@
     reorderHandleKeydown,
     type CardReorderStart,
   } from "./cardReorderSurface";
-  import type { ConnectionStatus, ViewMode } from "../lib/chartState";
+  import type { ViewMode } from "../lib/chartState";
   import { loadEventDetails, type EventDetails } from "../lib/eventDetails";
   import type { EventMarketStatus } from "../lib/marketLifecycle";
   import { createPublicClient, type Event } from "@polymarket/client";
@@ -19,16 +19,8 @@
 
   type RuntimeState =
     | { readonly kind: "metadata-loading" }
-    | {
-        readonly kind: "chart-loading";
-        readonly bundle: EventDetails;
-        readonly connection: ConnectionStatus;
-      }
-    | {
-        readonly kind: "ready";
-        readonly bundle: EventDetails;
-        readonly connection: ConnectionStatus;
-      }
+    | { readonly kind: "chart-loading"; readonly bundle: EventDetails }
+    | { readonly kind: "ready"; readonly bundle: EventDetails }
     | { readonly kind: "failed"; readonly message: string };
 
   export let event: Event;
@@ -51,22 +43,11 @@
       ? runtime.bundle
       : null;
   $: presentation = bundle?.presentation ?? null;
-  $: connection =
-    runtime.kind === "chart-loading" || runtime.kind === "ready"
-      ? runtime.connection
-      : "connecting";
-
-  function chartConnectionChanged(status: ConnectionStatus): void {
-    if (runtime.kind === "chart-loading" || runtime.kind === "ready")
-      runtime = { ...runtime, connection: status };
-  }
-
   function chartReady(): void {
     if (runtime.kind !== "chart-loading") return;
     runtime = {
       kind: "ready",
       bundle: runtime.bundle,
-      connection: runtime.connection,
     };
     onready();
   }
@@ -86,7 +67,6 @@
         runtime = {
           kind: "chart-loading",
           bundle: loaded,
-          connection: "connecting",
         };
       },
       (error: unknown) => {
@@ -190,7 +170,6 @@
       {event}
       {slug}
       iconUrl={presentation?.iconUrl ?? null}
-      {connection}
       {marketStatus}
     />
 
@@ -209,7 +188,6 @@
         {viewMode}
         onready={chartReady}
         onfailure={fail}
-        onconnection={chartConnectionChanged}
         onmarketstatus={(status) => (marketStatus = status)}
       />
     {/if}
