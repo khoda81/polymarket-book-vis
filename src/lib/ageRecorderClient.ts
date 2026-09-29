@@ -21,6 +21,10 @@ export interface RecorderHydration {
   >;
 }
 
+export type RecorderHydrationProgress = (
+  hydration: RecorderHydration,
+) => void;
+
 const RECORDER_FETCH_TIMEOUT_MS = 5_000;
 const MAX_CONCURRENT_RECORDER_REQUESTS = 4;
 const HYDRATION_RETRY_DELAYS_MS = [
@@ -34,6 +38,7 @@ const RECORDER_DEBUG =
 
 export async function fetchRecorderHydration(
   tokenIds: readonly string[],
+  onProgress: RecorderHydrationProgress = () => undefined,
 ): Promise<RecorderHydration> {
   const requested = [...new Set(tokenIds.filter(Boolean))];
   if (requested.length === 0) return emptyHydration();
@@ -58,11 +63,12 @@ export async function fetchRecorderHydration(
         pending: body.pendingTokenIds.map(shortToken),
       });
 
-      mergeRecorderResponse(
+      const progress = mergeRecorderResponse(
         body,
         recordingSinceMsByToken,
         pressureSnapshotsByToken,
       );
+      if (hasHydration(progress)) onProgress(progress);
 
       const explicitPending = new Set(
         Array.isArray(body.pendingTokenIds)
@@ -153,18 +159,25 @@ function mergeRecorderResponse(
   body: RecorderStateResponse,
   recordingSinceMsByToken: Record<string, number>,
   pressureSnapshotsByToken: Record<string, PressureFrontierSnapshot>,
-): void {
+): RecorderHydration {
+  const progressRecordingSinceMsByToken: Record<string, number> = {};
+  const progressPressureSnapshotsByToken: Record<
+    string,
+    PressureFrontierSnapshot
+  > = {};
+
   for (const [tokenId, since] of Object.entries(body.recordingSinceMsByToken)) {
-    if (typeof since === "number" && Number.isFinite(since))
-      recordingSinceMsByToken[tokenId] = since;
+    if (typeof since !== "number" || !Number.isFinite(since)) continue;
+    recordingSinceMsByToken[tokenId] = since;
+    progressRecordingSinceMsByToken[tokenId] = since;
   }
 
   for (const [tokenId, state] of Object.entries(body.states)) {
     if (state.pressure === undefined) continue;
     try {
-      pressureSnapshotsByToken[tokenId] = parsePressureFrontierSnapshot(
-        state.pressure,
-      );
+      const pressure = parsePressureFrontierSnapshot(state.pressure);
+      pressureSnapshotsByToken[tokenId] = pressure;
+      progressPressureSnapshotsByToken[tokenId] = pressure;
     } catch (error) {
       console.warn(
         `Ignoring malformed recorder pressure state for ${tokenId}`,
@@ -172,6 +185,18 @@ function mergeRecorderResponse(
       );
     }
   }
+
+  return {
+    recordingSinceMsByToken: progressRecordingSinceMsByToken,
+    pressureSnapshotsByToken: progressPressureSnapshotsByToken,
+  };
+}
+
+function hasHydration(hydration: RecorderHydration): boolean {
+  return (
+    Object.keys(hydration.recordingSinceMsByToken).length > 0 ||
+    Object.keys(hydration.pressureSnapshotsByToken).length > 0
+  );
 }
 
 function recorderStateFromProto(
