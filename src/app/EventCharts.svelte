@@ -3,7 +3,7 @@
     flipAgeRowOrientation,
     type AgeRowOrientation,
   } from "../chart/ageStripOrientation";
-  import type { ConnectionStatus, ViewMode } from "../lib/chartState";
+  import type { ViewMode } from "../lib/chartState";
   import type { EventDetails } from "../lib/eventDetails";
   import {
     eventMarketGroups,
@@ -25,7 +25,6 @@
   export let viewMode: ViewMode;
   export let onready: () => void = () => undefined;
   export let onfailure: (message: string) => void = () => undefined;
-  export let onconnection: (status: ConnectionStatus) => void = () => undefined;
   export let onmarketstatus: (status: EventMarketStatus) => void = () =>
     undefined;
 
@@ -35,14 +34,10 @@
   );
   let readyGroups = new Set<EventMarketGroupKey>();
   let readyEmitted = false;
-  let connectionByGroup = new Map<EventMarketGroupKey, ConnectionStatus>(
-    groups.map((group) => [group.key, "connecting"]),
-  );
   let marketStatusByGroup = new Map<EventMarketGroupKey, EventMarketStatus>(
     groups.map((group) => [group.key, { kind: "trading" }]),
   );
 
-  $: onconnection(combinedConnection(connectionByGroup.values()));
   $: onmarketstatus(combinedMarketStatus(marketStatusByGroup.values()));
 
   function initialOrientation(group: EventMarketGroup): AgeRowOrientation {
@@ -92,30 +87,12 @@
     }
   }
 
-  function groupConnectionChanged(
-    key: EventMarketGroupKey,
-    status: ConnectionStatus,
-  ): void {
-    connectionByGroup = new Map(connectionByGroup);
-    connectionByGroup.set(key, status);
-  }
-
   function groupMarketStatusChanged(
     key: EventMarketGroupKey,
     status: EventMarketStatus,
   ): void {
     marketStatusByGroup = new Map(marketStatusByGroup);
     marketStatusByGroup.set(key, status);
-  }
-
-  function combinedConnection(
-    statuses: Iterable<ConnectionStatus>,
-  ): ConnectionStatus {
-    const values = [...statuses];
-    if (values.some((status) => status === "disconnected"))
-      return "disconnected";
-    if (values.some((status) => status === "connecting")) return "connecting";
-    return "live";
   }
 
   function combinedMarketStatus(
@@ -146,7 +123,6 @@
     onrowflip={() => flipGroupRows(group)}
     onready={() => groupReady(group.key)}
     {onfailure}
-    onconnection={(status) => groupConnectionChanged(group.key, status)}
     onmarketstatus={(status) => groupMarketStatusChanged(group.key, status)}
   />
 {:else}
