@@ -14,7 +14,6 @@
     series.image?.trim() ||
     null;
   $: if (iconUrl) iconFailed = false;
-
 </script>
 
 <div class="cpv-header">
@@ -44,5 +43,4 @@
       {/if}
     </div>
   </div>
-
 </div>
