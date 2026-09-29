@@ -58,8 +58,6 @@ test("market trading metadata supplies fee schedules without CLOB lookup", () =>
       feeSchedule: {
         rate: "0.04",
         exponent: 1,
-        takerOnly: true,
-        rebateRate: "0",
       },
     },
   });
