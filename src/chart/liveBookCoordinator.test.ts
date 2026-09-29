@@ -4,6 +4,7 @@ import { parsePrice } from "@/lib/price";
 import {
   LiveBookCoordinator,
   type LiveBookFeedCallbacks,
+  type LiveBookNetworkState,
   type LiveBookUpdate,
 } from "./liveBookCoordinator";
 import type {
@@ -25,6 +26,85 @@ const TOKEN_B = "1002" as TokenId;
 const TOKEN_C = "1003" as TokenId;
 const MARKET_A = "market-a";
 const MARKET_B = "market-b";
+
+test("reports transport coverage separately from the snapshot barrier", async () => {
+  const client = new FakeClient();
+  const refresh = new FakeRefreshScheduler();
+  const coordinator = createCoordinator(client, refresh);
+  const states: LiveBookNetworkState[] = [];
+  const unsubscribe = coordinator.subscribeNetworkState((state) =>
+    states.push(state),
+  );
+
+  const initialGate = deferred<void>();
+  client.gates.push(initialGate.promise);
+  const first = coordinator.watch([TOKEN_A], callbackLog().callbacks);
+  await waitFor(() => client.subscribeAttempts === 1);
+  expect(states.at(-1)).toMatchObject({
+    transport: "connecting",
+    desiredTokens: 1,
+    subscribedTokens: 0,
+    synchronizedBooks: 0,
+    cachedBooks: 0,
+  });
+
+  initialGate.resolve();
+  await first.ready;
+  expect(states.at(-1)).toMatchObject({
+    transport: "streaming",
+    desiredTokens: 1,
+    subscribedTokens: 1,
+    synchronizedBooks: 0,
+    cachedBooks: 0,
+    awaitingSnapshots: 1,
+  });
+
+  client.latest().push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
+  await flush();
+  expect(states.at(-1)).toMatchObject({
+    transport: "streaming",
+    synchronizedBooks: 1,
+    cachedBooks: 1,
+    awaitingSnapshots: 0,
+  });
+
+  const handoffGate = deferred<void>();
+  client.gates.push(handoffGate.promise);
+  const second = coordinator.watch([TOKEN_B], callbackLog().callbacks);
+  await waitFor(() => client.subscribeAttempts === 2);
+  expect(states.at(-1)).toMatchObject({
+    transport: "handoff",
+    desiredTokens: 2,
+    subscribedTokens: 1,
+    synchronizedBooks: 1,
+    cachedBooks: 1,
+  });
+
+  handoffGate.resolve();
+  await second.ready;
+  expect(states.at(-1)).toMatchObject({
+    transport: "streaming",
+    desiredTokens: 2,
+    subscribedTokens: 2,
+    synchronizedBooks: 0,
+    cachedBooks: 1,
+    awaitingSnapshots: 2,
+  });
+
+  client.latest().push(bookEvent(TOKEN_A, 1_200, "0.42", "0.62"));
+  client.latest().push(bookEvent(TOKEN_B, 1_200, "0.30", "0.70"));
+  await flush();
+  expect(states.at(-1)).toMatchObject({
+    transport: "streaming",
+    synchronizedBooks: 2,
+    cachedBooks: 2,
+    awaitingSnapshots: 0,
+  });
+
+  first.close();
+  second.close();
+  unsubscribe();
+});
 
 test("coalesces watches into one steady subscription and replays cached books", async () => {
   const client = new FakeClient();
