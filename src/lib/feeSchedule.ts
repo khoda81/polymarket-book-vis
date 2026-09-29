@@ -109,9 +109,15 @@ export class ClobFeeScheduleResolver implements FeeScheduleResolver {
   }
 }
 
-export function feeScheduleFromMarket(
-  market: Pick<Market, "trading">,
-): FeeSchedule | null {
+export function feeScheduleFromMarket(market: {
+  readonly trading: {
+    readonly feesEnabled?: boolean | null;
+    readonly feeSchedule?: {
+      readonly rate: string | number;
+      readonly exponent: number;
+    } | null;
+  };
+}): FeeSchedule | null {
   if (market.trading.feesEnabled === false) return NO_FEE_SCHEDULE;
 
   const schedule = market.trading.feeSchedule;
