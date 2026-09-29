@@ -67,12 +67,7 @@ export interface LiveBookWatch {
 }
 
 export type LiveBookTransportState =
-  | "idle"
-  | "closing"
-  | "connecting"
-  | "handoff"
-  | "retrying"
-  | "streaming";
+  "idle" | "closing" | "connecting" | "handoff" | "retrying" | "streaming";
 
 export interface LiveBookNetworkState {
   readonly transport: LiveBookTransportState;
@@ -91,9 +86,7 @@ export interface LiveBookNetworkState {
   readonly retryAtMs: number | null;
 }
 
-export type LiveBookNetworkSubscriber = (
-  state: LiveBookNetworkState,
-) => void;
+export type LiveBookNetworkSubscriber = (state: LiveBookNetworkState) => void;
 
 interface RefreshScheduler {
   observe(
