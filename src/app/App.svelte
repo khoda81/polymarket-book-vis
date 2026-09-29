@@ -3,6 +3,7 @@
   import EventCard from "./EventCard.svelte";
   import EventSearch from "./EventSearch.svelte";
   import PressureLegend from "./PressureLegend.svelte";
+  import NetworkStatus from "./NetworkStatus.svelte";
   import SeriesCard from "./SeriesCard.svelte";
   import type { CardReorderStart } from "./cardReorderSurface";
   import {
@@ -814,6 +815,7 @@
       onchooseseries={addManualSeries}
       onstatus={(message) => (status = message)}
     />
+    <NetworkStatus {client} />
     <div class="layout-columns" role="group" aria-label="Dashboard columns">
       <label for="dashboard-columns">Columns</label>
       <div class="layout-columns-controls">
