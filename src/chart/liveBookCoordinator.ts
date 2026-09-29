@@ -66,6 +66,35 @@ export interface LiveBookWatch {
   close(): void;
 }
 
+export type LiveBookTransportState =
+  | "idle"
+  | "closing"
+  | "connecting"
+  | "handoff"
+  | "retrying"
+  | "streaming";
+
+export interface LiveBookNetworkState {
+  readonly transport: LiveBookTransportState;
+  readonly desiredTokens: number;
+  readonly subscribedTokens: number;
+  readonly synchronizedBooks: number;
+  readonly cachedBooks: number;
+  readonly awaitingSnapshots: number;
+  readonly refreshingTokens: number;
+  readonly watchers: number;
+  readonly coveredWatchers: number;
+  readonly activeHandles: number;
+  readonly reconciling: boolean;
+  readonly reconcileScheduled: boolean;
+  readonly revision: number;
+  readonly retryAtMs: number | null;
+}
+
+export type LiveBookNetworkSubscriber = (
+  state: LiveBookNetworkState,
+) => void;
+
 interface RefreshScheduler {
   observe(
     subscriber: BookRefreshSubscriber,
@@ -185,6 +214,8 @@ export class LiveBookCoordinator {
   private reconcileScheduled = false;
   private reconciling = false;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private retryAtMs: number | null = null;
+  private readonly networkSubscribers = new Set<LiveBookNetworkSubscriber>();
 
   constructor(
     private readonly client: PublicClient,
@@ -231,6 +262,7 @@ export class LiveBookCoordinator {
       state.status = "live";
       this.notifyConnectionStatus(state, "live");
       state.ready.resolve();
+      this.emitNetworkState();
     } else {
       this.requestReconcile();
     }
@@ -243,6 +275,14 @@ export class LiveBookCoordinator {
 
   getBook(tokenId: TokenId): TokenBook | undefined {
     return this.tokens.get(tokenId)?.book;
+  }
+
+  subscribeNetworkState(subscriber: LiveBookNetworkSubscriber): () => void {
+    this.networkSubscribers.add(subscriber);
+    subscriber(this.networkState());
+    return () => {
+      this.networkSubscribers.delete(subscriber);
+    };
   }
 
   private closeWatch(watch: WatchState): void {
@@ -276,12 +316,18 @@ export class LiveBookCoordinator {
     if (this.retryTimer !== undefined) {
       globalThis.clearTimeout(this.retryTimer);
       this.retryTimer = undefined;
+      this.retryAtMs = null;
     }
-    if (this.reconcileScheduled || this.reconciling) return;
+    if (this.reconcileScheduled || this.reconciling) {
+      this.emitNetworkState();
+      return;
+    }
 
     this.reconcileScheduled = true;
+    this.emitNetworkState();
     queueMicrotask(() => {
       this.reconcileScheduled = false;
+      this.emitNetworkState();
       void this.reconcile();
     });
   }
@@ -289,6 +335,7 @@ export class LiveBookCoordinator {
   private async reconcile(): Promise<void> {
     if (this.reconciling) return;
     this.reconciling = true;
+    this.emitNetworkState();
 
     try {
       while (true) {
@@ -336,6 +383,7 @@ export class LiveBookCoordinator {
         }
 
         this.debugStats.activeHandles++;
+        this.emitNetworkState();
         const next: ActiveSubscription = {
           stream,
           tokenKeys: desiredKeys,
@@ -383,6 +431,7 @@ export class LiveBookCoordinator {
       }
     } finally {
       this.reconciling = false;
+      this.emitNetworkState();
       if (
         this.retryTimer === undefined &&
         !sameKeys(this.active?.tokenKeys, this.desiredTokenKeys())
@@ -409,10 +458,13 @@ export class LiveBookCoordinator {
 
   private scheduleRetry(): void {
     if (this.retryTimer !== undefined) return;
+    this.retryAtMs = this.now() + this.retryDelayMs;
     this.retryTimer = globalThis.setTimeout(() => {
       this.retryTimer = undefined;
+      this.retryAtMs = null;
       this.requestReconcile();
     }, this.retryDelayMs);
+    this.emitNetworkState();
   }
 
   private failUncoveredWatches(error: unknown): void {
@@ -430,6 +482,7 @@ export class LiveBookCoordinator {
       this.detachWatch(watch);
     }
     this.desiredRevision++;
+    this.emitNetworkState();
   }
 
   private markCoveredWatchesLive(): void {
@@ -450,6 +503,7 @@ export class LiveBookCoordinator {
       }
       watch.ready.resolve();
     }
+    this.emitNetworkState();
   }
 
   private async readEvents(subscription: ActiveSubscription): Promise<void> {
@@ -505,6 +559,7 @@ export class LiveBookCoordinator {
         0,
         this.debugStats.activeHandles - 1,
       );
+      this.emitNetworkState();
     }
   }
 
@@ -582,6 +637,7 @@ export class LiveBookCoordinator {
     token.subscriptionRequestedAtMs = undefined;
     token.awaitingSnapshot = false;
     this.debugStats.routedTokenBatches++;
+    if (firstOnStream) this.emitNetworkState();
     this.notifyToken(token, {
       kind: firstOnStream ? "snapshot" : "replace",
       validThroughMs,
@@ -787,6 +843,7 @@ export class LiveBookCoordinator {
       requestedAtMs,
       superseded: false,
     });
+    this.emitNetworkState();
   }
 
   private applyBookRefresh(
@@ -830,8 +887,10 @@ export class LiveBookCoordinator {
 
   private finishBookRefresh(tokenId: TokenId, requestId: number): void {
     const tokenKey = tokenId;
-    if (this.refreshContexts.get(tokenKey)?.requestId === requestId)
+    if (this.refreshContexts.get(tokenKey)?.requestId === requestId) {
       this.refreshContexts.delete(tokenKey);
+      this.emitNetworkState();
+    }
   }
 
   private notifyToken(token: TokenState, update: LiveBookUpdate): void {
@@ -859,6 +918,66 @@ export class LiveBookCoordinator {
     status: ConnectionStatus,
   ): void {
     this.callSafely(() => watch.callbacks.onConnectionStatus(status));
+  }
+
+  private networkState(): LiveBookNetworkState {
+    const desiredKeys = this.desiredTokenKeys();
+    const activeKeys = this.active?.tokenKeys;
+    let synchronizedBooks = 0;
+    let cachedBooks = 0;
+    let awaitingSnapshots = 0;
+
+    for (const tokenKey of desiredKeys) {
+      const token = this.tokens.get(tokenKey);
+      if (!token) continue;
+      if (token.book) cachedBooks++;
+      if (token.awaitingSnapshot === true) awaitingSnapshots++;
+      if (
+        token.book &&
+        token.awaitingSnapshot !== true &&
+        activeKeys?.has(tokenKey)
+      )
+        synchronizedBooks++;
+    }
+
+    let transport: LiveBookTransportState;
+    if (desiredKeys.size === 0)
+      transport =
+        this.debugStats.activeHandles > 0 || this.reconciling
+          ? "closing"
+          : "idle";
+    else if (this.retryTimer !== undefined) transport = "retrying";
+    else if (!activeKeys) transport = "connecting";
+    else if (!sameKeys(activeKeys, desiredKeys)) transport = "handoff";
+    else transport = "streaming";
+
+    let coveredWatchers = 0;
+    for (const watch of this.watches)
+      if (isWatchCovered(watch, activeKeys)) coveredWatchers++;
+
+    return {
+      transport,
+      desiredTokens: desiredKeys.size,
+      subscribedTokens: activeKeys?.size ?? 0,
+      synchronizedBooks,
+      cachedBooks,
+      awaitingSnapshots,
+      refreshingTokens: this.refreshContexts.size,
+      watchers: this.watches.size,
+      coveredWatchers,
+      activeHandles: this.debugStats.activeHandles,
+      reconciling: this.reconciling,
+      reconcileScheduled: this.reconcileScheduled,
+      revision: this.desiredRevision,
+      retryAtMs: this.retryAtMs,
+    };
+  }
+
+  private emitNetworkState(): void {
+    if (this.networkSubscribers.size === 0) return;
+    const state = this.networkState();
+    for (const subscriber of [...this.networkSubscribers])
+      this.callSafely(() => subscriber(state));
   }
 
   private callSafely(callback: () => void): void {
