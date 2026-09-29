@@ -3,7 +3,7 @@ import {
   fetchMarketInfo,
   resolveConditionByToken,
 } from "@polymarket/client/actions";
-import type { PublicClient, TokenId } from "@polymarket/client";
+import type { Market, PublicClient, TokenId } from "@polymarket/client";
 
 export interface FeeSchedule {
   readonly rateNumerator: bigint;
@@ -38,7 +38,41 @@ export class ClobFeeScheduleResolver implements FeeScheduleResolver {
   private readonly marketByToken = new Map<TokenId, CachedMarketFee>();
   private readonly markets = new Map<string, CachedMarketFee>();
 
-  constructor(private readonly client: PublicClient) {}
+  constructor(
+    private readonly client: PublicClient,
+    markets: readonly Market[] = [],
+  ) {
+    this.primeMarkets(markets);
+  }
+
+  /**
+   * Seed immutable fee metadata already carried by Gamma market payloads.
+   * This is the normal path; token/condition lookups below are only a fallback
+   * for callers that genuinely do not have market metadata.
+   */
+  primeMarkets(markets: readonly Market[]): void {
+    for (const market of markets) this.primeMarket(market);
+  }
+
+  primeMarket(market: Market): boolean {
+    const schedule = feeScheduleFromMarket(market);
+    if (!schedule) return false;
+
+    const tokenIds = [
+      market.outcomes.yes.tokenId,
+      market.outcomes.no.tokenId,
+    ].filter((tokenId): tokenId is TokenId => tokenId !== null);
+    if (tokenIds.length === 0) return false;
+
+    const cached: CachedMarketFee = {
+      conditionId: market.conditionId ?? `market:${market.id}`,
+      schedule,
+      tokenIds,
+    };
+    if (market.conditionId) this.markets.set(market.conditionId, cached);
+    for (const tokenId of tokenIds) this.marketByToken.set(tokenId, cached);
+    return true;
+  }
 
   async prepareTokens(tokenIds: readonly TokenId[]): Promise<void> {
     for (const tokenId of tokenIds) {
@@ -73,6 +107,16 @@ export class ClobFeeScheduleResolver implements FeeScheduleResolver {
       throw new Error(`fee schedule was not prepared for token ${tokenId}`);
     return schedule;
   }
+}
+
+export function feeScheduleFromMarket(
+  market: Pick<Market, "trading">,
+): FeeSchedule | null {
+  if (market.trading.feesEnabled === false) return NO_FEE_SCHEDULE;
+
+  const schedule = market.trading.feeSchedule;
+  if (!schedule) return null;
+  return feeSchedule(Number(schedule.rate), schedule.exponent);
 }
 
 export function feeSchedule(rate: number, exponent: number): FeeSchedule {
