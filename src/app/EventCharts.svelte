@@ -141,7 +141,6 @@
           onrowflip={() => flipGroupRows(group)}
           onready={() => groupReady(group.key)}
           {onfailure}
-          onconnection={(status) => groupConnectionChanged(group.key, status)}
           onmarketstatus={(status) =>
             groupMarketStatusChanged(group.key, status)}
         />
