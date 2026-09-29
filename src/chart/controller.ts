@@ -80,7 +80,10 @@ export class ChartController {
     options: ChartControllerOptions = {},
   ) {
     this.definition = definition;
-    this.feeSchedules = new ClobFeeScheduleResolver(polyMarketClient);
+    this.feeSchedules = new ClobFeeScheduleResolver(
+      polyMarketClient,
+      definition.controls.map((control) => control.market),
+    );
     this.onMarketAutoHidden = options.onMarketAutoHidden ?? (() => undefined);
     this.onMarketLifecycleChanged =
       options.onMarketLifecycleChanged ?? (() => undefined);
@@ -217,7 +220,7 @@ export class ChartController {
     // Historical pressure remains meaningful after resolution, so hydrate every
     // displayed token. Only unresolved markets need a live websocket feed.
     if (allTokenIds.length > 0)
-      void fetchRecorderHydration(allTokenIds).then((hydration) => {
+      void fetchRecorderHydration(allTokenIds, (hydration) => {
         if (this.lifecycle === "destroyed") return;
         this.ageView.setRecordingCoverage(hydration.recordingSinceMsByToken);
         this.ageView.hydratePressureMemory(hydration.pressureSnapshotsByToken);
