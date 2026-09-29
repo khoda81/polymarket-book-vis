@@ -46,7 +46,6 @@ test("production-like fee curves remain monotone", () => {
   }
 });
 
-
 test("market trading metadata supplies fee schedules without CLOB lookup", () => {
   expect(
     feeScheduleFromMarket({ trading: { feesEnabled: false } }),
