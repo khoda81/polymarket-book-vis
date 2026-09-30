@@ -1,6 +1,6 @@
 import type { ObservationTime } from "@/lib/observationClock";
 import { AGE_ROW_BAND_PX, getAgeStripTuning } from "@/lib/ageStripTuning";
-import { relativeTimeDisplay } from "@/lib/math";
+import { relativeTimeOffsetDisplay } from "@/lib/math";
 import {
   PRESSURE_MIN_VISIBLE_ALPHA,
   pressureValidityAlpha,
@@ -206,14 +206,13 @@ export class AgeStripTooltip {
       (volume === null ? null : { kind: "finite", shares: volume });
     const ageDisplay =
       hover?.validity.kind === "through"
-        ? relativeTimeDisplay(
-            Math.max(0, nowMs - hover.validity.validThroughMs) / 1_000,
-            "elapsed",
+        ? relativeTimeOffsetDisplay(
+            (nowMs - hover.validity.validThroughMs) / 1_000,
           )
         : null;
     const ageText =
       hover?.validity.kind === "persistent"
-        ? "0s"
+        ? "now"
         : (ageDisplay?.text ?? (displayedVolume === null ? null : "∞"));
     const signature = [
       semanticTokenId,

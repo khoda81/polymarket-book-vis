@@ -17,7 +17,10 @@ export interface GhostLegendTick {
 export interface GhostLegendTickOptions {
   readonly minDistancePx?: number;
   readonly fadeDistancePx?: number;
-  /** Real age at the left edge of the scale. */
+  /**
+   * Local-clock offset at the left edge of the scale. Positive is in the past;
+   * negative means the newest observation timestamp is ahead of local time.
+   */
   readonly originAgeMs?: number;
 }
 
@@ -26,11 +29,12 @@ export interface GhostLegendTickOptions {
  *
  *   x(Δt) = 1 - 2^(-Δt / halfLife)
  *
- * Candidate grid lines live in displayed age coordinates, not in relative
- * offset coordinates. For each tiny screen interval we map both edges back to
- * age, choose the largest human-friendly grid crossed by that interval, then
- * project that exact grid value forward again. As the newest observation gets
- * older, both the label and its x position therefore move together.
+ * Candidate grid lines live in displayed clock-offset coordinates, not in
+ * relative-to-newest coordinates. Human grid boundaries are enumerated
+ * directly and projected through the inverse/forward transform; each family's
+ * projected spacing continuously controls its opacity. As the newest
+ * observation moves relative to the local clock, labels and positions move
+ * together without changing candidate families discontinuously.
  */
 export function ghostLegendTicks(
   halfLifeMs: number,
@@ -41,55 +45,63 @@ export function ghostLegendTicks(
   if (!(widthPx > 0) || !Number.isFinite(widthPx)) return [];
 
   const originAgeMs = options.originAgeMs ?? 0;
-  if (!(originAgeMs >= 0) || !Number.isFinite(originAgeMs)) return [];
+  if (!Number.isFinite(originAgeMs)) return [];
 
   const minDistancePx = options.minDistancePx ?? 48;
   const fadeDistancePx = options.fadeDistancePx ?? minDistancePx * 2;
-  const sampleCount = Math.max(64, Math.ceil(widthPx * 4));
   const maxPosition = Math.max(
     0,
     Math.min(1 - Number.EPSILON, 1 - 0.5 / widthPx),
   );
   const maxAgeMs = originAgeMs + ageAtGhostPosition(maxPosition, halfLifeMs);
-  const steps = durationSteps(maxAgeMs);
+  const steps = durationSteps();
   const byAge = new Map<number, GhostLegendTick>();
+  const toleranceMs = Math.max(
+    1e-9,
+    Math.max(Math.abs(originAgeMs), Math.abs(maxAgeMs)) * 1e-12,
+  );
 
-  let previousAgeMs = originAgeMs;
-  for (let index = 1; index <= sampleCount; index++) {
-    const position = (index / sampleCount) * maxPosition;
-    const nextAgeMs = originAgeMs + ageAtGhostPosition(position, halfLifeMs);
-    const stepMs = biggestCrossedStep(previousAgeMs, nextAgeMs, steps);
-    if (stepMs === null) {
-      previousAgeMs = nextAgeMs;
-      continue;
+  // Enumerate the actual human-grid boundaries directly. The old implementation
+  // sampled screen intervals and selected only the largest family crossed by
+  // each sample. As the scale drifted, a tiny change could make a different
+  // family "win" that interval and make a fully opaque label pop in/out.
+  //
+  // For one fixed step family, projected spacing decreases monotonically as we
+  // move right, so once its density opacity falls below one alpha step there
+  // cannot be another visible tick from that family.
+  for (const stepMs of steps) {
+    let ageMs = firstGridBoundaryAfter(originAgeMs, stepMs);
+    while (ageMs <= maxAgeMs + toleranceMs) {
+      const relativeAgeMs = ageMs - originAgeMs;
+      if (relativeAgeMs <= 0) {
+        ageMs += stepMs;
+        continue;
+      }
+
+      const tickPosition = ghostPositionForAge(relativeAgeMs, halfLifeMs);
+      const nextPosition = ghostPositionForAge(
+        relativeAgeMs + stepMs,
+        halfLifeMs,
+      );
+      const spacingPx = Math.abs(nextPosition - tickPosition) * widthPx;
+      const opacity = legendTickOpacity(
+        spacingPx,
+        minDistancePx,
+        fadeDistancePx,
+      );
+      if (opacity <= 1 / 255) break;
+
+      const tick: GhostLegendTick = {
+        ageMs,
+        position: tickPosition,
+        opacity,
+        label: formatDurationTick(ageMs),
+      };
+      const existing = byAge.get(ageMs);
+      if (!existing || tick.opacity > existing.opacity) byAge.set(ageMs, tick);
+
+      ageMs += stepMs;
     }
-
-    const ageMs = firstGridBoundaryAfter(previousAgeMs, stepMs);
-    previousAgeMs = nextAgeMs;
-    if (
-      !(ageMs > originAgeMs) ||
-      ageMs > nextAgeMs + Math.max(1e-9, Math.abs(nextAgeMs) * 1e-12)
-    )
-      continue;
-
-    const relativeAgeMs = ageMs - originAgeMs;
-    const tickPosition = ghostPositionForAge(relativeAgeMs, halfLifeMs);
-    const nextPosition = ghostPositionForAge(
-      ageMs + stepMs - originAgeMs,
-      halfLifeMs,
-    );
-    const spacingPx = Math.abs(nextPosition - tickPosition) * widthPx;
-    const opacity = legendTickOpacity(spacingPx, minDistancePx, fadeDistancePx);
-    if (opacity <= 1 / 255) continue;
-
-    const tick: GhostLegendTick = {
-      ageMs,
-      position: tickPosition,
-      opacity,
-      label: formatDurationTick(ageMs),
-    };
-    const existing = byAge.get(ageMs);
-    if (!existing || tick.opacity > existing.opacity) byAge.set(ageMs, tick);
   }
 
   return [...byAge.values()].sort((a, b) => a.ageMs - b.ageMs);
@@ -109,34 +121,30 @@ export function ageAtGhostPosition(
 }
 
 export function formatDurationTick(ageMs: number): string {
+  if (Object.is(ageMs, -0) || ageMs === 0) return "now";
   const magnitude = Math.abs(ageMs);
+  const sign = ageMs < 0 ? "−" : "";
   if (magnitude < 1) {
-    const microseconds = ageMs * 1_000;
-    if (Math.abs(microseconds) >= 1) return `${compact(microseconds)}µs`;
-    return `${compact(ageMs * 1_000_000)}ns`;
+    const microseconds = magnitude * 1_000;
+    if (microseconds >= 1) return `${sign}${compact(microseconds)}µs`;
+    return `${sign}${compact(magnitude * 1_000_000)}ns`;
   }
-  if (magnitude < SECOND_MS) return `${compact(ageMs)}ms`;
-  if (magnitude < MINUTE_MS) return `${compact(ageMs / SECOND_MS)}s`;
-  if (magnitude < HOUR_MS) return `${compact(ageMs / MINUTE_MS)}m`;
-  if (magnitude < DAY_MS) return `${compact(ageMs / HOUR_MS)}h`;
-  if (magnitude < MONTH_MS) return `${compact(ageMs / DAY_MS)}d`;
-  if (magnitude < YEAR_MS) return `${compact(ageMs / MONTH_MS)}mo`;
-  return `${compact(ageMs / YEAR_MS)}y`;
+  if (magnitude < SECOND_MS) return `${sign}${compact(magnitude)}ms`;
+  if (magnitude < MINUTE_MS) return `${sign}${compact(magnitude / SECOND_MS)}s`;
+  if (magnitude < HOUR_MS) return `${sign}${compact(magnitude / MINUTE_MS)}m`;
+  if (magnitude < DAY_MS) return `${sign}${compact(magnitude / HOUR_MS)}h`;
+  if (magnitude < MONTH_MS) return `${sign}${compact(magnitude / DAY_MS)}d`;
+  if (magnitude < YEAR_MS) return `${sign}${compact(magnitude / MONTH_MS)}mo`;
+  return `${sign}${compact(magnitude / YEAR_MS)}y`;
 }
 
-function durationSteps(maxAgeMs: number): number[] {
+function durationSteps(): number[] {
   const values = new Set<number>();
 
-  // Decimal sub-second families remain useful when the half-life is tiny.
-  const maxSubSecondExponent = Math.min(
-    2,
-    Math.ceil(Math.log10(Math.max(maxAgeMs, 1e-12))),
-  );
-  for (
-    let exponent = maxSubSecondExponent - 12;
-    exponent <= maxSubSecondExponent;
-    exponent++
-  )
+  // Keep the family set stable while the scale moves. Candidate visibility is
+  // determined continuously by projected spacing below; adding/removing an
+  // entire family based on the current range would make major ticks pop.
+  for (let exponent = -12; exponent <= 2; exponent++)
     for (const multiplier of [1, 2, 5])
       addStep(values, multiplier * 10 ** exponent);
 
@@ -148,35 +156,11 @@ function durationSteps(maxAgeMs: number): number[] {
   for (const value of [1, 2, 7, 14]) addStep(values, value * DAY_MS);
   for (const value of [1, 2, 3, 6]) addStep(values, value * MONTH_MS);
 
-  const yearExponent = Math.floor(
-    Math.log10(Math.max(maxAgeMs / YEAR_MS, 1e-12)),
-  );
-  for (
-    let exponent = Math.min(-1, yearExponent - 2);
-    exponent <= yearExponent + 2;
-    exponent++
-  )
-    for (const multiplier of [1, 2, 5]) {
-      const step = multiplier * YEAR_MS * 10 ** exponent;
-      if (step >= YEAR_MS) addStep(values, step);
-    }
+  for (let exponent = 0; exponent <= 9; exponent++)
+    for (const multiplier of [1, 2, 5])
+      addStep(values, multiplier * YEAR_MS * 10 ** exponent);
 
-  return [...values]
-    .filter(
-      (value) => value > 0 && Number.isFinite(value) && value <= maxAgeMs * 2,
-    )
-    .sort((a, b) => b - a);
-}
-
-function biggestCrossedStep(
-  startMs: number,
-  endMs: number,
-  steps: readonly number[],
-): number | null {
-  if (!(endMs > startMs)) return null;
-  for (const stepMs of steps)
-    if (firstGridBoundaryAfter(startMs, stepMs) <= endMs) return stepMs;
-  return null;
+  return [...values].sort((a, b) => b - a);
 }
 
 function firstGridBoundaryAfter(value: number, step: number): number {

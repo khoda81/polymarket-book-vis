@@ -30,6 +30,8 @@ test("duration ticks use human unit families and fade by local spacing", () => {
 });
 
 test("duration labels remain readable below milliseconds and above months", () => {
+  expect(formatDurationTick(0)).toBe("now");
+  expect(formatDurationTick(-50)).toBe("−50ms");
   expect(formatDurationTick(0.1)).toBe("100µs");
   expect(formatDurationTick(1_000)).toBe("1s");
   expect(formatDurationTick(60 * 60 * 1_000)).toBe("1h");
@@ -58,4 +60,40 @@ test("absolute-age ticks are reprojected when the newest observation gets older"
     ghostPositionForAge(sharedAge! - 1_000, 5_000),
   );
   expect(staleTick.label).toBe(formatDurationTick(sharedAge!));
+});
+
+test("signed clock offsets put now at its exact transformed position", () => {
+  const ticks = ghostLegendTicks(5_000, 600, {
+    minDistancePx: 24,
+    originAgeMs: -50,
+  });
+  const now = ticks.find((tick) => tick.ageMs === 0);
+  expect(now).toBeDefined();
+  expect(now!.label).toBe("now");
+  expect(now!.position).toBeCloseTo(ghostPositionForAge(50, 5_000));
+});
+
+test("future clock offsets can expose negative tick values", () => {
+  const ticks = ghostLegendTicks(5_000, 600, {
+    minDistancePx: 24,
+    originAgeMs: -1_500,
+  });
+  expect(ticks.some((tick) => tick.ageMs < 0)).toBe(true);
+  expect(ticks.some((tick) => tick.label.startsWith("−"))).toBe(true);
+});
+
+test("small origin drift preserves interior tick candidates", () => {
+  const before = ghostLegendTicks(5_000, 600, {
+    minDistancePx: 24,
+    originAgeMs: 1_234,
+  });
+  const after = ghostLegendTicks(5_000, 600, {
+    minDistancePx: 24,
+    originAgeMs: 1_235,
+  });
+  const afterAges = new Set(after.map((tick) => tick.ageMs));
+
+  for (const tick of before)
+    if (tick.position > 0.05 && tick.position < 0.95 && tick.opacity > 0.1)
+      expect(afterAges.has(tick.ageMs)).toBe(true);
 });

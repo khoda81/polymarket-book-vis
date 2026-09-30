@@ -1,4 +1,4 @@
-import { relativeTimeDisplay } from "@/lib/math";
+import { relativeTimeDisplay, relativeTimeOffsetDisplay } from "@/lib/math";
 import type { ViewMode } from "@/lib/chartState";
 import type { PublicClient } from "@polymarket/client";
 import {
@@ -139,7 +139,7 @@ export class AgeStripClock {
         const since = timing?.recordingSinceMs;
         const age =
           since != null && Number.isFinite(since)
-            ? relativeTimeDisplay(Math.max(0, nowMs - since) / 1000, "elapsed")
+            ? relativeTimeOffsetDisplay((nowMs - since) / 1_000)
             : null;
         if (age?.nextChangeMs != null)
           nextChangeMs = Math.min(nextChangeMs, age.nextChangeMs);
