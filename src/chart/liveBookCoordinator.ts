@@ -6,9 +6,10 @@ import {
 } from "@/lib/bookIngestion";
 import type { MarketResolutionUpdate } from "@/lib/marketLifecycle";
 import type { TokenBook } from "@/lib/orderBook";
-import type {
-  BookRefreshSnapshot,
-  BookRefreshSubscriber,
+import {
+  bookRefreshCoordinator,
+  type BookRefreshSnapshot,
+  type BookRefreshSubscriber,
 } from "./bookRefreshCoordinator";
 import {
   TransportError,
@@ -99,9 +100,8 @@ interface RefreshScheduler {
 
 export interface LiveBookCoordinatorOptions {
   /**
-   * Optional stale-book verifier. Production currently leaves this disabled:
-   * websocket silence is represented as stale observation time instead of
-   * manufacturing freshness with aggressive REST polling.
+   * Optional stale-book verifier. Production uses the shared REST watchdog;
+   * pass null to disable it in a test or diagnostic build.
    */
   readonly refreshScheduler?: RefreshScheduler | null;
   readonly retryDelayMs?: number;
@@ -218,7 +218,10 @@ export class LiveBookCoordinator {
     private readonly client: PublicClient,
     options: LiveBookCoordinatorOptions = {},
   ) {
-    this.refreshScheduler = options.refreshScheduler ?? null;
+    this.refreshScheduler =
+      options.refreshScheduler === undefined
+        ? bookRefreshCoordinator(client)
+        : options.refreshScheduler;
     this.retryDelayMs = options.retryDelayMs ?? SUBSCRIPTION_RETRY_MS;
     this.now = options.now ?? Date.now;
     this.handoffYield = options.handoffYield ?? yieldToNextTask;
@@ -873,7 +876,9 @@ export class LiveBookCoordinator {
         requestedAtMs,
       );
       token.validThroughMs = validThroughMs;
-      this.notifyToken(token, { kind: "snapshot", validThroughMs });
+      // REST equality is evidence that the existing canonical geometry is
+      // still valid; it is not a new stream snapshot. Advance only causality.
+      this.notifyToken(token, { kind: "watermark", validThroughMs });
       this.observeBook(token, validThroughMs);
       return;
     }

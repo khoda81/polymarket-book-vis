@@ -595,6 +595,7 @@
   max-height: min(220px, 40vh);
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 
