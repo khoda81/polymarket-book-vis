@@ -70,11 +70,26 @@ export function ghostLegendTicks(
   // move right, so once its density opacity falls below one alpha step there
   // cannot be another visible tick from that family.
   for (const stepMs of steps) {
+    // Projected spacing is maximal at the left edge and only decreases as we
+    // move right. Steps are sorted coarse -> fine, so once a family is already
+    // below one visible alpha step here, this family and every finer one can be
+    // skipped entirely. Besides being cheaper, this prevents asking IEEE-754
+    // to enumerate grid steps far smaller than the representable spacing near
+    // a large clock offset.
+    const maxSpacingPx = ghostPositionForAge(stepMs, halfLifeMs) * widthPx;
+    if (
+      legendTickOpacity(maxSpacingPx, minDistancePx, fadeDistancePx) <=
+      1 / 255
+    )
+      break;
+
     let ageMs = firstGridBoundaryAfter(originAgeMs, stepMs);
     while (ageMs <= maxAgeMs + toleranceMs) {
       const relativeAgeMs = ageMs - originAgeMs;
       if (relativeAgeMs <= 0) {
-        ageMs += stepMs;
+        const nextAgeMs = ageMs + stepMs;
+        if (!(nextAgeMs > ageMs)) break;
+        ageMs = nextAgeMs;
         continue;
       }
 
@@ -100,7 +115,9 @@ export function ghostLegendTicks(
       const existing = byAge.get(ageMs);
       if (!existing || tick.opacity > existing.opacity) byAge.set(ageMs, tick);
 
-      ageMs += stepMs;
+      const nextAgeMs = ageMs + stepMs;
+      if (!(nextAgeMs > ageMs)) break;
+      ageMs = nextAgeMs;
     }
   }
 
