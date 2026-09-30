@@ -19,7 +19,6 @@
   const SHARE_TICK_MIN_DISTANCE_PX = 24;
   let shareBar: HTMLDivElement;
   let ghostCanvas: HTMLCanvasElement;
-  let ghostLatency: HTMLSpanElement;
   let shareWidth = 0;
   let tuning: Readonly<AgeStripTuning> = getAgeStripTuning();
 
@@ -40,7 +39,7 @@
     observer.observe(shareBar);
     shareWidth = shareBar.clientWidth;
 
-    const ghost = new GhostMemoryScale(ghostCanvas, ghostLatency, client);
+    const ghost = new GhostMemoryScale(ghostCanvas, client);
 
     return () => {
       ghost.destroy();
@@ -93,18 +92,11 @@
       <span>Ghost memory</span>
       <span class="ghost-legend-note">newest → older</span>
     </div>
-    <div class="ghost-memory-scale">
-      <canvas
-        class="ghost-memory-canvas"
-        bind:this={ghostCanvas}
-        role="img"
-        aria-label="Ghost memory: awaiting observation"
-      ></canvas>
-      <span
-        class="ghost-memory-latency"
-        bind:this={ghostLatency}
-        aria-hidden="true"
-      ></span>
-    </div>
+    <canvas
+      class="ghost-memory-canvas"
+      bind:this={ghostCanvas}
+      role="img"
+      aria-label="Ghost memory: awaiting observation"
+    ></canvas>
   </section>
 </div>

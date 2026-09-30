@@ -59,7 +59,6 @@ export class GhostMemoryScale {
   } | null = null;
   constructor(
     private readonly canvas: HTMLCanvasElement,
-    private readonly latencyLabel: HTMLSpanElement,
     client: PublicClient,
   ) {
     const ctx = canvas.getContext("2d");
@@ -93,7 +92,6 @@ export class GhostMemoryScale {
     this.canvas.removeEventListener("pointermove", this.handlePointer);
     this.canvas.removeEventListener("pointerleave", this.clearPointer);
     this.canvas.removeEventListener("wheel", this.handleWheel);
-    this.latencyLabel.textContent = "";
     this.tooltipList = null;
     this.tooltipAgeTexts.clear();
     releaseSharedTooltip(this.tooltipOwner);
@@ -150,7 +148,6 @@ export class GhostMemoryScale {
     ctx.textBaseline = "bottom";
     ctx.fillStyle = textColor;
     if (frame.kind === "unobserved") {
-      this.latencyLabel.textContent = "";
       ctx.textAlign = "left";
       ctx.fillText("awaiting observation", INSET, HEIGHT);
       this.canvas.setAttribute(
@@ -165,14 +162,7 @@ export class GhostMemoryScale {
       minDistancePx: 32,
       originAgeMs: clockOffsetMs,
     });
-    const originLabel = fmtRelativeTimeOffset(clockOffsetMs / 1_000);
-    if (this.latencyLabel.textContent !== originLabel)
-      this.latencyLabel.textContent = originLabel;
-    const originLabelWidth = ctx.measureText(originLabel).width;
-    // Center the DOM label on the rounded left cap without moving the actual
-    // age-transform origin at INSET.
-    const originLabelCenterX = INSET + BAR_HEIGHT / 2;
-    let rightEdge = originLabelCenterX + originLabelWidth / 2 + 8;
+    let rightEdge = INSET - 8;
 
     // Cut tick marks out of the gradient instead of painting them with the
     // same foreground color. This preserves the old high-contrast appearance
@@ -192,8 +182,8 @@ export class GhostMemoryScale {
       const left = x - labelWidth / 2;
       const right = x + labelWidth / 2;
       const collisionFade = smoothVisibility(left - rightEdge, 8);
-      const boundaryFade = smoothVisibility(width - right, 8);
-      const opacity = tick.opacity * collisionFade * boundaryFade;
+      const rightBoundaryFade = smoothVisibility(width - INSET - right, 8);
+      const opacity = tick.opacity * collisionFade * rightBoundaryFade;
       if (opacity <= 1 / 255) continue;
 
       ctx.globalAlpha = opacity;
@@ -219,7 +209,8 @@ export class GhostMemoryScale {
         );
       }
     }
-    const description = `Ghost memory: newest observation clock offset ${originLabel}. Markers show token offsets relative to that observation.`;
+    const description =
+      "Ghost memory. Ticks are signed local-clock offsets; markers show token observations.";
     if (this.canvas.getAttribute("aria-label") !== description)
       this.canvas.setAttribute("aria-label", description);
     if (this.hoverPointer)

@@ -82,6 +82,23 @@ test("future clock offsets can expose negative tick values", () => {
   expect(ticks.some((tick) => tick.label.startsWith("−"))).toBe(true);
 });
 
+test("large clock offsets cannot stall on sub-representable grid steps", () => {
+  const ticks = ghostLegendTicks(5_000, 600, {
+    minDistancePx: 24,
+    originAgeMs: 20_000,
+  });
+
+  expect(ticks.length).toBeGreaterThan(0);
+  expect(
+    ticks.every(
+      (tick) =>
+        Number.isFinite(tick.ageMs) &&
+        Number.isFinite(tick.position) &&
+        Number.isFinite(tick.opacity),
+    ),
+  ).toBe(true);
+});
+
 test("small origin drift preserves interior tick candidates", () => {
   const before = ghostLegendTicks(5_000, 600, {
     minDistancePx: 24,
