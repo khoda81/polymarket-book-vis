@@ -6,10 +6,9 @@ import {
 } from "@/lib/bookIngestion";
 import type { MarketResolutionUpdate } from "@/lib/marketLifecycle";
 import type { TokenBook } from "@/lib/orderBook";
-import {
-  bookRefreshCoordinator,
-  type BookRefreshSnapshot,
-  type BookRefreshSubscriber,
+import type {
+  BookRefreshSnapshot,
+  BookRefreshSubscriber,
 } from "./bookRefreshCoordinator";
 import {
   TransportError,
@@ -99,7 +98,12 @@ interface RefreshScheduler {
 }
 
 export interface LiveBookCoordinatorOptions {
-  readonly refreshScheduler?: RefreshScheduler;
+  /**
+   * Optional stale-book verifier. Production currently leaves this disabled:
+   * websocket silence is represented as stale observation time instead of
+   * manufacturing freshness with aggressive REST polling.
+   */
+  readonly refreshScheduler?: RefreshScheduler | null;
   readonly retryDelayMs?: number;
   readonly now?: () => number;
   readonly debug?: boolean;
@@ -172,14 +176,14 @@ export function liveBookCoordinator(client: PublicClient): LiveBookCoordinator {
 /**
  * One canonical live-book store and one logical market subscription per client.
  * Views retain independent pressure histories but share transport, ingestion,
- * market-local causal watermarking, stale-book detection, and current books.
+ * market-local causal watermarking and current books.
  */
 export class LiveBookCoordinator {
   private readonly tokens = new Map<ClobAssetId, TokenState>();
   private readonly watches = new Set<WatchState>();
   private readonly refreshContexts = new Map<ClobAssetId, BookRefreshContext>();
   private readonly seenEvents = new WeakSet<object>();
-  private readonly refreshScheduler: RefreshScheduler;
+  private readonly refreshScheduler: RefreshScheduler | null;
   private readonly retryDelayMs: number;
   private readonly now: () => number;
   private readonly debug: boolean;
@@ -214,8 +218,7 @@ export class LiveBookCoordinator {
     private readonly client: PublicClient,
     options: LiveBookCoordinatorOptions = {},
   ) {
-    this.refreshScheduler =
-      options.refreshScheduler ?? bookRefreshCoordinator(client);
+    this.refreshScheduler = options.refreshScheduler ?? null;
     this.retryDelayMs = options.retryDelayMs ?? SUBSCRIPTION_RETRY_MS;
     this.now = options.now ?? Date.now;
     this.handoffYield = options.handoffYield ?? yieldToNextTask;
@@ -270,6 +273,10 @@ export class LiveBookCoordinator {
     return this.tokens.get(tokenId)?.book;
   }
 
+  tokenStreamConnected(tokenId: string): boolean {
+    return this.active?.tokenKeys.has(tokenId as ClobAssetId) ?? false;
+  }
+
   subscribeNetworkState(subscriber: LiveBookNetworkSubscriber): () => void {
     this.networkSubscribers.add(subscriber);
     subscriber(this.networkState());
@@ -301,7 +308,7 @@ export class LiveBookCoordinator {
   private dropToken(tokenKey: ClobAssetId, token: TokenState): void {
     this.tokens.delete(tokenKey);
     this.refreshContexts.delete(tokenKey);
-    this.refreshScheduler.unwatch(this.refreshSubscriber, token.tokenId);
+    this.refreshScheduler?.unwatch(this.refreshSubscriber, token.tokenId);
   }
 
   private requestReconcile(): void {
@@ -520,7 +527,7 @@ export class LiveBookCoordinator {
     void this.closeSubscription(subscription);
 
     this.refreshContexts.clear();
-    this.refreshScheduler.unwatchAll(this.refreshSubscriber);
+    this.refreshScheduler?.unwatchAll(this.refreshSubscriber);
     for (const token of this.tokens.values()) {
       // Preserve the last book for display/cache consumers, but never mutate
       // it from the next stream until that stream establishes a fresh snapshot.
@@ -815,7 +822,7 @@ export class LiveBookCoordinator {
   }
 
   private observeBook(token: TokenState, validThroughMs: number): void {
-    this.refreshScheduler.observe(
+    this.refreshScheduler?.observe(
       this.refreshSubscriber,
       token.tokenId,
       validThroughMs,

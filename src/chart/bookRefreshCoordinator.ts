@@ -3,7 +3,11 @@ import {
   ghostOpacityStepDelayMs,
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
-import type { PublicClient, TokenId } from "@polymarket/client";
+import {
+  RateLimitError,
+  type PublicClient,
+  type TokenId,
+} from "@polymarket/client";
 
 const BOOKS_REQUEST_LIMIT = 500;
 const BOOKS_REQUEST_WINDOW_MS = 10_000;
@@ -257,9 +261,13 @@ export class BookRefreshCoordinator {
         MAX_FAILURE_BACKOFF_MS,
         INITIAL_FAILURE_BACKOFF_MS * 2 ** (this.failureCount - 1),
       );
-      this.backoffUntilMs = Date.now() + backoffMs;
+      const retryAfterMs =
+        error instanceof RateLimitError && Number.isFinite(error.retryAfter)
+          ? Math.max(0, error.retryAfter! * 1_000)
+          : 0;
+      this.backoffUntilMs = Date.now() + Math.max(backoffMs, retryAfterMs);
       console.warn(
-        `Could not refresh stale order books; backing off ${backoffMs}ms`,
+        `Could not refresh stale order books; backing off ${Math.max(backoffMs, retryAfterMs)}ms`,
         error,
       );
     } finally {

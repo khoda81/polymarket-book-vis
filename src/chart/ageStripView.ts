@@ -1,7 +1,7 @@
+import { observationClock, opacityReference } from "@/lib/observationClock";
 import {
   AGE_ROW_BAND_PX,
   getAgeStripTuning,
-  ghostRefreshDelayMs,
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
 import type { FeeSchedule } from "@/lib/feeSchedule";
@@ -31,11 +31,13 @@ import {
 import type { LiveBookUpdate } from "./liveBookFeed";
 import { AgeStripTooltip } from "./ageStripTooltip";
 import type { AgeRowOrientation } from "./ageStripOrientation";
+import { signedVolumeColor } from "@/lib/signedVolume";
+import type { PublicClient } from "@polymarket/client";
 import type { ChartMarketControl } from "@/lib/chartDefinition";
 
-const MAX_TIMER_DELAY_MS = 2_147_483_647;
-
 export interface AgeStripHost {
+  readonly client: PublicClient;
+  readonly getMarketTokenName: (tokenId: string) => string;
   readonly canvas: HTMLCanvasElement;
   readonly pressureCanvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
@@ -45,6 +47,7 @@ export interface AgeStripHost {
   readonly getBook: (tokenId: string) => TokenBook | undefined;
   readonly getFeeSchedule: (tokenId: string) => FeeSchedule;
   readonly getTokenName: (tokenId: string) => string | undefined;
+  readonly getMarketName: (tokenId: string) => string | undefined;
   readonly getOppositeTokenId: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
   readonly getTheme: () => ChartTheme;
@@ -68,7 +71,7 @@ export class AgeStripView {
   private readonly pressure = new AgeStripPressureState();
   private pressureLayer: GpuPressureLayer | null = null;
   private readonly visibilityInitialized = new Set<string>();
-  private timedRefreshTimer: number | undefined;
+  private readonly unsubscribeObservation: () => void;
   private layoutMode: "age" | "volume" | null = null;
 
   constructor(host: AgeStripHost) {
@@ -76,17 +79,39 @@ export class AgeStripView {
     this.clock = new AgeStripClock({
       canvasWrap: host.canvasWrap,
       getViewMode: host.getViewMode,
-      getTheme: host.getTheme,
-      getTiming: (tokenId) =>
-        this.pressure.rowTiming(tokenId, this.host.getOppositeTokenId(tokenId)),
+      client: host.client,
+      getObservationTime: (tokenId) => this.pressure.observationTime(tokenId),
+      getTiming: (tokenId) => this.pressure.timing(tokenId),
+      getRowOrientation: host.getRowOrientation,
+      getTokenName: host.getMarketTokenName,
+      getTokenColor: (tokenId, opposite) =>
+        signedVolumeColor(
+          opposite ? 1 : -1,
+          host.getPressureColorScale(tokenId),
+        ),
     });
+    this.unsubscribeObservation = observationClock(host.client).subscribe(
+      (reference) => {
+        if (host.getViewMode() !== "age" || !this.pressureLayer) return;
+        if (
+          !this.pressureLayer.refreshOpacity(
+            opacityReference(reference),
+            getAgeStripTuning().ghostHalfLifeMs,
+          )
+        )
+          host.requestDraw();
+      },
+    );
     this.tooltip = new AgeStripTooltip({
+      getOpacityTime: () =>
+        opacityReference(observationClock(host.client).readReference()),
       canvas: host.canvas,
       getViewMode: host.getViewMode,
       getRowOrientation: host.getRowOrientation,
       getPressureBand: (tokenId, price, volume) =>
         this.pressure.bandAtPoint(tokenId, price, volume),
       getTokenName: host.getTokenName,
+      getMarketName: host.getMarketName,
       getPressureColorScale: host.getPressureColorScale,
     });
 
@@ -104,7 +129,6 @@ export class AgeStripView {
     this.pressure.reset();
     this.pressureLayer?.invalidate();
     this.visibilityInitialized.clear();
-    this.cancelTimedRefresh();
     this.clock.reset();
     this.tooltip.clear();
     this.layoutMode = null;
@@ -114,6 +138,7 @@ export class AgeStripView {
     recordingSinceMsByToken: Readonly<Record<string, number>>,
   ): void {
     this.pressure.setRecordingCoverage(recordingSinceMsByToken);
+    this.clock.refresh();
     this.host.requestDraw();
   }
 
@@ -126,6 +151,7 @@ export class AgeStripView {
       (tokenId) => this.host.getFeeSchedule(tokenId),
     );
     this.pressureLayer?.invalidate();
+    observationClock(this.host.client).changed();
   }
 
   configureMarkets(controls: readonly ChartMarketControl[]): void {
@@ -174,6 +200,7 @@ export class AgeStripView {
       update,
     );
 
+    observationClock(this.host.client).changed();
     if (this.visibilityInitialized.has(tokenId)) return;
     this.visibilityInitialized.add(tokenId);
     if (hasRealOrders(book)) return;
@@ -193,6 +220,8 @@ export class AgeStripView {
       resolvedAtMs,
     );
     this.pressureLayer?.invalidate();
+    this.clock.refresh();
+    observationClock(this.host.client).changed();
   }
 
   private applyResolvedPressure(
@@ -221,14 +250,8 @@ export class AgeStripView {
   }
 
   draw(): void {
-    // A book-driven redraw advances validity. Reset the decay timer so the
-    // next staleness-only frame happens only after the chart goes quiet.
-    this.cancelTimedRefresh();
-
     const tuning = getAgeStripTuning();
-    const nowMs = Date.now();
     const rowOrientation = this.host.getRowOrientation();
-    let hasVisiblePressure = false;
 
     const controls = this.collectControls();
     const activeControls = controls.filter((label) => this.isActive(label));
@@ -273,7 +296,7 @@ export class AgeStripView {
       canvasHeight: vp.t + vp.height + this.host.plotter.padding.b,
     };
     this.clock.setEnabled(true);
-    const clockRefreshDelayMs = this.clock.setGeometry(geometry);
+    this.clock.setGeometry(geometry);
     this.tooltip.setGeometry(geometry);
 
     const gpuRows: GpuPressureRow[] = [];
@@ -336,18 +359,6 @@ export class AgeStripView {
             : []),
         ],
       });
-      hasVisiblePressure ||=
-        this.pressure.hasVisiblePressure(
-          tokenId,
-          nowMs,
-          tuning.ghostHalfLifeMs,
-        ) ||
-        (oppositeTokenId !== undefined &&
-          this.pressure.hasVisiblePressure(
-            oppositeTokenId,
-            nowMs,
-            tuning.ghostHalfLifeMs,
-          ));
     }
 
     const pressureLayer =
@@ -361,26 +372,18 @@ export class AgeStripView {
       dpr,
       volumePerCssPixel: tuning.volumePerCssPixel,
       ghostHalfLifeMs: tuning.ghostHalfLifeMs,
-      nowMs,
+      opacityTimeMs: opacityReference(
+        observationClock(this.host.client).readReference(),
+      ),
       background: theme.bg,
     });
 
     drawAgeAxes(frame, rowCount, activeControls, (tokenId) =>
       this.host.getPressureColorScale(tokenId),
     );
-
-    let nextRefreshDelayMs = clockRefreshDelayMs ?? Infinity;
-    if (hasVisiblePressure)
-      nextRefreshDelayMs = Math.min(
-        nextRefreshDelayMs,
-        ghostRefreshDelayMs(tuning.ghostHalfLifeMs),
-      );
-    if (Number.isFinite(nextRefreshDelayMs))
-      this.scheduleTimedRefresh(nextRefreshDelayMs);
   }
 
   prepareVolumeView(): void {
-    this.cancelTimedRefresh();
     this.pressureLayer?.setVisible(false);
     this.clock.setGeometry(null);
     this.clock.setEnabled(false);
@@ -413,7 +416,7 @@ export class AgeStripView {
 
   destroy(): void {
     this.unsubscribeTuning();
-    this.cancelTimedRefresh();
+    this.unsubscribeObservation();
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.clock.destroy();
     this.tooltip.destroy();
@@ -427,28 +430,6 @@ export class AgeStripView {
     event.preventDefault();
     event.stopImmediatePropagation();
   };
-
-  private scheduleTimedRefresh(delayMs: number): void {
-    if (
-      this.timedRefreshTimer !== undefined ||
-      this.host.getViewMode() !== "age"
-    )
-      return;
-
-    this.timedRefreshTimer = window.setTimeout(
-      () => {
-        this.timedRefreshTimer = undefined;
-        this.host.requestDraw();
-      },
-      Math.min(MAX_TIMER_DELAY_MS, Math.max(1, Math.ceil(delayMs) + 1)),
-    );
-  }
-
-  private cancelTimedRefresh(): void {
-    if (this.timedRefreshTimer === undefined) return;
-    clearTimeout(this.timedRefreshTimer);
-    this.timedRefreshTimer = undefined;
-  }
 
   private installAgeLayout(
     rowCount: number,

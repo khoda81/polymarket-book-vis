@@ -1,3 +1,5 @@
+import { observationClock, opacityReference } from "@/lib/observationClock";
+import { signedVolumeColor } from "@/lib/signedVolume";
 import { AgeStripClock } from "./ageStripClock";
 import { AgeStripTooltip } from "./ageStripTooltip";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
@@ -21,7 +23,6 @@ import { LiveBookFeed } from "./liveBookFeed";
 import { fetchRecorderHydration } from "@/lib/ageRecorderClient";
 import {
   getAgeStripTuning,
-  ghostRefreshDelayMs,
   subscribeAgeStripTuning,
 } from "@/lib/ageStripTuning";
 import { defaultPressureScaleForMarket } from "@/lib/chartDefinition";
@@ -67,7 +68,6 @@ const BOTTOM_PADDING_PX = 0;
 const TIMELINE_RELATIVE_GUTTER_PX = 42;
 const SUBSCRIPTION_BUFFER_ROWS = 2;
 const WINDOW_RELOAD_FRACTION = 0.45;
-const MAX_AUTO_SCROLL_FRAME_DELAY_MS = 250;
 
 export interface SeriesTimelineViewOptions {
   readonly onConnectionStatus?: (status: ConnectionStatus) => void;
@@ -123,7 +123,7 @@ export class SeriesTimelineView {
   private lastEdgeRefreshMs = 0;
   private lastAnchorEventId: string | null = null;
   private clockTimer: number | undefined;
-  private stalenessRefreshTimer: number | undefined;
+  private readonly unsubscribeObservation: () => void;
   private raf: number | null = null;
   private destroyed = false;
 
@@ -169,10 +169,31 @@ export class SeriesTimelineView {
     this.ageClock = new AgeStripClock({
       canvasWrap,
       getViewMode: () => "age",
-      getTheme: () => this.theme,
+      client,
+      getObservationTime: (tokenId) => this.pressure.observationTime(tokenId),
       getTiming: (tokenId) => this.pressure.timing(tokenId),
+      getRowOrientation: () => this.ageRowOrientation,
+      getTokenName: (tokenId) => {
+        const market = this.marketByToken.get(tokenId);
+        if (!market) return tokenId;
+        const tokenName =
+          market.outcomes.yes.tokenId === tokenId
+            ? market.outcomes.yes.label
+            : market.outcomes.no.label;
+        return `${tokenName} · ${marketDisplayName(market)}`;
+      },
+      getTokenColor: (tokenId, opposite) =>
+        signedVolumeColor(
+          opposite ? 1 : -1,
+          this.scaleByToken.get(tokenId) ?? DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+        ),
     });
+    this.unsubscribeObservation = observationClock(client).subscribe(() =>
+      this.requestDraw(),
+    );
     this.tooltip = new AgeStripTooltip({
+      getOpacityTime: () =>
+        opacityReference(observationClock(client).readReference()),
       canvas,
       getViewMode: () => "age",
       getPressureBand: (tokenId, price, volume) =>
@@ -186,6 +207,10 @@ export class SeriesTimelineView {
         return market.outcomes.no.tokenId === tokenId
           ? market.outcomes.no.label
           : undefined;
+      },
+      getMarketName: (tokenId) => {
+        const market = this.marketByToken.get(tokenId);
+        return market ? marketDisplayName(market) : undefined;
       },
       getPressureColorScale: (tokenId) =>
         this.scaleByToken.get(tokenId) ??
@@ -224,13 +249,15 @@ export class SeriesTimelineView {
     await this.ensureWindow(Date.now(), true);
     if (this.destroyed) return;
 
-    this.scheduleClockFrame();
+    this.scheduleWindowRefresh();
     this.requestDraw();
   }
 
   jumpTo(timeMs: number): void {
     if (!Number.isFinite(timeMs)) return;
-    this.userOffsetMs = timeMs - Date.now();
+    const clock = observationClock(this.client).readReference();
+    this.userOffsetMs =
+      timeMs - (clock.kind === "observed" ? clock.newestMs : Date.now());
     this.setFollowing(false);
     void this.ensureWindow(timeMs, true);
     this.requestDraw();
@@ -256,12 +283,11 @@ export class SeriesTimelineView {
     this.feed?.destroy();
     this.feed = null;
     this.unsubscribeTuning();
+    this.unsubscribeObservation();
     this.ageClock.destroy();
     this.tooltip.destroy();
     this.pressureLayer.destroy();
     if (this.clockTimer !== undefined) window.clearTimeout(this.clockTimer);
-    if (this.stalenessRefreshTimer !== undefined)
-      window.clearTimeout(this.stalenessRefreshTimer);
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.resizeObserver.disconnect();
     this.plotter.destroy();
@@ -413,7 +439,7 @@ export class SeriesTimelineView {
       this.lastEdgeRefreshMs = Date.now();
       this.onWindowChanged(compatible.length);
       this.updateAnchorEvent(Date.now());
-      this.scheduleClockFrame();
+      this.scheduleWindowRefresh();
       this.requestDraw();
     } catch (error) {
       if (this.destroyed || generation !== this.loadGeneration) return;
@@ -433,13 +459,11 @@ export class SeriesTimelineView {
 
   private draw(): void {
     if (this.destroyed) return;
-    if (this.stalenessRefreshTimer !== undefined) {
-      window.clearTimeout(this.stalenessRefreshTimer);
-      this.stalenessRefreshTimer = undefined;
-    }
-
     const nowMs = Date.now();
-    const centerMs = nowMs + this.userOffsetMs;
+    const observations = observationClock(this.client).readReference();
+    const referenceMs =
+      observations.kind === "observed" ? observations.newestMs : nowMs;
+    const centerMs = referenceMs + this.userOffsetMs;
     const spanMs = SERIES_VISIBLE_ROWS * this.cadenceMs;
     const minMs = centerMs - spanMs / 2;
     const maxMs = centerMs + spanMs / 2;
@@ -454,10 +478,13 @@ export class SeriesTimelineView {
     );
 
     const subscriptionPaddingMs = SUBSCRIPTION_BUFFER_ROWS * this.cadenceMs;
+    const wallCenterMs = nowMs + this.userOffsetMs;
     const bufferedRows = this.rows.filter(
       (row) =>
-        row.centerMs >= minMs - subscriptionPaddingMs &&
-        row.centerMs <= maxMs + subscriptionPaddingMs,
+        (row.centerMs >= minMs - subscriptionPaddingMs &&
+          row.centerMs <= maxMs + subscriptionPaddingMs) ||
+        (row.centerMs >= wallCenterMs - spanMs / 2 - subscriptionPaddingMs &&
+          row.centerMs <= wallCenterMs + spanMs / 2 + subscriptionPaddingMs),
     );
     const visibleRows = bufferedRows.filter(
       (row) =>
@@ -484,7 +511,6 @@ export class SeriesTimelineView {
     void this.hydrateTokens(hydratableTokens);
 
     const tuning = getAgeStripTuning();
-    let hasVisiblePressure = false;
     const gpuRows: GpuPressureRow[] = [];
     const dpr = window.devicePixelRatio || 1;
 
@@ -549,16 +575,9 @@ export class SeriesTimelineView {
             : []),
         ],
       });
-      hasVisiblePressure ||=
-        this.pressure.hasVisiblePressure(key, nowMs, tuning.ghostHalfLifeMs) ||
-        (oppositeKey !== null &&
-          this.pressure.hasVisiblePressure(
-            oppositeKey,
-            nowMs,
-            tuning.ghostHalfLifeMs,
-          ));
     }
 
+    this.updateAgeOverlays(frame, visibleRows);
     this.pressureLayer.render({
       rows: gpuRows,
       viewport: { l: frame.viewport.l, width: frame.viewport.width },
@@ -567,20 +586,16 @@ export class SeriesTimelineView {
       dpr,
       volumePerCssPixel: tuning.volumePerCssPixel,
       ghostHalfLifeMs: tuning.ghostHalfLifeMs,
-      nowMs,
+      opacityTimeMs: opacityReference(
+        observationClock(this.client).readReference(),
+      ),
       background: this.theme.bg,
     });
 
-    this.drawTimeline(frame, visibleRows, nowMs);
-    this.updateAgeOverlays(frame, visibleRows);
+    this.drawTimeline(frame, visibleRows, referenceMs);
     this.updateAnchorEvent(nowMs);
     this.refreshFeed(bufferedTokens);
     this.refreshWindowIfNeeded(centerMs, minMs, maxMs, nowMs);
-
-    if (hasVisiblePressure)
-      this.scheduleStalenessRefresh(
-        ghostRefreshDelayMs(tuning.ghostHalfLifeMs),
-      );
   }
 
   private drawTimeline(
@@ -794,6 +809,7 @@ export class SeriesTimelineView {
           this.feeSchedules.scheduleForToken(tokenId),
           update,
         );
+        observationClock(this.client).changed();
         this.requestDraw();
       },
       onMarketResolved: (resolution) => {
@@ -818,6 +834,7 @@ export class SeriesTimelineView {
         }
 
         this.pressureLayer.invalidate();
+        observationClock(this.client).changed();
         this.requestDraw();
       },
     });
@@ -858,6 +875,7 @@ export class SeriesTimelineView {
       );
       this.pressureLayer.invalidate();
       this.ageClock.refresh();
+      observationClock(this.client).changed();
       this.requestDraw();
     });
   }
@@ -913,37 +931,30 @@ export class SeriesTimelineView {
     void this.ensureWindow(centerMs, true);
   }
 
-  private scheduleClockFrame(): void {
+  private scheduleWindowRefresh(): void {
     if (this.destroyed) return;
     if (this.clockTimer !== undefined) window.clearTimeout(this.clockTimer);
-
-    const nowMs = Date.now();
-    const dpr = window.devicePixelRatio || 1;
-    const stepCssPx = 0.25 / dpr;
-    const pixelsPerMs = SERIES_ROW_HEIGHT_PX / this.cadenceMs;
-    const currentPx = nowMs * pixelsPerMs;
-    const nextPx = (Math.floor(currentPx / stepCssPx) + 1) * stepCssPx;
-    const nextMs = nextPx / pixelsPerMs;
-    const delayMs = Math.max(
-      16,
-      Math.min(MAX_AUTO_SCROLL_FRAME_DELAY_MS, nextMs - nowMs),
-    );
-
+    // Discover new events even during a stream outage, without repainting pressure.
+    const delayMs = Math.max(5_000, Math.min(60_000, this.cadenceMs / 2));
     this.clockTimer = window.setTimeout(() => {
       this.clockTimer = undefined;
-      this.requestDraw();
-      this.scheduleClockFrame();
+      const nowMs = Date.now();
+      const centerMs = nowMs + this.userOffsetMs;
+      const halfSpanMs = (SERIES_VISIBLE_ROWS * this.cadenceMs) / 2;
+      this.refreshWindowIfNeeded(
+        centerMs,
+        centerMs - halfSpanMs,
+        centerMs + halfSpanMs,
+        nowMs,
+      );
+      this.updateAnchorEvent(nowMs);
+      this.scheduleWindowRefresh();
     }, delayMs);
   }
+}
 
-  private scheduleStalenessRefresh(delayMs: number): void {
-    if (this.destroyed || this.stalenessRefreshTimer !== undefined) return;
-
-    this.stalenessRefreshTimer = window.setTimeout(() => {
-      this.stalenessRefreshTimer = undefined;
-      this.requestDraw();
-    }, delayMs);
-  }
+function marketDisplayName(market: Market): string {
+  return market.groupItemTitle ?? market.question ?? "(untitled)";
 }
 
 function primaryMarket(event: Event): Market | null {

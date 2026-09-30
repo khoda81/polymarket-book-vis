@@ -20,6 +20,7 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
       body: { appendChild() {} },
       createElement: () => ({
         remove() {},
+        replaceChildren() {},
         setAttribute() {},
         style: {},
         className: "",
@@ -46,6 +47,7 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
   let view: AgeStripView | undefined;
   try {
     view = new AgeStripView({
+      client: {},
       canvas: {
         addEventListener(type: string, listener: typeof wheel) {
           if (type === "wheel") wheel = listener;
@@ -58,6 +60,7 @@ test("only Ctrl+wheel changes share scale in age mode", () => {
       toggles: { parentElement: null, nextSibling: null },
       hiddenTray: {},
       getViewMode: () => "age",
+      getRowOrientation: () => "negative-above",
       hideToken() {},
       requestDraw() {},
     } as unknown as AgeStripHost);

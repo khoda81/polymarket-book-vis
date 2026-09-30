@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { NO_FEE_SCHEDULE } from "../lib/feeSchedule";
+import { observationTime } from "../lib/observationClock";
 import { emptyTokenBook } from "../lib/orderBook";
 import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "../lib/pressureField";
 import { PressureFrontierMemory } from "../lib/pressureFrontierMemory";
@@ -111,6 +112,55 @@ test("late recorder hydration keeps websocket validity and older token history",
   ]);
 });
 
+test("recorder-ahead hydration waits for websocket catch-up then rebases from the full live book", () => {
+  const state = new AgeStripPressureState();
+  const liveBook = emptyTokenBook();
+  liveBook.yesToUsd.setLevel(p(0.6), 40);
+  state.applyBookUpdate("token", liveBook, NO_FEE_SCHEDULE, {
+    kind: "snapshot",
+    validThroughMs: 3_600,
+  });
+
+  const recorded = new PressureFrontierMemory();
+  recorded.observeLevels([{ price: p(0.6), shares: 80 }], 3_666);
+  state.hydrate(
+    { token: recorded.snapshot() },
+    () => liveBook,
+    () => NO_FEE_SCHEDULE,
+  );
+
+  // The local stream is still behind recorder history. Its raw book changes,
+  // but pressure must not move backward or incrementally mutate the newer
+  // recorder frontier.
+  liveBook.yesToUsd.setLevel(p(0.6), 60);
+  expect(() =>
+    state.applyBookUpdate("token", liveBook, NO_FEE_SCHEDULE, {
+      kind: "levels",
+      validThroughMs: 3_663,
+      changes: [{ side: "ask", price: p(0.6), shares: 60 }],
+    }),
+  ).not.toThrow();
+  expect(state.memory("token")!.currentLevels()).toEqual([
+    { price: p(0.6), shares: 80 },
+  ]);
+
+  // Once live evidence catches up, rebase from the complete current book so
+  // any deltas skipped behind the barrier are incorporated in one observation.
+  liveBook.yesToUsd.setLevel(p(0.6), 50);
+  state.applyBookUpdate("token", liveBook, NO_FEE_SCHEDULE, {
+    kind: "watermark",
+    validThroughMs: 3_667,
+  });
+
+  expect(state.memory("token")!.currentLevels()).toEqual([
+    { price: p(0.6), shares: 50 },
+  ]);
+  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+    { loVolume: 0, hiVolume: 50, validThroughMs: 3_667 },
+    { loVolume: 50, hiVolume: 80, validThroughMs: 3_666 },
+  ]);
+});
+
 test("runtime extents compose over pressure history without erasing it", () => {
   const state = new AgeStripPressureState();
   const book = emptyTokenBook();
@@ -130,7 +180,9 @@ test("runtime extents compose over pressure history without erasing it", () => {
     validity: { kind: "persistent" },
   });
   expect(state.memory("token")!.snapshot()).toEqual(before);
-  expect(state.hasVisiblePressure("token", 1_000_000_000, 1_000)).toBe(true);
+  expect(state.renderExtents("token")[0]!.validity).toEqual({
+    kind: "persistent",
+  });
 });
 
 test("removing a runtime extent reveals the historical field again", () => {
@@ -228,22 +280,47 @@ test("observed resolution time freezes loser history through resolution", () => 
   ]);
 });
 
-test("row timing uses history from either token", () => {
+test("recorder coverage remains token-local when starts differ or one token is missing", () => {
   const state = new AgeStripPressureState();
   state.configure([
     { tokenId: "yes", resolutionMs: 10_000 },
     { tokenId: "no", resolutionMs: 10_000 },
   ]);
-
   state.setRecordingCoverage({ no: 2_000 });
-  expect(state.rowTiming("yes", "no")).toMatchObject({
-    recordingSinceMs: 2_000,
-    resolutionMs: 10_000,
-  });
-
+  expect(state.timing("yes")!.recordingSinceMs).toBeNull();
+  expect(state.timing("no")!.recordingSinceMs).toBe(2_000);
   state.setRecordingCoverage({ yes: 1_000 });
-  expect(state.rowTiming("yes", "no")).toMatchObject({
-    recordingSinceMs: 1_000,
-    resolutionMs: 10_000,
+  expect(state.timing("yes")!.recordingSinceMs).toBe(1_000);
+  expect(state.timing("no")!.recordingSinceMs).toBe(2_000);
+});
+
+test("frontier observation time stays token-local, including hydration", () => {
+  const state = new AgeStripPressureState();
+  const book = emptyTokenBook();
+  book.yesToUsd.setLevel(p(0.6), 40);
+  expect(state.observationTime("first")).toBeUndefined();
+
+  state.applyBookUpdate("first", book, NO_FEE_SCHEDULE, {
+    kind: "snapshot",
+    validThroughMs: 1_000,
   });
+  state.applyBookUpdate("second", book, NO_FEE_SCHEDULE, {
+    kind: "snapshot",
+    validThroughMs: 2_000,
+  });
+  expect(state.observationTime("first")).toBe(observationTime(1_000));
+  expect(state.observationTime("second")).toBe(observationTime(2_000));
+
+  const history = new PressureFrontierMemory();
+  history.observeLevels([{ price: p(0.5), shares: 20 }], 3_000);
+  state.hydrate(
+    { first: history.snapshot() },
+    () => undefined,
+    () => NO_FEE_SCHEDULE,
+  );
+  expect(state.observationTime("first")).toBe(observationTime(3_000));
+
+  state.retain(new Set(["second"]));
+  expect(state.observationTime("first")).toBeUndefined();
+  expect(state.observationTime("second")).toBe(observationTime(2_000));
 });

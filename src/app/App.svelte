@@ -3,7 +3,6 @@
   import EventCard from "./EventCard.svelte";
   import EventSearch from "./EventSearch.svelte";
   import PressureLegend from "./PressureLegend.svelte";
-  import NetworkStatus from "./NetworkStatus.svelte";
   import SeriesCard from "./SeriesCard.svelte";
   import type { CardReorderStart } from "./cardReorderSurface";
   import {
@@ -482,15 +481,21 @@
     const mutations = new MutationObserver((records) => {
       const nextCanvasHeight =
         node.querySelector<HTMLElement>(".cpv-canvas-wrap")?.style.height ?? "";
-      if (
-        records.some(
-          (record) =>
-            record.type === "childList" ||
-            record.attributeName === "hidden" ||
-            record.attributeName === "open",
-        ) ||
-        nextCanvasHeight !== canvasHeight
-      ) {
+      const hasLayoutMutation = records.some((record) => {
+        if (
+          record.attributeName === "hidden" ||
+          record.attributeName === "open"
+        )
+          return true;
+        if (record.type !== "childList") return false;
+
+        // Clock annotations are absolutely positioned overlays. Their text and
+        // membership cannot change card geometry, so don't turn them into a
+        // forced masonry measurement.
+        const target = record.target as Element;
+        return !target.closest?.("[data-masonry-layout-neutral]");
+      });
+      if (hasLayoutMutation || nextCanvasHeight !== canvasHeight) {
         canvasHeight = nextCanvasHeight;
         scheduleMeasure();
       }
@@ -815,7 +820,6 @@
       onchooseseries={addManualSeries}
       onstatus={(message) => (status = message)}
     />
-    <NetworkStatus {client} />
     <div class="layout-columns" role="group" aria-label="Dashboard columns">
       <label for="dashboard-columns">Columns</label>
       <div class="layout-columns-controls">
@@ -843,7 +847,7 @@
       </div>
     </div>
   </div>
-  <PressureLegend />
+  <PressureLegend {client} />
 </header>
 
 <div

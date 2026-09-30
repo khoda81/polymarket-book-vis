@@ -36,6 +36,7 @@ test("reports transport coverage separately from the snapshot barrier", async ()
     states.push(state),
   );
 
+  expect(coordinator.tokenStreamConnected(TOKEN_A)).toBe(false);
   const initialGate = deferred<void>();
   client.gates.push(initialGate.promise);
   const first = coordinator.watch([TOKEN_A], callbackLog().callbacks);
@@ -59,6 +60,7 @@ test("reports transport coverage separately from the snapshot barrier", async ()
     awaitingSnapshots: 1,
   });
 
+  expect(coordinator.tokenStreamConnected(TOKEN_A)).toBe(true);
   client.latest().push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
   await flush();
   expect(states.at(-1)).toMatchObject({
@@ -80,6 +82,8 @@ test("reports transport coverage separately from the snapshot barrier", async ()
     cachedBooks: 1,
   });
 
+  expect(coordinator.tokenStreamConnected(TOKEN_A)).toBe(true);
+  expect(coordinator.tokenStreamConnected(TOKEN_B)).toBe(false);
   handoffGate.resolve();
   await second.ready;
   expect(states.at(-1)).toMatchObject({
