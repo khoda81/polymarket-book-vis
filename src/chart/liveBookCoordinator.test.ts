@@ -285,7 +285,7 @@ test("identical REST snapshot safely confirms freshness without reconnecting", a
 
   expect(client.streams).toHaveLength(1);
   expect(log.updates.at(-1)).toMatchObject({
-    kind: "snapshot",
+    kind: "watermark",
     validThroughMs: 2_000,
   });
   watch.close();

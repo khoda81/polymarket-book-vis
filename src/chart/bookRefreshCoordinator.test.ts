@@ -6,6 +6,7 @@ import {
 } from "@polymarket/client";
 import {
   BookRefreshCoordinator,
+  STALE_BOOK_VERIFY_MS,
   type BookRefreshSubscriber,
 } from "./bookRefreshCoordinator";
 
@@ -55,8 +56,8 @@ test("refresh scheduling honors 429 Retry-After, pacing and failure backoff", as
     callback();
   };
   try {
-    scheduler.observe(watcher, B, now - 100);
-    scheduler.observe(watcher, A, now - 200);
+    scheduler.observe(watcher, B, now - STALE_BOOK_VERIFY_MS - 100);
+    scheduler.observe(watcher, A, now - STALE_BOOK_VERIFY_MS - 200);
     runTimer();
     expect(calls).toBe(1);
     reject(new RateLimitError("Too many requests", { retryAfter: 5 }));

@@ -1,9 +1,4 @@
 import {
-  getAgeStripTuning,
-  ghostOpacityStepDelayMs,
-  subscribeAgeStripTuning,
-} from "@/lib/ageStripTuning";
-import {
   RateLimitError,
   type PublicClient,
   type TokenId,
@@ -13,6 +8,10 @@ const BOOKS_REQUEST_LIMIT = 500;
 const BOOKS_REQUEST_WINDOW_MS = 10_000;
 const BOOKS_REQUEST_SPACING_MS = BOOKS_REQUEST_WINDOW_MS / BOOKS_REQUEST_LIMIT;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+// Temporary watchdog for Polymarket's silently-stalled market websocket.
+// Keep this independent of ghost rendering precision: REST is evidence/liveness,
+// not a display refresh mechanism. See #13.
+export const STALE_BOOK_VERIFY_MS = 5_000;
 const INITIAL_FAILURE_BACKOFF_MS = 1_000;
 const MAX_FAILURE_BACKOFF_MS = 30_000;
 
@@ -68,8 +67,11 @@ export function bookRefreshCoordinator(
  * Process-wide stale-book refresh scheduler for one PublicClient.
  *
  * The shared LiveBookCoordinator reports each token's latest observation here.
- * Tokens live in one min-heap ordered by the next opacity-significant deadline,
- * so duplicate watches across charts collapse into one /books request.
+ * Tokens live in one min-heap ordered by their next liveness-verification
+ * deadline, so duplicate watches across charts collapse into one /books request.
+ *
+ * A token receiving websocket evidence continually pushes its deadline forward;
+ * only books silent for STALE_BOOK_VERIFY_MS are verified over REST.
  */
 export class BookRefreshCoordinator {
   private readonly states = new Map<TokenId, TokenRefreshState>();
@@ -86,9 +88,7 @@ export class BookRefreshCoordinator {
   private failureCount = 0;
   private backoffUntilMs = 0;
 
-  constructor(private readonly client: PublicClient) {
-    subscribeAgeStripTuning(() => this.rebuildDeadlines());
-  }
+  constructor(private readonly client: PublicClient) {}
 
   observe(
     subscriber: BookRefreshSubscriber,
@@ -155,12 +155,6 @@ export class BookRefreshCoordinator {
     }
   }
 
-  private rebuildDeadlines(): void {
-    this.heap.clear();
-    for (const state of this.states.values()) this.reschedule(state);
-    this.schedulePump();
-  }
-
   private reschedule(state: TokenRefreshState): void {
     if (state.watchers.size === 0) return;
 
@@ -168,10 +162,7 @@ export class BookRefreshCoordinator {
     for (const observedThroughMs of state.watchers.values())
       oldestObservationMs = Math.min(oldestObservationMs, observedThroughMs);
 
-    const maxAgeMs = ghostOpacityStepDelayMs(
-      getAgeStripTuning().ghostHalfLifeMs,
-    );
-    this.heap.set(state.tokenId, oldestObservationMs + maxAgeMs);
+    this.heap.set(state.tokenId, oldestObservationMs + STALE_BOOK_VERIFY_MS);
   }
 
   private schedulePump(): void {

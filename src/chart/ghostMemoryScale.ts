@@ -49,6 +49,7 @@ export class GhostMemoryScale {
   private observationFrame: ObservationFrame = { kind: "unobserved" };
   private hoverPointer: GhostHoverPointer | null = null;
   private tooltipList: HTMLDivElement | null = null;
+  private tooltipAgeTexts = new Map<string, Text>();
   private markerCache: {
     readonly frame: Extract<ObservationFrame, { kind: "observed" }>;
     readonly width: number;
@@ -94,6 +95,7 @@ export class GhostMemoryScale {
     this.canvas.removeEventListener("wheel", this.handleWheel);
     this.latencyLabel.textContent = "";
     this.tooltipList = null;
+    this.tooltipAgeTexts.clear();
     releaseSharedTooltip(this.tooltipOwner);
   }
 
@@ -267,6 +269,7 @@ export class GhostMemoryScale {
   private readonly clearPointer = (): void => {
     this.hoverPointer = null;
     this.tooltipList = null;
+    this.tooltipAgeTexts.clear();
     hideSharedTooltip(this.tooltipOwner);
   };
   private renderTooltip(
@@ -294,41 +297,49 @@ export class GhostMemoryScale {
 
     if (afterCursor.length === 0) {
       this.tooltipList = null;
+      this.tooltipAgeTexts.clear();
       hideSharedTooltip(this.tooltipOwner);
       return;
     }
 
+    // Age text changes continuously, but list membership/presentation usually
+    // does not. Keep the DOM stable so Firefox doesn't repeatedly tear down and
+    // recreate the scrollbar while the clocks tick.
     const afterCursorSignature = afterCursor
-      .map((token) => {
-        const age = relativeTimeDisplay(
-          Math.max(0, Date.now() - token.observedAtMs) / 1_000,
-          "elapsed",
-        ).text;
-        return `${token.tokenId}:${age}`;
-      })
-      .join(",");
+      .map((token) => `${token.tokenId}\u0000${token.name}\u0000${token.color}`)
+      .join("\u0001");
     const previousScrollTop = this.tooltipList?.scrollTop ?? 0;
     showSharedTooltip(
       this.tooltipOwner,
       afterCursorSignature,
       (overlay) => {
-        this.tooltipList = renderGhostTooltip(
+        const rendered = renderGhostTooltip(
           overlay,
           afterCursor.map((token) => ({
+            tokenId: token.tokenId,
             name: token.name,
             color: token.color,
-            age: relativeTimeDisplay(
-              Math.max(0, Date.now() - token.observedAtMs) / 1_000,
-              "elapsed",
-            ).text,
           })),
         );
+        this.tooltipList = rendered.list;
+        this.tooltipAgeTexts = rendered.ageTexts;
         this.tooltipList.scrollTop = previousScrollTop;
       },
       pointer.clientX,
       pointer.anchorY,
       "below",
     );
+
+    const nowMs = Date.now();
+    for (const token of afterCursor) {
+      const text = this.tooltipAgeTexts.get(token.tokenId);
+      if (!text) continue;
+      const next = relativeTimeDisplay(
+        Math.max(0, nowMs - token.observedAtMs) / 1_000,
+        "elapsed",
+      ).text;
+      if (text.data !== next) text.data = next;
+    }
   }
 
   private readonly handleWheel = (event: WheelEvent): void => {
@@ -359,25 +370,31 @@ export class GhostMemoryScale {
 function renderGhostTooltip(
   overlay: HTMLDivElement,
   afterCursor: readonly {
+    readonly tokenId: string;
     readonly name: string;
     readonly color: string;
-    readonly age: string;
   }[],
-): HTMLDivElement {
+): {
+  readonly list: HTMLDivElement;
+  readonly ageTexts: Map<string, Text>;
+} {
   overlay.replaceChildren();
 
   const list = document.createElement("div");
   list.className = "cpv-ghost-observation-list";
+  const ageTexts = new Map<string, Text>();
   for (const token of afterCursor) {
-    const row = tooltipRow(token.name, token.age);
+    const ageText = document.createTextNode("");
+    const row = tooltipRow(token.name, ageText);
     row.firstElementChild?.setAttribute("style", `color: ${token.color}`);
     list.appendChild(row);
+    ageTexts.set(token.tokenId, ageText);
   }
   overlay.appendChild(list);
-  return list;
+  return { list, ageTexts };
 }
 
-function tooltipRow(name: string, value: string): HTMLDivElement {
+function tooltipRow(name: string, value: string | Text): HTMLDivElement {
   const row = document.createElement("div");
   row.className = "cpv-ov-row";
 
@@ -385,7 +402,8 @@ function tooltipRow(name: string, value: string): HTMLDivElement {
   key.textContent = name;
 
   const amount = document.createElement("b");
-  amount.textContent = value;
+  if (typeof value === "string") amount.textContent = value;
+  else amount.appendChild(value);
 
   row.append(key, amount);
   return row;
