@@ -3,6 +3,7 @@ import {
   MARKET_COLOR_CHROMA,
   MARKET_COLOR_LUMINANCE,
   fmtRelativeTime,
+  fmtRelativeTimeOffset,
   fmtSI,
   marketColor,
   marketHue,
@@ -10,7 +11,7 @@ import {
 } from "./math";
 
 test("fmtRelativeTime uses compact significant digits", () => {
-  expect(fmtRelativeTime(0)).toBe("0ms");
+  expect(fmtRelativeTime(0)).toBe("now");
   expect(fmtRelativeTime(0.053)).toBe("53ms");
   expect(fmtRelativeTime(0.53)).toBe("0.53s");
   expect(fmtRelativeTime(3.4)).toBe("3.4s");
@@ -19,6 +20,13 @@ test("fmtRelativeTime uses compact significant digits", () => {
   expect(fmtRelativeTime(18.01 * 60)).toBe("18m");
   expect(fmtRelativeTime(7_200)).toBe("2h");
   expect(fmtRelativeTime(104 * 86_400)).toBe("3.4mo");
+});
+
+test("signed relative offsets preserve clock skew", () => {
+  expect(fmtRelativeTimeOffset(0)).toBe("now");
+  expect(fmtRelativeTimeOffset(0.053)).toBe("53ms");
+  expect(fmtRelativeTimeOffset(-0.053)).toBe("−53ms");
+  expect(fmtRelativeTimeOffset(-3.4)).toBe("−3.4s");
 });
 
 test("relativeTimeDisplay exposes semantic redraw deadlines", () => {

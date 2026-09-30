@@ -7,7 +7,7 @@ import {
   ghostObservationColumns,
   type GhostObservationColumn,
 } from "@/lib/ghostObservationMarkers";
-import { relativeTimeDisplay } from "@/lib/math";
+import { fmtRelativeTimeOffset } from "@/lib/math";
 import {
   hideSharedTooltip,
   releaseSharedTooltip,
@@ -159,16 +159,13 @@ export class GhostMemoryScale {
       );
       return false;
     }
-    const stalenessMs = Math.max(0, Date.now() - frame.newestMs);
+    const clockOffsetMs = Date.now() - frame.newestMs;
     const span = width - INSET * 2;
     const ticks = ghostLegendTicks(ghostHalfLifeMs, span, {
       minDistancePx: 32,
-      originAgeMs: stalenessMs,
+      originAgeMs: clockOffsetMs,
     });
-    const originLabel = relativeTimeDisplay(
-      stalenessMs / 1_000,
-      "elapsed",
-    ).text;
+    const originLabel = fmtRelativeTimeOffset(clockOffsetMs / 1_000);
     if (this.latencyLabel.textContent !== originLabel)
       this.latencyLabel.textContent = originLabel;
     const originLabelWidth = ctx.measureText(originLabel).width;
@@ -192,11 +189,16 @@ export class GhostMemoryScale {
     for (const tick of ticks) {
       const x = INSET + tick.position * span;
       const labelWidth = ctx.measureText(tick.label).width;
-      if (x - labelWidth / 2 < rightEdge || x + labelWidth / 2 > width)
-        continue;
-      ctx.globalAlpha = tick.opacity;
+      const left = x - labelWidth / 2;
+      const right = x + labelWidth / 2;
+      const collisionFade = smoothVisibility(left - rightEdge, 8);
+      const boundaryFade = smoothVisibility(width - right, 8);
+      const opacity = tick.opacity * collisionFade * boundaryFade;
+      if (opacity <= 1 / 255) continue;
+
+      ctx.globalAlpha = opacity;
       ctx.fillText(tick.label, x, HEIGHT);
-      rightEdge = x + labelWidth / 2 + 8;
+      rightEdge = right + 8;
     }
     ctx.globalAlpha = 1;
     const markerWidth = 1 / dpr;
@@ -217,7 +219,7 @@ export class GhostMemoryScale {
         );
       }
     }
-    const description = `Ghost memory: newest token observation ${originLabel} ago. Markers show token ages relative to that observation. Shift+wheel adjusts memory.`;
+    const description = `Ghost memory: newest observation clock offset ${originLabel}. Markers show token offsets relative to that observation.`;
     if (this.canvas.getAttribute("aria-label") !== description)
       this.canvas.setAttribute("aria-label", description);
     if (this.hoverPointer)
@@ -334,10 +336,7 @@ export class GhostMemoryScale {
     for (const token of afterCursor) {
       const text = this.tooltipAgeTexts.get(token.tokenId);
       if (!text) continue;
-      const next = relativeTimeDisplay(
-        Math.max(0, nowMs - token.observedAtMs) / 1_000,
-        "elapsed",
-      ).text;
+      const next = fmtRelativeTimeOffset((nowMs - token.observedAtMs) / 1_000);
       if (text.data !== next) text.data = next;
     }
   }
@@ -365,6 +364,12 @@ export class GhostMemoryScale {
       event.stopPropagation();
     }
   };
+}
+
+function smoothVisibility(distancePx: number, fadePx: number): number {
+  if (!(fadePx > 0) || !Number.isFinite(fadePx)) return distancePx >= 0 ? 1 : 0;
+  const x = Math.max(0, Math.min(1, distancePx / fadePx));
+  return x * x * (3 - 2 * x);
 }
 
 function renderGhostTooltip(

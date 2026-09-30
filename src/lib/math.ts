@@ -83,6 +83,8 @@ export function relativeTimeDisplay(
   const clamped = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
   if (direction === "remaining" && clamped <= 0)
     return { text: "due", nextChangeMs: null };
+  if (direction === "elapsed" && clamped === 0)
+    return { text: "now", nextChangeMs: 1 };
 
   const unit =
     RELATIVE_TIME_UNITS.find((candidate) => clamped < candidate.maxSeconds) ??
@@ -143,6 +145,35 @@ function formatCompactRelativeTime(
       ? String(Math.round(value))
       : value.toFixed(decimals).replace(/0+$/, "").replace(/\.$/, "");
   return `${text}${suffix}`;
+}
+
+/**
+ * Compact signed offset from the local clock.
+ *
+ * Positive values are in the past, negative values are in the future, and
+ * exact zero is rendered semantically as "now". Magnitude formatting matches
+ * the ordinary compact elapsed timer.
+ */
+export function relativeTimeOffsetDisplay(
+  seconds: number,
+): RelativeTimeDisplay {
+  const finite = Number.isFinite(seconds) ? seconds : 0;
+  if (Object.is(finite, -0) || finite === 0)
+    return { text: "now", nextChangeMs: 1 };
+
+  const magnitude = relativeTimeDisplay(Math.abs(finite), "elapsed");
+  return {
+    text: finite < 0 ? `−${magnitude.text}` : magnitude.text,
+    // Negative offsets move toward zero rather than away from it. They are
+    // uncommon and short-lived clock-skew windows, so let the caller's normal
+    // animation-frame path update them instead of inventing a second rounding
+    // scheduler for the reversed direction.
+    nextChangeMs: finite < 0 ? 1 : magnitude.nextChangeMs,
+  };
+}
+
+export function fmtRelativeTimeOffset(seconds: number): string {
+  return relativeTimeOffsetDisplay(seconds).text;
 }
 
 /** Human-readable elapsed duration. */
