@@ -17,17 +17,20 @@ export interface GhostLegendTick {
 export interface GhostLegendTickOptions {
   readonly minDistancePx?: number;
   readonly fadeDistancePx?: number;
+  /** Real age at the left edge of the scale. */
+  readonly originAgeMs?: number;
 }
 
 /**
  * QBar-style ticks for the exponential ghost-age transform:
  *
- *   x(t) = 1 - 2^(-t / halfLife)
+ *   x(Δt) = 1 - 2^(-Δt / halfLife)
  *
- * For each tiny screen interval, choose the largest human-friendly duration
- * grid whose boundary crosses that interval. Opacity then depends on the local
- * pixel spacing to the next tick from the same family, so dense families fade
- * continuously instead of popping on/off.
+ * Candidate grid lines live in displayed age coordinates, not in relative
+ * offset coordinates. For each tiny screen interval we map both edges back to
+ * age, choose the largest human-friendly grid crossed by that interval, then
+ * project that exact grid value forward again. As the newest observation gets
+ * older, both the label and its x position therefore move together.
  */
 export function ghostLegendTicks(
   halfLifeMs: number,
@@ -37,6 +40,9 @@ export function ghostLegendTicks(
   if (!(halfLifeMs > 0) || !Number.isFinite(halfLifeMs)) return [];
   if (!(widthPx > 0) || !Number.isFinite(widthPx)) return [];
 
+  const originAgeMs = options.originAgeMs ?? 0;
+  if (!(originAgeMs >= 0) || !Number.isFinite(originAgeMs)) return [];
+
   const minDistancePx = options.minDistancePx ?? 48;
   const fadeDistancePx = options.fadeDistancePx ?? minDistancePx * 2;
   const sampleCount = Math.max(64, Math.ceil(widthPx * 4));
@@ -44,26 +50,34 @@ export function ghostLegendTicks(
     0,
     Math.min(1 - Number.EPSILON, 1 - 0.5 / widthPx),
   );
-  const maxAgeMs = ageAtGhostPosition(maxPosition, halfLifeMs);
+  const maxAgeMs = originAgeMs + ageAtGhostPosition(maxPosition, halfLifeMs);
   const steps = durationSteps(maxAgeMs);
   const byAge = new Map<number, GhostLegendTick>();
 
-  let previousAgeMs = 0;
+  let previousAgeMs = originAgeMs;
   for (let index = 1; index <= sampleCount; index++) {
     const position = (index / sampleCount) * maxPosition;
-    const nextAgeMs = ageAtGhostPosition(position, halfLifeMs);
+    const nextAgeMs = originAgeMs + ageAtGhostPosition(position, halfLifeMs);
     const stepMs = biggestCrossedStep(previousAgeMs, nextAgeMs, steps);
+    if (stepMs === null) {
+      previousAgeMs = nextAgeMs;
+      continue;
+    }
+
+    const ageMs = firstGridBoundaryAfter(previousAgeMs, stepMs);
     previousAgeMs = nextAgeMs;
-    if (stepMs === null) continue;
+    if (
+      !(ageMs > originAgeMs) ||
+      ageMs > nextAgeMs + Math.max(1e-9, Math.abs(nextAgeMs) * 1e-12)
+    )
+      continue;
 
-    const ageMs = firstGridBoundaryAfter(
-      ageAtGhostPosition(((index - 1) / sampleCount) * maxPosition, halfLifeMs),
-      stepMs,
+    const relativeAgeMs = ageMs - originAgeMs;
+    const tickPosition = ghostPositionForAge(relativeAgeMs, halfLifeMs);
+    const nextPosition = ghostPositionForAge(
+      ageMs + stepMs - originAgeMs,
+      halfLifeMs,
     );
-    if (!(ageMs > 0) || ageMs > nextAgeMs * (1 + 1e-12)) continue;
-
-    const tickPosition = ghostPositionForAge(ageMs, halfLifeMs);
-    const nextPosition = ghostPositionForAge(ageMs + stepMs, halfLifeMs);
     const spacingPx = Math.abs(nextPosition - tickPosition) * widthPx;
     const opacity = legendTickOpacity(spacingPx, minDistancePx, fadeDistancePx);
     if (opacity <= 1 / 255) continue;
@@ -80,7 +94,6 @@ export function ghostLegendTicks(
 
   return [...byAge.values()].sort((a, b) => a.ageMs - b.ageMs);
 }
-
 export function ghostPositionForAge(ageMs: number, halfLifeMs: number): number {
   if (!(ageMs > 0)) return 0;
   if (!(halfLifeMs > 0)) return 1;

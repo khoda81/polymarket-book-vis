@@ -6,25 +6,24 @@
     subscribeAgeStripTuning,
     type AgeStripTuning,
   } from "../lib/ageStripTuning";
-  import { ghostLegendTicks } from "../lib/ghostLegendTicks";
+  import { GhostMemoryScale } from "../chart/ghostMemoryScale";
+  import type { PublicClient } from "@polymarket/client";
   import { shareLegendTicks } from "../lib/shareLegendTicks";
   import {
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     signedVolumeColor,
   } from "../lib/signedVolume";
 
-  const GHOST_TICK_MIN_DISTANCE_PX = 32;
+  export let client: PublicClient;
+
   const SHARE_TICK_MIN_DISTANCE_PX = 24;
   let shareBar: HTMLDivElement;
-  let ghostBar: HTMLDivElement;
+  let ghostCanvas: HTMLCanvasElement;
+  let ghostLatency: HTMLSpanElement;
   let shareWidth = 0;
-  let ghostWidth = 0;
   let tuning: Readonly<AgeStripTuning> = getAgeStripTuning();
 
   $: reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
-  $: ghostTicks = ghostLegendTicks(tuning.ghostHalfLifeMs, ghostWidth, {
-    minDistancePx: GHOST_TICK_MIN_DISTANCE_PX,
-  });
   $: shareTicks = shareLegendTicks(reserveShares, shareWidth, {
     minDistancePx: SHARE_TICK_MIN_DISTANCE_PX,
   });
@@ -37,14 +36,14 @@
     });
     const observer = new ResizeObserver(() => {
       shareWidth = shareBar.clientWidth;
-      ghostWidth = ghostBar.clientWidth;
     });
     observer.observe(shareBar);
-    observer.observe(ghostBar);
     shareWidth = shareBar.clientWidth;
-    ghostWidth = ghostBar.clientWidth;
+
+    const ghost = new GhostMemoryScale(ghostCanvas, ghostLatency, client);
 
     return () => {
+      ghost.destroy();
       observer.disconnect();
       unsubscribe();
     };
@@ -89,33 +88,23 @@
     </div>
   </section>
 
-  <section
-    class="ghost-legend"
-    aria-label="Ghost memory scale"
-    title="Shift+wheel adjusts ghost memory"
-  >
+  <section class="ghost-legend" aria-label="Ghost memory scale">
     <div class="ghost-legend-header">
       <span>Ghost memory</span>
+      <span class="ghost-legend-note">newest → older</span>
     </div>
-    <div class="ghost-legend-bar" bind:this={ghostBar} aria-hidden="true">
-      {#each ghostTicks as tick (tick.ageMs)}
-        <span
-          class="ghost-legend-mark"
-          style:left={`${tick.position * 100}%`}
-          style:opacity={tick.opacity}
-        ></span>
-      {/each}
-    </div>
-    <div class="ghost-legend-ticks">
-      <span class="ghost-legend-now">now</span>
-      {#each ghostTicks as tick (tick.ageMs)}
-        <span
-          style:left={`${tick.position * 100}%`}
-          style:opacity={tick.opacity}
-        >
-          {tick.label}
-        </span>
-      {/each}
+    <div class="ghost-memory-scale">
+      <canvas
+        class="ghost-memory-canvas"
+        bind:this={ghostCanvas}
+        role="img"
+        aria-label="Ghost memory: awaiting observation"
+      ></canvas>
+      <span
+        class="ghost-memory-latency"
+        bind:this={ghostLatency}
+        aria-hidden="true"
+      ></span>
     </div>
   </section>
 </div>

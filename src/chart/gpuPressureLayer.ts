@@ -1,3 +1,4 @@
+import type { ObservationTime } from "@/lib/observationClock";
 import {
   PRESSURE_MIN_VISIBLE_ALPHA,
   type PressureExtent,
@@ -41,7 +42,7 @@ export interface GpuPressureFrame {
   readonly dpr: number;
   readonly volumePerCssPixel: number;
   readonly ghostHalfLifeMs: number;
-  readonly nowMs: number;
+  readonly opacityTimeMs: ObservationTime;
   readonly background: string;
 }
 
@@ -308,6 +309,9 @@ export class GpuPressureLayer {
   private supersampleY = 1;
   private rasterKey = "";
   private referenceTimeMs = 0;
+  private referenceHalfLifeMs = 0;
+  private displayedOpacityTimeMs = 0;
+  private displayedHalfLifeMs = 0;
   private visible = true;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -348,6 +352,8 @@ export class GpuPressureLayer {
   invalidate(): void {
     this.clearSurfaceBuffers();
     this.rasterKey = "";
+    this.referenceTimeMs = 0;
+    this.displayedOpacityTimeMs = 0;
   }
 
   render(frame: GpuPressureFrame): void {
@@ -371,12 +377,45 @@ export class GpuPressureLayer {
     const buffersChanged = this.syncSurfaceBuffers(frame);
 
     const nextRasterKey = rasterProjectionKey(frame, targetWidth, targetHeight);
-    if (resized || buffersChanged || nextRasterKey !== this.rasterKey) {
+    if (
+      resized ||
+      buffersChanged ||
+      nextRasterKey !== this.rasterKey ||
+      frame.opacityTimeMs < this.referenceTimeMs
+    ) {
       this.rasterize(frame);
       this.rasterKey = nextRasterKey;
     }
 
-    this.drawDisplay(frame);
+    this.drawDisplay(frame.opacityTimeMs, frame.ghostHalfLifeMs);
+  }
+
+  /**
+   * Advance only the display-time decay of an already-rasterized pressure
+   * field. Returns false when the cached geometry cannot represent the new
+   * reference and the owner must do a full render.
+   */
+  refreshOpacity(
+    opacityTimeMs: ObservationTime,
+    ghostHalfLifeMs: number,
+  ): boolean {
+    if (
+      !this.visible ||
+      this.displayWidth === 0 ||
+      this.referenceTimeMs === 0 ||
+      ghostHalfLifeMs !== this.referenceHalfLifeMs ||
+      opacityTimeMs < this.referenceTimeMs
+    )
+      return false;
+
+    if (
+      opacityTimeMs === this.displayedOpacityTimeMs &&
+      ghostHalfLifeMs === this.displayedHalfLifeMs
+    )
+      return true;
+
+    this.drawDisplay(opacityTimeMs, ghostHalfLifeMs);
+    return true;
   }
 
   destroy(): void {
@@ -418,7 +457,7 @@ export class GpuPressureLayer {
           this.uploadSurfaceBuffer(
             cached,
             surface,
-            frame.nowMs,
+            frame.opacityTimeMs,
             firstChangedRun,
           );
           cached.dataRevision = surface.dataRevision;
@@ -654,7 +693,8 @@ export class GpuPressureLayer {
 
   private rasterize(frame: GpuPressureFrame): void {
     const gl = this.gl;
-    this.referenceTimeMs = frame.nowMs;
+    this.referenceTimeMs = frame.opacityTimeMs;
+    this.referenceHalfLifeMs = frame.ghostHalfLifeMs;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
     gl.viewport(0, 0, this.targetWidth, this.targetHeight);
@@ -711,7 +751,7 @@ export class GpuPressureLayer {
             gl,
             this.geometryProgram,
             "uNowOffsetSec",
-            (frame.nowMs - cached.timeOriginMs) / 1_000,
+            (frame.opacityTimeMs - cached.timeOriginMs) / 1_000,
           );
 
           const hasCurrent = surface.currentValidThroughMs !== undefined;
@@ -762,7 +802,10 @@ export class GpuPressureLayer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  private drawDisplay(frame: GpuPressureFrame): void {
+  private drawDisplay(
+    opacityTimeMs: ObservationTime,
+    ghostHalfLifeMs: number,
+  ): void {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.displayWidth, this.displayHeight);
@@ -770,6 +813,8 @@ export class GpuPressureLayer {
     gl.disable(gl.BLEND);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
+    this.displayedOpacityTimeMs = opacityTimeMs;
+    this.displayedHalfLifeMs = ghostHalfLifeMs;
 
     if (this.totalCachedInstanceCount === 0) return;
 
@@ -782,12 +827,12 @@ export class GpuPressureLayer {
     gl.bindTexture(gl.TEXTURE_2D, this.persistentTexture);
     uniform1i(gl, this.displayProgram, "uPersistentColor", 1);
 
-    const elapsedMs = Math.max(0, frame.nowMs - this.referenceTimeMs);
+    const elapsedMs = Math.max(0, opacityTimeMs - this.referenceTimeMs);
     uniform1f(
       gl,
       this.displayProgram,
       "uGlobalDecay",
-      2 ** (-elapsedMs / frame.ghostHalfLifeMs),
+      2 ** (-elapsedMs / ghostHalfLifeMs),
     );
     uniform2i(
       gl,
@@ -1048,13 +1093,37 @@ function compileShader(
   return shader;
 }
 
+const UNIFORM_LOCATION_CACHE = new WeakMap<
+  WebGLProgram,
+  Map<string, WebGLUniformLocation>
+>();
+
+function uniformLocation(
+  gl: WebGL2RenderingContext,
+  program: WebGLProgram,
+  name: string,
+): WebGLUniformLocation {
+  let locations = UNIFORM_LOCATION_CACHE.get(program);
+  if (!locations) {
+    locations = new Map();
+    UNIFORM_LOCATION_CACHE.set(program, locations);
+  }
+
+  const cached = locations.get(name);
+  if (cached) return cached;
+
+  const location = required(gl.getUniformLocation(program, name), name);
+  locations.set(name, location);
+  return location;
+}
+
 function uniform1f(
   gl: WebGL2RenderingContext,
   program: WebGLProgram,
   name: string,
   value: number,
 ): void {
-  gl.uniform1f(required(gl.getUniformLocation(program, name), name), value);
+  gl.uniform1f(uniformLocation(gl, program, name), value);
 }
 
 function uniform1i(
@@ -1063,7 +1132,7 @@ function uniform1i(
   name: string,
   value: number,
 ): void {
-  gl.uniform1i(required(gl.getUniformLocation(program, name), name), value);
+  gl.uniform1i(uniformLocation(gl, program, name), value);
 }
 
 function uniform2i(
@@ -1073,7 +1142,7 @@ function uniform2i(
   x: number,
   y: number,
 ): void {
-  gl.uniform2i(required(gl.getUniformLocation(program, name), name), x, y);
+  gl.uniform2i(uniformLocation(gl, program, name), x, y);
 }
 
 function uniform2f(
@@ -1083,7 +1152,7 @@ function uniform2f(
   x: number,
   y: number,
 ): void {
-  gl.uniform2f(required(gl.getUniformLocation(program, name), name), x, y);
+  gl.uniform2f(uniformLocation(gl, program, name), x, y);
 }
 
 function uniform3f(
@@ -1093,7 +1162,7 @@ function uniform3f(
   value: readonly [number, number, number],
 ): void {
   gl.uniform3f(
-    required(gl.getUniformLocation(program, name), name),
+    uniformLocation(gl, program, name),
     value[0],
     value[1],
     value[2],

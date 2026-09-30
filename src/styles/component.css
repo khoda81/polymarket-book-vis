@@ -285,13 +285,6 @@
 }
 
 /* In age mode the existing market toggles become the y-axis labels. */
-.cpv-clock-canvas {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  pointer-events: none;
-}
-
 .cpv-toggles--age-axis {
   position: absolute;
   top: 0;
@@ -559,6 +552,30 @@
   max-width: 220px;
 }
 
+.cpv-ov-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.cpv-ov-market {
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  color: var(--color-text-primary, #111);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cpv-ov-token-price {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .cpv-ov-row {
   display: flex;
   justify-content: space-between;
@@ -574,6 +591,21 @@
   color: #1d9e75 !important;
 }
 
+.cpv-ghost-observation-list {
+  max-height: min(220px, 40vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.cpv-ghost-observation-list .cpv-ov-row > span {
+  min-width: 0;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Dark mode ───────────────────────────────────────────────────────────── */
 
 @media (prefers-color-scheme: dark) {
@@ -585,4 +617,27 @@
     --color-border-secondary: #444;
     --color-border-tertiary: #333;
   }
+}
+
+.cpv-clock-annotations {
+  z-index: 5;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.cpv-clock-annotations > span {
+  position: absolute;
+  transform: translate(-100%, -50%);
+  white-space: pre;
+  font: 9px sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.cpv-token-age {
+  pointer-events: auto;
+  opacity: 0.8;
+}
+.cpv-row-resolution {
+  color: var(--color-text-secondary, #666);
+  opacity: 0.75;
 }

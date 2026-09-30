@@ -1,10 +1,9 @@
+import { observationTime, type ObservationTime } from "@/lib/observationClock";
 import type { FeeSchedule } from "@/lib/feeSchedule";
 import type { TokenBook } from "@/lib/orderBook";
 import {
   FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT,
-  PRESSURE_MIN_VISIBLE_ALPHA,
   pressureExtentContains,
-  pressureValidityAlpha,
   type PressureExtent,
   type PressureFieldBand,
 } from "@/lib/pressureField";
@@ -31,6 +30,13 @@ interface PressureState extends AgeStripPressureTiming {
    */
   readonly extents: readonly PressureExtent[];
   readonly extentRevision: number;
+  /**
+   * Recorder hydration can be causally ahead of the local websocket. While the
+   * stream catches up, keep mutating its canonical raw book but do not replay
+   * older deltas into the newer pressure frontier. The first live observation
+   * at/after this barrier rebases pressure from the complete current book.
+   */
+  readonly liveRebaseAfterMs: number | null;
 }
 
 /** Token-local timestamped pressure histories used by age views. */
@@ -51,6 +57,7 @@ export class AgeStripPressureState {
         memory: new PressureFrontierMemory(),
         extents: [],
         extentRevision: 0,
+        liveRebaseAfterMs: null,
       };
       this.states.set(tokenId, state);
     } else if (
@@ -146,7 +153,7 @@ export class AgeStripPressureState {
     getFeeSchedule: (tokenId: string) => FeeSchedule,
   ): void {
     for (const [tokenId, snapshot] of Object.entries(snapshotsByToken)) {
-      const state = this.ensure(tokenId);
+      let state = this.ensure(tokenId);
       try {
         state.memory.restore(snapshot);
       } catch (error) {
@@ -154,6 +161,7 @@ export class AgeStripPressureState {
           `Ignoring invalid recorder pressure for token ${tokenId}; preserving current pressure`,
           error,
         );
+        continue;
       }
 
       if (state.memory.isResolvedUnbounded()) {
@@ -162,8 +170,9 @@ export class AgeStripPressureState {
       }
 
       // A newer local websocket book may have arrived before recorder
-      // hydration. Only overlay it when its causal watermark is not older than
-      // the restored recorder frontier; never max-stamp a stale snapshot.
+      // hydration. Overlay it only when it is at least as new. Otherwise the
+      // raw book keeps ingesting websocket deltas while pressure waits behind
+      // a causal catch-up barrier, then rebases from that complete live book.
       const book = getBook(tokenId);
       const restoredThrough = state.memory.validThroughMs();
       if (
@@ -171,11 +180,23 @@ export class AgeStripPressureState {
         state.validThroughMs !== null &&
         (restoredThrough === undefined ||
           state.validThroughMs >= restoredThrough)
-      )
+      ) {
         state.memory.observeLevels(
           tokenPressureLevels(book, getFeeSchedule(tokenId)),
           state.validThroughMs,
         );
+        if (state.liveRebaseAfterMs !== null) {
+          state = { ...state, liveRebaseAfterMs: null };
+          this.states.set(tokenId, state);
+        }
+      } else if (
+        restoredThrough !== undefined &&
+        (state.validThroughMs === null ||
+          state.validThroughMs < restoredThrough)
+      ) {
+        state = { ...state, liveRebaseAfterMs: restoredThrough };
+        this.states.set(tokenId, state);
+      }
     }
   }
 
@@ -189,13 +210,6 @@ export class AgeStripPressureState {
     if (state.memory.isResolvedUnbounded()) return;
 
     const currentThrough = state.memory.validThroughMs();
-    if (
-      update.kind === "snapshot" &&
-      currentThrough !== undefined &&
-      update.validThroughMs < currentThrough
-    )
-      return;
-
     const validThroughMs = update.validThroughMs;
 
     if (
@@ -204,6 +218,35 @@ export class AgeStripPressureState {
     ) {
       state = { ...state, validThroughMs };
       this.states.set(tokenId, state);
+    }
+
+    if (currentThrough !== undefined && validThroughMs < currentThrough) {
+      // This commonly happens for a few milliseconds when recorder hydration
+      // wins the race against the local websocket. Do not force the newer
+      // pressure frontier backward. The coordinator has already applied this
+      // event to the canonical raw book, so a later catch-up can rebase safely.
+      const barrier = Math.max(
+        state.liveRebaseAfterMs ?? currentThrough,
+        currentThrough,
+      );
+      if (barrier !== state.liveRebaseAfterMs) {
+        state = { ...state, liveRebaseAfterMs: barrier };
+        this.states.set(tokenId, state);
+      }
+      return;
+    }
+
+    if (
+      state.liveRebaseAfterMs !== null &&
+      validThroughMs >= state.liveRebaseAfterMs
+    ) {
+      state.memory.observeLevels(
+        tokenPressureLevels(book, schedule),
+        validThroughMs,
+      );
+      state = { ...state, liveRebaseAfterMs: null };
+      this.states.set(tokenId, state);
+      return;
     }
 
     if (update.kind === "snapshot") {
@@ -254,49 +297,9 @@ export class AgeStripPressureState {
     return this.states.get(tokenId);
   }
 
-  /** Timing metadata for one rendered market row, which combines both tokens. */
-  rowTiming(
-    primaryTokenId: string,
-    oppositeTokenId: string | null | undefined,
-  ): AgeStripPressureTiming | undefined {
-    const primary = this.states.get(primaryTokenId);
-    const opposite = oppositeTokenId
-      ? this.states.get(oppositeTokenId)
-      : undefined;
-    if (!primary) return opposite;
-    if (!opposite) return primary;
-
-    return {
-      recordingSinceMs: earliestNonNull(
-        primary.recordingSinceMs,
-        opposite.recordingSinceMs,
-      ),
-      resolutionMs: primary.resolutionMs ?? opposite.resolutionMs,
-      validThroughMs: latestNonNull(
-        primary.validThroughMs,
-        opposite.validThroughMs,
-      ),
-    };
-  }
-
-  hasVisiblePressure(
-    tokenId: string,
-    nowMs: number,
-    halfLifeMs: number,
-  ): boolean {
-    const state = this.states.get(tokenId);
-    if (!state) return false;
-
-    if (
-      state.extents.some(
-        (extent) =>
-          pressureValidityAlpha(extent.validity, nowMs, halfLifeMs) >
-          PRESSURE_MIN_VISIBLE_ALPHA,
-      )
-    )
-      return true;
-
-    return state.memory.hasVisiblePressure(nowMs, halfLifeMs);
+  observationTime(tokenId: string): ObservationTime | undefined {
+    const timestamp = this.states.get(tokenId)?.memory.validThroughMs();
+    return timestamp === undefined ? undefined : observationTime(timestamp);
   }
 }
 
@@ -323,16 +326,4 @@ function pressureExtentsEqual(
       );
     })
   );
-}
-
-function earliestNonNull(a: number | null, b: number | null): number | null {
-  if (a === null) return b;
-  if (b === null) return a;
-  return Math.min(a, b);
-}
-
-function latestNonNull(a: number | null, b: number | null): number | null {
-  if (a === null) return b;
-  if (b === null) return a;
-  return Math.max(a, b);
 }

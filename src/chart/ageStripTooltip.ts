@@ -1,3 +1,4 @@
+import type { ObservationTime } from "@/lib/observationClock";
 import { AGE_ROW_BAND_PX, getAgeStripTuning } from "@/lib/ageStripTuning";
 import { relativeTimeDisplay } from "@/lib/math";
 import {
@@ -33,6 +34,7 @@ import {
 } from "./ageStripPressureProjection";
 
 export interface AgeStripTooltipHost {
+  readonly getOpacityTime: () => ObservationTime;
   readonly canvas: HTMLCanvasElement;
   readonly getViewMode: () => ViewMode;
   readonly getRowOrientation: () => AgeRowOrientation;
@@ -41,8 +43,9 @@ export interface AgeStripTooltipHost {
     price: Price,
     volume: number,
   ) => PressureFieldBand | undefined;
-  /** Must resolve the label for the actual token id passed in. */
+  /** Must resolve labels for the actual token id passed in. */
   readonly getTokenName: (tokenId: string) => string | undefined;
+  readonly getMarketName: (tokenId: string) => string | undefined;
   readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
 }
 
@@ -159,6 +162,7 @@ export class AgeStripTooltip {
     const semanticPrice = semanticPriceAtDisplayX(displayPrice, perspective);
     const pressurePrice = pressurePriceAtDisplayX(displayPrice, perspective);
     const tokenName = this.host.getTokenName(semanticTokenId) ?? "(unknown)";
+    const marketName = this.host.getMarketName(semanticTokenId) ?? "(unknown)";
     const color = signedVolumeColor(
       perspective.colorSign,
       this.host.getPressureColorScale(row.tokenId),
@@ -184,7 +188,7 @@ export class AgeStripTooltip {
       if (band) {
         const alpha = pressureValidityAlpha(
           band.validity,
-          nowMs,
+          this.host.getOpacityTime(),
           getAgeStripTuning().ghostHalfLifeMs,
         );
         if (alpha > PRESSURE_MIN_VISIBLE_ALPHA)
@@ -213,6 +217,7 @@ export class AgeStripTooltip {
         : (ageDisplay?.text ?? (displayedVolume === null ? null : "∞"));
     const signature = [
       semanticTokenId,
+      marketName,
       formatProbability(semanticPrice),
       displayedVolume === null ? "" : formatPressureVolume(displayedVolume),
       ageText ?? "",
@@ -224,6 +229,7 @@ export class AgeStripTooltip {
       (overlay) =>
         renderAgeTooltip(
           overlay,
+          marketName,
           tokenName,
           semanticPrice,
           color,
@@ -276,6 +282,7 @@ export class AgeStripTooltip {
 
 export function renderAgeTooltip(
   overlay: HTMLDivElement,
+  marketName: string,
   tokenName: string,
   tokenPrice: number,
   color: string,
@@ -284,11 +291,20 @@ export function renderAgeTooltip(
 ): void {
   overlay.replaceChildren();
 
-  const title = document.createElement("div");
-  title.className = "cpv-ov-label";
-  title.textContent = `${tokenName}@${formatProbability(tokenPrice)}`;
-  title.style.color = color;
-  overlay.appendChild(title);
+  const heading = document.createElement("div");
+  heading.className = "cpv-ov-heading";
+
+  const market = document.createElement("span");
+  market.className = "cpv-ov-market";
+  market.textContent = marketName;
+
+  const token = document.createElement("span");
+  token.className = "cpv-ov-token-price";
+  token.textContent = `${tokenName} @ ${formatProbability(tokenPrice)}`;
+  token.style.color = color;
+
+  heading.append(market, token);
+  overlay.appendChild(heading);
 
   if (volume === null) return;
 

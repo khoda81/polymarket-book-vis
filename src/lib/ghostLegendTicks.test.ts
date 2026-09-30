@@ -35,3 +35,27 @@ test("duration labels remain readable below milliseconds and above months", () =
   expect(formatDurationTick(60 * 60 * 1_000)).toBe("1h");
   expect(formatDurationTick(365 * 24 * 60 * 60 * 1_000)).toBe("1y");
 });
+
+test("absolute-age ticks are reprojected when the newest observation gets older", () => {
+  const fresh = ghostLegendTicks(5_000, 600, {
+    minDistancePx: 24,
+    originAgeMs: 0,
+  });
+  const stale = ghostLegendTicks(5_000, 600, {
+    minDistancePx: 24,
+    originAgeMs: 1_000,
+  });
+
+  const sharedAge = fresh
+    .map((tick) => tick.ageMs)
+    .find((age) => stale.some((tick) => tick.ageMs === age));
+  expect(sharedAge).toBeDefined();
+
+  const freshTick = fresh.find((tick) => tick.ageMs === sharedAge)!;
+  const staleTick = stale.find((tick) => tick.ageMs === sharedAge)!;
+  expect(staleTick.position).toBeLessThan(freshTick.position);
+  expect(staleTick.position).toBeCloseTo(
+    ghostPositionForAge(sharedAge! - 1_000, 5_000),
+  );
+  expect(staleTick.label).toBe(formatDurationTick(sharedAge!));
+});

@@ -112,6 +112,16 @@ export class ChartController {
     this.plotter = new OrderBookPlotter(surface.canvas);
 
     this.ageView = new AgeStripView({
+      client: polyMarketClient,
+      getMarketTokenName: (tokenId) => {
+        const control = this.controlForTokenValue(tokenId);
+        if (!control) return tokenId;
+        const tokenName =
+          control.tokenId === tokenId
+            ? control.market.outcomes.yes.label
+            : control.market.outcomes.no.label;
+        return `${tokenName} · ${control.title}`;
+      },
       canvas: surface.canvas,
       pressureCanvas: surface.pressureCanvas,
       canvasWrap: surface.canvasWrap,
@@ -136,6 +146,8 @@ export class ChartController {
           ? control.market.outcomes.no.label
           : undefined;
       },
+      getMarketName: (tokenId) =>
+        this.controlForTokenValue(tokenId)?.title ?? undefined,
       getOppositeTokenId: (tokenId) => {
         const control = this.controlForTokenValue(tokenId);
         return control?.market.outcomes.no.tokenId ?? undefined;
