@@ -127,7 +127,12 @@
       canvasWrap,
       toggles,
     };
-    const next = new ChartController(surface, model, renderInput());
+    const next = new ChartController(
+      surface,
+      model,
+      visualization.tuning,
+      renderInput(),
+    );
     chart = next;
 
     void model.start().then(
