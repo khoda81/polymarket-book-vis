@@ -1,5 +1,6 @@
 import type { ObservationTime } from "@/domain/pressure/observationClock";
 import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
+import type { AgeStripTuningStore } from "@/chart/age/ageStripTuningStore";
 import type { ChartTheme, OrderBookPlotter } from "@/rendering/renderer";
 import type { MarketGroupModel } from "@/chart/model/marketGroupModel.svelte";
 import {
@@ -30,6 +31,7 @@ export interface AgeStripRenderState {
 
 export interface AgeStripHost {
   readonly model: MarketGroupModel;
+  readonly tuning: AgeStripTuningStore;
   readonly canvas: HTMLCanvasElement;
   readonly pressureCanvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
@@ -297,7 +299,7 @@ export class AgeStripView {
   private readonly handleWheel = (event: WheelEvent) => {
     if (
       this.host.getRenderState().viewMode !== "age" ||
-      !handleAgeStripTuningWheel(event)
+      !handleAgeStripTuningWheel(event, this.host.tuning)
     )
       return;
 
