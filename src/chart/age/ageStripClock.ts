@@ -1,12 +1,6 @@
 import { relativeTimeDisplay, relativeTimeOffsetDisplay } from "@/shared/math";
 import type { ViewMode } from "@/domain/markets/chartState";
-import type { PublicClient } from "@polymarket/client";
-import {
-  observationClock,
-  type ObservationDescription,
-  type ObservationPoint,
-  type ObservationTime,
-} from "@/domain/pressure/observationClock";
+import type { ObservationTime } from "@/domain/pressure/observationClock";
 import {
   ageRowYDirection,
   type AgeRowOrientation,
@@ -24,7 +18,6 @@ export interface AgeStripTiming {
 
 export interface AgeStripClockHost {
   readonly canvasWrap: HTMLElement;
-  readonly client: PublicClient;
   readonly getViewMode: () => ViewMode;
   readonly getObservationTime: (tokenId: string) => ObservationTime | undefined;
   readonly getTiming: (tokenId: string) => AgeStripTiming | undefined;
@@ -47,7 +40,6 @@ export class AgeStripClock {
   private enabled = true;
   private pending:
     { kind: "frame"; id: number } | { kind: "timer"; id: number } | null = null;
-  private readonly unregisterSource: () => void;
 
   constructor(private readonly host: AgeStripClockHost) {
     this.orientation = host.getRowOrientation();
@@ -57,56 +49,22 @@ export class AgeStripClock {
     // Masonry can therefore ignore its internal mutations entirely.
     this.layer.setAttribute("data-masonry-layout-neutral", "");
     host.canvasWrap.appendChild(this.layer);
-    this.unregisterSource = observationClock(host.client).register({
-      points: () => this.observationPoints(),
-      describe: (tokenId) => this.describeObservation(tokenId),
-    });
   }
 
   setGeometry(geometry: AgeStripGeometry | null): void {
     const previous = this.geometry;
     const orientation = this.host.getRowOrientation();
-    const sourceChanged = !sameObservationRows(previous, geometry);
     const presentationChanged =
       orientation !== this.orientation || !sameGeometry(previous, geometry);
 
     this.geometry = geometry;
     this.orientation = orientation;
-    if (sourceChanged) observationClock(this.host.client).changed();
     if (presentationChanged) this.refresh();
-  }
-
-  private *observationPoints(): Iterable<ObservationPoint> {
-    if (!this.enabled || this.host.getViewMode() !== "age") return;
-    for (const row of this.geometry?.rows ?? []) {
-      for (const tokenId of [row.tokenId, row.oppositeTokenId]) {
-        if (!tokenId) continue;
-        const observedAtMs = this.host.getObservationTime(tokenId);
-        if (observedAtMs !== undefined) yield { tokenId, observedAtMs };
-      }
-    }
-  }
-
-  private describeObservation(tokenId: string): ObservationDescription {
-    for (const row of this.geometry?.rows ?? []) {
-      if (row.tokenId === tokenId)
-        return {
-          name: this.host.getTokenName(tokenId),
-          color: this.host.getTokenColor(row.tokenId, false),
-        };
-      if (row.oppositeTokenId === tokenId)
-        return {
-          name: this.host.getTokenName(tokenId),
-          color: this.host.getTokenColor(row.tokenId, true),
-        };
-    }
-    throw new Error(`observation source lost token geometry for ${tokenId}`);
   }
 
   setEnabled(enabled: boolean): void {
     if (enabled === this.enabled) return;
     this.enabled = enabled;
-    observationClock(this.host.client).changed();
     this.layer.hidden = !enabled;
     if (enabled) this.refresh();
     else this.clear();
@@ -254,22 +212,8 @@ export class AgeStripClock {
 
   destroy(): void {
     this.clear();
-    this.unregisterSource();
     this.layer.remove();
   }
-}
-
-function sameObservationRows(
-  a: AgeStripGeometry | null,
-  b: AgeStripGeometry | null,
-): boolean {
-  if (a === b) return true;
-  if (!a || !b || a.rows.length !== b.rows.length) return false;
-  return a.rows.every(
-    (row, index) =>
-      row.tokenId === b.rows[index]!.tokenId &&
-      row.oppositeTokenId === b.rows[index]!.oppositeTokenId,
-  );
 }
 
 function sameGeometry(

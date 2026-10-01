@@ -1,35 +1,63 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import AgeRowFlipButton from "../charts/AgeRowFlipButton.svelte";
-  import { SeriesTimelineView } from "../../chart/series/seriesTimelineView";
+  import {
+    SeriesTimelineView,
+    type SeriesTimelineRenderInput,
+  } from "../../chart/series/seriesTimelineView";
   import {
     DEFAULT_AGE_ROW_ORIENTATION,
     type AgeRowOrientation,
   } from "../../chart/age/ageStripOrientation";
+  import { getAgeStripTuning } from "../../chart/age/ageStripTuning";
+  import { observationClock } from "../../domain/pressure/observationClock";
   import type { ConnectionStatus } from "../../domain/markets/chartState";
-  import {
-    type PublicClient,
-    type Event,
-    type Series,
+  import type {
+    PublicClient,
+    Event,
+    Series,
   } from "@polymarket/client";
 
-  export let series: Series;
-  export let client: PublicClient;
-  export let ageRowOrientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION;
-  export let onready: () => void = () => undefined;
-  export let onfailure: (message: string) => void = () => undefined;
-  export let onconnection: (status: ConnectionStatus) => void = () => undefined;
-  export let onanchorevent: (event: Event | null) => void = () => undefined;
-  export let onrowflip: () => void = () => undefined;
+  interface Props {
+    series: Series;
+    client: PublicClient;
+    ageRowOrientation?: AgeRowOrientation;
+    onready?: () => void;
+    onfailure?: (message: string) => void;
+    onconnection?: (status: ConnectionStatus) => void;
+    onanchorevent?: (event: Event | null) => void;
+    onrowflip?: () => void;
+  }
+
+  let {
+    series,
+    client,
+    ageRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
+    onready = () => undefined,
+    onfailure = () => undefined,
+    onconnection = () => undefined,
+    onanchorevent = () => undefined,
+    onrowflip = () => undefined,
+  }: Props = $props();
 
   let canvas: HTMLCanvasElement;
   let pressureCanvas: HTMLCanvasElement;
   let canvasWrap: HTMLDivElement;
-  let view: SeriesTimelineView | null = null;
-  let following = true;
-  let jumpValue = "";
-  let eventCount = 0;
-  let message = "";
+  let view = $state<SeriesTimelineView | null>(null);
+  let following = $state(true);
+  let jumpValue = $state("");
+  let eventCount = $state(0);
+  let message = $state("");
+
+  function renderInput(): SeriesTimelineRenderInput {
+    const tuning = getAgeStripTuning();
+    return {
+      ageRowOrientation,
+      observationReference: observationClock(client).readReference(),
+      volumePerCssPixel: tuning.volumePerCssPixel,
+      ghostHalfLifeMs: tuning.ghostHalfLifeMs,
+    };
+  }
 
   function jump(): void {
     if (!jumpValue) return;
@@ -47,7 +75,9 @@
     view?.followLive();
   }
 
-  $: view?.setAgeRowOrientation(ageRowOrientation);
+  $effect(() => {
+    view?.updateRenderInputs(renderInput());
+  });
 
   onMount(() => {
     const timeline = new SeriesTimelineView(
@@ -56,6 +86,7 @@
       canvasWrap,
       client,
       series,
+      renderInput(),
       {
         onConnectionStatus: onconnection,
         onFollowingChanged: (value) => {
@@ -72,7 +103,6 @@
       },
     );
     view = timeline;
-    timeline.setAgeRowOrientation(ageRowOrientation);
 
     void timeline.start().then(
       () => onready(),

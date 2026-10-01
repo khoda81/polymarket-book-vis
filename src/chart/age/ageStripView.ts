@@ -1,24 +1,13 @@
-import {
-  observationClock,
-  opacityReference,
-} from "@/domain/pressure/observationClock";
-import {
-  AGE_ROW_BAND_PX,
-  getAgeStripTuning,
-  subscribeAgeStripTuning,
-} from "@/chart/age/ageStripTuning";
-import type { FeeSchedule } from "@/domain/books/feeSchedule";
-import type { TokenBook } from "@/domain/books/orderBook";
-import type { PressureFrontierSnapshot } from "@/domain/pressure/pressureFrontierSnapshot";
+import type { ObservationTime } from "@/domain/pressure/observationClock";
+import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
 import type { ChartTheme, OrderBookPlotter } from "@/rendering/renderer";
-import type { SignedVolumeColorScale } from "@/rendering/colors/signedVolume";
+import type { MarketGroupModel } from "@/chart/model/marketGroupModel.svelte";
 import {
   AGE_TIME_GUTTER_PX,
   type AgeStripGeometry,
   VOLUME_LEFT_PADDING_PX,
   VOLUME_RIGHT_PADDING_PX,
   ageLabelGutterWidth,
-  hasRealOrders,
   positionRowControls,
   rowRasterGeometry,
 } from "./ageStripLayout";
@@ -26,38 +15,28 @@ import { drawAgeAxes } from "./ageStripRendering";
 import { GpuPressureLayer, type GpuPressureRow } from "./gpuPressureLayer";
 import { AgeStripClock } from "./ageStripClock";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
-import { AgeStripPressureState } from "./ageStripPressureState";
-import {
-  agePressureSourceTokenForSemanticToken,
-  agePressureSurface,
-} from "./ageStripPressureProjection";
-import type { LiveBookUpdate } from "../live/liveBookContracts";
+import { agePressureSurface } from "./ageStripPressureProjection";
 import { AgeStripTooltip } from "./ageStripTooltip";
 import type { AgeRowOrientation } from "./ageStripOrientation";
 import { signedVolumeColor } from "@/rendering/colors/signedVolume";
-import type { PublicClient } from "@polymarket/client";
-import type { ChartMarketControl } from "@/chart/configuration/chartDefinition";
+
+export interface AgeStripRenderState {
+  readonly viewMode: "volume" | "age";
+  readonly rowOrientation: AgeRowOrientation;
+  readonly opacityTimeMs: ObservationTime;
+  readonly volumePerCssPixel: number;
+  readonly ghostHalfLifeMs: number;
+}
 
 export interface AgeStripHost {
-  readonly client: PublicClient;
-  readonly getMarketTokenName: (tokenId: string) => string;
+  readonly model: MarketGroupModel;
   readonly canvas: HTMLCanvasElement;
   readonly pressureCanvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
   readonly toggles: HTMLElement;
   readonly plotter: OrderBookPlotter;
-  readonly activeTokens: Set<string>;
-  readonly getBook: (tokenId: string) => TokenBook | undefined;
-  readonly getFeeSchedule: (tokenId: string) => FeeSchedule;
-  readonly getTokenName: (tokenId: string) => string | undefined;
-  readonly getMarketName: (tokenId: string) => string | undefined;
-  readonly getOppositeTokenId: (tokenId: string) => string | undefined;
-  readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
   readonly getTheme: () => ChartTheme;
-  readonly getViewMode: () => "volume" | "age";
-  readonly getRowOrientation: () => AgeRowOrientation;
-  readonly hideToken: (tokenId: string) => void;
-  readonly requestDraw: () => void;
+  readonly getRenderState: () => AgeStripRenderState;
 }
 
 /**
@@ -70,11 +49,7 @@ export class AgeStripView {
   private readonly host: AgeStripHost;
   private readonly clock: AgeStripClock;
   private readonly tooltip: AgeStripTooltip;
-  private readonly unsubscribeTuning: () => void;
-  private readonly pressure = new AgeStripPressureState();
   private pressureLayer: GpuPressureLayer | null = null;
-  private readonly visibilityInitialized = new Set<string>();
-  private readonly unsubscribeObservation: () => void;
   private geometry: AgeStripGeometry | null = null;
   private layoutMode: "age" | "volume" | null = null;
 
@@ -82,176 +57,37 @@ export class AgeStripView {
     this.host = host;
     this.clock = new AgeStripClock({
       canvasWrap: host.canvasWrap,
-      getViewMode: host.getViewMode,
-      client: host.client,
-      getObservationTime: (tokenId) => this.pressure.observationTime(tokenId),
-      getTiming: (tokenId) => this.pressure.timing(tokenId),
-      getRowOrientation: host.getRowOrientation,
-      getTokenName: host.getMarketTokenName,
+      getViewMode: () => host.getRenderState().viewMode,
+      getObservationTime: (tokenId) =>
+        host.model.pressure.observationTime(tokenId),
+      getTiming: (tokenId) => host.model.pressure.timing(tokenId),
+      getRowOrientation: () => host.getRenderState().rowOrientation,
+      getTokenName: (tokenId) => host.model.marketTokenName(tokenId),
       getTokenColor: (tokenId, opposite) =>
         signedVolumeColor(
           opposite ? 1 : -1,
-          host.getPressureColorScale(tokenId),
+          host.model.pressureColorScale(tokenId),
         ),
     });
-    this.unsubscribeObservation = observationClock(host.client).subscribe(
-      (reference) => {
-        if (host.getViewMode() !== "age" || !this.pressureLayer) return;
-        if (
-          !this.pressureLayer.refreshOpacity(
-            opacityReference(reference),
-            getAgeStripTuning().ghostHalfLifeMs,
-          )
-        )
-          host.requestDraw();
-      },
-    );
     this.tooltip = new AgeStripTooltip({
-      getOpacityTime: () =>
-        opacityReference(observationClock(host.client).readReference()),
+      getOpacityTime: () => host.getRenderState().opacityTimeMs,
       canvas: host.canvas,
-      getViewMode: host.getViewMode,
-      getRowOrientation: host.getRowOrientation,
+      getViewMode: () => host.getRenderState().viewMode,
+      getRowOrientation: () => host.getRenderState().rowOrientation,
+      getVolumePerCssPixel: () => host.getRenderState().volumePerCssPixel,
+      getGhostHalfLifeMs: () => host.getRenderState().ghostHalfLifeMs,
       getPressureBand: (tokenId, price, volume) =>
-        this.pressure.bandAtPoint(tokenId, price, volume),
-      getTokenName: host.getTokenName,
-      getMarketName: host.getMarketName,
-      getPressureColorScale: host.getPressureColorScale,
-    });
-
-    this.unsubscribeTuning = subscribeAgeStripTuning(() => {
-      host.requestDraw();
+        host.model.pressure.bandAtPoint(tokenId, price, volume),
+      getTokenName: (tokenId) => host.model.tokenName(tokenId),
+      getMarketName: (tokenId) => host.model.marketName(tokenId),
+      getPressureColorScale: (tokenId) =>
+        host.model.pressureColorScale(tokenId),
     });
 
     host.canvas.addEventListener("wheel", this.handleWheel, {
       capture: true,
       passive: false,
     });
-  }
-
-  reset(): void {
-    this.pressure.reset();
-    this.pressureLayer?.invalidate();
-    this.visibilityInitialized.clear();
-    this.clock.reset();
-    this.tooltip.clear();
-    this.geometry = null;
-    this.layoutMode = null;
-  }
-
-  setRecordingCoverage(
-    recordingSinceMsByToken: Readonly<Record<string, number>>,
-  ): void {
-    this.pressure.setRecordingCoverage(recordingSinceMsByToken);
-    this.clock.refresh();
-    this.host.requestDraw();
-  }
-
-  hydratePressureMemory(
-    snapshotsByToken: Readonly<Record<string, PressureFrontierSnapshot>>,
-  ): void {
-    this.pressure.hydrate(
-      snapshotsByToken,
-      (tokenId) => this.host.getBook(tokenId),
-      (tokenId) => this.host.getFeeSchedule(tokenId),
-    );
-    this.pressureLayer?.invalidate();
-    observationClock(this.host.client).changed();
-  }
-
-  configureMarkets(controls: readonly ChartMarketControl[]): void {
-    this.visibilityInitialized.clear();
-    this.pressure.configure(
-      controls.flatMap((control) => {
-        const rows = [
-          {
-            tokenId: control.tokenId,
-            resolutionMs: control.resolutionMs,
-          },
-        ];
-        const oppositeTokenId = control.market.outcomes.no.tokenId;
-        if (oppositeTokenId)
-          rows.push({
-            tokenId: oppositeTokenId,
-            resolutionMs: control.resolutionMs,
-          });
-        return rows;
-      }),
-    );
-
-    for (const control of controls) {
-      if (control.lifecycle.kind !== "resolved") continue;
-      // Static market metadata gives us the terminal winner, but its
-      // end/closed timestamp is not causal pressure evidence.
-      this.applyResolvedPressure(
-        control.tokenId,
-        control.market.outcomes.no.tokenId,
-        control.lifecycle.winningTokenId,
-        null,
-      );
-    }
-
-    this.pressureLayer?.invalidate();
-  }
-
-  onBookUpdate(tokenId: string, update: LiveBookUpdate): void {
-    const book = this.host.getBook(tokenId);
-    if (!book) return;
-
-    this.pressure.applyBookUpdate(
-      tokenId,
-      book,
-      this.host.getFeeSchedule(tokenId),
-      update,
-    );
-
-    observationClock(this.host.client).changed();
-    if (this.visibilityInitialized.has(tokenId)) return;
-    this.visibilityInitialized.add(tokenId);
-    if (hasRealOrders(book)) return;
-
-    if (this.host.activeTokens.has(tokenId)) this.host.hideToken(tokenId);
-  }
-
-  resolveMarket(
-    primaryTokenId: string,
-    winningTokenId: string,
-    resolvedAtMs: number | null,
-  ): void {
-    this.applyResolvedPressure(
-      primaryTokenId,
-      this.host.getOppositeTokenId(primaryTokenId),
-      winningTokenId,
-      resolvedAtMs,
-    );
-    this.pressureLayer?.invalidate();
-    this.clock.refresh();
-    observationClock(this.host.client).changed();
-  }
-
-  private applyResolvedPressure(
-    primaryTokenId: string,
-    oppositeTokenId: string | null | undefined,
-    winningTokenId: string,
-    resolvedAtMs: number | null,
-  ): void {
-    const unboundedSourceTokenId = agePressureSourceTokenForSemanticToken(
-      primaryTokenId,
-      oppositeTokenId,
-      winningTokenId,
-    );
-
-    this.pressure.resolveSource(
-      primaryTokenId,
-      primaryTokenId === unboundedSourceTokenId,
-      resolvedAtMs,
-    );
-    if (oppositeTokenId)
-      this.pressure.resolveSource(
-        oppositeTokenId,
-        oppositeTokenId === unboundedSourceTokenId,
-        resolvedAtMs,
-      );
   }
 
   draw(): void {
@@ -288,7 +124,7 @@ export class AgeStripView {
 
         return {
           tokenId,
-          oppositeTokenId: this.host.getOppositeTokenId(tokenId),
+          oppositeTokenId: this.host.model.oppositeTokenId(tokenId),
           centerY: raster.centerCss,
           topY: raster.topCss,
           bottomY: raster.topCss + raster.heightCss,
@@ -304,32 +140,48 @@ export class AgeStripView {
     this.renderPressure(geometry);
 
     drawAgeAxes(frame, rowCount, activeControls, (tokenId) =>
-      this.host.getPressureColorScale(tokenId),
+      this.host.model.pressureColorScale(tokenId),
+    );
+  }
+
+  refreshAnnotations(): void {
+    this.clock.refresh();
+  }
+
+  refreshOpacity(): boolean {
+    const state = this.host.getRenderState();
+    return (
+      state.viewMode === "age" &&
+      !!this.pressureLayer?.refreshOpacity(
+        state.opacityTimeMs,
+        state.ghostHalfLifeMs,
+      )
     );
   }
 
   refreshPressure(): boolean {
     const geometry = this.geometry;
-    if (this.host.getViewMode() !== "age" || !geometry) return false;
+    if (this.host.getRenderState().viewMode !== "age" || !geometry)
+      return false;
     this.renderPressure(geometry);
     return true;
   }
 
   private renderPressure(geometry: AgeStripGeometry): void {
-    const tuning = getAgeStripTuning();
-    const rowOrientation = this.host.getRowOrientation();
+    const state = this.host.getRenderState();
+    const rowOrientation = state.rowOrientation;
     const gpuRows: GpuPressureRow[] = [];
 
     for (const row of geometry.rows) {
       const tokenId = row.tokenId;
-      const primaryMemory = this.pressure.memory(tokenId);
+      const primaryMemory = this.host.model.pressure.memory(tokenId);
       const oppositeTokenId = row.oppositeTokenId;
       const oppositeMemory = oppositeTokenId
-        ? this.pressure.memory(oppositeTokenId)
+        ? this.host.model.pressure.memory(oppositeTokenId)
         : undefined;
       if (!primaryMemory && !oppositeMemory) continue;
 
-      const colorScale = this.host.getPressureColorScale(tokenId);
+      const colorScale = this.host.model.pressureColorScale(tokenId);
       const centerCss =
         row.centerY ??
         geometry.viewport.t +
@@ -353,8 +205,8 @@ export class AgeStripView {
                   (revision) =>
                     primaryMemory.renderFirstChangedRunSince(revision),
                   primaryMemory.renderCurrentValidThroughMs(),
-                  this.pressure.renderExtents(tokenId),
-                  this.pressure.renderExtentRevision(tokenId),
+                  this.host.model.pressure.renderExtents(tokenId),
+                  this.host.model.pressure.renderExtentRevision(tokenId),
                   colorScale,
                   "primary",
                   rowOrientation,
@@ -372,8 +224,10 @@ export class AgeStripView {
                   (revision) =>
                     oppositeMemory.renderFirstChangedRunSince(revision),
                   oppositeMemory.renderCurrentValidThroughMs(),
-                  this.pressure.renderExtents(oppositeTokenId!),
-                  this.pressure.renderExtentRevision(oppositeTokenId!),
+                  this.host.model.pressure.renderExtents(oppositeTokenId!),
+                  this.host.model.pressure.renderExtentRevision(
+                    oppositeTokenId!,
+                  ),
                   colorScale,
                   "opposite",
                   rowOrientation,
@@ -394,11 +248,9 @@ export class AgeStripView {
       cssWidth: geometry.canvasWidth,
       cssHeight: geometry.canvasHeight,
       dpr: window.devicePixelRatio || 1,
-      volumePerCssPixel: tuning.volumePerCssPixel,
-      ghostHalfLifeMs: tuning.ghostHalfLifeMs,
-      opacityTimeMs: opacityReference(
-        observationClock(this.host.client).readReference(),
-      ),
+      volumePerCssPixel: state.volumePerCssPixel,
+      ghostHalfLifeMs: state.ghostHalfLifeMs,
+      opacityTimeMs: state.opacityTimeMs,
       background: theme.bg,
     });
   }
@@ -436,8 +288,6 @@ export class AgeStripView {
   }
 
   destroy(): void {
-    this.unsubscribeTuning();
-    this.unsubscribeObservation();
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.clock.destroy();
     this.tooltip.destroy();
@@ -445,7 +295,10 @@ export class AgeStripView {
   }
 
   private readonly handleWheel = (event: WheelEvent) => {
-    if (this.host.getViewMode() !== "age" || !handleAgeStripTuningWheel(event))
+    if (
+      this.host.getRenderState().viewMode !== "age" ||
+      !handleAgeStripTuningWheel(event)
+    )
       return;
 
     event.preventDefault();
@@ -499,6 +352,6 @@ export class AgeStripView {
 
   private isActive(label: HTMLLabelElement): boolean {
     const tokenId = label.dataset.tokenId;
-    return !!tokenId && this.host.activeTokens.has(tokenId);
+    return !!tokenId && this.host.model.isTokenActive(tokenId);
   }
 }

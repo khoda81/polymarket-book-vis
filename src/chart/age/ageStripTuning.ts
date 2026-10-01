@@ -24,12 +24,6 @@ export function getAgeStripTuning(): Readonly<AgeStripTuning> {
   return tuningStore().get();
 }
 
-export function subscribeAgeStripTuning(
-  listener: (tuning: Readonly<AgeStripTuning>) => void,
-): () => void {
-  return tuningStore().subscribe(listener);
-}
-
 export function scaleAgeStripVolumePerCssPixel(factor: number): void {
   scaleAgeStripTuning(factor, 1);
 }

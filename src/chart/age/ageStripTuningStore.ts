@@ -1,3 +1,4 @@
+import { SvelteMap } from "svelte/reactivity";
 import { DEFAULT_VOLUME_PER_CSS_PIXEL } from "../../rendering/colors/pressureInk";
 
 const STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
@@ -19,45 +20,53 @@ interface StoredAgeStripTuning {
 }
 
 type TuningStorage = Pick<Storage, "getItem" | "setItem">;
+type TuningKey = keyof AgeStripTuning;
 
+/**
+ * Reactive global tuning state.
+ *
+ * Svelte consumers become dependencies by calling get(); no parallel listener
+ * channel is needed. Both values are updated synchronously and Svelte batches
+ * effects after the complete scale operation.
+ */
 export class AgeStripTuningStore {
-  private readonly listeners = new Set<
-    (tuning: Readonly<AgeStripTuning>) => void
-  >();
-  private tuning: AgeStripTuning;
+  private readonly values: SvelteMap<TuningKey, number>;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly storage: TuningStorage | null) {
-    this.tuning = loadTuning(storage);
+    const tuning = loadTuning(storage);
+    this.values = new SvelteMap<TuningKey, number>([
+      ["volumePerCssPixel", tuning.volumePerCssPixel],
+      ["ghostHalfLifeMs", tuning.ghostHalfLifeMs],
+    ]);
   }
 
   get(): Readonly<AgeStripTuning> {
-    return this.tuning;
-  }
-
-  subscribe(listener: (tuning: Readonly<AgeStripTuning>) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return {
+      volumePerCssPixel: this.values.get("volumePerCssPixel")!,
+      ghostHalfLifeMs: this.values.get("ghostHalfLifeMs")!,
+    };
   }
 
   scale(volumeFactor: number, ghostFactor: number): void {
+    const current = this.get();
     const validVolumeFactor = positiveFactor(volumeFactor);
     const validGhostFactor = positiveFactor(ghostFactor);
     const volumePerCssPixel = Math.max(
       1e-3,
-      this.tuning.volumePerCssPixel * validVolumeFactor,
+      current.volumePerCssPixel * validVolumeFactor,
     );
-    const ghostHalfLifeMs = this.tuning.ghostHalfLifeMs * validGhostFactor;
+    const ghostHalfLifeMs = current.ghostHalfLifeMs * validGhostFactor;
     if (!(ghostHalfLifeMs > 0) || !Number.isFinite(ghostHalfLifeMs)) return;
     if (
-      volumePerCssPixel === this.tuning.volumePerCssPixel &&
-      ghostHalfLifeMs === this.tuning.ghostHalfLifeMs
+      volumePerCssPixel === current.volumePerCssPixel &&
+      ghostHalfLifeMs === current.ghostHalfLifeMs
     )
       return;
 
-    this.tuning = { volumePerCssPixel, ghostHalfLifeMs };
+    this.values.set("volumePerCssPixel", volumePerCssPixel);
+    this.values.set("ghostHalfLifeMs", ghostHalfLifeMs);
     this.schedulePersist();
-    for (const listener of this.listeners) listener(this.tuning);
   }
 
   private schedulePersist(): void {
@@ -66,7 +75,7 @@ export class AgeStripTuningStore {
     this.persistTimer = setTimeout(() => {
       this.persistTimer = undefined;
       try {
-        this.storage!.setItem(STORAGE_KEY, JSON.stringify(this.tuning));
+        this.storage!.setItem(STORAGE_KEY, JSON.stringify(this.get()));
       } catch (error) {
         console.warn("Could not persist age-strip tuning:", error);
       }
