@@ -4,6 +4,7 @@
   import EventSearch from "./discovery/EventSearch.svelte";
   import DiscoveryPanel from "./discovery/DiscoveryPanel.svelte";
   import PressureLegend from "./shared/PressureLegend.svelte";
+  import { provideVisualizationContext } from "./visualization/visualizationContext";
   import SeriesCard from "./series/SeriesCard.svelte";
   import { DashboardReorderController } from "./dashboard/dashboardReorderController";
   import {
@@ -39,6 +40,7 @@
   import { masonryItem } from "./dashboard/masonryItem";
 
   const client = createPublicClient();
+  provideVisualizationContext(client);
 
   let entries: DashboardItem[] = [];
   let pinnedEventIds = loadStoredIds<EventId>(PINNED_EVENT_IDS_STORAGE_KEY);
@@ -354,7 +356,7 @@
       </div>
     </div>
   </div>
-  <PressureLegend {client} />
+  <PressureLegend />
 </header>
 
 <div
@@ -372,7 +374,6 @@
       {#if entry.kind === "series"}
         <SeriesCard
           series={entry.series}
-          {client}
           pinned={pinnedSeriesIds.includes(entry.series.id)}
           onpin={(pinned) => setSeriesPinned(entry.series.id, pinned, "end")}
           onremove={() => removeSeries(entry)}
@@ -389,7 +390,6 @@
       {:else}
         <EventCard
           event={entry.event}
-          {client}
           pinned={pinnedEventIds.includes(entry.event.id)}
           onpin={(pinned) => setEventPinned(entry.event.id, pinned, "end")}
           onremove={() => removeEvent(entry)}

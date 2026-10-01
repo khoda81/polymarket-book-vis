@@ -9,18 +9,12 @@
     DEFAULT_AGE_ROW_ORIENTATION,
     type AgeRowOrientation,
   } from "../../chart/age/ageStripOrientation";
-  import { getAgeStripTuning } from "../../chart/age/ageStripTuning";
-  import { observationClock } from "../../domain/pressure/observationClock";
+  import { getVisualizationContext } from "../visualization/visualizationContext";
   import type { ConnectionStatus } from "../../domain/markets/chartState";
-  import type {
-    PublicClient,
-    Event,
-    Series,
-  } from "@polymarket/client";
+  import type { Event, Series } from "@polymarket/client";
 
   interface Props {
     series: Series;
-    client: PublicClient;
     ageRowOrientation?: AgeRowOrientation;
     onready?: () => void;
     onfailure?: (message: string) => void;
@@ -31,7 +25,6 @@
 
   let {
     series,
-    client,
     ageRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
     onready = () => undefined,
     onfailure = () => undefined,
@@ -39,6 +32,8 @@
     onanchorevent = () => undefined,
     onrowflip = () => undefined,
   }: Props = $props();
+
+  const visualization = getVisualizationContext();
 
   let canvas: HTMLCanvasElement;
   let pressureCanvas: HTMLCanvasElement;
@@ -50,10 +45,10 @@
   let message = $state("");
 
   function renderInput(): SeriesTimelineRenderInput {
-    const tuning = getAgeStripTuning();
+    const tuning = visualization.tuning.get();
     return {
       ageRowOrientation,
-      observationReference: observationClock(client).readReference(),
+      observationReference: visualization.observations.readReference(),
       volumePerCssPixel: tuning.volumePerCssPixel,
       ghostHalfLifeMs: tuning.ghostHalfLifeMs,
     };
@@ -84,7 +79,8 @@
       canvas,
       pressureCanvas,
       canvasWrap,
-      client,
+      visualization.client,
+      visualization.observations,
       series,
       renderInput(),
       {

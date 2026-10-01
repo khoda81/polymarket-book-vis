@@ -16,14 +16,9 @@
     loadStoredAgeRowOrientation,
     persistAgeRowOrientation,
   } from "../charts/ageRowOrientationStorage";
-  import {
-    type PublicClient,
-    type Event,
-    type Series,
-  } from "@polymarket/client";
+  import type { Event, Series } from "@polymarket/client";
 
   export let series: Series;
-  export let client: PublicClient;
   export let pinned: boolean;
   export let onpin: (pinned: boolean) => void;
   export let onremove: () => void;
@@ -138,7 +133,6 @@
 
     <SeriesTimeline
       {series}
-      {client}
       {ageRowOrientation}
       onrowflip={flipRows}
       onready={timelineReady}

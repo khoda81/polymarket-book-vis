@@ -9,11 +9,8 @@
     DEFAULT_AGE_ROW_ORIENTATION,
     type AgeRowOrientation,
   } from "../../chart/age/ageStripOrientation";
-  import { getAgeStripTuning } from "../../chart/age/ageStripTuning";
-  import {
-    observationClock,
-    opacityReference,
-  } from "../../domain/pressure/observationClock";
+  import { opacityReference } from "../../domain/pressure/observationClock";
+  import { getVisualizationContext } from "../visualization/visualizationContext";
   import {
     buildChartDefinition,
     type ChartMarketControl,
@@ -32,11 +29,9 @@
   import AgeRowFlipButton from "./AgeRowFlipButton.svelte";
   import { hiddenMarketDisplayOrder } from "./hiddenMarketOrder";
   import MarketControl from "./MarketControl.svelte";
-  import type { PublicClient } from "@polymarket/client";
 
   interface Props {
     bundle: EventDetails;
-    client: PublicClient;
     viewMode: ViewMode;
     ageRowOrientation?: AgeRowOrientation;
     onready?: () => void;
@@ -48,7 +43,6 @@
 
   let {
     bundle,
-    client,
     viewMode,
     ageRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
     onready = () => undefined,
@@ -58,12 +52,18 @@
     onrowflip = () => undefined,
   }: Props = $props();
 
+  const visualization = getVisualizationContext();
+
   // A ChartHost owns one market-group renderer for its entire component
-  // lifetime. If bundle/client identity changes, the host itself must be
-  // recreated rather than retargeting a live feed and retained renderer.
-  const source = untrack(() => ({ bundle, client }));
-  const definition = buildChartDefinition(source.bundle);
-  const model = new MarketGroupModel(source.client, definition);
+  // lifetime. If bundle identity changes, the host itself must be recreated
+  // rather than retargeting a live feed and retained renderer.
+  const sourceBundle = untrack(() => bundle);
+  const definition = buildChartDefinition(sourceBundle);
+  const model = new MarketGroupModel(
+    visualization.client,
+    visualization.observations,
+    definition,
+  );
 
   let canvas: HTMLCanvasElement;
   let pressureCanvas: HTMLCanvasElement;
@@ -91,8 +91,8 @@
   }
 
   function renderInput(): ChartRenderInput {
-    const tuning = getAgeStripTuning();
-    const reference = observationClock(source.client).readReference();
+    const tuning = visualization.tuning.get();
+    const reference = visualization.observations.readReference();
 
     return {
       viewMode,

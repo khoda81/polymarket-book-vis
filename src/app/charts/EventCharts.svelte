@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { PublicClient } from "@polymarket/client";
   import {
     flipAgeRowOrientation,
     type AgeRowOrientation,
@@ -18,7 +17,6 @@
   import ChartHost from "./ChartHost.svelte";
 
   export let bundle: EventDetails;
-  export let client: PublicClient;
   export let viewMode: ViewMode;
   export let onready: () => void = () => undefined;
   export let onfailure: (message: string) => void = () => undefined;
@@ -116,7 +114,6 @@
   {@const group = groups[0]!}
   <ChartHost
     bundle={group.definition.bundle}
-    {client}
     {viewMode}
     ageRowOrientation={group.orientation}
     onrowflip={() => flipGroupRows(group)}
@@ -136,7 +133,6 @@
         </div>
         <ChartHost
           bundle={group.definition.bundle}
-          {client}
           {viewMode}
           ageRowOrientation={group.orientation}
           onrowflip={() => flipGroupRows(group)}
