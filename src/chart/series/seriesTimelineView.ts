@@ -1,7 +1,12 @@
 import {
   observationClock,
   opacityReference,
+  syncObservationPoints,
+  type ObservationDescription,
+  type ObservationPoint,
+  type ObservationReference,
 } from "@/domain/pressure/observationClock";
+import { SvelteMap } from "svelte/reactivity";
 import { signedVolumeColor } from "@/rendering/colors/signedVolume";
 import { AgeStripClock } from "../age/ageStripClock";
 import { AgeStripTooltip } from "../age/ageStripTooltip";
@@ -16,19 +21,12 @@ import {
   agePressureSourceTokenForSemanticToken,
   agePressureSurface,
 } from "../age/ageStripPressureProjection";
-import {
-  DEFAULT_AGE_ROW_ORIENTATION,
-  type AgeRowOrientation,
-} from "../age/ageStripOrientation";
+import type { AgeRowOrientation } from "../age/ageStripOrientation";
 import { drawAgeRowRails } from "../age/ageStripRendering";
 import { GpuPressureLayer, type GpuPressureRow } from "../age/gpuPressureLayer";
 import { LiveBookFeed } from "../live/liveBookFeed";
 import { fetchRecorderHydration } from "@/recorder/ageRecorderClient";
-import {
-  AGE_ROW_BAND_PX,
-  getAgeStripTuning,
-  subscribeAgeStripTuning,
-} from "@/chart/age/ageStripTuning";
+import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
 import { defaultPressureScaleForMarket } from "@/chart/configuration/chartDefinition";
 import { ClobFeeScheduleResolver } from "@/domain/books/feeSchedule";
 import type { TokenBook } from "@/domain/books/orderBook";
@@ -77,6 +75,13 @@ const TIMELINE_RELATIVE_GUTTER_PX = 42;
 const SUBSCRIPTION_BUFFER_ROWS = 2;
 const WINDOW_RELOAD_FRACTION = 0.45;
 
+export interface SeriesTimelineRenderInput {
+  readonly ageRowOrientation: AgeRowOrientation;
+  readonly observationReference: ObservationReference;
+  readonly volumePerCssPixel: number;
+  readonly ghostHalfLifeMs: number;
+}
+
 export interface SeriesTimelineViewOptions {
   readonly onConnectionStatus?: (status: ConnectionStatus) => void;
   readonly onFollowingChanged?: (following: boolean) => void;
@@ -94,7 +99,6 @@ export class SeriesTimelineView {
   private readonly pressureLayer: GpuPressureLayer;
   private readonly ageClock: AgeStripClock;
   private readonly tooltip: AgeStripTooltip;
-  private readonly unsubscribeTuning: () => void;
   private readonly onConnectionStatus: (status: ConnectionStatus) => void;
   private readonly onFollowingChanged: (following: boolean) => void;
   private readonly onWindowChanged: (eventCount: number) => void;
@@ -115,7 +119,6 @@ export class SeriesTimelineView {
   private readonly hydratedTokens = new Set<string>();
 
   private theme: ChartTheme;
-  private ageRowOrientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION;
   private rows: TimedSeriesEvent[];
   private cadenceMs: number;
   private userOffsetMs = 0;
@@ -131,7 +134,11 @@ export class SeriesTimelineView {
   private lastEdgeRefreshMs = 0;
   private lastAnchorEventId: string | null = null;
   private clockTimer: number | undefined;
-  private readonly unsubscribeObservation: () => void;
+  private readonly unregisterObservationSource: () => void;
+  private readonly observationPointsByToken =
+    new SvelteMap<string, ObservationPoint>();
+  private observationGeometry: AgeStripGeometry | null = null;
+  private renderInput: SeriesTimelineRenderInput;
   private raf: number | null = null;
   private destroyed = false;
 
@@ -141,8 +148,10 @@ export class SeriesTimelineView {
     private readonly canvasWrap: HTMLElement,
     private readonly client: PublicClient,
     private readonly series: Series,
+    initialRenderInput: SeriesTimelineRenderInput,
     options: SeriesTimelineViewOptions = {},
   ) {
+    this.renderInput = initialRenderInput;
     this.feeSchedules = new ClobFeeScheduleResolver(client);
     const seedEvents = [...(series.events ?? [])];
     this.cadenceMs = inferSeriesCadenceMs(seedEvents, series.recurrence);
@@ -177,10 +186,9 @@ export class SeriesTimelineView {
     this.ageClock = new AgeStripClock({
       canvasWrap,
       getViewMode: () => "age",
-      client,
       getObservationTime: (tokenId) => this.pressure.observationTime(tokenId),
       getTiming: (tokenId) => this.pressure.timing(tokenId),
-      getRowOrientation: () => this.ageRowOrientation,
+      getRowOrientation: () => this.renderInput.ageRowOrientation,
       getTokenName: (tokenId) => {
         const market = this.marketByToken.get(tokenId);
         if (!market) return tokenId;
@@ -196,17 +204,20 @@ export class SeriesTimelineView {
           this.scaleByToken.get(tokenId) ?? DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
         ),
     });
-    this.unsubscribeObservation = observationClock(client).subscribe(() =>
-      this.requestDraw(),
-    );
+    this.unregisterObservationSource = observationClock(client).register({
+      points: this.observationPointsByToken,
+      describe: (tokenId) => this.describeObservation(tokenId),
+    });
     this.tooltip = new AgeStripTooltip({
       getOpacityTime: () =>
-        opacityReference(observationClock(client).readReference()),
+        opacityReference(this.renderInput.observationReference),
       canvas,
       getViewMode: () => "age",
       getPressureBand: (tokenId, price, volume) =>
         this.pressure.bandAtPoint(tokenId, price, volume),
-      getRowOrientation: () => this.ageRowOrientation,
+      getRowOrientation: () => this.renderInput.ageRowOrientation,
+      getVolumePerCssPixel: () => this.renderInput.volumePerCssPixel,
+      getGhostHalfLifeMs: () => this.renderInput.ghostHalfLifeMs,
       getTokenName: (tokenId) => {
         const market = this.marketByToken.get(tokenId);
         if (!market) return undefined;
@@ -226,10 +237,6 @@ export class SeriesTimelineView {
           this.marketByToken.get(tokenId)?.outcomes.yes.tokenId ?? "",
         ) ??
         DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-    });
-
-    this.unsubscribeTuning = subscribeAgeStripTuning(() => {
-      this.requestDraw();
     });
 
     const height =
@@ -253,6 +260,25 @@ export class SeriesTimelineView {
     this.themeQuery.addEventListener("change", this.handleThemeChange);
   }
 
+  updateRenderInputs(next: SeriesTimelineRenderInput): void {
+    const previous = this.renderInput;
+    this.renderInput = next;
+
+    const orientationChanged =
+      next.ageRowOrientation !== previous.ageRowOrientation;
+    const tuningChanged =
+      next.volumePerCssPixel !== previous.volumePerCssPixel ||
+      next.ghostHalfLifeMs !== previous.ghostHalfLifeMs;
+    const observationChanged = !sameObservationReference(
+      next.observationReference,
+      previous.observationReference,
+    );
+
+    if (orientationChanged) this.ageClock.refresh();
+    if (orientationChanged || tuningChanged || observationChanged)
+      this.requestDraw();
+  }
+
   async start(): Promise<void> {
     await this.ensureWindow(Date.now(), true);
     if (this.destroyed) return;
@@ -263,9 +289,10 @@ export class SeriesTimelineView {
 
   jumpTo(timeMs: number): void {
     if (!Number.isFinite(timeMs)) return;
-    const clock = observationClock(this.client).readReference();
+    const reference = this.renderInput.observationReference;
     this.userOffsetMs =
-      timeMs - (clock.kind === "observed" ? clock.newestMs : Date.now());
+      timeMs -
+      (reference.kind === "observed" ? reference.newestMs : Date.now());
     this.setFollowing(false);
     void this.ensureWindow(timeMs, true);
     this.requestDraw();
@@ -278,20 +305,13 @@ export class SeriesTimelineView {
     this.requestDraw();
   }
 
-  setAgeRowOrientation(orientation: AgeRowOrientation): void {
-    if (orientation === this.ageRowOrientation) return;
-    this.ageRowOrientation = orientation;
-    this.requestDraw();
-  }
-
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     this.feedGeneration++;
     this.feed?.destroy();
     this.feed = null;
-    this.unsubscribeTuning();
-    this.unsubscribeObservation();
+    this.unregisterObservationSource();
     this.ageClock.destroy();
     this.tooltip.destroy();
     this.pressureLayer.destroy();
@@ -468,9 +488,9 @@ export class SeriesTimelineView {
   private draw(): void {
     if (this.destroyed) return;
     const nowMs = Date.now();
-    const observations = observationClock(this.client).readReference();
+    const reference = this.renderInput.observationReference;
     const referenceMs =
-      observations.kind === "observed" ? observations.newestMs : nowMs;
+      reference.kind === "observed" ? reference.newestMs : nowMs;
     const centerMs = referenceMs + this.userOffsetMs;
     const spanMs = SERIES_VISIBLE_ROWS * this.cadenceMs;
     const minMs = centerMs - spanMs / 2;
@@ -518,7 +538,6 @@ export class SeriesTimelineView {
     }
     void this.hydrateTokens(hydratableTokens);
 
-    const tuning = getAgeStripTuning();
     const gpuRows: GpuPressureRow[] = [];
     const dpr = window.devicePixelRatio || 1;
 
@@ -558,7 +577,7 @@ export class SeriesTimelineView {
                   this.pressure.renderExtentRevision(key),
                   scale,
                   "primary",
-                  this.ageRowOrientation,
+                  this.renderInput.ageRowOrientation,
                 ),
               ]
             : []),
@@ -577,7 +596,7 @@ export class SeriesTimelineView {
                   this.pressure.renderExtentRevision(oppositeKey!),
                   scale,
                   "opposite",
-                  this.ageRowOrientation,
+                  this.renderInput.ageRowOrientation,
                 ),
               ]
             : []),
@@ -592,11 +611,9 @@ export class SeriesTimelineView {
       cssWidth: this.plotter.width,
       cssHeight: this.plotter.height,
       dpr,
-      volumePerCssPixel: tuning.volumePerCssPixel,
-      ghostHalfLifeMs: tuning.ghostHalfLifeMs,
-      opacityTimeMs: opacityReference(
-        observationClock(this.client).readReference(),
-      ),
+      volumePerCssPixel: this.renderInput.volumePerCssPixel,
+      ghostHalfLifeMs: this.renderInput.ghostHalfLifeMs,
+      opacityTimeMs: opacityReference(this.renderInput.observationReference),
       background: this.theme.bg,
     });
 
@@ -733,8 +750,42 @@ export class SeriesTimelineView {
       canvasWidth: vp.l + vp.width + this.plotter.padding.r,
       canvasHeight: vp.t + vp.height + this.plotter.padding.b,
     };
+    this.observationGeometry = geometry;
     this.ageClock.setGeometry(geometry);
     this.tooltip.setGeometry(geometry);
+    syncObservationPoints(
+      this.observationPointsByToken,
+      this.observationPoints(),
+    );
+  }
+
+  private *observationPoints(): Iterable<ObservationPoint> {
+    for (const row of this.observationGeometry?.rows ?? []) {
+      for (const tokenId of [row.tokenId, row.oppositeTokenId]) {
+        if (!tokenId) continue;
+        const observedAtMs = this.pressure.observationTime(tokenId);
+        if (observedAtMs !== undefined) yield { tokenId, observedAtMs };
+      }
+    }
+  }
+
+  private describeObservation(tokenId: string): ObservationDescription {
+    const market = this.marketByToken.get(tokenId);
+    if (!market) throw new Error(`observation source lost token ${tokenId}`);
+
+    const primaryTokenId = market.outcomes.yes.tokenId;
+    const opposite = primaryTokenId !== tokenId;
+    const tokenName = opposite
+      ? market.outcomes.no.label
+      : market.outcomes.yes.label;
+    return {
+      name: `${tokenName} · ${marketDisplayName(market)}`,
+      color: signedVolumeColor(
+        opposite ? 1 : -1,
+        this.scaleByToken.get(primaryTokenId ?? "") ??
+          DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
+      ),
+    };
   }
 
   private pressureScale(event: Event, market: Market): SignedVolumeColorScale {
@@ -817,7 +868,6 @@ export class SeriesTimelineView {
           this.feeSchedules.scheduleForToken(tokenId),
           update,
         );
-        observationClock(this.client).changed();
         this.requestDraw();
       },
       onMarketResolved: (resolution) => {
@@ -842,7 +892,6 @@ export class SeriesTimelineView {
         }
 
         this.pressureLayer.invalidate();
-        observationClock(this.client).changed();
         this.requestDraw();
       },
     });
@@ -883,7 +932,6 @@ export class SeriesTimelineView {
       );
       this.pressureLayer.invalidate();
       this.ageClock.refresh();
-      observationClock(this.client).changed();
       this.requestDraw();
     });
   }
@@ -1011,4 +1059,28 @@ function seriesRowGeometry(frame: Frame, y: number, dpr: number) {
     topCss: geometry.topCss + offsetCss,
     centerCss: desiredCenter,
   };
+}
+
+function sameObservationReference(
+  a: ObservationReference,
+  b: ObservationReference,
+): boolean {
+  return (
+    a.kind === b.kind &&
+    (a.kind === "unobserved" ||
+      (b.kind === "observed" && a.newestMs === b.newestMs))
+  );
+}
+
+function sameObservationRows(
+  a: AgeStripGeometry | null,
+  b: AgeStripGeometry | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.rows.length !== b.rows.length) return false;
+  return a.rows.every(
+    (row, index) =>
+      row.tokenId === b.rows[index]!.tokenId &&
+      row.oppositeTokenId === b.rows[index]!.oppositeTokenId,
+  );
 }

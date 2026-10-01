@@ -3,9 +3,8 @@
   import {
     AGE_ROW_BAND_PX,
     getAgeStripTuning,
-    subscribeAgeStripTuning,
   } from "../../chart/age/ageStripTuning";
-  import type { AgeStripTuning } from "../../chart/age/ageStripTuningStore";
+  import { observationClock } from "../../domain/pressure/observationClock";
   import { GhostMemoryScale } from "../../chart/age/ghostMemoryScale";
   import type { PublicClient } from "@polymarket/client";
   import { shareLegendTicks } from "../../rendering/legends/shareLegendTicks";
@@ -14,52 +13,58 @@
     signedVolumeColor,
   } from "../../rendering/colors/signedVolume";
 
-  export let client: PublicClient;
+  interface Props {
+    client: PublicClient;
+  }
+
+  let { client }: Props = $props();
 
   const SHARE_TICK_MIN_SPACING_PX = 24;
   const SHARE_TICK_FULL_OPACITY_SPACING_PX = 32;
   let shareBar: HTMLDivElement;
   let ghostCanvas: HTMLCanvasElement;
-  let shareWidth = 0;
-  let shareDpr = 1;
-  let shareTicks = [] as ReturnType<typeof shareLegendTicks>;
+  let shareWidth = $state(0);
+  let shareDpr = $state(1);
+  let ghost = $state<GhostMemoryScale | null>(null);
 
-  function refreshShareTicks(
-    next: Readonly<AgeStripTuning> = getAgeStripTuning(),
-  ): void {
-    shareTicks = shareLegendTicks(
-      next.volumePerCssPixel * AGE_ROW_BAND_PX,
-      shareWidth,
-      {
-        minSpacingPx: SHARE_TICK_MIN_SPACING_PX,
-        fullOpacitySpacingPx: SHARE_TICK_FULL_OPACITY_SPACING_PX,
-        dpr: shareDpr,
-      },
-    );
-  }
-  $: negativeColor = signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
-  $: positiveColor = signedVolumeColor(1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
+  const tuning = $derived(getAgeStripTuning());
+  const observationFrame = $derived(observationClock(client).read());
+  const shareTicks = $derived(
+    shareLegendTicks(tuning.volumePerCssPixel * AGE_ROW_BAND_PX, shareWidth, {
+      minSpacingPx: SHARE_TICK_MIN_SPACING_PX,
+      fullOpacitySpacingPx: SHARE_TICK_FULL_OPACITY_SPACING_PX,
+      dpr: shareDpr,
+    }),
+  );
+  const negativeColor = $derived(
+    signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE),
+  );
+  const positiveColor = $derived(
+    signedVolumeColor(1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE),
+  );
+
+  $effect(() => {
+    ghost?.setInputs(observationFrame, tuning.ghostHalfLifeMs);
+  });
 
   onMount(() => {
-    const unsubscribe = subscribeAgeStripTuning(refreshShareTicks);
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
       shareWidth = entry.contentRect.width;
       shareDpr = window.devicePixelRatio || 1;
-      refreshShareTicks();
     });
     observer.observe(shareBar);
     shareWidth = shareBar.clientWidth;
     shareDpr = window.devicePixelRatio || 1;
-    refreshShareTicks();
 
-    const ghost = new GhostMemoryScale(ghostCanvas, client);
+    const nextGhost = new GhostMemoryScale(ghostCanvas);
+    ghost = nextGhost;
 
     return () => {
-      ghost.destroy();
+      ghost = null;
+      nextGhost.destroy();
       observer.disconnect();
-      unsubscribe();
     };
   });
 </script>
