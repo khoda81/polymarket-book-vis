@@ -1,11 +1,14 @@
-import { legendTickOpacity } from "./legendTickDensity";
+import { tickDensityOpacity } from "./tickPlacement/density";
+import { placeQuantileTicks } from "./tickPlacement/quantileTicks";
 
 const SECOND_MS = 1_000;
 const MINUTE_MS = 60 * SECOND_MS;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const MONTH_MS = 30 * DAY_MS;
-const YEAR_MS = 365 * DAY_MS;
+// These are display-duration units, not calendar arithmetic. Keeping a year
+// exactly 12 fixed 30-day months lets the entire tick lattice remain nested.
+const YEAR_MS = 12 * MONTH_MS;
 
 export interface GhostLegendTick {
   readonly ageMs: number;
@@ -17,13 +20,16 @@ export interface GhostLegendTick {
 }
 
 export interface GhostLegendTickOptions {
-  readonly minDistancePx?: number;
-  readonly fadeDistancePx?: number;
+  /** Required presentation policy from the caller, in CSS pixels. */
+  readonly minSpacingPx: number;
+  readonly fullOpacitySpacingPx: number;
   /**
    * Local-clock offset at the left edge of the scale. Positive is in the past;
    * negative means the newest observation timestamp is ahead of local time.
    */
-  readonly originAgeMs?: number;
+  readonly originAgeMs: number;
+  /** Physical pixels per CSS pixel. */
+  readonly dpr: number;
 }
 
 /**
@@ -31,109 +37,43 @@ export interface GhostLegendTickOptions {
  *
  *   x(Δt) = 1 - 2^(-Δt / halfLife)
  *
- * Candidate grid lines live in displayed clock-offset coordinates, not in
- * relative-to-newest coordinates. Screen pixels are treated as ranges and
- * grouped at the requested minimum spacing. We invert each group boundary
- * exactly once, then choose the coarsest human grid boundary owned by that
- * half-open screen interval.
+ * Placement itself knows nothing about this transform's inverse. We provide
+ * only its quantile function to the generic raster tick placer, which searches
+ * half-open screen ranges, locates the owning physical pixel, and estimates
+ * density from the value interval represented by that pixel.
  */
 export function ghostLegendTicks(
   halfLifeMs: number,
   widthPx: number,
-  options: GhostLegendTickOptions = {},
-): GhostLegendTick[] {
-  if (!(halfLifeMs > 0) || !Number.isFinite(halfLifeMs)) return [];
-  if (!(widthPx > 0) || !Number.isFinite(widthPx)) return [];
+  options: GhostLegendTickOptions,
+): readonly GhostLegendTick[] {
+  const pixelCount = Math.round(widthPx * options.dpr);
+  const minSpacingRasterPx = Math.round(options.minSpacingPx * options.dpr);
 
-  const originAgeMs = options.originAgeMs ?? 0;
-  if (!Number.isFinite(originAgeMs)) return [];
+  const placements = placeQuantileTicks({
+    pixelCount,
+    minSpacingPx: minSpacingRasterPx,
+    quantile: (position) =>
+      options.originAgeMs + ageAtGhostPosition(position, halfLifeMs),
+    refinementSteps: durationRefinementSteps(),
+  });
 
-  const minDistancePx = options.minDistancePx ?? 48;
-  const fadeDistancePx = options.fadeDistancePx ?? minDistancePx * 2;
-  if (!(minDistancePx > 0) || !Number.isFinite(minDistancePx)) return [];
-
-  // Search screen ranges at exactly the spacing scale we care about instead of
-  // oversampling at an arbitrary fraction of a pixel. Screen ownership is
-  // half-open [0, width): the final group reaches x=width, whose inverse under
-  // the exponential transform is +∞.
-  const groupCount = Math.max(1, Math.ceil(widthPx / minDistancePx));
-  const boundaries = new Array<number>(groupCount + 1);
-  for (let index = 0; index <= groupCount; index++) {
-    const x = Math.min(index * minDistancePx, widthPx);
-    boundaries[index] =
-      x === widthPx
-        ? Number.POSITIVE_INFINITY
-        : originAgeMs + ageAtGhostPosition(x / widthPx, halfLifeMs);
-  }
-
-  const steps = durationSteps();
-  const byAge = new Map<number, GhostLegendTick>();
-
-  for (let group = 0; group < groupCount; group++) {
-    const startAgeMs = boundaries[group]!;
-    const endAgeMs = boundaries[group + 1]!;
-    const includeEnd = group === groupCount - 1;
-    const toleranceMs = Math.max(
-      1e-9,
-      Math.abs(startAgeMs) * 1e-12,
-      Number.isFinite(endAgeMs) ? Math.abs(endAgeMs) * 1e-12 : 0,
-    );
-
-    // Groups own [start, end), matching raster-cell ownership: a tick exactly
-    // on a shared pixel/group boundary belongs to the group on its right.
-    // Only the final visible group owns its right endpoint.
-    for (const stepMs of steps) {
-      const ageMs = firstGridBoundaryAtOrAfter(startAgeMs, stepMs);
-      if (
-        !gridBoundaryBelongsToInterval(
-          ageMs,
-          startAgeMs,
-          endAgeMs,
-          includeEnd,
-          toleranceMs,
-        )
-      )
-        continue;
-
-      const relativeAgeMs = ageMs - originAgeMs;
-      if (relativeAgeMs < -toleranceMs) continue;
-
-      const tickPosition = ghostPositionForAge(
-        Math.max(0, relativeAgeMs),
-        halfLifeMs,
+  return placements
+    .map((placement): GhostLegendTick => {
+      const opacity = tickDensityOpacity(
+        placement.densityPx / options.dpr,
+        options.minSpacingPx,
+        options.fullOpacitySpacingPx,
       );
-      if (!(tickPosition >= 0 && tickPosition < 1)) continue;
-
-      const nextPosition = ghostPositionForAge(
-        Math.max(0, relativeAgeMs + stepMs),
-        halfLifeMs,
-      );
-      const spacingPx = Math.abs(nextPosition - tickPosition) * widthPx;
-      const opacity = legendTickOpacity(
-        spacingPx,
-        minDistancePx,
-        fadeDistancePx,
-      );
-      // A finer family can place its boundary earlier in this same nonlinear
-      // screen interval, where projected spacing is larger, so an invisible
-      // coarse candidate does not justify terminating the search.
-      if (opacity <= 1 / 255) continue;
-
-      const tick: GhostLegendTick = {
-        ageMs: normalizeZero(ageMs),
-        position: tickPosition,
+      return {
+        ageMs: placement.value,
+        position: placement.position,
         opacity,
-        stepMs,
-        label: formatDurationTick(ageMs),
+        stepMs: placement.step,
+        label: formatDurationTick(placement.value),
       };
-      const existing = byAge.get(tick.ageMs);
-      if (!existing || tick.opacity > existing.opacity)
-        byAge.set(tick.ageMs, tick);
-      break;
-    }
-  }
-
-  return [...byAge.values()].sort((a, b) => a.position - b.position);
+    })
+    .filter((tick) => tick.opacity > 1 / 255);
 }
 
 export function ghostPositionForAge(ageMs: number, halfLifeMs: number): number {
@@ -146,8 +86,7 @@ export function ageAtGhostPosition(
   position: number,
   halfLifeMs: number,
 ): number {
-  const p = Math.max(0, Math.min(1 - Number.EPSILON, position));
-  return -halfLifeMs * Math.log2(1 - p);
+  return -halfLifeMs * Math.log2(1 - position);
 }
 
 export function formatDurationTick(ageMs: number): string {
@@ -168,55 +107,47 @@ export function formatDurationTick(ageMs: number): string {
   return `${sign}${compact(magnitude / YEAR_MS)}y`;
 }
 
-function durationSteps(): number[] {
-  const values = new Set<number>();
+export function durationRefinementSteps(): readonly number[] {
+  const steps: number[] = [];
 
-  // Keep the family set stable while the scale moves. Candidate visibility is
-  // determined continuously by projected spacing below; adding/removing an
-  // entire family based on the current range would make major ticks pop.
-  for (let exponent = -12; exponent <= 2; exponent++)
-    for (const multiplier of [1, 2, 5])
-      addStep(values, multiplier * 10 ** exponent);
+  // Decimal coarse scales use the nested 1 / 0.5 pattern:
+  // ... 100y, 50y, 10y, 5y, 1y ...
+  for (let exponent = 9; exponent >= 0; exponent--) {
+    steps.push(YEAR_MS * 10 ** exponent);
+    steps.push(0.5 * YEAR_MS * 10 ** exponent);
+  }
 
-  for (const value of [1, 2, 5, 10, 20, 50, 100, 200, 500])
-    addStep(values, value);
-  for (const value of [1, 2, 5, 10, 15, 30]) addStep(values, value * SECOND_MS);
-  for (const value of [1, 2, 5, 10, 15, 30]) addStep(values, value * MINUTE_MS);
-  for (const value of [1, 2, 3, 6, 12]) addStep(values, value * HOUR_MS);
-  for (const value of [1, 2, 7, 14]) addStep(values, value * DAY_MS);
-  for (const value of [1, 2, 3, 6]) addStep(values, value * MONTH_MS);
+  // Human-unit bridges. Every next step divides the previous one exactly, so
+  // every coarse grid is a literal subset of every finer grid.
+  steps.push(
+    3 * MONTH_MS,
+    MONTH_MS,
+    15 * DAY_MS,
+    5 * DAY_MS,
+    DAY_MS,
+    12 * HOUR_MS,
+    6 * HOUR_MS,
+    3 * HOUR_MS,
+    HOUR_MS,
+    30 * MINUTE_MS,
+    10 * MINUTE_MS,
+    5 * MINUTE_MS,
+    MINUTE_MS,
+    30 * SECOND_MS,
+    10 * SECOND_MS,
+    5 * SECOND_MS,
+    SECOND_MS,
+  );
 
-  for (let exponent = 0; exponent <= 9; exponent++)
-    for (const multiplier of [1, 2, 5])
-      addStep(values, multiplier * YEAR_MS * 10 ** exponent);
+  // Below one second, continue the same nested 1 / 0.5 decade pattern:
+  // 1s, 500ms, 100ms, 50ms, 10ms, 5ms, 1ms, ...
+  steps.push(0.5 * SECOND_MS);
+  for (let exponent = -1; exponent >= -15; exponent--) {
+    steps.push(SECOND_MS * 10 ** exponent);
+    steps.push(0.5 * SECOND_MS * 10 ** exponent);
+  }
 
-  return [...values].sort((a, b) => b - a);
-}
-
-function firstGridBoundaryAtOrAfter(value: number, step: number): number {
-  const quotient = value / step;
-  const nearest = Math.round(quotient);
-  const epsilon = 1e-12 * Math.max(1, Math.abs(quotient));
-  const index =
-    Math.abs(quotient - nearest) <= epsilon ? nearest : Math.ceil(quotient);
-  return index * step;
-}
-
-function gridBoundaryBelongsToInterval(
-  value: number,
-  start: number,
-  end: number,
-  includeEnd: boolean,
-  tolerance: number,
-): boolean {
-  if (value < start - tolerance || value > end + tolerance) return false;
-  if (Math.abs(value - start) <= tolerance) return true;
-  if (Math.abs(value - end) <= tolerance) return includeEnd;
-  return value > start && value < end;
-}
-
-function normalizeZero(value: number): number {
-  return Object.is(value, -0) ? 0 : value;
+  return steps;
 }
 
 function compact(value: number): string {
