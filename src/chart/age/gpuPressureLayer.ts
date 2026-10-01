@@ -271,11 +271,11 @@ void main() {
   }
   vec4 persistent = persistentSum / sampleCount;
   vec4 resolved = persistent + decaying * (1.0 - persistent.a);
-  if (resolved.a <= 0.0039215686) discard;
 
-  // Decaying geometry factorizes through one global time scalar; persistent
-  // geometry composes over it without inheriting that decay.
-  outColor = resolved;
+  // Write transparent pixels instead of discarding them. The display pass
+  // covers the entire canvas, so this makes an explicit full-canvas clear
+  // unnecessary on opacity-only refreshes.
+  outColor = resolved.a <= 0.0039215686 ? vec4(0.0) : resolved;
 }
 `;
 
@@ -312,6 +312,7 @@ export class GpuPressureLayer {
   private referenceHalfLifeMs = 0;
   private displayedOpacityTimeMs = 0;
   private displayedHalfLifeMs = 0;
+  private displayStateReady = false;
   private visible = true;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -354,6 +355,7 @@ export class GpuPressureLayer {
     this.rasterKey = "";
     this.referenceTimeMs = 0;
     this.displayedOpacityTimeMs = 0;
+    this.displayStateReady = false;
   }
 
   render(frame: GpuPressureFrame): void {
@@ -377,6 +379,7 @@ export class GpuPressureLayer {
     const buffersChanged = this.syncSurfaceBuffers(frame);
 
     const nextRasterKey = rasterProjectionKey(frame, targetWidth, targetHeight);
+    let rasterized = false;
     if (
       resized ||
       buffersChanged ||
@@ -385,9 +388,14 @@ export class GpuPressureLayer {
     ) {
       this.rasterize(frame);
       this.rasterKey = nextRasterKey;
+      rasterized = true;
     }
 
-    this.drawDisplay(frame.opacityTimeMs, frame.ghostHalfLifeMs);
+    this.drawDisplay(
+      frame.opacityTimeMs,
+      frame.ghostHalfLifeMs,
+      rasterized || resized || buffersChanged,
+    );
   }
 
   /**
@@ -648,6 +656,7 @@ export class GpuPressureLayer {
     this.targetHeight = targetHeight;
     this.supersampleX = supersampleX;
     this.supersampleY = supersampleY;
+    this.displayStateReady = false;
     this.canvas.width = displayWidth;
     this.canvas.height = displayHeight;
 
@@ -693,6 +702,7 @@ export class GpuPressureLayer {
 
   private rasterize(frame: GpuPressureFrame): void {
     const gl = this.gl;
+    this.displayStateReady = false;
     this.referenceTimeMs = frame.opacityTimeMs;
     this.referenceHalfLifeMs = frame.ghostHalfLifeMs;
 
@@ -805,27 +815,36 @@ export class GpuPressureLayer {
   private drawDisplay(
     opacityTimeMs: ObservationTime,
     ghostHalfLifeMs: number,
+    forceState = false,
   ): void {
     const gl = this.gl;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.displayWidth, this.displayHeight);
-    gl.disable(gl.DEPTH_TEST);
-    gl.disable(gl.BLEND);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    if (forceState || !this.displayStateReady) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.displayWidth, this.displayHeight);
+      gl.disable(gl.DEPTH_TEST);
+      gl.disable(gl.BLEND);
+      gl.useProgram(this.displayProgram);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
+      uniform1i(gl, this.displayProgram, "uDecayingColor", 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.persistentTexture);
+      uniform1i(gl, this.displayProgram, "uPersistentColor", 1);
+      uniform2i(
+        gl,
+        this.displayProgram,
+        "uSupersample",
+        this.supersampleX,
+        this.supersampleY,
+      );
+
+      gl.bindVertexArray(this.displayVao);
+      this.displayStateReady = true;
+    }
+
     this.displayedOpacityTimeMs = opacityTimeMs;
     this.displayedHalfLifeMs = ghostHalfLifeMs;
-
-    if (this.totalCachedInstanceCount === 0) return;
-
-    gl.useProgram(this.displayProgram);
-
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
-    uniform1i(gl, this.displayProgram, "uDecayingColor", 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.persistentTexture);
-    uniform1i(gl, this.displayProgram, "uPersistentColor", 1);
 
     const elapsedMs = Math.max(0, opacityTimeMs - this.referenceTimeMs);
     uniform1f(
@@ -834,17 +853,7 @@ export class GpuPressureLayer {
       "uGlobalDecay",
       2 ** (-elapsedMs / ghostHalfLifeMs),
     );
-    uniform2i(
-      gl,
-      this.displayProgram,
-      "uSupersample",
-      this.supersampleX,
-      this.supersampleY,
-    );
-
-    gl.bindVertexArray(this.displayVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.bindVertexArray(null);
   }
 }
 

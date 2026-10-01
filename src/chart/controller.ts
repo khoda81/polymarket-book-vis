@@ -68,6 +68,7 @@ export class ChartController {
   private ageView!: AgeStripView;
   private volumeView!: VolumeBookView;
   private raf: number | null = null;
+  private pendingDraw: "pressure" | "full" | null = null;
   private readonly definition: ChartDefinition;
   private viewMode: ViewMode = "age";
   private ageRowOrientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION;
@@ -99,7 +100,7 @@ export class ChartController {
       onConnectionStatus: options.onConnectionStatus ?? (() => undefined),
       onBookUpdated: (tokenId, _book, update) => {
         this.ageView.onBookUpdate(tokenId, update);
-        this.reqDraw();
+        this.reqDraw(this.viewMode === "age" ? "pressure" : "full");
       },
       onMarketResolved: (resolution) => {
         this.applyResolution(resolution);
@@ -351,16 +352,21 @@ export class ChartController {
     this.reqDraw();
   }
 
-  private reqDraw() {
+  private reqDraw(kind: "pressure" | "full" = "full") {
+    if (kind === "full" || this.pendingDraw === null) this.pendingDraw = kind;
     if (this.raf !== null) return;
     this.raf = requestAnimationFrame(() => this.performDraw());
   }
 
   private performDraw() {
     this.raf = null;
+    const kind = this.pendingDraw ?? "full";
+    this.pendingDraw = null;
 
-    if (this.viewMode === "age") this.ageView.draw();
-    else {
+    if (this.viewMode === "age") {
+      if (kind === "pressure" && this.ageView.refreshPressure()) return;
+      this.ageView.draw();
+    } else {
       this.ageView.prepareVolumeView();
       this.volumeView.draw();
     }
