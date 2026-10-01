@@ -26,6 +26,7 @@ const MARKER_TOP = 0;
 const MARKER_HEIGHT = 3;
 const BAR_TOP = 4;
 const BAR_HEIGHT = 7;
+const GHOST_TICK_MIN_SPACING_PX = 32;
 
 interface GhostHoverPointer {
   readonly x: number;
@@ -159,8 +160,10 @@ export class GhostMemoryScale {
     const clockOffsetMs = Date.now() - frame.newestMs;
     const span = width - INSET * 2;
     const ticks = ghostLegendTicks(ghostHalfLifeMs, span, {
-      minDistancePx: 32,
+      minSpacingPx: GHOST_TICK_MIN_SPACING_PX,
+      fullOpacitySpacingPx: GHOST_TICK_MIN_SPACING_PX * 2,
       originAgeMs: clockOffsetMs,
+      dpr,
     });
     // Cut tick marks out of the gradient instead of painting them with the
     // same foreground color. This preserves the old high-contrast appearance

@@ -1,4 +1,4 @@
-import { legendTickOpacity } from "./legendTickDensity";
+import { tickDensityOpacity } from "./tickPlacement/density";
 import { fmtSIAtExponent } from "./math";
 
 const SHARE_STEP_MULTIPLIERS = [1, 0.5] as const;
@@ -87,7 +87,11 @@ export function shareLegendTicks(
         Math.abs(nextPosition - tickPosition),
         Math.abs(tickPosition - previousPosition),
       ) * widthPx;
-    const opacity = legendTickOpacity(spacingPx, minDistancePx, fadeDistancePx);
+    const opacity = tickDensityOpacity(
+      spacingPx,
+      minDistancePx,
+      fadeDistancePx,
+    );
     if (opacity <= 1 / 255) continue;
 
     const normalizedValue = normalizeZero(value);
