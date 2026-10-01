@@ -101,7 +101,6 @@
     <canvas
       class="ghost-memory-canvas"
       bind:this={ghostCanvas}
-      role="img"
       aria-label="Ghost memory: awaiting observation"
     ></canvas>
   </section>
