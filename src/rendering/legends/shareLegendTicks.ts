@@ -1,4 +1,8 @@
 import { fmtSIAtExponent } from "../../shared/math";
+import {
+  shareVolumeAtPressure,
+  signedSharePressure,
+} from "../colors/pressureInk";
 import { tickDensityOpacity } from "../ticks/density";
 import { placeQuantileTicks } from "../ticks/quantileTicks";
 
@@ -20,7 +24,7 @@ export interface ShareLegendTickOptions {
 /**
  * QBar-style ticks for the signed share-pressure transform:
  *
- *   s = q / (|q| + reserve)
+ *   s = q / sqrt(q^2 + reserve^2)
  *   x = 1/2 + s/2
  *
  * Placement is delegated to the same quantile-only raster algorithm used by
@@ -79,10 +83,7 @@ export function shareLegendPosition(value: number, reserve: number): number {
   if (!(reserve > 0) || !Number.isFinite(reserve)) return 0.5;
   if (Number.isNaN(value) || value === 0) return 0.5;
 
-  const signed = Number.isFinite(value)
-    ? value / (Math.abs(value) + reserve)
-    : Math.sign(value);
-  return 0.5 + 0.5 * signed;
+  return 0.5 + 0.5 * signedSharePressure(value, reserve);
 }
 
 export function shareValueAtPosition(
@@ -92,11 +93,7 @@ export function shareValueAtPosition(
   if (position === 0) return Number.NEGATIVE_INFINITY;
   if (position === 1) return Number.POSITIVE_INFINITY;
 
-  const signed = 2 * position - 1;
-  if (signed === 0) return 0;
-
-  const magnitude = (reserve * Math.abs(signed)) / (1 - Math.abs(signed));
-  return Math.sign(signed) * magnitude;
+  return shareVolumeAtPressure(2 * position - 1, reserve);
 }
 
 export function shareRefinementSteps(
