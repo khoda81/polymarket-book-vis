@@ -82,7 +82,7 @@ export function syncObservationPoints(
 }
 
 /**
- * Reactive aggregation of observation sources sharing one PublicClient.
+ * Reactive aggregation of observation sources within one visualization scope.
  *
  * Both source membership and the observation maps themselves are reactive.
  * Consumers therefore depend directly on the timestamps they display.
