@@ -1,7 +1,7 @@
 import {
-  observationClock,
   opacityReference,
   syncObservationPoints,
+  type ObservationClock,
   type ObservationDescription,
   type ObservationPoint,
   type ObservationReference,
@@ -27,6 +27,7 @@ import { GpuPressureLayer, type GpuPressureRow } from "../age/gpuPressureLayer";
 import { LiveBookFeed } from "../live/liveBookFeed";
 import { fetchRecorderHydration } from "@/recorder/ageRecorderClient";
 import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
+import type { AgeStripTuningStore } from "@/chart/age/ageStripTuningStore";
 import { defaultPressureScaleForMarket } from "@/chart/configuration/chartDefinition";
 import { ClobFeeScheduleResolver } from "@/domain/books/feeSchedule";
 import type { TokenBook } from "@/domain/books/orderBook";
@@ -147,6 +148,8 @@ export class SeriesTimelineView {
     pressureCanvas: HTMLCanvasElement,
     private readonly canvasWrap: HTMLElement,
     private readonly client: PublicClient,
+    private readonly observations: ObservationClock,
+    private readonly tuning: AgeStripTuningStore,
     private readonly series: Series,
     initialRenderInput: SeriesTimelineRenderInput,
     options: SeriesTimelineViewOptions = {},
@@ -204,7 +207,7 @@ export class SeriesTimelineView {
           this.scaleByToken.get(tokenId) ?? DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
         ),
     });
-    this.unregisterObservationSource = observationClock(client).register({
+    this.unregisterObservationSource = observations.register({
       points: this.observationPointsByToken,
       describe: (tokenId) => this.describeObservation(tokenId),
     });
@@ -330,7 +333,7 @@ export class SeriesTimelineView {
   };
 
   private readonly handleWheel = (event: WheelEvent) => {
-    if (handleAgeStripTuningWheel(event)) {
+    if (handleAgeStripTuningWheel(event, this.tuning)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       return;

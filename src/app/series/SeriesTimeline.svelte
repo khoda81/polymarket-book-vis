@@ -81,6 +81,7 @@
       canvasWrap,
       visualization.client,
       visualization.observations,
+      visualization.tuning,
       series,
       renderInput(),
       {
