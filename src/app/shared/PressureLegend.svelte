@@ -25,7 +25,7 @@
   let ghostCanvas: HTMLCanvasElement;
   let shareWidth = $state(0);
   let shareDpr = $state(1);
-  let ghost = $state<GhostMemoryScale | null>(null);
+  let ghost: GhostMemoryScale | null = null;
 
   const tuning = $derived(getAgeStripTuning());
   const observationFrame = $derived(observationClock(client).read());
@@ -44,7 +44,12 @@
   );
 
   $effect(() => {
-    ghost?.setInputs(observationFrame, tuning.ghostHalfLifeMs);
+    // Always read the reactive inputs, even before the imperative canvas
+    // resource exists. Optional-chaining the whole call here can otherwise
+    // short-circuit dependency discovery while ghost is still null.
+    const frame = observationFrame;
+    const halfLifeMs = tuning.ghostHalfLifeMs;
+    ghost?.setInputs(frame, halfLifeMs);
   });
 
   onMount(() => {
@@ -60,6 +65,9 @@
 
     const nextGhost = new GhostMemoryScale(ghostCanvas);
     ghost = nextGhost;
+    // ghost itself is intentionally not reactive state. Seed the imperative
+    // resource explicitly, then the effect above keeps it synchronized.
+    nextGhost.setInputs(observationFrame, tuning.ghostHalfLifeMs);
 
     return () => {
       ghost = null;
