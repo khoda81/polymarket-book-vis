@@ -1,0 +1,136 @@
+import { DEFAULT_VOLUME_PER_CSS_PIXEL } from "../../rendering/colors/pressureInk";
+import { stalenessAgeForOpacityErrorMs } from "../../domain/pressure/pressureField";
+
+export const AGE_ROW_BAND_PX = 48;
+export const DEFAULT_GHOST_HALF_LIFE_MS = 5_000;
+
+const MIN_GHOST_REFRESH_MS = 33;
+// Browsers clamp setTimeout to a signed 32-bit millisecond delay.
+const MAX_GHOST_REFRESH_MS = 2_147_483_647;
+export const GHOST_ALPHA_STEP = 1 / 255;
+
+const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
+
+export interface AgeStripTuning {
+  /** Share scale parameter, expressed as shares per CSS pixel of row height. */
+  readonly volumePerCssPixel: number;
+  /** Exponential half-life of historical pressure ghosts. */
+  readonly ghostHalfLifeMs: number;
+}
+
+interface StoredAgeStripTuning {
+  volumePerCssPixel?: number;
+  ghostHalfLifeMs?: number;
+  /** Legacy v1 name; migrated in place to volumePerCssPixel. */
+  volumeSoftLimit?: number;
+}
+
+const listeners = new Set<(tuning: Readonly<AgeStripTuning>) => void>();
+let tuning = loadTuning();
+let persistTimer: number | undefined;
+
+export function getAgeStripTuning(): Readonly<AgeStripTuning> {
+  return tuning;
+}
+
+export function subscribeAgeStripTuning(
+  listener: (tuning: Readonly<AgeStripTuning>) => void,
+): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export function scaleAgeStripVolumePerCssPixel(factor: number): void {
+  scaleAgeStripTuning(factor, 1);
+}
+
+/**
+ * Time until exponential decay changes by about one 8-bit alpha step.
+ * Long half-lives therefore redraw only when the displayed alpha can change.
+ */
+export function ghostOpacityStepDelayMs(halfLifeMs: number): number {
+  return stalenessAgeForOpacityErrorMs(halfLifeMs, GHOST_ALPHA_STEP);
+}
+
+export function ghostRefreshDelayMs(halfLifeMs: number): number {
+  if (!(halfLifeMs > 0) || !Number.isFinite(halfLifeMs))
+    return MAX_GHOST_REFRESH_MS;
+
+  const delay = ghostOpacityStepDelayMs(halfLifeMs);
+  return Math.min(MAX_GHOST_REFRESH_MS, Math.max(MIN_GHOST_REFRESH_MS, delay));
+}
+
+export function scaleAgeStripGhostHalfLife(factor: number): void {
+  scaleAgeStripTuning(1, factor);
+}
+
+export function scaleAgeStripTuning(
+  volumeFactor: number,
+  ghostFactor: number,
+): void {
+  const validVolumeFactor =
+    volumeFactor > 0 && Number.isFinite(volumeFactor) ? volumeFactor : 1;
+  const validGhostFactor =
+    ghostFactor > 0 && Number.isFinite(ghostFactor) ? ghostFactor : 1;
+
+  const volumePerCssPixel = Math.max(
+    1e-3,
+    tuning.volumePerCssPixel * validVolumeFactor,
+  );
+  const ghostHalfLifeMs = tuning.ghostHalfLifeMs * validGhostFactor;
+  if (!(ghostHalfLifeMs > 0) || !Number.isFinite(ghostHalfLifeMs)) return;
+
+  if (
+    volumePerCssPixel === tuning.volumePerCssPixel &&
+    ghostHalfLifeMs === tuning.ghostHalfLifeMs
+  )
+    return;
+
+  tuning = { volumePerCssPixel, ghostHalfLifeMs };
+  schedulePersist();
+  for (const listener of listeners) listener(tuning);
+}
+
+function loadTuning(): AgeStripTuning {
+  const fallback: AgeStripTuning = {
+    volumePerCssPixel: DEFAULT_VOLUME_PER_CSS_PIXEL,
+    ghostHalfLifeMs: DEFAULT_GHOST_HALF_LIFE_MS,
+  };
+
+  try {
+    const raw = window.localStorage.getItem(TUNING_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as StoredAgeStripTuning;
+    const stored =
+      typeof parsed.volumePerCssPixel === "number"
+        ? parsed.volumePerCssPixel
+        : parsed.volumeSoftLimit;
+    return {
+      volumePerCssPixel:
+        typeof stored === "number" && Number.isFinite(stored) && stored > 0
+          ? stored
+          : fallback.volumePerCssPixel,
+      ghostHalfLifeMs:
+        typeof parsed.ghostHalfLifeMs === "number" &&
+        Number.isFinite(parsed.ghostHalfLifeMs) &&
+        parsed.ghostHalfLifeMs > 0
+          ? parsed.ghostHalfLifeMs
+          : fallback.ghostHalfLifeMs,
+    };
+  } catch (error) {
+    console.warn("Could not restore age-strip tuning:", error);
+    return fallback;
+  }
+}
+
+function schedulePersist(): void {
+  if (persistTimer !== undefined) clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(() => {
+    persistTimer = undefined;
+    try {
+      window.localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(tuning));
+    } catch (error) {
+      console.warn("Could not persist age-strip tuning:", error);
+    }
+  }, 200);
+}

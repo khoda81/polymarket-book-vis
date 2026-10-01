@@ -1,5 +1,5 @@
-import type { CanonicalBookChange } from "../../src/lib/bookIngestion";
-import type { TokenBook } from "../../src/lib/orderBook";
+import type { CanonicalBookChange } from "../../src/domain/books/bookIngestion";
+import type { TokenBook } from "../../src/domain/books/orderBook";
 import type { FrontierLevel } from "./monotoneFrontier";
 import type { PressureLevelChange } from "./pressureFrontierMemory";
 

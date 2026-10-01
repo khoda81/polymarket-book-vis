@@ -1,4 +1,4 @@
-import type { ChartTheme } from "@/lib/renderer";
+import type { ChartTheme } from "@/rendering/renderer";
 
 export const LIGHT_CHART_THEME: ChartTheme = {
   bg: "#ffffff",

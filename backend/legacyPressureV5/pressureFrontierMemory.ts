@@ -11,13 +11,16 @@ import {
   type FrontierLevel,
   type FrontierRoot,
 } from "./monotoneFrontier";
-import { visibleSinceMs, type PressureBand } from "../../src/lib/pressureField";
+import {
+  visibleSinceMs,
+  type PressureBand,
+} from "../../src/domain/pressure/pressureField";
 import {
   PRICE_ONE,
   PRICE_ZERO,
   type Price,
   priceFromTicks,
-} from "../../src/lib/price";
+} from "../../src/domain/books/price";
 import {
   PRESSURE_FRONTIER_SNAPSHOT_VERSION,
   parsePressureFrontierSnapshot,

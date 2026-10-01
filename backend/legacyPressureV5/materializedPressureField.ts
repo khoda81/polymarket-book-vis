@@ -3,13 +3,13 @@ import {
   sameFrontierVolume,
   type FrontierRoot,
 } from "./monotoneFrontier";
-import type { PressureBand } from "../../src/lib/pressureField";
+import type { PressureBand } from "../../src/domain/pressure/pressureField";
 import {
   PRICE_ONE,
   PRICE_ZERO,
   type Price,
   priceFromTicks,
-} from "../../src/lib/price";
+} from "../../src/domain/books/price";
 
 /**
  * One explicit price boundary in the materialized pressure field.

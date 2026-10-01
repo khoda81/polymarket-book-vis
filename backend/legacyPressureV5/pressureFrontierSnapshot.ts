@@ -5,8 +5,12 @@ import {
   type FrontierLevel,
   type FrontierRoot,
 } from "./monotoneFrontier";
-import type { PressureBand } from "../../src/lib/pressureField";
-import { PRICE_ZERO, type Price, priceFromTicks } from "../../src/lib/price";
+import type { PressureBand } from "../../src/domain/pressure/pressureField";
+import {
+  PRICE_ZERO,
+  type Price,
+  priceFromTicks,
+} from "../../src/domain/books/price";
 
 export const PRESSURE_FRONTIER_SNAPSHOT_VERSION = 5 as const;
 
