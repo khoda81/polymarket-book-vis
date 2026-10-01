@@ -55,10 +55,7 @@
     shareWidth = shareBar.clientWidth;
     shareDpr = window.devicePixelRatio || 1;
 
-    const nextGhost = new GhostMemoryScale(
-      ghostCanvas,
-      visualization.tuning,
-    );
+    const nextGhost = new GhostMemoryScale(ghostCanvas, visualization.tuning);
     ghost = nextGhost;
     // ghost itself is intentionally not reactive state. Seed the imperative
     // resource explicitly, then the effect above keeps it synchronized.
