@@ -1,11 +1,26 @@
-import type { ConnectionStatus } from "@/domain/markets/chartState";
 import {
   applyPriceChange,
   bookFromSnapshot,
   type CanonicalBookChange,
 } from "@/domain/books/bookIngestion";
-import type { MarketResolutionUpdate } from "@/domain/markets/marketLifecycle";
+import type { ConnectionStatus } from "@/domain/markets/chartState";
 import type { TokenBook } from "@/domain/books/orderBook";
+import { LiveTokenState } from "./liveTokenState";
+import {
+  booksEqual,
+  marketEventKey,
+  marketEventPayload,
+  marketEventTimeMs,
+  sameTokenKeys,
+} from "./liveBookProtocol";
+import type {
+  LiveBookFeedCallbacks,
+  LiveBookNetworkState,
+  LiveBookNetworkSubscriber,
+  LiveBookTransportState,
+  LiveBookUpdate,
+  LiveBookWatch,
+} from "./liveBookContracts";
 import {
   bookRefreshCoordinator,
   type BookRefreshSnapshot,
@@ -24,69 +39,6 @@ import type {
 
 const SUBSCRIPTION_RETRY_MS = 1_000;
 const DEBUG_REPORT_INTERVAL_MS = 5_000;
-
-export type LiveBookUpdate =
-  | {
-      /** Complete observation after a stream discontinuity. */
-      readonly kind: "snapshot";
-      readonly validThroughMs: number;
-    }
-  | {
-      /** Complete replacement on one continuous ordered stream. */
-      readonly kind: "replace";
-      readonly validThroughMs: number;
-    }
-  | {
-      readonly kind: "levels";
-      readonly validThroughMs: number;
-      readonly changes: readonly {
-        readonly side: "bid" | "ask";
-        readonly price: import("@/domain/books/price").Price;
-        readonly shares: number;
-      }[];
-    }
-  | {
-      /** Same-market ordered evidence with no token-local geometry change. */
-      readonly kind: "watermark";
-      readonly validThroughMs: number;
-    };
-
-export interface LiveBookFeedCallbacks {
-  readonly onConnectionStatus: (status: ConnectionStatus) => void;
-  readonly onBookUpdated: (
-    tokenId: TokenId,
-    book: TokenBook,
-    update: LiveBookUpdate,
-  ) => void;
-  readonly onMarketResolved: (resolution: MarketResolutionUpdate) => void;
-}
-
-export interface LiveBookWatch {
-  readonly ready: Promise<void>;
-  close(): void;
-}
-
-export type LiveBookTransportState =
-  "idle" | "closing" | "connecting" | "handoff" | "retrying" | "streaming";
-
-export interface LiveBookNetworkState {
-  readonly transport: LiveBookTransportState;
-  readonly desiredTokens: number;
-  readonly subscribedTokens: number;
-  readonly synchronizedBooks: number;
-  readonly cachedBooks: number;
-  readonly awaitingSnapshots: number;
-  readonly refreshingTokens: number;
-  readonly watchers: number;
-  readonly coveredWatchers: number;
-  readonly activeHandles: number;
-  readonly reconciling: boolean;
-  readonly reconcileScheduled: boolean;
-  readonly revision: number;
-  readonly retryAtMs: number | null;
-}
-
-export type LiveBookNetworkSubscriber = (state: LiveBookNetworkState) => void;
 
 interface RefreshScheduler {
   observe(
@@ -127,11 +79,7 @@ interface WatchState {
 interface TokenState {
   readonly tokenId: TokenId;
   readonly watchers: Set<WatchState>;
-  book?: TokenBook;
-  validThroughMs?: number;
-  subscriptionRequestedAtMs?: number;
-  awaitingSnapshot?: boolean;
-  marketKey?: string;
+  readonly stream: LiveTokenState;
 }
 
 interface BookRefreshContext {
@@ -251,7 +199,7 @@ export class LiveBookCoordinator {
     for (const [tokenKey, tokenId] of unique) {
       let token = this.tokens.get(tokenKey);
       if (!token) {
-        token = { tokenId, watchers: new Set() };
+        token = { tokenId, watchers: new Set(), stream: new LiveTokenState() };
         this.tokens.set(tokenKey, token);
       }
       token.watchers.add(state);
@@ -273,7 +221,7 @@ export class LiveBookCoordinator {
   }
 
   getBook(tokenId: TokenId): TokenBook | undefined {
-    return this.tokens.get(tokenId)?.book;
+    return this.tokens.get(tokenId)?.stream.book;
   }
 
   tokenStreamConnected(tokenId: string): boolean {
@@ -346,7 +294,7 @@ export class LiveBookCoordinator {
         const desired = this.desiredTokens();
         const desiredKeys = new Set(desired.map(([key]) => key));
 
-        if (sameKeys(this.active?.tokenKeys, desiredKeys)) {
+        if (sameTokenKeys(this.active?.tokenKeys, desiredKeys)) {
           this.markCoveredWatchesLive();
           this.pruneUnwatchedTokens();
           if (revision === this.desiredRevision) return;
@@ -421,8 +369,7 @@ export class LiveBookCoordinator {
         for (const [tokenKey] of desired) {
           const token = this.tokens.get(tokenKey);
           if (!token) continue;
-          token.awaitingSnapshot = true;
-          token.subscriptionRequestedAtMs = requestedAtMs;
+          token.stream.beginStream(requestedAtMs);
         }
 
         this.active = next;
@@ -437,7 +384,7 @@ export class LiveBookCoordinator {
       this.emitNetworkState();
       if (
         this.retryTimer === undefined &&
-        !sameKeys(this.active?.tokenKeys, this.desiredTokenKeys())
+        !sameTokenKeys(this.active?.tokenKeys, this.desiredTokenKeys())
       )
         this.requestReconcile();
     }
@@ -498,10 +445,11 @@ export class LiveBookCoordinator {
       this.notifyConnectionStatus(watch, "live");
       for (const tokenKey of watch.tokenIds.keys()) {
         const token = this.tokens.get(tokenKey);
-        if (!token?.book || token.validThroughMs === undefined) continue;
+        const observed = token?.stream.observed;
+        if (!observed) continue;
         this.notifyBookUpdated(watch, token, {
           kind: "snapshot",
-          validThroughMs: token.validThroughMs,
+          validThroughMs: observed.validThroughMs,
         });
       }
       watch.ready.resolve();
@@ -534,9 +482,7 @@ export class LiveBookCoordinator {
     for (const token of this.tokens.values()) {
       // Preserve the last book for display/cache consumers, but never mutate
       // it from the next stream until that stream establishes a fresh snapshot.
-      token.subscriptionRequestedAtMs = undefined;
-      token.awaitingSnapshot = true;
-      token.marketKey = undefined;
+      token.stream.disconnect();
     }
 
     for (const watch of this.watches) {
@@ -605,15 +551,15 @@ export class LiveBookCoordinator {
     const refresh = this.refreshContexts.get(tokenKey);
     if (refresh) refresh.superseded = true;
 
-    const marketKey = eventMarketKey(event);
-    const timestampMs = optionalEventTimeMs(event.payload.timestamp);
+    const marketKey = marketEventKey(event);
+    const timestampMs = marketEventTimeMs(event.payload.timestamp);
     const marketWatermark = this.recordMarketWatermark(
       subscription,
       marketKey,
       timestampMs,
     );
     if (marketKey) {
-      token.marketKey = marketKey;
+      token.stream.associateMarket(marketKey);
       this.advanceMarketThrough(
         subscription,
         marketKey,
@@ -622,23 +568,10 @@ export class LiveBookCoordinator {
       );
     }
 
-    const requestedAtMs = token.subscriptionRequestedAtMs;
-    const firstOnStream =
-      token.awaitingSnapshot === true ||
-      requestedAtMs !== undefined ||
-      !token.book;
-    const validThroughMs = causalMax(
-      token.validThroughMs,
+    const { firstOnStream, validThroughMs } = token.stream.acceptSnapshot(
+      bookFromSnapshot(event.payload.bids, event.payload.asks),
       marketWatermark,
-      firstOnStream ? requestedAtMs : undefined,
     );
-    if (validThroughMs === undefined)
-      throw new Error("book snapshot has no causal watermark");
-
-    token.book = bookFromSnapshot(event.payload.bids, event.payload.asks);
-    token.validThroughMs = validThroughMs;
-    token.subscriptionRequestedAtMs = undefined;
-    token.awaitingSnapshot = false;
     this.debugStats.routedTokenBatches++;
     if (firstOnStream) this.emitNetworkState();
     this.notifyToken(token, {
@@ -652,8 +585,8 @@ export class LiveBookCoordinator {
     subscription: ActiveSubscription,
     event: Extract<MarketEvent, { type: "price_change" }>,
   ): void {
-    const marketKey = eventMarketKey(event);
-    const timestampMs = optionalEventTimeMs(event.payload.timestamp);
+    const marketKey = marketEventKey(event);
+    const timestampMs = marketEventTimeMs(event.payload.timestamp);
     const marketWatermark = this.recordMarketWatermark(
       subscription,
       marketKey,
@@ -666,11 +599,12 @@ export class LiveBookCoordinator {
       const token = this.tokens.get(change.assetId);
       if (!token) continue;
       changedKeys.add(change.assetId);
-      if (marketKey) token.marketKey = marketKey;
+      if (marketKey) token.stream.associateMarket(marketKey);
 
       const refresh = this.refreshContexts.get(change.assetId);
       if (refresh) refresh.superseded = true;
-      if (!token.book || token.awaitingSnapshot === true) continue;
+      const book = token.stream.streamBook();
+      if (!book) continue;
 
       let changes = changesByToken.get(token);
       if (!changes) {
@@ -678,7 +612,7 @@ export class LiveBookCoordinator {
         changesByToken.set(token, changes);
       }
       changes.canonical.push(
-        applyPriceChange(token.book, {
+        applyPriceChange(book, {
           side: change.side,
           price: change.price,
           size: change.size,
@@ -695,11 +629,7 @@ export class LiveBookCoordinator {
       );
 
     for (const [token, changes] of changesByToken) {
-      const validThroughMs = causalMax(token.validThroughMs, marketWatermark);
-      if (validThroughMs === undefined)
-        throw new Error("price change has no causal watermark");
-
-      token.validThroughMs = validThroughMs;
+      const validThroughMs = token.stream.confirmThrough(marketWatermark);
       this.debugStats.routedTokenBatches++;
       this.notifyToken(token, {
         kind: "levels",
@@ -714,9 +644,9 @@ export class LiveBookCoordinator {
     subscription: ActiveSubscription,
     event: MarketEvent,
   ): void {
-    const marketKey = eventMarketKey(event);
+    const marketKey = marketEventKey(event);
     if (!marketKey) return;
-    const timestampMs = optionalEventTimeMs(eventPayload(event).timestamp);
+    const timestampMs = marketEventTimeMs(marketEventPayload(event).timestamp);
     const watermark = this.recordMarketWatermark(
       subscription,
       marketKey,
@@ -730,11 +660,11 @@ export class LiveBookCoordinator {
     event: Extract<MarketEvent, { type: "market_resolved" }>,
   ): void {
     const assetIds = event.payload.assetIds ?? [];
-    const marketKey = eventMarketKey(event);
+    const marketKey = marketEventKey(event);
     const resolvedAtMs = this.recordMarketWatermark(
       subscription,
       marketKey,
-      optionalEventTimeMs(eventPayload(event).timestamp),
+      marketEventTimeMs(marketEventPayload(event).timestamp),
     );
     if (marketKey)
       this.advanceMarketThrough(
@@ -758,7 +688,7 @@ export class LiveBookCoordinator {
       this.dropToken(tokenKey, token);
     }
 
-    const resolution: MarketResolutionUpdate = {
+    const resolution = {
       conditionId: event.payload.conditionId,
       assetIds,
       winningAssetId: event.payload.winningAssetId ?? null,
@@ -804,20 +734,13 @@ export class LiveBookCoordinator {
       if (
         excluded.has(tokenKey) ||
         !subscription.tokenKeys.has(tokenKey) ||
-        token.marketKey !== marketKey ||
-        !token.book ||
-        token.awaitingSnapshot === true
+        token.stream.marketKey !== marketKey ||
+        !token.stream.synchronized
       )
         continue;
 
-      const validThroughMs = causalMax(token.validThroughMs, watermarkMs);
-      if (
-        validThroughMs === undefined ||
-        validThroughMs === token.validThroughMs
-      )
-        continue;
-
-      token.validThroughMs = validThroughMs;
+      const validThroughMs = token.stream.advanceThrough(watermarkMs);
+      if (validThroughMs === null) continue;
       this.debugStats.routedTokenBatches++;
       this.notifyToken(token, { kind: "watermark", validThroughMs });
       this.observeBook(token, validThroughMs);
@@ -839,7 +762,7 @@ export class LiveBookCoordinator {
   ): void {
     const tokenKey = tokenId;
     const token = this.tokens.get(tokenKey);
-    if (!token?.book || token.watchers.size === 0) return;
+    if (!token?.stream.book || token.watchers.size === 0) return;
 
     this.refreshContexts.set(tokenKey, {
       requestId,
@@ -870,12 +793,8 @@ export class LiveBookCoordinator {
       return;
 
     const refreshed = bookFromSnapshot(snapshot.bids, snapshot.asks);
-    if (token.book && booksEqual(token.book, refreshed)) {
-      const validThroughMs = Math.max(
-        token.validThroughMs ?? requestedAtMs,
-        requestedAtMs,
-      );
-      token.validThroughMs = validThroughMs;
+    if (token.stream.book && booksEqual(token.stream.book, refreshed)) {
+      const validThroughMs = token.stream.confirmThrough(requestedAtMs);
       // REST equality is evidence that the existing canonical geometry is
       // still valid; it is not a new stream snapshot. Advance only causality.
       this.notifyToken(token, { kind: "watermark", validThroughMs });
@@ -899,7 +818,7 @@ export class LiveBookCoordinator {
   }
 
   private notifyToken(token: TokenState, update: LiveBookUpdate): void {
-    if (!token.book) return;
+    if (!token.stream.book) return;
     for (const watch of [...token.watchers]) {
       if (watch.status !== "live") continue;
       this.notifyBookUpdated(watch, token, update);
@@ -911,10 +830,11 @@ export class LiveBookCoordinator {
     token: TokenState,
     update: LiveBookUpdate,
   ): void {
-    if (!token.book) return;
+    const book = token.stream.book;
+    if (!book) return;
     this.debugStats.downstreamDeliveries++;
     this.callSafely(() =>
-      watch.callbacks.onBookUpdated(token.tokenId, token.book!, update),
+      watch.callbacks.onBookUpdated(token.tokenId, book, update),
     );
   }
 
@@ -935,13 +855,9 @@ export class LiveBookCoordinator {
     for (const tokenKey of desiredKeys) {
       const token = this.tokens.get(tokenKey);
       if (!token) continue;
-      if (token.book) cachedBooks++;
-      if (token.awaitingSnapshot === true) awaitingSnapshots++;
-      if (
-        token.book &&
-        token.awaitingSnapshot !== true &&
-        activeKeys?.has(tokenKey)
-      )
+      if (token.stream.book) cachedBooks++;
+      if (token.stream.awaitingSnapshot) awaitingSnapshots++;
+      if (token.stream.synchronized && activeKeys?.has(tokenKey))
         synchronizedBooks++;
     }
 
@@ -953,7 +869,7 @@ export class LiveBookCoordinator {
           : "idle";
     else if (this.retryTimer !== undefined) transport = "retrying";
     else if (!activeKeys) transport = "connecting";
-    else if (!sameKeys(activeKeys, desiredKeys)) transport = "handoff";
+    else if (!sameTokenKeys(activeKeys, desiredKeys)) transport = "handoff";
     else transport = "streaming";
 
     let coveredWatchers = 0;
@@ -1056,67 +972,6 @@ function isWatchCovered(
   for (const tokenKey of watch.tokenIds.keys())
     if (!tokenKeys.has(tokenKey)) return false;
   return true;
-}
-
-function sameKeys(
-  left: ReadonlySet<ClobAssetId> | undefined,
-  right: ReadonlySet<ClobAssetId>,
-): boolean {
-  if (!left) return right.size === 0;
-  if (left.size !== right.size) return false;
-  for (const key of left) if (!right.has(key)) return false;
-  return true;
-}
-
-function booksEqual(left: TokenBook, right: TokenBook): boolean {
-  return (
-    ordersEqual(left.usdToYes.asOrders(), right.usdToYes.asOrders()) &&
-    ordersEqual(left.yesToUsd.asSellOrders(), right.yesToUsd.asSellOrders())
-  );
-}
-
-function ordersEqual(
-  left: Iterable<{ readonly price: unknown; readonly take: number }>,
-  right: Iterable<{ readonly price: unknown; readonly take: number }>,
-): boolean {
-  const a = [...left];
-  const b = [...right];
-  return (
-    a.length === b.length &&
-    a.every(
-      (order, index) =>
-        order.price === b[index]!.price && order.take === b[index]!.take,
-    )
-  );
-}
-
-function eventPayload(event: MarketEvent): Record<string, unknown> {
-  return event.payload as unknown as Record<string, unknown>;
-}
-
-function eventMarketKey(event: MarketEvent): string | null {
-  const payload = eventPayload(event);
-  const value = payload.conditionId ?? payload.market;
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function optionalEventTimeMs(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
-  const timestamp = Number(value);
-  return Number.isFinite(timestamp) && timestamp >= 0
-    ? Math.trunc(timestamp)
-    : null;
-}
-
-function causalMax(
-  ...values: readonly (number | undefined)[]
-): number | undefined {
-  let result: number | undefined;
-  for (const value of values) {
-    if (value === undefined) continue;
-    result = result === undefined ? value : Math.max(result, value);
-  }
-  return result;
 }
 
 function debugNow(): number {

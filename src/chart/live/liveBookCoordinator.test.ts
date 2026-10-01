@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import { canonicalSpread, type TokenBook } from "@/domain/books/orderBook";
 import { parsePrice } from "@/domain/books/price";
-import {
-  LiveBookCoordinator,
-  type LiveBookFeedCallbacks,
-  type LiveBookNetworkState,
-  type LiveBookUpdate,
-} from "./liveBookCoordinator";
+import { LiveBookCoordinator } from "./liveBookCoordinator";
+import type {
+  LiveBookFeedCallbacks,
+  LiveBookNetworkState,
+  LiveBookUpdate,
+} from "./liveBookContracts";
 import type {
   BookRefreshSnapshot,
   BookRefreshSubscriber,

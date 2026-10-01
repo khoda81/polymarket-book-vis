@@ -31,12 +31,12 @@ import {
   agePressureSourceTokenForSemanticToken,
   agePressureSurface,
 } from "./ageStripPressureProjection";
-import type { LiveBookUpdate } from "../live/liveBookFeed";
+import type { LiveBookUpdate } from "../live/liveBookContracts";
 import { AgeStripTooltip } from "./ageStripTooltip";
 import type { AgeRowOrientation } from "./ageStripOrientation";
 import { signedVolumeColor } from "@/rendering/colors/signedVolume";
 import type { PublicClient } from "@polymarket/client";
-import type { ChartMarketControl } from "@/domain/markets/chartDefinition";
+import type { ChartMarketControl } from "@/chart/configuration/chartDefinition";
 
 export interface AgeStripHost {
   readonly client: PublicClient;

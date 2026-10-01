@@ -1,4 +1,4 @@
-import type { ChartDefinition } from "@/domain/markets/chartDefinition";
+import type { ChartDefinition } from "@/chart/configuration/chartDefinition";
 import { marketColor } from "@/shared/math";
 import { emptyTokenBook, type BookOrder } from "@/domain/books/orderBook";
 import { priceToNumber } from "@/domain/books/price";

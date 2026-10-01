@@ -1,43 +1,33 @@
-import { DEFAULT_VOLUME_PER_CSS_PIXEL } from "../../rendering/colors/pressureInk";
 import { stalenessAgeForOpacityErrorMs } from "../../domain/pressure/pressureField";
+import {
+  AgeStripTuningStore,
+  type AgeStripTuning,
+} from "./ageStripTuningStore";
 
 export const AGE_ROW_BAND_PX = 48;
-export const DEFAULT_GHOST_HALF_LIFE_MS = 5_000;
-
 const MIN_GHOST_REFRESH_MS = 33;
 // Browsers clamp setTimeout to a signed 32-bit millisecond delay.
 const MAX_GHOST_REFRESH_MS = 2_147_483_647;
 export const GHOST_ALPHA_STEP = 1 / 255;
 
-const TUNING_STORAGE_KEY = "polymarket-book-vis.age-strip-tuning.v1";
+let store: AgeStripTuningStore | undefined;
 
-export interface AgeStripTuning {
-  /** Share scale parameter, expressed as shares per CSS pixel of row height. */
-  readonly volumePerCssPixel: number;
-  /** Exponential half-life of historical pressure ghosts. */
-  readonly ghostHalfLifeMs: number;
+function tuningStore(): AgeStripTuningStore {
+  if (!store)
+    store = new AgeStripTuningStore(
+      typeof window === "undefined" ? null : window.localStorage,
+    );
+  return store;
 }
-
-interface StoredAgeStripTuning {
-  volumePerCssPixel?: number;
-  ghostHalfLifeMs?: number;
-  /** Legacy v1 name; migrated in place to volumePerCssPixel. */
-  volumeSoftLimit?: number;
-}
-
-const listeners = new Set<(tuning: Readonly<AgeStripTuning>) => void>();
-let tuning = loadTuning();
-let persistTimer: number | undefined;
 
 export function getAgeStripTuning(): Readonly<AgeStripTuning> {
-  return tuning;
+  return tuningStore().get();
 }
 
 export function subscribeAgeStripTuning(
   listener: (tuning: Readonly<AgeStripTuning>) => void,
 ): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  return tuningStore().subscribe(listener);
 }
 
 export function scaleAgeStripVolumePerCssPixel(factor: number): void {
@@ -68,69 +58,5 @@ export function scaleAgeStripTuning(
   volumeFactor: number,
   ghostFactor: number,
 ): void {
-  const validVolumeFactor =
-    volumeFactor > 0 && Number.isFinite(volumeFactor) ? volumeFactor : 1;
-  const validGhostFactor =
-    ghostFactor > 0 && Number.isFinite(ghostFactor) ? ghostFactor : 1;
-
-  const volumePerCssPixel = Math.max(
-    1e-3,
-    tuning.volumePerCssPixel * validVolumeFactor,
-  );
-  const ghostHalfLifeMs = tuning.ghostHalfLifeMs * validGhostFactor;
-  if (!(ghostHalfLifeMs > 0) || !Number.isFinite(ghostHalfLifeMs)) return;
-
-  if (
-    volumePerCssPixel === tuning.volumePerCssPixel &&
-    ghostHalfLifeMs === tuning.ghostHalfLifeMs
-  )
-    return;
-
-  tuning = { volumePerCssPixel, ghostHalfLifeMs };
-  schedulePersist();
-  for (const listener of listeners) listener(tuning);
-}
-
-function loadTuning(): AgeStripTuning {
-  const fallback: AgeStripTuning = {
-    volumePerCssPixel: DEFAULT_VOLUME_PER_CSS_PIXEL,
-    ghostHalfLifeMs: DEFAULT_GHOST_HALF_LIFE_MS,
-  };
-
-  try {
-    const raw = window.localStorage.getItem(TUNING_STORAGE_KEY);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as StoredAgeStripTuning;
-    const stored =
-      typeof parsed.volumePerCssPixel === "number"
-        ? parsed.volumePerCssPixel
-        : parsed.volumeSoftLimit;
-    return {
-      volumePerCssPixel:
-        typeof stored === "number" && Number.isFinite(stored) && stored > 0
-          ? stored
-          : fallback.volumePerCssPixel,
-      ghostHalfLifeMs:
-        typeof parsed.ghostHalfLifeMs === "number" &&
-        Number.isFinite(parsed.ghostHalfLifeMs) &&
-        parsed.ghostHalfLifeMs > 0
-          ? parsed.ghostHalfLifeMs
-          : fallback.ghostHalfLifeMs,
-    };
-  } catch (error) {
-    console.warn("Could not restore age-strip tuning:", error);
-    return fallback;
-  }
-}
-
-function schedulePersist(): void {
-  if (persistTimer !== undefined) clearTimeout(persistTimer);
-  persistTimer = window.setTimeout(() => {
-    persistTimer = undefined;
-    try {
-      window.localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(tuning));
-    } catch (error) {
-      console.warn("Could not persist age-strip tuning:", error);
-    }
-  }, 200);
+  tuningStore().scale(volumeFactor, ghostFactor);
 }

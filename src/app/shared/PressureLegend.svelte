@@ -4,8 +4,8 @@
     AGE_ROW_BAND_PX,
     getAgeStripTuning,
     subscribeAgeStripTuning,
-    type AgeStripTuning,
   } from "../../chart/age/ageStripTuning";
+  import type { AgeStripTuning } from "../../chart/age/ageStripTuningStore";
   import { GhostMemoryScale } from "../../chart/age/ghostMemoryScale";
   import type { PublicClient } from "@polymarket/client";
   import { shareLegendTicks } from "../../rendering/legends/shareLegendTicks";

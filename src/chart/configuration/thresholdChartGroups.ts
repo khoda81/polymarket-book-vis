@@ -3,8 +3,9 @@ import {
   type ThresholdFamilyDirection,
   type ThresholdPalette,
 } from "../../rendering/colors/thresholdColors";
-import type { EventDetails } from "./eventDetails";
-import { isActiveOrderMarket } from "./marketTradability";
+import type { EventDetails } from "../../domain/markets/eventDetails";
+import { isActiveOrderMarket } from "../../domain/markets/marketTradability";
+import { subsetEventDetails } from "./subsetEventDetails";
 import type { Event, Market, MarketId } from "@polymarket/client";
 
 export type ThresholdMarketGroupKey = "high" | "low";
@@ -59,13 +60,13 @@ export function thresholdMarketGroups(
     {
       key: "high",
       label: "↑ High thresholds",
-      bundle: subsetBundle(bundle, highMarkets),
+      bundle: subsetEventDetails(bundle, highMarkets),
       direction: highPalette.direction,
     },
     {
       key: "low",
       label: "↓ Low thresholds",
-      bundle: subsetBundle(bundle, lowMarkets),
+      bundle: subsetEventDetails(bundle, lowMarkets),
       direction: lowPalette.direction,
     },
   ];
@@ -104,21 +105,4 @@ function liveThresholdPalette(
     { ...event, markets: liveMarkets },
     thresholdByMarketId,
   );
-}
-
-function subsetBundle(
-  bundle: EventDetails,
-  markets: readonly Market[],
-): EventDetails {
-  const marketIds = new Set(markets.map((market) => market.id));
-  return {
-    ...bundle,
-    event: { ...bundle.event, markets: [...markets] },
-    presentation: {
-      ...bundle.presentation,
-      marketRules: bundle.presentation.marketRules.filter((rule) =>
-        marketIds.has(rule.marketId),
-      ),
-    },
-  };
 }

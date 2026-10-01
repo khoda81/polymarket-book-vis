@@ -25,10 +25,11 @@ import { GpuPressureLayer, type GpuPressureRow } from "../age/gpuPressureLayer";
 import { LiveBookFeed } from "../live/liveBookFeed";
 import { fetchRecorderHydration } from "@/recorder/ageRecorderClient";
 import {
+  AGE_ROW_BAND_PX,
   getAgeStripTuning,
   subscribeAgeStripTuning,
 } from "@/chart/age/ageStripTuning";
-import { defaultPressureScaleForMarket } from "@/domain/markets/chartDefinition";
+import { defaultPressureScaleForMarket } from "@/chart/configuration/chartDefinition";
 import { ClobFeeScheduleResolver } from "@/domain/books/feeSchedule";
 import type { TokenBook } from "@/domain/books/orderBook";
 import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "@/domain/pressure/pressureField";
@@ -49,7 +50,6 @@ import {
   type SignedVolumeColorScale,
 } from "@/rendering/colors/signedVolume";
 import {
-  SERIES_ROW_HEIGHT_PX,
   SERIES_VISIBLE_ROWS,
   SERIES_WINDOW_ROWS,
   inferSeriesCadenceMs,
@@ -68,6 +68,7 @@ import type {
   TokenId,
 } from "@polymarket/client";
 
+export const SERIES_ROW_HEIGHT_PX = AGE_ROW_BAND_PX;
 const LEFT_PADDING_PX = AGE_TIME_GUTTER_PX;
 const RIGHT_PADDING_PX = 108;
 const TOP_PADDING_PX = 0;

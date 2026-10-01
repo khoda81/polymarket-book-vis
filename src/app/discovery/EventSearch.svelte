@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { buildChartDefinition } from "../../domain/markets/chartDefinition";
+  import { buildChartDefinition } from "../../chart/configuration/chartDefinition";
   import {
     loadEventDetails,
     type EventDetails,

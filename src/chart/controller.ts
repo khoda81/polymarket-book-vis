@@ -11,7 +11,7 @@ import {
   pressureScaleForToken,
   type ChartDefinition,
   type ChartMarketControl,
-} from "@/domain/markets/chartDefinition";
+} from "@/chart/configuration/chartDefinition";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   type SignedVolumeColorScale,

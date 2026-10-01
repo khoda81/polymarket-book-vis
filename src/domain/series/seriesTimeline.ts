@@ -1,7 +1,5 @@
-import { AGE_ROW_BAND_PX } from "../../chart/age/ageStripTuning";
 import type { Event, PublicClient, Series } from "@polymarket/client";
 
-export const SERIES_ROW_HEIGHT_PX = AGE_ROW_BAND_PX;
 export const SERIES_VISIBLE_ROWS = 7;
 export const SERIES_WINDOW_ROWS = 64;
 

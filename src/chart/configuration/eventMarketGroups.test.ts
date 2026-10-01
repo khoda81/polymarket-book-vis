@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Event, Market, MarketId } from "@polymarket/client";
-import type { EventDetails } from "./eventDetails";
+import type { EventDetails } from "../../domain/markets/eventDetails";
 import { eventMarketGroups } from "./eventMarketGroups";
 
 const ATTENDEE_ROWS = [
