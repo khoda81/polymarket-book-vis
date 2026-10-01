@@ -16,9 +16,8 @@
 
   export let client: PublicClient;
 
-  const SHARE_TICK_MIN_SPACING_PX = 16;
+  const SHARE_TICK_MIN_SPACING_PX = 24;
   const SHARE_TICK_FULL_OPACITY_SPACING_PX = 32;
-  const SHARE_TICK_EDGE_PADDING_PX = 8;
   let shareBar: HTMLDivElement;
   let ghostCanvas: HTMLCanvasElement;
   let shareWidth = 0;
@@ -29,7 +28,6 @@
   $: shareTicks = shareLegendTicks(reserveShares, shareWidth, {
     minSpacingPx: SHARE_TICK_MIN_SPACING_PX,
     fullOpacitySpacingPx: SHARE_TICK_FULL_OPACITY_SPACING_PX,
-    edgePaddingPx: SHARE_TICK_EDGE_PADDING_PX,
     dpr: shareDpr,
   });
   $: negativeColor = signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);

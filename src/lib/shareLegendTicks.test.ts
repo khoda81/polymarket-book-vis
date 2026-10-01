@@ -9,7 +9,6 @@ import {
 const DEFAULT_OPTIONS = {
   minSpacingPx: 16,
   fullOpacitySpacingPx: 32,
-  edgePaddingPx: 8,
   dpr: 1,
 } as const;
 

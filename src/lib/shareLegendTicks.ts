@@ -14,7 +14,6 @@ export interface ShareLegendTick {
 export interface ShareLegendTickOptions {
   readonly minSpacingPx: number;
   readonly fullOpacitySpacingPx: number;
-  readonly edgePaddingPx: number;
   readonly dpr: number;
 }
 
@@ -37,25 +36,20 @@ export function shareLegendTicks(
   if (!(widthPx > 0) || !Number.isFinite(widthPx)) return [];
 
   const pixelCount = Math.round(widthPx * options.dpr);
-  const edgePaddingRasterPx = Math.round(options.edgePaddingPx * options.dpr);
-  const innerPixelCount = pixelCount - edgePaddingRasterPx * 2;
-  if (innerPixelCount <= 0) return [];
-
   const minSpacingRasterPx = Math.round(options.minSpacingPx * options.dpr);
   const quantile = (position: number): number =>
-    shareValueAtPosition(
-      (edgePaddingRasterPx + position * innerPixelCount) / pixelCount,
-      reserve,
-    );
+    shareValueAtPosition(position, reserve);
 
-  const maxMagnitude = Math.max(Math.abs(quantile(0)), Math.abs(quantile(1)));
-  const centerPixel = Math.floor(innerPixelCount / 2);
-  const centerLeft = quantile(centerPixel / innerPixelCount);
-  const centerRight = quantile((centerPixel + 1) / innerPixelCount);
+  const centerPixel = Math.floor(pixelCount / 2);
+  const centerLeft = quantile(centerPixel / pixelCount);
+  const centerRight = quantile((centerPixel + 1) / pixelCount);
   const finestVisibleStep = (centerRight - centerLeft) * minSpacingRasterPx;
+  const leftVisible = quantile(1 / pixelCount);
+  const rightVisible = quantile((pixelCount - 1) / pixelCount);
+  const maxMagnitude = Math.max(Math.abs(leftVisible), Math.abs(rightVisible));
 
   const placements = placeQuantileTicks({
-    pixelCount: innerPixelCount,
+    pixelCount,
     minSpacingPx: minSpacingRasterPx,
     quantile,
     refinementSteps: shareRefinementSteps(maxMagnitude, finestVisibleStep),
@@ -72,7 +66,7 @@ export function shareLegendTicks(
       const displayExponent = engineeringExponent(exponent);
       return {
         value: placement.value,
-        position: (edgePaddingRasterPx + placement.pixel + 0.5) / pixelCount,
+        position: placement.position,
         opacity,
         displayExponent,
         label: formatShareTick(placement.value, displayExponent),
