@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
 import type { Event, Market } from "@polymarket/client";
 import { buildChartDefinition, pressureScaleForToken } from "./chartDefinition";
-import { buildEventDetails, type EventDetails } from "./eventDetails";
+import {
+  buildEventDetails,
+  type EventDetails,
+} from "../../domain/markets/eventDetails";
 import { eventMarketGroups } from "./eventMarketGroups";
-import { isActiveOrderMarket } from "./marketTradability";
+import { isActiveOrderMarket } from "../../domain/markets/marketTradability";
 import { buildThresholdPalette } from "../../rendering/colors/thresholdColors";
 
 interface WtiMarketRow {

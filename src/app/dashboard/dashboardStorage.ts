@@ -60,10 +60,14 @@ export function loadStoredJson(
 
 export function loadDismissedDiscoveryIds(
   storage: StorageReader = localStorage,
-): Set<string> {
+): Set<EventId> {
   const parsed = loadStoredJson(DISMISSED_DISCOVERY_STORAGE_KEY, storage);
   return Array.isArray(parsed)
-    ? new Set(parsed.filter((id): id is string => typeof id === "string"))
+    ? new Set(
+        parsed.filter(
+          (id): id is string => typeof id === "string",
+        ) as EventId[],
+      )
     : new Set();
 }
 
