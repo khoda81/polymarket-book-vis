@@ -1,5 +1,4 @@
 import { SvelteSet } from "svelte/reactivity";
-import type { PublicClient } from "@polymarket/client";
 
 // Wall time cannot accidentally be passed as the pressure opacity reference.
 declare const observationTimeBrand: unique symbol;
@@ -139,15 +138,4 @@ export class ObservationClock {
       })),
     };
   }
-}
-
-const clocks = new WeakMap<PublicClient, ObservationClock>();
-
-export function observationClock(client: PublicClient): ObservationClock {
-  let clock = clocks.get(client);
-  if (!clock) {
-    clock = new ObservationClock();
-    clocks.set(client, clock);
-  }
-  return clock;
 }
