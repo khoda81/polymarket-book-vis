@@ -1,16 +1,16 @@
 import { resolve } from "node:path";
 import { createPublicClient, OrderSide } from "@polymarket/client";
 import type { MarketEvent } from "@polymarket/client/actions";
-import { DirtyTokenTracker } from "./dirtyTokenTracker";
-import type { RecorderPressureMutation } from "./recorderPressureLog";
-import { RecorderStore } from "./recorderStore";
-import { RecorderSubscriptionPool } from "./recorderSubscriptionPool";
+import { DirtyTokenTracker } from "./storage/dirtyTokenTracker";
+import type { RecorderPressureMutation } from "./storage/recorderPressureLog";
+import { RecorderStore } from "./storage/recorderStore";
+import { RecorderSubscriptionPool } from "./live/recorderSubscriptionPool";
 import {
   applyPriceChange,
   bookFromSnapshot,
   type CanonicalBookChange,
-} from "../src/lib/bookIngestion";
-import type { TokenBook } from "../src/lib/orderBook";
+} from "../src/domain/books/bookIngestion";
+import type { TokenBook } from "../src/domain/books/orderBook";
 import {
   tokenPressureChanges,
   tokenPressureLevels,

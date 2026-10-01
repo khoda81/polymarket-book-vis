@@ -1,30 +1,30 @@
-import { fetchRecorderHydration } from "@/lib/ageRecorderClient";
-import type { ConnectionStatus, ViewMode } from "@/lib/chartState";
-import { ClobFeeScheduleResolver } from "@/lib/feeSchedule";
-import type { AutoHiddenReason } from "@/lib/marketVisibility";
+import { fetchRecorderHydration } from "@/recorder/ageRecorderClient";
+import type { ConnectionStatus, ViewMode } from "@/domain/markets/chartState";
+import { ClobFeeScheduleResolver } from "@/domain/books/feeSchedule";
+import type { AutoHiddenReason } from "@/domain/markets/marketVisibility";
 import {
   resolveMarketLifecycle,
   type MarketLifecycle,
   type MarketResolutionUpdate,
-} from "@/lib/marketLifecycle";
+} from "@/domain/markets/marketLifecycle";
 import {
   pressureScaleForToken,
   type ChartDefinition,
   type ChartMarketControl,
-} from "@/lib/chartDefinition";
+} from "@/domain/markets/chartDefinition";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   type SignedVolumeColorScale,
-} from "@/lib/signedVolume";
-import { OrderBookPlotter, type ChartTheme } from "@/lib/renderer";
+} from "@/rendering/colors/signedVolume";
+import { OrderBookPlotter, type ChartTheme } from "@/rendering/renderer";
 import { chartThemeForDarkMode } from "./chartTheme";
-import { AgeStripView } from "./ageStripView";
+import { AgeStripView } from "./age/ageStripView";
 import {
   DEFAULT_AGE_ROW_ORIENTATION,
   type AgeRowOrientation,
-} from "./ageStripOrientation";
-import { LiveBookFeed } from "./liveBookFeed";
-import { VolumeBookView } from "./volumeBookView";
+} from "./age/ageStripOrientation";
+import { LiveBookFeed } from "./live/liveBookFeed";
+import { VolumeBookView } from "./volume/volumeBookView";
 import type { MarketId, PublicClient, TokenId } from "@polymarket/client";
 
 export interface ChartSurfaceElements {

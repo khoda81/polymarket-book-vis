@@ -1,4 +1,8 @@
-import { PRICE_SCALE, type Price, priceFromTicks } from "../../src/lib/price";
+import {
+  PRICE_SCALE,
+  type Price,
+  priceFromTicks,
+} from "../../src/domain/books/price";
 
 /**
  * Immutable weighted AVL tree for one side of the order book in side-local

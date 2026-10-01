@@ -1,31 +1,37 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import EventCard from "./EventCard.svelte";
-  import EventSearch from "./EventSearch.svelte";
-  import PressureLegend from "./PressureLegend.svelte";
-  import SeriesCard from "./SeriesCard.svelte";
-  import type { CardReorderStart } from "./cardReorderSurface";
+  import EventCard from "./events/EventCard.svelte";
+  import EventSearch from "./discovery/EventSearch.svelte";
+  import PressureLegend from "./shared/PressureLegend.svelte";
+  import SeriesCard from "./series/SeriesCard.svelte";
+  import type { CardReorderStart } from "./dashboard/cardReorderSurface";
   import {
+    MAX_DISCOVERED_EVENTS,
+    MAX_DISCOVERY_RESULTS,
+    MAX_DISCOVERY_AMOUNT,
+    MAX_DISCOVERY_RECENCY_DAYS,
     DEFAULT_MIN_VOLUME,
     DEFAULT_RECENCY_DAYS,
     discoverEvents,
     parseDiscoveryTopics,
     validateDiscoveryFilters,
     type DiscoveryOrder,
-  } from "../lib/eventDiscovery";
-  import { setSharedTooltipSuppressed } from "../lib/sharedTooltip";
+  } from "../domain/discovery/eventDiscovery";
+  import { setSharedTooltipSuppressed } from "../rendering/sharedTooltip";
   import {
     dashboardDragScrollVelocity,
     dashboardOrderForPointer,
     type DashboardDragSnapshot,
-  } from "./dashboardReorder";
+  } from "./dashboard/dashboardReorder";
   import {
+    itemKey,
+    orderDashboardItems,
     eventLabel,
     seriesLabel,
     type EventDashboardItem,
     type DashboardItem,
     type SeriesDashboardItem,
-  } from "./model";
+  } from "./dashboard/model";
   import {
     createPublicClient,
     type Event,
@@ -34,20 +40,28 @@
     type SeriesId,
   } from "@polymarket/client";
 
-  const PINNED_EVENT_IDS_STORAGE_KEY =
-    "polymarket-book-vis:pinned-event-ids:v1";
-  const PINNED_SERIES_IDS_STORAGE_KEY =
-    "polymarket-book-vis:pinned-series-ids:v1";
-  const COLUMN_COUNT_STORAGE_KEY = "polymarket-book-vis:dashboard-columns:v1";
-  const LAYOUT_ORDER_STORAGE_KEY = "polymarket-book-vis:dashboard-order:v2";
-  // Keep the original storage keys so saved filters and dismissals survive
-  // the move from regional discovery to general event discovery.
-  const DISCOVERY_VOLUME_STORAGE_KEY =
-    "polymarket-book-vis:regional-min-volume:v1";
-  const DISCOVERY_DAYS_STORAGE_KEY = "polymarket-book-vis:regional-days:v1";
-  const DISMISSED_DISCOVERY_STORAGE_KEY =
-    "polymarket-book-vis:dismissed-regional-events:v1";
-  const MIN_COLUMNS = 1;
+  import {
+    DISCOVERY_TOPICS_STORAGE_KEY,
+    DISCOVERY_LIQUIDITY_STORAGE_KEY,
+    PINNED_EVENT_IDS_STORAGE_KEY,
+    PINNED_SERIES_IDS_STORAGE_KEY,
+    COLUMN_COUNT_STORAGE_KEY,
+    LAYOUT_ORDER_STORAGE_KEY,
+    DISCOVERY_VOLUME_STORAGE_KEY,
+    DISCOVERY_DAYS_STORAGE_KEY,
+    DISMISSED_DISCOVERY_STORAGE_KEY,
+    MIN_COLUMNS,
+    loadDiscoveryNumber,
+    loadDismissedDiscoveryIds,
+    loadStoredIds,
+    loadColumnCount,
+    loadLayoutOrder,
+    persistIds,
+  } from "./dashboard/dashboardStorage";
+  import { masonryItem } from "./dashboard/masonryItem";
+
+  const INITIAL_SCROLL_FRAME_MS = 16;
+  const MAX_SCROLL_FRAME_MS = 32;
 
   const client = createPublicClient();
 
@@ -56,9 +70,12 @@
   let pinnedSeriesIds = loadStoredIds<SeriesId>(PINNED_SERIES_IDS_STORAGE_KEY);
   let layoutOrder = loadLayoutOrder(pinnedEventIds, pinnedSeriesIds);
   let columnCount = loadColumnCount();
-  let draggingKey: string | null = null;
-  let dragSnapshot: DashboardDragSnapshot | null = null;
-  let dragPointer: { x: number; y: number } | null = null;
+  interface DragSession {
+    readonly key: string;
+    readonly snapshot: DashboardDragSnapshot;
+    pointer: { x: number; y: number };
+  }
+  let drag: DragSession | null = null;
   let dragScrollFrame: number | null = null;
   let dragScrollFrameTime: number | null = null;
   let status = "";
@@ -66,25 +83,25 @@
   let discovering = false;
   let discoveryRun = 0;
   let discoveryTopics =
-    localStorage.getItem("polymarket-book-vis:discovery-topics:v1") ?? "";
+    localStorage.getItem(DISCOVERY_TOPICS_STORAGE_KEY) ?? "";
   let minLiquidity = loadDiscoveryNumber(
-    "polymarket-book-vis:discovery-min-liquidity:v1",
+    DISCOVERY_LIQUIDITY_STORAGE_KEY,
     0,
     0,
-    100_000_000,
+    MAX_DISCOVERY_AMOUNT,
   );
   let discoveryOrder: DiscoveryOrder = "createdAt";
   let minVolume = loadDiscoveryNumber(
     DISCOVERY_VOLUME_STORAGE_KEY,
     DEFAULT_MIN_VOLUME,
     0,
-    100_000_000,
+    MAX_DISCOVERY_AMOUNT,
   );
   let recencyDays = loadDiscoveryNumber(
     DISCOVERY_DAYS_STORAGE_KEY,
     DEFAULT_RECENCY_DAYS,
     0,
-    365,
+    MAX_DISCOVERY_RECENCY_DAYS,
   );
   let dismissedDiscoveryIds = loadDismissedDiscoveryIds();
 
@@ -95,67 +112,11 @@
     ),
   );
 
-  function loadDiscoveryNumber(
-    key: string,
-    fallback: number,
-    min: number,
-    max: number,
-  ): number {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return fallback;
-    const value = Number(raw);
-    return Number.isInteger(value) && value >= min && value <= max
-      ? value
-      : fallback;
-  }
-
-  function loadStoredJson(key: string): unknown {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return undefined;
-
-    try {
-      return JSON.parse(raw);
-    } catch (error) {
-      console.warn(`Ignoring malformed localStorage value for ${key}:`, error);
-      return undefined;
-    }
-  }
-
-  function loadDismissedDiscoveryIds(): Set<string> {
-    const parsed = loadStoredJson(DISMISSED_DISCOVERY_STORAGE_KEY);
-    return Array.isArray(parsed)
-      ? new Set(parsed.filter((id): id is string => typeof id === "string"))
-      : new Set();
-  }
-
   function persistDismissedDiscoveryIds(): void {
     localStorage.setItem(
       DISMISSED_DISCOVERY_STORAGE_KEY,
       JSON.stringify([...dismissedDiscoveryIds]),
     );
-  }
-
-  function loadStoredIds<T extends string>(key: string): T[] {
-    const parsed = loadStoredJson(key);
-    if (!Array.isArray(parsed)) return [];
-
-    const ids = parsed.filter(
-      (value): value is string =>
-        typeof value === "string" && value.trim().length > 0,
-    );
-    return [...new Set(ids)] as T[];
-  }
-
-  function loadColumnCount(): number {
-    const raw = localStorage.getItem(COLUMN_COUNT_STORAGE_KEY);
-    if (raw !== null) {
-      const parsed = Number(raw);
-      if (Number.isInteger(parsed) && parsed >= MIN_COLUMNS) return parsed;
-    }
-
-    if (window.innerWidth < 800) return 1;
-    if (window.innerWidth < 1200) return 2;
-    return 3;
   }
 
   function setColumnCount(next: number): void {
@@ -173,31 +134,6 @@
     )
       setColumnCount(value);
     input.value = String(columnCount);
-  }
-
-  function loadLayoutOrder(
-    eventPins: readonly EventId[],
-    seriesPins: readonly SeriesId[],
-  ): string[] {
-    const parsed = loadStoredJson(LAYOUT_ORDER_STORAGE_KEY);
-    if (Array.isArray(parsed)) {
-      const seen = new Set<string>();
-      return parsed.filter((value): value is string => {
-        if (
-          typeof value !== "string" ||
-          seen.has(value) ||
-          (!value.startsWith("event:") && !value.startsWith("series:"))
-        )
-          return false;
-        seen.add(value);
-        return true;
-      });
-    }
-
-    return [
-      ...seriesPins.map((id) => `series:${id}`),
-      ...eventPins.map((id) => `event:${id}`),
-    ];
   }
 
   function persistLayoutOrder(): void {
@@ -275,8 +211,7 @@
         .filter((itemKey) => !layoutOrder.includes(itemKey)),
     ];
 
-    draggingKey = key;
-    dragSnapshot = {
+    const snapshot: DashboardDragSnapshot = {
       order: visibleOrder,
       items,
       viewportScrollY: window.scrollY,
@@ -294,6 +229,8 @@
         y: origin.y - draggedRect.top,
       },
     };
+
+    drag = { key, snapshot, pointer: { x: event.clientX, y: event.clientY } };
 
     try {
       surface.setPointerCapture(event.pointerId);
@@ -318,29 +255,29 @@
   }
 
   function moveReorder(event: PointerEvent): void {
-    if (!draggingKey || !dragSnapshot) return;
+    if (!drag) return;
 
     event.preventDefault();
     event.stopPropagation();
 
-    dragPointer = { x: event.clientX, y: event.clientY };
-    applyReorderAtPointer(dragPointer);
+    drag.pointer = { x: event.clientX, y: event.clientY };
+    applyReorderAtPointer(drag.pointer);
     updateDragAutoScroll();
   }
 
   function applyReorderAtPointer(pointer: { x: number; y: number }): void {
-    if (!draggingKey || !dragSnapshot) return;
+    if (!drag) return;
 
     const nextVisible = dashboardOrderForPointer(
-      dragSnapshot,
-      draggingKey,
+      drag.snapshot,
+      drag.key,
       {
         x: pointer.x,
         y: pointer.y,
       },
       window.scrollY,
     );
-    const visible = new Set(dragSnapshot.order);
+    const visible = new Set(drag.snapshot.order);
     let nextIndex = 0;
     const next = layoutOrder.map((itemKey) =>
       visible.has(itemKey) ? (nextVisible[nextIndex++] ?? itemKey) : itemKey,
@@ -356,8 +293,8 @@
   }
 
   function updateDragAutoScroll(): void {
-    if (!dragPointer || !draggingKey) return;
-    if (dashboardDragScrollVelocity(dragPointer.y, window.innerHeight) === 0) {
+    if (!drag) return;
+    if (dashboardDragScrollVelocity(drag.pointer.y, window.innerHeight) === 0) {
       stopDragAutoScroll();
       return;
     }
@@ -367,10 +304,10 @@
 
   function runDragAutoScroll(time: number): void {
     dragScrollFrame = null;
-    if (!dragPointer || !draggingKey) return;
+    if (!drag) return;
 
     const velocity = dashboardDragScrollVelocity(
-      dragPointer.y,
+      drag.pointer.y,
       window.innerHeight,
     );
     if (velocity === 0) {
@@ -380,8 +317,11 @@
 
     const elapsedMs =
       dragScrollFrameTime === null
-        ? 16
-        : Math.min(32, Math.max(0, time - dragScrollFrameTime));
+        ? INITIAL_SCROLL_FRAME_MS
+        : Math.min(
+            MAX_SCROLL_FRAME_MS,
+            Math.max(0, time - dragScrollFrameTime),
+          );
     dragScrollFrameTime = time;
     const before = window.scrollY;
     window.scrollBy(0, (velocity * elapsedMs) / 1_000);
@@ -391,7 +331,7 @@
       return;
     }
 
-    applyReorderAtPointer(dragPointer);
+    applyReorderAtPointer(drag.pointer);
     dragScrollFrame = requestAnimationFrame(runDragAutoScroll);
   }
 
@@ -405,11 +345,9 @@
     window.removeEventListener("pointermove", moveReorder, true);
     window.removeEventListener("pointerup", finishReorder, true);
     window.removeEventListener("pointercancel", finishReorder, true);
-    if (draggingKey) persistLayoutOrder();
+    if (drag) persistLayoutOrder();
     stopDragAutoScroll();
-    draggingKey = null;
-    dragSnapshot = null;
-    dragPointer = null;
+    drag = null;
     setSharedTooltipSuppressed(false);
   }
 
@@ -429,98 +367,6 @@
     persistLayoutOrder();
   }
 
-  function masonryItem(node: HTMLElement): { destroy(): void } {
-    let frame = 0;
-    let canvasHeight = "";
-
-    const measure = (): void => {
-      const grid = node.parentElement;
-      if (!grid) return;
-
-      const styles = getComputedStyle(grid);
-      const rowHeight = Number.parseFloat(styles.gridAutoRows);
-      const rowGap = Number.parseFloat(styles.rowGap);
-      if (!Number.isFinite(rowHeight) || !Number.isFinite(rowGap)) return;
-
-      // Break the stretch chain while measuring. Otherwise the rounded row
-      // allocation becomes the next measurement (or collapses a flex chart).
-      const card = node.querySelector<HTMLElement>(":scope > .card");
-      const content = card?.querySelector<HTMLElement>(":scope > .cpv-wrap");
-      const stage = content?.querySelector<HTMLElement>(
-        ":scope > .cpv-chart-stage",
-      );
-      const canvas = stage?.querySelector<HTMLElement>(
-        ":scope > .cpv-canvas-wrap",
-      );
-      node.style.alignSelf = "start";
-      node.style.gridRowEnd = "auto";
-      if (card) card.style.height = "auto";
-      if (content) content.style.height = "auto";
-      if (stage) stage.style.flex = "none";
-      if (canvas) canvas.style.flex = "none";
-      const naturalCardHeight = node.getBoundingClientRect().height;
-      const span = Math.max(
-        1,
-        Math.ceil((naturalCardHeight + rowGap) / (rowHeight + rowGap)),
-      );
-      node.style.gridRowEnd = `span ${span}`;
-      node.style.alignSelf = "";
-      if (card) card.style.height = "";
-      if (content) content.style.height = "";
-      if (stage) stage.style.flex = "";
-      if (canvas) canvas.style.flex = "";
-    };
-
-    const scheduleMeasure = (): void => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(measure);
-    };
-
-    const observer = new ResizeObserver(scheduleMeasure);
-    observer.observe(node);
-    const mutations = new MutationObserver((records) => {
-      const nextCanvasHeight =
-        node.querySelector<HTMLElement>(".cpv-canvas-wrap")?.style.height ?? "";
-      const hasLayoutMutation = records.some((record) => {
-        if (
-          record.attributeName === "hidden" ||
-          record.attributeName === "open"
-        )
-          return true;
-        if (record.type !== "childList") return false;
-
-        // Clock annotations are absolutely positioned overlays. Their text and
-        // membership cannot change card geometry, so don't turn them into a
-        // forced masonry measurement.
-        const target = record.target as Element;
-        return !target.closest?.("[data-masonry-layout-neutral]");
-      });
-      if (hasLayoutMutation || nextCanvasHeight !== canvasHeight) {
-        canvasHeight = nextCanvasHeight;
-        scheduleMeasure();
-      }
-    });
-    mutations.observe(node, {
-      attributes: true,
-      attributeFilter: ["style", "hidden", "open"],
-      childList: true,
-      subtree: true,
-    });
-    scheduleMeasure();
-
-    return {
-      destroy() {
-        cancelAnimationFrame(frame);
-        observer.disconnect();
-        mutations.disconnect();
-      },
-    };
-  }
-
-  function persistIds(key: string, ids: readonly string[]): void {
-    localStorage.setItem(key, JSON.stringify(ids));
-  }
-
   async function refreshDiscoveryEvents(): Promise<void> {
     if (discovering) return;
     const run = ++discoveryRun;
@@ -538,12 +384,9 @@
       validateDiscoveryFilters(filters);
       localStorage.setItem(DISCOVERY_VOLUME_STORAGE_KEY, String(minVolume));
       localStorage.setItem(DISCOVERY_DAYS_STORAGE_KEY, String(recencyDays));
+      localStorage.setItem(DISCOVERY_TOPICS_STORAGE_KEY, discoveryTopics);
       localStorage.setItem(
-        "polymarket-book-vis:discovery-topics:v1",
-        discoveryTopics,
-      );
-      localStorage.setItem(
-        "polymarket-book-vis:discovery-min-liquidity:v1",
+        DISCOVERY_LIQUIDITY_STORAGE_KEY,
         String(minLiquidity),
       );
       const events = await discoverEvents(
@@ -567,7 +410,7 @@
       for (const event of events) if (addEvent(event, false, false)) added++;
       discoveryStatus = added
         ? `Added ${added} ${added === 1 ? "event" : "events"}. Pin any you want to keep.`
-        : "No new matches in the first 150 results. Try broader filters or another sort.";
+        : `No new matches in the first ${MAX_DISCOVERY_RESULTS} results. Try broader filters or another sort.`;
     } catch (error) {
       if (run === discoveryRun)
         discoveryStatus = `Discovery failed: ${
@@ -782,32 +625,6 @@
       finishReorder();
     };
   });
-
-  function orderDashboardItems(
-    items: readonly DashboardItem[],
-    order: readonly string[],
-  ): DashboardItem[] {
-    const ranks = new Map(order.map((key, index) => [key, index]));
-    const insertion = new Map(
-      items.map((entry, index) => [itemKey(entry), index]),
-    );
-
-    return [...items].sort((a, b) => {
-      const aRank = ranks.get(itemKey(a));
-      const bRank = ranks.get(itemKey(b));
-      if (aRank !== undefined && bRank !== undefined) return aRank - bRank;
-      if (aRank !== undefined) return -1;
-      if (bRank !== undefined) return 1;
-      return (
-        (insertion.get(itemKey(a)) ?? 0) - (insertion.get(itemKey(b)) ?? 0)
-      );
-    });
-  }
-
-  function itemKey(entry: DashboardItem): string {
-    if (entry.kind === "series") return `series:${entry.series.id}`;
-    return `event:${entry.event.id}`;
-  }
 </script>
 
 <header class="dashboard-toolbar">
@@ -852,13 +669,13 @@
 
 <div
   class="grid"
-  class:grid--dragging={draggingKey !== null}
+  class:grid--dragging={drag !== null}
   style={`--dashboard-columns: ${columnCount}`}
 >
   {#each orderedEntries as entry (itemKey(entry))}
     <div
       class="grid-item"
-      class:grid-item--dragging={draggingKey === itemKey(entry)}
+      class:grid-item--dragging={drag?.key === itemKey(entry)}
       data-layout-key={itemKey(entry)}
       use:masonryItem
     >
@@ -922,7 +739,7 @@
         <input
           type="number"
           min="0"
-          max="100000000"
+          max={MAX_DISCOVERY_AMOUNT}
           step="1"
           required
           bind:value={minVolume}
@@ -933,7 +750,7 @@
         <input
           type="number"
           min="0"
-          max="100000000"
+          max={MAX_DISCOVERY_AMOUNT}
           step="1"
           required
           bind:value={minLiquidity}
@@ -946,7 +763,7 @@
           <option value={7}>7 days</option>
           <option value={30}>30 days</option>
           <option value={90}>90 days</option>
-          <option value={365}>1 year</option>
+          <option value={MAX_DISCOVERY_RECENCY_DAYS}>1 year</option>
         </select>
       </label>
       <label
@@ -963,8 +780,8 @@
       >
     </fieldset>
     <p class="discovery-help">
-      Adds up to 8 events per click, scanning up to 150 results. Already loaded
-      or dismissed events are skipped.
+      Adds up to {MAX_DISCOVERED_EVENTS} events per click, scanning up to {MAX_DISCOVERY_RESULTS}
+      results. Already loaded or dismissed events are skipped.
     </p>
     <p class="discovery-status" role="status">{discoveryStatus}</p>
   </form>
