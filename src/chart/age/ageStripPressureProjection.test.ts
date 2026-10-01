@@ -119,7 +119,8 @@ test("screen y exactly inverts the renderer's volume transfer", () => {
   const center = 14;
 
   // Halfway to the row edge means pressure = 0.5. With reserve
-  // s = 28 * 100 = 2800, v/(v+s)=0.5 iff v=2800.
+  // R = 28 * 100 = 2800, v/sqrt(v^2 + R^2)=0.5 iff
+  // v = R / sqrt(3).
   expect(
     pressureVolumeAtY(
       center + rowHeight / 4,
@@ -127,7 +128,7 @@ test("screen y exactly inverts the renderer's volume transfer", () => {
       rowHeight,
       volumePerCssPixel,
     ),
-  ).toBeCloseTo(2_800);
+  ).toBeCloseTo(2_800 / Math.sqrt(3));
 
   expect(
     pressureVolumeAtY(
@@ -136,7 +137,7 @@ test("screen y exactly inverts the renderer's volume transfer", () => {
       rowHeight,
       volumePerCssPixel,
     ),
-  ).toBeCloseTo(2_800);
+  ).toBeCloseTo(2_800 / Math.sqrt(3));
 
   expect(
     pressureVolumeAtY(

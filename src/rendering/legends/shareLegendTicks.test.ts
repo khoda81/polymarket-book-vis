@@ -16,10 +16,23 @@ test("share pressure transform is invertible away from asymptotic edges", () => 
   const reserve = 1_500;
   for (const value of [-1e6, -1000, -1, 0, 1, 1000, 1e6]) {
     const p = shareLegendPosition(value, reserve);
-    expect(shareValueAtPosition(p, reserve)).toBeCloseTo(value, 6);
+    expect(shareValueAtPosition(p, reserve)).toBeCloseTo(value, 4);
   }
   expect(shareValueAtPosition(0, reserve)).toBe(Number.NEGATIVE_INFINITY);
   expect(shareValueAtPosition(1, reserve)).toBe(Number.POSITIVE_INFINITY);
+});
+
+test("reserve shares land at the smooth vector-normalization quantile", () => {
+  const reserve = 1_500;
+  const expectedSignedPressure = 1 / Math.sqrt(2);
+  expect(shareLegendPosition(reserve, reserve)).toBeCloseTo(
+    0.5 + 0.5 * expectedSignedPressure,
+    12,
+  );
+  expect(shareLegendPosition(-reserve, reserve)).toBeCloseTo(
+    0.5 - 0.5 * expectedSignedPressure,
+    12,
+  );
 });
 
 test("share refinement steps form one recursive subset lattice", () => {

@@ -124,14 +124,17 @@ void main() {
   }
 
   float reserveShares = uVolumePerCssPixel * uRowHeightCss;
+  float reserveSharesSq = reserveShares * reserveShares;
   float pressureLo =
-      aVolumeLo <= 0.0 ? 0.0 : aVolumeLo / (aVolumeLo + reserveShares);
+      aVolumeLo <= 0.0
+        ? 0.0
+        : aVolumeLo / sqrt(aVolumeLo * aVolumeLo + reserveSharesSq);
   float pressureHi =
       aVolumeHiUnbounded > 0.5
         ? 1.0
         : (aVolumeHi <= 0.0
             ? 0.0
-            : aVolumeHi / (aVolumeHi + reserveShares));
+            : aVolumeHi / sqrt(aVolumeHi * aVolumeHi + reserveSharesSq));
 
   float y0Css =
       uCenterCss + uYDirection * 0.5 * uRowHeightCss * pressureLo;
