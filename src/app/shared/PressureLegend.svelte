@@ -1,23 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import {
-    AGE_ROW_BAND_PX,
-    getAgeStripTuning,
-  } from "../../chart/age/ageStripTuning";
-  import { observationClock } from "../../domain/pressure/observationClock";
+  import { AGE_ROW_BAND_PX } from "../../chart/age/ageStripTuning";
   import { GhostMemoryScale } from "../../chart/age/ghostMemoryScale";
-  import type { PublicClient } from "@polymarket/client";
+  import { getVisualizationContext } from "../visualization/visualizationContext";
   import { shareLegendTicks } from "../../rendering/legends/shareLegendTicks";
   import {
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     signedVolumeColor,
   } from "../../rendering/colors/signedVolume";
 
-  interface Props {
-    client: PublicClient;
-  }
-
-  let { client }: Props = $props();
+  const visualization = getVisualizationContext();
 
   const SHARE_TICK_MIN_SPACING_PX = 24;
   const SHARE_TICK_FULL_OPACITY_SPACING_PX = 32;
@@ -27,8 +19,8 @@
   let shareDpr = $state(1);
   let ghost: GhostMemoryScale | null = null;
 
-  const tuning = $derived(getAgeStripTuning());
-  const observationFrame = $derived(observationClock(client).read());
+  const tuning = $derived(visualization.tuning.get());
+  const observationFrame = $derived(visualization.observations.read());
   const shareTicks = $derived(
     shareLegendTicks(tuning.volumePerCssPixel * AGE_ROW_BAND_PX, shareWidth, {
       minSpacingPx: SHARE_TICK_MIN_SPACING_PX,
@@ -63,7 +55,10 @@
     shareWidth = shareBar.clientWidth;
     shareDpr = window.devicePixelRatio || 1;
 
-    const nextGhost = new GhostMemoryScale(ghostCanvas);
+    const nextGhost = new GhostMemoryScale(
+      ghostCanvas,
+      visualization.tuning,
+    );
     ghost = nextGhost;
     // ghost itself is intentionally not reactive state. Seed the imperative
     // resource explicitly, then the effect above keeps it synchronized.

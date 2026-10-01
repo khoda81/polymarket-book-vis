@@ -10,6 +10,7 @@ import {
   showSharedTooltip,
 } from "@/rendering/sharedTooltip";
 import type { ObservationFrame } from "@/domain/pressure/observationClock";
+import type { AgeStripTuningStore } from "@/chart/age/ageStripTuningStore";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
 
 const HEIGHT = 28;
@@ -50,7 +51,10 @@ export class GhostMemoryScale {
     readonly dpr: number;
     readonly values: readonly GhostObservationColumn[];
   } | null = null;
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    private readonly tuning: AgeStripTuningStore,
+  ) {
     const ctx = canvas.getContext("2d");
     if (!ctx)
       throw new Error("Canvas2D is required for the ghost-memory scale");
@@ -361,7 +365,7 @@ export class GhostMemoryScale {
   }
 
   private readonly handleWheel = (event: WheelEvent): void => {
-    if (handleAgeStripTuningWheel(event)) {
+    if (handleAgeStripTuningWheel(event, this.tuning)) {
       event.preventDefault();
       event.stopPropagation();
       return;
