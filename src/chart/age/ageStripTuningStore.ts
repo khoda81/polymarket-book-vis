@@ -23,7 +23,7 @@ type TuningStorage = Pick<Storage, "getItem" | "setItem">;
 type TuningKey = keyof AgeStripTuning;
 
 /**
- * Reactive global tuning state.
+ * Reactive tuning state owned by one visualization scope.
  *
  * Svelte consumers become dependencies by calling get(); no parallel listener
  * channel is needed. Both values are updated synchronously and Svelte batches
