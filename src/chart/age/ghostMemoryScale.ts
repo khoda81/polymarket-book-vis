@@ -1,7 +1,3 @@
-import {
-  getAgeStripTuning,
-  subscribeAgeStripTuning,
-} from "@/chart/age/ageStripTuning";
 import { ghostLegendTicks } from "@/rendering/legends/ghostLegendTicks";
 import {
   ghostObservationColumns,
@@ -13,12 +9,8 @@ import {
   releaseSharedTooltip,
   showSharedTooltip,
 } from "@/rendering/sharedTooltip";
-import {
-  observationClock,
-  type ObservationFrame,
-} from "@/domain/pressure/observationClock";
+import type { ObservationFrame } from "@/domain/pressure/observationClock";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
-import type { PublicClient } from "@polymarket/client";
 
 const HEIGHT = 28;
 const INSET = 4;
@@ -39,8 +31,6 @@ export class GhostMemoryScale {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly tooltipOwner = Symbol("ghost-memory-tooltip");
   private readonly resizeObserver: ResizeObserver;
-  private readonly unsubscribeTuning: () => void;
-  private readonly unsubscribeObservation: () => void;
   private readonly themeQuery = window.matchMedia(
     "(prefers-color-scheme: dark)",
   );
@@ -49,6 +39,7 @@ export class GhostMemoryScale {
   private width = 0;
   private styleDirty = true;
   private observationFrame: ObservationFrame = { kind: "unobserved" };
+  private ghostHalfLifeMs = 5_000;
   private hoverPointer: GhostHoverPointer | null = null;
   private tooltipList: HTMLDivElement | null = null;
   private tooltipAgeTexts = new Map<string, Text>();
@@ -59,10 +50,7 @@ export class GhostMemoryScale {
     readonly dpr: number;
     readonly values: readonly GhostObservationColumn[];
   } | null = null;
-  constructor(
-    private readonly canvas: HTMLCanvasElement,
-    client: PublicClient,
-  ) {
+  constructor(private readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (!ctx)
       throw new Error("Canvas2D is required for the ghost-memory scale");
@@ -74,15 +62,6 @@ export class GhostMemoryScale {
       this.requestPaint();
     });
     this.resizeObserver.observe(canvas);
-    this.unsubscribeTuning = subscribeAgeStripTuning(() => this.requestPaint());
-
-    const clock = observationClock(client);
-    this.observationFrame = clock.read();
-    this.unsubscribeObservation = clock.subscribe(() => {
-      this.observationFrame = clock.read();
-      this.markerCache = null;
-      this.requestPaint();
-    });
     this.themeQuery.addEventListener("change", this.handleThemeChange);
     canvas.addEventListener("pointermove", this.handlePointer);
     canvas.addEventListener("pointerleave", this.clearPointer);
@@ -93,8 +72,6 @@ export class GhostMemoryScale {
   destroy(): void {
     if (this.raf !== null) cancelAnimationFrame(this.raf);
     this.resizeObserver.disconnect();
-    this.unsubscribeTuning();
-    this.unsubscribeObservation();
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
     this.canvas.removeEventListener("pointermove", this.handlePointer);
     this.canvas.removeEventListener("pointerleave", this.clearPointer);
@@ -102,6 +79,17 @@ export class GhostMemoryScale {
     this.tooltipList = null;
     this.tooltipAgeTexts.clear();
     releaseSharedTooltip(this.tooltipOwner);
+  }
+
+  setInputs(frame: ObservationFrame, ghostHalfLifeMs: number): void {
+    const frameChanged = frame !== this.observationFrame;
+    const halfLifeChanged = ghostHalfLifeMs !== this.ghostHalfLifeMs;
+    if (!frameChanged && !halfLifeChanged) return;
+
+    this.observationFrame = frame;
+    this.ghostHalfLifeMs = ghostHalfLifeMs;
+    this.markerCache = null;
+    this.requestPaint();
   }
 
   private readonly handleThemeChange = (): void => {
@@ -119,7 +107,7 @@ export class GhostMemoryScale {
 
   private paint(): boolean {
     const frame = this.observationFrame;
-    const { ghostHalfLifeMs } = getAgeStripTuning();
+    const ghostHalfLifeMs = this.ghostHalfLifeMs;
     const width = this.width;
     if (width <= INSET * 2) return false;
     const dpr = window.devicePixelRatio || 1;
@@ -294,7 +282,7 @@ export class GhostMemoryScale {
     }
 
     const width = this.canvas.clientWidth;
-    const halfLife = getAgeStripTuning().ghostHalfLifeMs;
+    const halfLife = this.ghostHalfLifeMs;
     const dpr = window.devicePixelRatio || 1;
     this.renderTooltip(this.hoverPointer, frame, width, halfLife, dpr);
   };

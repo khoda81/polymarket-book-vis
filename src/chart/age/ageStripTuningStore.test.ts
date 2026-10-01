@@ -25,14 +25,11 @@ test("stored legacy volume and current half-life are validated at construction",
   });
 });
 
-test("scaling publishes one complete tuning value", () => {
+test("scaling updates one coherent tuning value", () => {
   const store = new AgeStripTuningStore(null);
-  const published: unknown[] = [];
-  store.subscribe((tuning) => published.push(tuning));
 
   store.scale(2, 0.5);
 
-  expect(published).toEqual([store.get()]);
   expect(store.get()).toEqual({
     volumePerCssPixel: DEFAULT_VOLUME_PER_CSS_PIXEL * 2,
     ghostHalfLifeMs: DEFAULT_GHOST_HALF_LIFE_MS * 0.5,

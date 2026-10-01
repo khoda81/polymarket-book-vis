@@ -1,140 +1,123 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     ChartController,
+    type ChartRenderInput,
     type ChartSurfaceElements,
   } from "../../chart/controller";
   import {
     DEFAULT_AGE_ROW_ORIENTATION,
     type AgeRowOrientation,
   } from "../../chart/age/ageStripOrientation";
+  import { getAgeStripTuning } from "../../chart/age/ageStripTuning";
+  import {
+    observationClock,
+    opacityReference,
+  } from "../../domain/pressure/observationClock";
   import {
     buildChartDefinition,
     type ChartMarketControl,
   } from "../../chart/configuration/chartDefinition";
+  import { MarketGroupModel } from "../../chart/model/marketGroupModel.svelte";
   import type {
     ConnectionStatus,
     ViewMode,
   } from "../../domain/markets/chartState";
   import type { EventDetails } from "../../domain/markets/eventDetails";
-  import {
-    summarizeEventMarketStatus,
-    type EventMarketStatus,
-    type MarketLifecycle,
-  } from "../../domain/markets/marketLifecycle";
+  import type { EventMarketStatus } from "../../domain/markets/marketLifecycle";
   import {
     isMarketVisible,
-    loadMarketVisibility,
     partitionMarketVisibility,
-    persistStoredMarketVisibility,
-    setMarketVisibility,
-    setUserMarketVisible,
-    storedVisibilityForUserChoice,
-    type AutoHiddenReason,
-    type MarketVisibility,
   } from "../../domain/markets/marketVisibility";
   import AgeRowFlipButton from "./AgeRowFlipButton.svelte";
   import { hiddenMarketDisplayOrder } from "./hiddenMarketOrder";
   import MarketControl from "./MarketControl.svelte";
-  import { type PublicClient, type MarketId } from "@polymarket/client";
+  import type { PublicClient } from "@polymarket/client";
 
-  export let bundle: EventDetails;
-  export let client: PublicClient;
-  export let viewMode: ViewMode;
-  export let ageRowOrientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION;
-  export let onready: () => void = () => undefined;
-  export let onfailure: (message: string) => void = () => undefined;
-  export let onconnection: (status: ConnectionStatus) => void = () => undefined;
-  export let onmarketstatus: (status: EventMarketStatus) => void = () =>
-    undefined;
-  export let onrowflip: () => void = () => undefined;
+  interface Props {
+    bundle: EventDetails;
+    client: PublicClient;
+    viewMode: ViewMode;
+    ageRowOrientation?: AgeRowOrientation;
+    onready?: () => void;
+    onfailure?: (message: string) => void;
+    onconnection?: (status: ConnectionStatus) => void;
+    onmarketstatus?: (status: EventMarketStatus) => void;
+    onrowflip?: () => void;
+  }
 
-  const definition = buildChartDefinition(bundle);
-  const VISIBLE_MARKET: MarketVisibility = { kind: "visible" };
+  let {
+    bundle,
+    client,
+    viewMode,
+    ageRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
+    onready = () => undefined,
+    onfailure = () => undefined,
+    onconnection = () => undefined,
+    onmarketstatus = () => undefined,
+    onrowflip = () => undefined,
+  }: Props = $props();
 
-  let visibilityByMarketId = loadMarketVisibility(definition.controls);
-  let lifecycleByMarketId = new Map<MarketId, MarketLifecycle>(
-    definition.controls.map((control) => [
-      control.market.id,
-      control.lifecycle,
-    ]),
-  );
+  // A ChartHost owns one market-group renderer for its entire component
+  // lifetime. If bundle/client identity changes, the host itself must be
+  // recreated rather than retargeting a live feed and retained renderer.
+  const source = untrack(() => ({ bundle, client }));
+  const definition = buildChartDefinition(source.bundle);
+  const model = new MarketGroupModel(source.client, definition);
 
   let canvas: HTMLCanvasElement;
   let pressureCanvas: HTMLCanvasElement;
   let canvasWrap: HTMLDivElement;
   let toggles: HTMLDivElement;
-  let chart: ChartController | null = null;
+  let chart = $state<ChartController | null>(null);
 
-  $: orderedAgeControls = [...definition.controls].sort(
-    (a, b) => a.order - b.order,
+  const orderedAgeControls = $derived(
+    [...definition.controls].sort((a, b) => a.order - b.order),
   );
-  $: controlPartition = partitionMarketVisibility(
-    orderedAgeControls,
-    visibilityByMarketId,
+  const controlPartition = $derived(
+    partitionMarketVisibility(orderedAgeControls, model.visibilityByMarketId),
   );
-  $: visibleControls = controlPartition.visible;
-  $: hiddenControls = controlPartition.hidden;
-  $: displayedHiddenControls = hiddenMarketDisplayOrder(
-    hiddenControls,
-    ageRowOrientation,
+  const visibleControls = $derived(controlPartition.visible);
+  const hiddenControls = $derived(controlPartition.hidden);
+  const displayedHiddenControls = $derived(
+    hiddenMarketDisplayOrder(hiddenControls, ageRowOrientation),
   );
-  $: toggledControls =
-    viewMode === "age" ? visibleControls : definition.controls;
-  $: onmarketstatus(summarizeEventMarketStatus(lifecycleByMarketId.values()));
+  const toggledControls = $derived(
+    viewMode === "age" ? visibleControls : definition.controls,
+  );
 
   function userSetVisible(control: ChartMarketControl, visible: boolean): void {
-    visibilityByMarketId = setUserMarketVisible(
-      visibilityByMarketId,
-      control.market.id,
-      visible,
-    );
-
-    const lifecycle =
-      lifecycleByMarketId.get(control.market.id) ?? control.lifecycle;
-    persistStoredMarketVisibility(
-      control.market.id,
-      storedVisibilityForUserChoice(visible, lifecycle),
-    );
-    chart?.setMarketVisible(control.market.id, visible);
+    model.userSetMarketVisible(control, visible);
   }
 
-  function marketLifecycleChanged(
-    marketId: MarketId,
-    lifecycle: MarketLifecycle,
-  ): void {
-    lifecycleByMarketId = new Map(lifecycleByMarketId);
-    lifecycleByMarketId.set(marketId, lifecycle);
+  function renderInput(): ChartRenderInput {
+    const tuning = getAgeStripTuning();
+    const reference = observationClock(source.client).readReference();
 
-    if (lifecycle.kind !== "resolved") return;
-
-    const visibility = visibilityByMarketId.get(marketId) ?? VISIBLE_MARKET;
-    if (visibility.kind !== "visible") return;
-
-    visibilityByMarketId = setMarketVisibility(visibilityByMarketId, marketId, {
-      kind: "hidden",
-      reason: "resolved-default",
-    });
-    persistStoredMarketVisibility(marketId, "hidden-resolved");
-    chart?.setMarketVisible(marketId, false);
+    return {
+      viewMode,
+      ageRowOrientation,
+      bookRevision: model.bookRevision,
+      pressureRevision: model.pressureRevision,
+      visibilityRevision: model.visibilityRevision,
+      recordingRevision: model.recordingRevision,
+      opacityTimeMs: opacityReference(reference),
+      volumePerCssPixel: tuning.volumePerCssPixel,
+      ghostHalfLifeMs: tuning.ghostHalfLifeMs,
+    };
   }
 
-  function autoHide(marketId: MarketId, reason: AutoHiddenReason): void {
-    visibilityByMarketId = setMarketVisibility(visibilityByMarketId, marketId, {
-      kind: "hidden",
-      reason,
-    });
-    persistStoredMarketVisibility(marketId, "hidden-empty");
-  }
+  $effect(() => {
+    onconnection(model.connectionStatus);
+  });
 
-  function initialHiddenMarketIds(): Set<MarketId> {
-    return new Set(
-      partitionMarketVisibility(
-        definition.controls,
-        visibilityByMarketId,
-      ).hidden.map((control) => control.market.id),
-    );
-  }
+  $effect(() => {
+    onmarketstatus(model.marketStatus);
+  });
+
+  $effect(() => {
+    chart?.update(renderInput());
+  });
 
   onMount(() => {
     let alive = true;
@@ -144,22 +127,10 @@
       canvasWrap,
       toggles,
     };
-    const next = new ChartController(surface, client, definition, {
-      onConnectionStatus: (status) => {
-        if (alive) onconnection(status);
-      },
-      onMarketAutoHidden: (marketId, reason) => {
-        if (alive) autoHide(marketId, reason);
-      },
-      onMarketLifecycleChanged: (marketId, lifecycle) => {
-        if (alive) marketLifecycleChanged(marketId, lifecycle);
-      },
-    });
+    const next = new ChartController(surface, model, renderInput());
     chart = next;
-    next.setViewMode(viewMode);
-    next.setAgeRowOrientation(ageRowOrientation);
 
-    void next.start(initialHiddenMarketIds()).then(
+    void model.start().then(
       () => {
         if (alive) onready();
       },
@@ -173,11 +144,9 @@
       alive = false;
       chart = null;
       next.destroy();
+      model.destroy();
     };
   });
-
-  $: chart?.setViewMode(viewMode);
-  $: chart?.setAgeRowOrientation(ageRowOrientation);
 </script>
 
 <div
@@ -189,8 +158,7 @@
       <MarketControl
         {control}
         checked={false}
-        lifecycle={lifecycleByMarketId.get(control.market.id) ??
-          control.lifecycle}
+        lifecycle={model.lifecycleFor(control.market.id)}
         onchange={(checked) => userSetVisible(control, checked)}
       />
     {/each}
@@ -226,11 +194,8 @@
     {#each toggledControls as control (control.market.id)}
       <MarketControl
         {control}
-        checked={isMarketVisible(
-          visibilityByMarketId.get(control.market.id) ?? VISIBLE_MARKET,
-        )}
-        lifecycle={lifecycleByMarketId.get(control.market.id) ??
-          control.lifecycle}
+        checked={isMarketVisible(model.visibilityFor(control.market.id))}
+        lifecycle={model.lifecycleFor(control.market.id)}
         onchange={(checked) => userSetVisible(control, checked)}
       />
     {/each}

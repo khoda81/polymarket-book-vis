@@ -1,3 +1,4 @@
+import { SvelteSet } from "svelte/reactivity";
 import type { PublicClient } from "@polymarket/client";
 
 // Wall time cannot accidentally be passed as the pressure opacity reference.
@@ -46,75 +47,70 @@ export function opacityReference(frame: ObservationReference): ObservationTime {
 }
 
 /**
- * One source of truth for observation time. Presentation is derived only when
- * a consumer needs the full token list; there is no separately stored/latest
- * timestamp that can drift out of sync with the points.
+ * One directly reactive observation source.
+ *
+ * The map is the state. ObservationClock does not have a parallel revision or
+ * notification channel; Svelte tracks map iteration in read()/readReference().
  */
 export interface ObservationSource {
-  readonly points: () => Iterable<ObservationPoint>;
+  readonly points: ReadonlyMap<string, ObservationPoint>;
   readonly describe: (tokenId: string) => ObservationDescription;
 }
 
-type ObservationListener = (reference: ObservationReference) => void;
-type ObservationNotifyScheduler = (notify: () => void) => void;
+/**
+ * Update a reactive observation map without generating invalidations when its
+ * logical contents are unchanged.
+ */
+export function syncObservationPoints(
+  target: Map<string, ObservationPoint>,
+  points: Iterable<ObservationPoint>,
+): void {
+  const next = new Map<string, ObservationPoint>();
+  for (const point of points) {
+    const previous = next.get(point.tokenId);
+    if (!previous || point.observedAtMs > previous.observedAtMs)
+      next.set(point.tokenId, point);
+  }
 
+  for (const tokenId of target.keys())
+    if (!next.has(tokenId)) target.delete(tokenId);
+
+  for (const [tokenId, point] of next) {
+    const previous = target.get(tokenId);
+    if (previous?.observedAtMs === point.observedAtMs) continue;
+    target.set(tokenId, point);
+  }
+}
+
+/**
+ * Reactive aggregation of observation sources sharing one PublicClient.
+ *
+ * Both source membership and the observation maps themselves are reactive.
+ * Consumers therefore depend directly on the timestamps they display.
+ */
 export class ObservationClock {
-  private readonly sources = new Set<ObservationSource>();
-  private readonly listeners = new Set<ObservationListener>();
-  private notifyPending = false;
-
-  constructor(
-    private readonly scheduleNotify: ObservationNotifyScheduler = scheduleObservationNotify,
-  ) {}
+  private readonly sources = new SvelteSet<ObservationSource>();
 
   register(source: ObservationSource): () => void {
     this.sources.add(source);
-    this.changed();
     return () => {
       this.sources.delete(source);
-      this.changed();
     };
-  }
-
-  subscribe(listener: ObservationListener): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-
-  changed(): void {
-    if (this.listeners.size === 0 || this.notifyPending) return;
-    this.notifyPending = true;
-    this.scheduleNotify(() => {
-      this.notifyPending = false;
-      if (this.listeners.size === 0) return;
-
-      // Observation changes are visual invalidations. Collapse every book
-      // update in one display frame into one derived reference instead of
-      // rescanning every chart for every websocket event.
-      const reference = this.readReference();
-      for (const listener of this.listeners) listener(reference);
-    });
   }
 
   readReference(): ObservationReference {
     let newestMs: ObservationTime | undefined;
-    for (const source of this.sources) {
-      for (const point of source.points()) {
+    for (const source of this.sources)
+      for (const point of source.points.values())
         if (newestMs === undefined || point.observedAtMs > newestMs)
           newestMs = point.observedAtMs;
-      }
-    }
+
     return newestMs === undefined
       ? { kind: "unobserved" }
       : { kind: "observed", newestMs };
   }
 
   read(): ObservationFrame {
-    // Keep only the newest point for each token, remembering the source whose
-    // presentation belongs to that point. newestMs is derived from the same
-    // points in this pass, so it cannot disagree with the token observations.
     const tokens = new Map<
       string,
       { readonly point: ObservationPoint; readonly source: ObservationSource }
@@ -122,7 +118,7 @@ export class ObservationClock {
     let newestMs: ObservationTime | undefined;
 
     for (const source of this.sources) {
-      for (const point of source.points()) {
+      for (const point of source.points.values()) {
         if (newestMs === undefined || point.observedAtMs > newestMs)
           newestMs = point.observedAtMs;
 
@@ -145,15 +141,8 @@ export class ObservationClock {
   }
 }
 
-function scheduleObservationNotify(notify: () => void): void {
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => notify());
-    return;
-  }
-  queueMicrotask(notify);
-}
-
 const clocks = new WeakMap<PublicClient, ObservationClock>();
+
 export function observationClock(client: PublicClient): ObservationClock {
   let clock = clocks.get(client);
   if (!clock) {
