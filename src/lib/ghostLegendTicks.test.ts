@@ -20,7 +20,7 @@ test("duration ticks use human unit families and fade by local spacing", () => {
   expect(
     ticks.every(
       (tick) =>
-        tick.position > 0 &&
+        tick.position >= 0 &&
         tick.position < 1 &&
         tick.opacity > 0 &&
         tick.opacity <= 1,
@@ -80,6 +80,38 @@ test("future clock offsets can expose negative tick values", () => {
   });
   expect(ticks.some((tick) => tick.ageMs < 0)).toBe(true);
   expect(ticks.some((tick) => tick.label.startsWith("−"))).toBe(true);
+});
+
+test("half-open screen groups own an exact boundary without a gap or duplicate", () => {
+  const halfLifeMs = 5_000;
+  const widthPx = 640;
+  const minDistancePx = 32;
+  const boundaryAgeMs = ageAtGhostPosition(minDistancePx / widthPx, halfLifeMs);
+
+  const positions = [-1e-6, 0, 1e-6].map((deltaMs) => {
+    const ticks = ghostLegendTicks(halfLifeMs, widthPx, {
+      minDistancePx,
+      originAgeMs: -boundaryAgeMs + deltaMs,
+    });
+    const now = ticks.filter((tick) => tick.ageMs === 0);
+    expect(now).toHaveLength(1);
+    expect(new Set(ticks.map((tick) => tick.ageMs)).size).toBe(ticks.length);
+    return now[0]!.position;
+  });
+
+  expect(positions[0]!).toBeGreaterThan(positions[1]!);
+  expect(positions[1]!).toBeGreaterThan(positions[2]!);
+  expect(positions[1]! * widthPx).toBeCloseTo(minDistancePx, 8);
+});
+
+test("500ms candidate survives small clock-origin drift", () => {
+  for (const originAgeMs of [0, 1, 2, 3]) {
+    const ticks = ghostLegendTicks(5_000, 600, {
+      minDistancePx: 24,
+      originAgeMs,
+    });
+    expect(ticks.some((tick) => tick.ageMs === 500)).toBe(true);
+  }
 });
 
 test("large clock offsets cannot stall on sub-representable grid steps", () => {

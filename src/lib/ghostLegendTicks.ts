@@ -11,6 +11,8 @@ export interface GhostLegendTick {
   readonly ageMs: number;
   readonly position: number;
   readonly opacity: number;
+  /** Human grid family that produced this tick; larger means coarser. */
+  readonly stepMs: number;
   readonly label: string;
 }
 
@@ -30,11 +32,10 @@ export interface GhostLegendTickOptions {
  *   x(Δt) = 1 - 2^(-Δt / halfLife)
  *
  * Candidate grid lines live in displayed clock-offset coordinates, not in
- * relative-to-newest coordinates. Human grid boundaries are enumerated
- * directly and projected through the inverse/forward transform; each family's
- * projected spacing continuously controls its opacity. As the newest
- * observation moves relative to the local clock, labels and positions move
- * together without changing candidate families discontinuously.
+ * relative-to-newest coordinates. Screen pixels are treated as ranges and
+ * grouped at the requested minimum spacing. We invert each group boundary
+ * exactly once, then choose the coarsest human grid boundary owned by that
+ * half-open screen interval.
  */
 export function ghostLegendTicks(
   halfLifeMs: number,
@@ -49,53 +50,62 @@ export function ghostLegendTicks(
 
   const minDistancePx = options.minDistancePx ?? 48;
   const fadeDistancePx = options.fadeDistancePx ?? minDistancePx * 2;
-  const maxPosition = Math.max(
-    0,
-    Math.min(1 - Number.EPSILON, 1 - 0.5 / widthPx),
-  );
-  const maxAgeMs = originAgeMs + ageAtGhostPosition(maxPosition, halfLifeMs);
+  if (!(minDistancePx > 0) || !Number.isFinite(minDistancePx)) return [];
+
+  // Search screen ranges at exactly the spacing scale we care about instead of
+  // oversampling at an arbitrary fraction of a pixel. Screen ownership is
+  // half-open [0, width): the final group reaches x=width, whose inverse under
+  // the exponential transform is +∞.
+  const groupCount = Math.max(1, Math.ceil(widthPx / minDistancePx));
+  const boundaries = new Array<number>(groupCount + 1);
+  for (let index = 0; index <= groupCount; index++) {
+    const x = Math.min(index * minDistancePx, widthPx);
+    boundaries[index] =
+      x === widthPx
+        ? Number.POSITIVE_INFINITY
+        : originAgeMs + ageAtGhostPosition(x / widthPx, halfLifeMs);
+  }
+
   const steps = durationSteps();
   const byAge = new Map<number, GhostLegendTick>();
-  const toleranceMs = Math.max(
-    1e-9,
-    Math.max(Math.abs(originAgeMs), Math.abs(maxAgeMs)) * 1e-12,
-  );
 
-  // Enumerate the actual human-grid boundaries directly. The old implementation
-  // sampled screen intervals and selected only the largest family crossed by
-  // each sample. As the scale drifted, a tiny change could make a different
-  // family "win" that interval and make a fully opaque label pop in/out.
-  //
-  // For one fixed step family, projected spacing decreases monotonically as we
-  // move right, so once its density opacity falls below one alpha step there
-  // cannot be another visible tick from that family.
-  for (const stepMs of steps) {
-    // Projected spacing is maximal at the left edge and only decreases as we
-    // move right. Steps are sorted coarse -> fine, so once a family is already
-    // below one visible alpha step here, this family and every finer one can be
-    // skipped entirely. Besides being cheaper, this prevents asking IEEE-754
-    // to enumerate grid steps far smaller than the representable spacing near
-    // a large clock offset.
-    const maxSpacingPx = ghostPositionForAge(stepMs, halfLifeMs) * widthPx;
-    if (
-      legendTickOpacity(maxSpacingPx, minDistancePx, fadeDistancePx) <=
-      1 / 255
-    )
-      break;
+  for (let group = 0; group < groupCount; group++) {
+    const startAgeMs = boundaries[group]!;
+    const endAgeMs = boundaries[group + 1]!;
+    const includeEnd = group === groupCount - 1;
+    const toleranceMs = Math.max(
+      1e-9,
+      Math.abs(startAgeMs) * 1e-12,
+      Number.isFinite(endAgeMs) ? Math.abs(endAgeMs) * 1e-12 : 0,
+    );
 
-    let ageMs = firstGridBoundaryAfter(originAgeMs, stepMs);
-    while (ageMs <= maxAgeMs + toleranceMs) {
-      const relativeAgeMs = ageMs - originAgeMs;
-      if (relativeAgeMs <= 0) {
-        const nextAgeMs = ageMs + stepMs;
-        if (!(nextAgeMs > ageMs)) break;
-        ageMs = nextAgeMs;
+    // Groups own [start, end), matching raster-cell ownership: a tick exactly
+    // on a shared pixel/group boundary belongs to the group on its right.
+    // Only the final visible group owns its right endpoint.
+    for (const stepMs of steps) {
+      const ageMs = firstGridBoundaryAtOrAfter(startAgeMs, stepMs);
+      if (
+        !gridBoundaryBelongsToInterval(
+          ageMs,
+          startAgeMs,
+          endAgeMs,
+          includeEnd,
+          toleranceMs,
+        )
+      )
         continue;
-      }
 
-      const tickPosition = ghostPositionForAge(relativeAgeMs, halfLifeMs);
+      const relativeAgeMs = ageMs - originAgeMs;
+      if (relativeAgeMs < -toleranceMs) continue;
+
+      const tickPosition = ghostPositionForAge(
+        Math.max(0, relativeAgeMs),
+        halfLifeMs,
+      );
+      if (!(tickPosition >= 0 && tickPosition < 1)) continue;
+
       const nextPosition = ghostPositionForAge(
-        relativeAgeMs + stepMs,
+        Math.max(0, relativeAgeMs + stepMs),
         halfLifeMs,
       );
       const spacingPx = Math.abs(nextPosition - tickPosition) * widthPx;
@@ -104,25 +114,28 @@ export function ghostLegendTicks(
         minDistancePx,
         fadeDistancePx,
       );
-      if (opacity <= 1 / 255) break;
+      // A finer family can place its boundary earlier in this same nonlinear
+      // screen interval, where projected spacing is larger, so an invisible
+      // coarse candidate does not justify terminating the search.
+      if (opacity <= 1 / 255) continue;
 
       const tick: GhostLegendTick = {
-        ageMs,
+        ageMs: normalizeZero(ageMs),
         position: tickPosition,
         opacity,
+        stepMs,
         label: formatDurationTick(ageMs),
       };
-      const existing = byAge.get(ageMs);
-      if (!existing || tick.opacity > existing.opacity) byAge.set(ageMs, tick);
-
-      const nextAgeMs = ageMs + stepMs;
-      if (!(nextAgeMs > ageMs)) break;
-      ageMs = nextAgeMs;
+      const existing = byAge.get(tick.ageMs);
+      if (!existing || tick.opacity > existing.opacity)
+        byAge.set(tick.ageMs, tick);
+      break;
     }
   }
 
-  return [...byAge.values()].sort((a, b) => a.ageMs - b.ageMs);
+  return [...byAge.values()].sort((a, b) => a.position - b.position);
 }
+
 export function ghostPositionForAge(ageMs: number, halfLifeMs: number): number {
   if (!(ageMs > 0)) return 0;
   if (!(halfLifeMs > 0)) return 1;
@@ -180,13 +193,30 @@ function durationSteps(): number[] {
   return [...values].sort((a, b) => b - a);
 }
 
-function firstGridBoundaryAfter(value: number, step: number): number {
+function firstGridBoundaryAtOrAfter(value: number, step: number): number {
   const quotient = value / step;
   const nearest = Math.round(quotient);
   const epsilon = 1e-12 * Math.max(1, Math.abs(quotient));
   const index =
-    Math.abs(quotient - nearest) <= epsilon ? nearest + 1 : Math.ceil(quotient);
+    Math.abs(quotient - nearest) <= epsilon ? nearest : Math.ceil(quotient);
   return index * step;
+}
+
+function gridBoundaryBelongsToInterval(
+  value: number,
+  start: number,
+  end: number,
+  includeEnd: boolean,
+  tolerance: number,
+): boolean {
+  if (value < start - tolerance || value > end + tolerance) return false;
+  if (Math.abs(value - start) <= tolerance) return true;
+  if (Math.abs(value - end) <= tolerance) return includeEnd;
+  return value > start && value < end;
+}
+
+function normalizeZero(value: number): number {
+  return Object.is(value, -0) ? 0 : value;
 }
 
 function compact(value: number): string {

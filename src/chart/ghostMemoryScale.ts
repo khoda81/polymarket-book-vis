@@ -162,8 +162,6 @@ export class GhostMemoryScale {
       minDistancePx: 32,
       originAgeMs: clockOffsetMs,
     });
-    let rightEdge = INSET - 8;
-
     // Cut tick marks out of the gradient instead of painting them with the
     // same foreground color. This preserves the old high-contrast appearance
     // in both light and dark themes.
@@ -176,19 +174,52 @@ export class GhostMemoryScale {
     }
     ctx.restore();
 
-    for (const tick of ticks) {
+    const labels = ticks.map((tick) => {
       const x = INSET + tick.position * span;
-      const labelWidth = ctx.measureText(tick.label).width;
-      const left = x - labelWidth / 2;
-      const right = x + labelWidth / 2;
-      const collisionFade = smoothVisibility(left - rightEdge, 8);
-      const rightBoundaryFade = smoothVisibility(width - INSET - right, 8);
-      const opacity = tick.opacity * collisionFade * rightBoundaryFade;
-      if (opacity <= 1 / 255) continue;
+      const widthPx = ctx.measureText(tick.label).width;
+      const left = x - widthPx / 2;
+      const right = x + widthPx / 2;
+      return {
+        tick,
+        x,
+        left,
+        right,
+        baseOpacity:
+          tick.opacity *
+          smoothVisibility(left - INSET, 8) *
+          smoothVisibility(width - INSET - right, 8),
+      };
+    });
 
+    // Soft non-maximum suppression: coarser grid labels attenuate overlapping
+    // finer ones in proportion to their own visibility. Crucially, suppression
+    // does not depend on whether a label happened to cross the 1/255 draw
+    // threshold, so no full-width collision obstacle can pop into existence.
+    for (const label of labels) {
+      let opacity = label.baseOpacity;
+      for (const blocker of labels) {
+        if (blocker === label || blocker.baseOpacity <= 0) continue;
+        const blockerWins =
+          blocker.tick.stepMs > label.tick.stepMs ||
+          (blocker.tick.stepMs === label.tick.stepMs &&
+            blocker.tick.position < label.tick.position);
+        if (!blockerWins) continue;
+
+        const gap =
+          blocker.right <= label.left
+            ? label.left - blocker.right
+            : label.right <= blocker.left
+              ? blocker.left - label.right
+              : 0;
+        if (gap >= 8) continue;
+
+        const separation = smoothVisibility(gap, 8);
+        opacity *= 1 - blocker.baseOpacity * (1 - separation);
+      }
+
+      if (opacity <= 1 / 255) continue;
       ctx.globalAlpha = opacity;
-      ctx.fillText(tick.label, x, HEIGHT);
-      rightEdge = right + 8;
+      ctx.fillText(label.tick.label, label.x, HEIGHT);
     }
     ctx.globalAlpha = 1;
     const markerWidth = 1 / dpr;
