@@ -16,15 +16,21 @@
 
   export let client: PublicClient;
 
-  const SHARE_TICK_MIN_DISTANCE_PX = 24;
+  const SHARE_TICK_MIN_SPACING_PX = 16;
+  const SHARE_TICK_FULL_OPACITY_SPACING_PX = 32;
+  const SHARE_TICK_EDGE_PADDING_PX = 8;
   let shareBar: HTMLDivElement;
   let ghostCanvas: HTMLCanvasElement;
   let shareWidth = 0;
+  let shareDpr = 1;
   let tuning: Readonly<AgeStripTuning> = getAgeStripTuning();
 
   $: reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
   $: shareTicks = shareLegendTicks(reserveShares, shareWidth, {
-    minDistancePx: SHARE_TICK_MIN_DISTANCE_PX,
+    minSpacingPx: SHARE_TICK_MIN_SPACING_PX,
+    fullOpacitySpacingPx: SHARE_TICK_FULL_OPACITY_SPACING_PX,
+    edgePaddingPx: SHARE_TICK_EDGE_PADDING_PX,
+    dpr: shareDpr,
   });
   $: negativeColor = signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
   $: positiveColor = signedVolumeColor(1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
@@ -35,9 +41,11 @@
     });
     const observer = new ResizeObserver(() => {
       shareWidth = shareBar.clientWidth;
+      shareDpr = window.devicePixelRatio || 1;
     });
     observer.observe(shareBar);
     shareWidth = shareBar.clientWidth;
+    shareDpr = window.devicePixelRatio || 1;
 
     const ghost = new GhostMemoryScale(ghostCanvas, client);
 

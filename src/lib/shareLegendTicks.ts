@@ -1,7 +1,6 @@
-import { tickDensityOpacity } from "./tickPlacement/density";
 import { fmtSIAtExponent } from "./math";
-
-const SHARE_STEP_MULTIPLIERS = [1, 0.5] as const;
+import { tickDensityOpacity } from "./tickPlacement/density";
+import { placeQuantileTicks } from "./tickPlacement/quantileTicks";
 
 export interface ShareLegendTick {
   readonly value: number;
@@ -13,9 +12,10 @@ export interface ShareLegendTick {
 }
 
 export interface ShareLegendTickOptions {
-  readonly minDistancePx?: number;
-  readonly fadeDistancePx?: number;
-  readonly edgePaddingPx?: number;
+  readonly minSpacingPx: number;
+  readonly fullOpacitySpacingPx: number;
+  readonly edgePaddingPx: number;
+  readonly dpr: number;
 }
 
 /**
@@ -24,91 +24,61 @@ export interface ShareLegendTickOptions {
  *   s = q / (|q| + reserve)
  *   x = 1/2 + s/2
  *
- * We sample tiny screen intervals, find the largest 1/5 × 10^n value grid
- * that crosses each interval, and fade that grid according to the projected
- * pixel spacing to the next tick from the same family.
+ * Placement is delegated to the same quantile-only raster algorithm used by
+ * the ghost-memory axis. The share-specific pieces are only this quantile,
+ * the nested 1 / 0.5 decade refinement chain, and label formatting.
  */
 export function shareLegendTicks(
   reserve: number,
   widthPx: number,
-  options: ShareLegendTickOptions = {},
-): ShareLegendTick[] {
+  options: ShareLegendTickOptions,
+): readonly ShareLegendTick[] {
   if (!(reserve > 0) || !Number.isFinite(reserve)) return [];
   if (!(widthPx > 0) || !Number.isFinite(widthPx)) return [];
 
-  const minDistancePx = options.minDistancePx ?? 48;
-  const fadeDistancePx = options.fadeDistancePx ?? minDistancePx * 2;
-  const edgePaddingPx = options.edgePaddingPx ?? minDistancePx / 2;
-  const minPosition = Math.min(0.49, Math.max(0, edgePaddingPx / widthPx));
-  const maxPosition = 1 - minPosition;
-  const sampleCount = Math.max(64, Math.ceil(widthPx * 4));
-  const byValue = new Map<number, ShareLegendTick>();
+  const pixelCount = Math.round(widthPx * options.dpr);
+  const edgePaddingRasterPx = Math.round(options.edgePaddingPx * options.dpr);
+  const innerPixelCount = pixelCount - edgePaddingRasterPx * 2;
+  if (innerPixelCount <= 0) return [];
 
-  const zero: ShareLegendTick = {
-    value: 0,
-    position: 0.5,
-    opacity: 1,
-    displayExponent: 0,
-    label: "0",
-  };
-  byValue.set(0, zero);
-
-  let previousValue = shareValueAtPosition(minPosition, reserve);
-  for (let index = 1; index <= sampleCount; index++) {
-    const position =
-      minPosition + (index / sampleCount) * (maxPosition - minPosition);
-    const nextValue = shareValueAtPosition(position, reserve);
-
-    if (previousValue < 0 && nextValue >= 0) {
-      previousValue = nextValue;
-      continue;
-    }
-
-    const family = biggestNiceStepCrossing(previousValue, nextValue);
-    if (family === null) {
-      previousValue = nextValue;
-      continue;
-    }
-
-    const value = firstGridBoundaryAfter(previousValue, family.step);
-    previousValue = nextValue;
-    if (
-      value === 0 ||
-      value < shareValueAtPosition(minPosition, reserve) ||
-      value > shareValueAtPosition(maxPosition, reserve)
-    )
-      continue;
-
-    const tickPosition = shareLegendPosition(value, reserve);
-    const nextPosition = shareLegendPosition(value + family.step, reserve);
-    const previousPosition = shareLegendPosition(value - family.step, reserve);
-    const spacingPx =
-      Math.min(
-        Math.abs(nextPosition - tickPosition),
-        Math.abs(tickPosition - previousPosition),
-      ) * widthPx;
-    const opacity = tickDensityOpacity(
-      spacingPx,
-      minDistancePx,
-      fadeDistancePx,
+  const minSpacingRasterPx = Math.round(options.minSpacingPx * options.dpr);
+  const quantile = (position: number): number =>
+    shareValueAtPosition(
+      (edgePaddingRasterPx + position * innerPixelCount) / pixelCount,
+      reserve,
     );
-    if (opacity <= 1 / 255) continue;
 
-    const normalizedValue = normalizeZero(value);
-    const displayExponent = engineeringExponent(family.exponent);
-    const tick: ShareLegendTick = {
-      value: normalizedValue,
-      position: tickPosition,
-      opacity,
-      displayExponent,
-      label: formatShareTick(normalizedValue, displayExponent),
-    };
-    const existing = byValue.get(tick.value);
-    if (!existing || tick.opacity > existing.opacity)
-      byValue.set(tick.value, tick);
-  }
+  const maxMagnitude = Math.max(Math.abs(quantile(0)), Math.abs(quantile(1)));
+  const centerPixel = Math.floor(innerPixelCount / 2);
+  const centerLeft = quantile(centerPixel / innerPixelCount);
+  const centerRight = quantile((centerPixel + 1) / innerPixelCount);
+  const finestVisibleStep = (centerRight - centerLeft) * minSpacingRasterPx;
 
-  return [...byValue.values()].sort((a, b) => a.value - b.value);
+  const placements = placeQuantileTicks({
+    pixelCount: innerPixelCount,
+    minSpacingPx: minSpacingRasterPx,
+    quantile,
+    refinementSteps: shareRefinementSteps(maxMagnitude, finestVisibleStep),
+  });
+
+  return placements
+    .map((placement): ShareLegendTick => {
+      const opacity = tickDensityOpacity(
+        placement.densityPx / options.dpr,
+        options.minSpacingPx,
+        options.fullOpacitySpacingPx,
+      );
+      const exponent = Math.ceil(Math.log10(placement.step));
+      const displayExponent = engineeringExponent(exponent);
+      return {
+        value: placement.value,
+        position: (edgePaddingRasterPx + placement.pixel + 0.5) / pixelCount,
+        opacity,
+        displayExponent,
+        label: formatShareTick(placement.value, displayExponent),
+      };
+    })
+    .filter((tick) => tick.opacity > 1 / 255);
 }
 
 export function shareLegendPosition(value: number, reserve: number): number {
@@ -125,58 +95,30 @@ export function shareValueAtPosition(
   position: number,
   reserve: number,
 ): number {
-  const signed = Math.max(
-    -1 + Number.EPSILON,
-    Math.min(1 - Number.EPSILON, 2 * position - 1),
-  );
+  if (position === 0) return Number.NEGATIVE_INFINITY;
+  if (position === 1) return Number.POSITIVE_INFINITY;
+
+  const signed = 2 * position - 1;
   if (signed === 0) return 0;
 
   const magnitude = (reserve * Math.abs(signed)) / (1 - Math.abs(signed));
   return Math.sign(signed) * magnitude;
 }
 
-interface ShareStepFamily {
-  readonly step: number;
-  readonly exponent: number;
-}
+export function shareRefinementSteps(
+  maxMagnitude: number,
+  finestVisibleStep: number,
+): readonly number[] {
+  const maxExponent = Math.ceil(Math.log10(maxMagnitude));
+  const minExponent = Math.floor(Math.log10(finestVisibleStep)) - 1;
+  const steps: number[] = [];
 
-function biggestNiceStepCrossing(
-  start: number,
-  end: number,
-): ShareStepFamily | null {
-  if (!(end > start)) return null;
-
-  const maxMagnitude = Math.max(
-    Math.abs(start),
-    Math.abs(end),
-    Number.MIN_VALUE,
-  );
-
-  // Start one decade above the data because 0.5 × 10^N is part of the family.
-  // Search order follows the family declaration:
-  // 1eN, 0.5eN, 1e(N-1), 0.5e(N-1), ...
-  let exponent = Math.floor(Math.log10(maxMagnitude)) + 1;
-  for (let guard = 0; guard < 700; guard++, exponent--) {
-    for (const multiplier of SHARE_STEP_MULTIPLIERS) {
-      const step = multiplier * 10 ** exponent;
-      if (!(step > 0) || !Number.isFinite(step)) continue;
-      if (firstGridBoundaryAfter(start, step) <= end) return { step, exponent };
-    }
+  for (let exponent = maxExponent; exponent >= minExponent; exponent--) {
+    steps.push(10 ** exponent);
+    steps.push(0.5 * 10 ** exponent);
   }
-  return null;
-}
 
-function firstGridBoundaryAfter(value: number, step: number): number {
-  const quotient = value / step;
-  const nearest = Math.round(quotient);
-  const epsilon = 1e-12 * Math.max(1, Math.abs(quotient));
-  const index =
-    Math.abs(quotient - nearest) <= epsilon ? nearest + 1 : Math.ceil(quotient);
-  return index * step;
-}
-
-function normalizeZero(value: number): number {
-  return Object.is(value, -0) ? 0 : value;
+  return steps;
 }
 
 function engineeringExponent(exponent: number): number {

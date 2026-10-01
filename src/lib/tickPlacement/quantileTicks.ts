@@ -67,38 +67,63 @@ export function placeQuantileTicks({
     const startValue = bucketValues[bucket]!;
     const endValue = bucketValues[bucket + 1]!;
 
-    for (const step of refinementSteps) {
-      const value = firstGridValueAtOrAfter(startValue, step);
-      if (!(value < endValue)) continue;
+    const crossing = findCoarsestCrossing(
+      startValue,
+      endValue,
+      refinementSteps,
+    );
+    if (crossing === null) continue;
 
-      const pixel = findOwningPixel(
-        value,
-        leftPixel,
-        rightPixel,
-        valueAtPixelBoundary,
-      );
-      const pixelStartValue = valueAtPixelBoundary(pixel);
-      const pixelEndValue = valueAtPixelBoundary(pixel + 1);
-      const representedPerPixel = pixelEndValue - pixelStartValue;
-      const densityPx =
-        representedPerPixel > 0 && Number.isFinite(representedPerPixel)
-          ? step / representedPerPixel
-          : representedPerPixel === 0
-            ? Number.POSITIVE_INFINITY
-            : 0;
+    const pixel = findOwningPixel(
+      crossing.value,
+      leftPixel,
+      rightPixel,
+      valueAtPixelBoundary,
+    );
+    const pixelStartValue = valueAtPixelBoundary(pixel);
+    const pixelEndValue = valueAtPixelBoundary(pixel + 1);
+    const representedPerPixel = pixelEndValue - pixelStartValue;
+    const densityPx =
+      representedPerPixel > 0 && Number.isFinite(representedPerPixel)
+        ? crossing.step / representedPerPixel
+        : representedPerPixel === 0
+          ? Number.POSITIVE_INFINITY
+          : 0;
 
-      ticks.push({
-        value: normalizeZero(value),
-        step,
-        pixel,
-        position: (pixel + 0.5) / pixelCount,
-        densityPx,
-      });
-      break;
-    }
+    ticks.push({
+      value: normalizeZero(crossing.value),
+      step: crossing.step,
+      pixel,
+      position: (pixel + 0.5) / pixelCount,
+      densityPx,
+    });
   }
 
   return ticks;
+}
+
+function findCoarsestCrossing(
+  startValue: number,
+  endValue: number,
+  refinementSteps: readonly number[],
+): { readonly value: number; readonly step: number } | null {
+  let lo = 0;
+  let hi = refinementSteps.length;
+
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const step = refinementSteps[mid]!;
+    const value = firstGridValueAtOrAfter(startValue, step);
+    if (value < endValue) hi = mid;
+    else lo = mid + 1;
+  }
+
+  if (lo === refinementSteps.length) return null;
+  const step = refinementSteps[lo]!;
+  return {
+    value: firstGridValueAtOrAfter(startValue, step),
+    step,
+  };
 }
 
 function firstGridValueAtOrAfter(value: number, step: number): number {
