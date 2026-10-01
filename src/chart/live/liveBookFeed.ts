@@ -1,15 +1,7 @@
 import type { TokenBook } from "@/domain/books/orderBook";
-import {
-  liveBookCoordinator,
-  type LiveBookFeedCallbacks,
-  type LiveBookWatch,
-} from "./liveBookCoordinator";
+import { liveBookCoordinator } from "./liveBookCoordinator";
+import type { LiveBookFeedCallbacks, LiveBookWatch } from "./liveBookContracts";
 import type { PublicClient, TokenId } from "@polymarket/client";
-
-export type {
-  LiveBookFeedCallbacks,
-  LiveBookUpdate,
-} from "./liveBookCoordinator";
 
 type FeedState =
   | { readonly kind: "idle" }

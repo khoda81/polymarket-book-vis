@@ -23,9 +23,11 @@ export function showSharedTooltip(
     activeSignature = signature;
   }
 
-  element.style.display = "block";
-  element.style.left = `${anchorX}px`;
-  element.style.top = `${anchorY}px`;
+  if (element.style.display !== "block") element.style.display = "block";
+  const left = `${anchorX}px`;
+  const top = `${anchorY}px`;
+  if (element.style.left !== left) element.style.left = left;
+  if (element.style.top !== top) element.style.top = top;
 
   const translateY =
     verticalPlacement === "above"
@@ -36,11 +38,13 @@ export function showSharedTooltip(
           ? "translateY(calc(-100% - 12px))"
           : "translateY(12px)";
 
-  element.style.transform = `${
+  const transform = `${
     anchorX > window.innerWidth / 2
       ? "translateX(calc(-100% - 12px))"
       : "translateX(12px)"
   } ${translateY}`;
+  if (element.style.transform !== transform)
+    element.style.transform = transform;
 }
 
 export function hideSharedTooltip(owner: TooltipOwner): void {

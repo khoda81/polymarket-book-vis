@@ -11,7 +11,7 @@
   import {
     buildChartDefinition,
     type ChartMarketControl,
-  } from "../../domain/markets/chartDefinition";
+  } from "../../chart/configuration/chartDefinition";
   import type {
     ConnectionStatus,
     ViewMode,

@@ -36,18 +36,19 @@ This separation is both a correctness rule and a performance rule.
 
 ## Code layout
 
-The browser entry point is `src/main.ts`; `src/app/App.svelte` composes the dashboard. Imports point directly to the owning module, without barrel files or compatibility re-exports.
+The browser entry point is `src/main.ts`; `src/app/App.svelte` composes the dashboard. Imports point directly to the owning module, without barrel files or compatibility re-exports. Dependencies flow from app and chart code toward domain code; domain modules do not import chart, rendering, or app policy.
 
 | Directory                                                   | Responsibility                                                                        |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `src/app/dashboard`                                         | Dashboard identity, ordering, persisted preferences, masonry and reorder interactions |
 | `src/app/events`, `series`, `charts`, `discovery`, `shared` | UI components grouped by feature                                                      |
 | `src/domain/books`                                          | Exact prices, order books, ingestion and fee schedules                                |
-| `src/domain/markets`                                        | Market metadata, lifecycle, visibility and chart definitions                          |
+| `src/domain/markets`                                        | Presentation-independent market metadata, lifecycle, ordering and visibility          |
 | `src/domain/pressure`                                       | Pressure history, snapshots and observation time                                      |
 | `src/domain/discovery`, `series`                            | Discovery queries and series timeline models                                          |
+| `src/chart/configuration`                                   | Chart definitions, palette selection and event grouping policy                        |
 | `src/chart/age`, `volume`, `series`                         | Chart views and their layout/interaction code                                         |
-| `src/chart/live`                                            | Shared canonical live books and REST/WebSocket reconciliation                         |
+| `src/chart/live`                                            | Shared canonical live books, token stream state and REST/WebSocket reconciliation     |
 | `src/rendering`                                             | Canvas rendering, transforms, tooltips, colors and ticks                              |
 | `src/recorder`                                              | Recorder HTTP hydration and protobuf decoding                                         |
 | `src/shared`                                                | General mathematical utilities                                                        |
@@ -60,7 +61,8 @@ Tests live beside their modules. `backend/recorder.ts` remains the recorder entr
 ## State ownership in the current modules
 
 - Treat persisted browser values, protobuf messages, exchange responses and DOM measurements as external boundaries. Validate them before use. Recorder decoding produces validated pressure snapshots; hydration merges those snapshots without reparsing them.
-- A drag is either absent or a complete session with its key, original geometry and current pointer. Chart groups own their orientation, readiness and market status together, rather than keeping partially populated maps in sync.
+- Dashboard discovery owns its filters, request generation and status. The reorder controller owns the complete pointer session, global listeners and animation frame lifecycle; `App.svelte` only receives order and active-key updates.
+- A live token is `idle`, `awaiting-snapshot`, or `live`. Cached geometry may remain visible during reconnect, but only the `live` state exposes a book for stream mutation. Chart groups own their orientation, readiness and market status together, rather than keeping partially populated maps in sync.
 - Derive secondary information where possible: stable sorting preserves insertion order; chart readiness follows group readiness; recorder network reporting reads the same pending-token list as the request loop.
 - Keep policy constants with their owner. Discovery limits drive both queries and UI bounds/help text. Dashboard storage owns persisted keys and viewport defaults. Protocol versions come from the snapshot schema module.
 - Preserve compatibility at boundaries: storage keys, protobuf field numbers, recorder schema versions, exact price/pressure semantics and live REST/WebSocket ordering must not change during organizational refactors.

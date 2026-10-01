@@ -17,7 +17,7 @@ import {
   tokenPressureChanges,
   tokenPressureLevels,
 } from "@/domain/pressure/pressureBookAdapter";
-import type { LiveBookUpdate } from "../live/liveBookFeed";
+import type { LiveBookUpdate } from "../live/liveBookContracts";
 
 export interface AgeStripPressureTiming {
   readonly recordingSinceMs: number | null;

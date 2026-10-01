@@ -9,7 +9,7 @@
   import {
     eventMarketGroups,
     type EventMarketGroup,
-  } from "../../domain/markets/eventMarketGroups";
+  } from "../../chart/configuration/eventMarketGroups";
   import type { EventMarketStatus } from "../../domain/markets/marketLifecycle";
   import {
     loadStoredAgeRowOrientation,
