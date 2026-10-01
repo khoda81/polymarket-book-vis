@@ -6,6 +6,7 @@ import type { AgeRowOrientation } from "./age/ageStripOrientation";
 import { VolumeBookView } from "./volume/volumeBookView";
 import type { MarketGroupModel } from "./model/marketGroupModel.svelte";
 import type { ObservationTime } from "@/domain/pressure/observationClock";
+import type { AgeStripTuningStore } from "./age/ageStripTuningStore";
 
 export interface ChartSurfaceElements {
   readonly canvas: HTMLCanvasElement;
@@ -57,6 +58,7 @@ export class ChartController {
   constructor(
     surface: ChartSurfaceElements,
     private readonly model: MarketGroupModel,
+    tuning: AgeStripTuningStore,
     initialState: ChartRenderInput,
   ) {
     this.renderState = initialState;
@@ -68,6 +70,7 @@ export class ChartController {
     this.plotter = new OrderBookPlotter(surface.canvas);
     this.ageView = new AgeStripView({
       model,
+      tuning,
       canvas: surface.canvas,
       pressureCanvas: surface.pressureCanvas,
       canvasWrap: surface.canvasWrap,
