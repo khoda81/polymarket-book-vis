@@ -5,6 +5,7 @@ import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/rendering/colors/signedVolume";
+import { shareVolumeAtPressure } from "@/rendering/colors/pressureInk";
 import type { GpuPressureSurface } from "./gpuPressureLayer";
 import {
   ageRowYDirection,
@@ -137,7 +138,7 @@ export function pressurePriceAtDisplayX(
 }
 
 /**
- * Invert the renderer's v/(v+s) vertical projection.
+ * Invert the renderer's v/sqrt(v^2 + s^2) vertical projection.
  *
  * Returns null at/outside the asymptote (the outer row boundary), where no
  * finite cumulative liquidity coordinate exists.
@@ -155,7 +156,7 @@ export function pressureVolumeAtY(
   if (!(pressure >= 0) || pressure >= 1) return null;
 
   const reserveShares = volumePerCssPixel * rowHeightCss;
-  return (reserveShares * pressure) / (1 - pressure);
+  return shareVolumeAtPressure(pressure, reserveShares);
 }
 
 function clamp01(value: number): number {
