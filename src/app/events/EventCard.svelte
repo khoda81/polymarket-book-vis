@@ -16,7 +16,8 @@
     type EventDetails,
   } from "../../domain/markets/eventDetails";
   import type { EventMarketStatus } from "../../domain/markets/marketLifecycle";
-  import { type PublicClient, type Event } from "@polymarket/client";
+  import { getVisualizationContext } from "../visualization/visualizationContext";
+  import type { Event } from "@polymarket/client";
 
   type RuntimeState =
     | { readonly kind: "metadata-loading" }
@@ -25,7 +26,6 @@
     | { readonly kind: "failed"; readonly message: string };
 
   export let event: Event;
-  export let client: PublicClient;
   export let pinned: boolean;
   export let onpin: (pinned: boolean) => void;
   export let onremove: () => void;
@@ -33,6 +33,8 @@
   export let onfailure: (message: string) => void;
   export let onreorderstart: (start: CardReorderStart) => void;
   export let onreorderstep: (direction: -1 | 1) => void;
+
+  const { client } = getVisualizationContext();
 
   let viewMode: ViewMode = "age";
   let runtime: RuntimeState = { kind: "metadata-loading" };
@@ -185,7 +187,6 @@
     {#if bundle}
       <EventCharts
         {bundle}
-        {client}
         {viewMode}
         onready={chartReady}
         onfailure={fail}

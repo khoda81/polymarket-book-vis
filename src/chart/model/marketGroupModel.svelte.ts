@@ -2,8 +2,8 @@ import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { fetchRecorderHydration } from "@/recorder/ageRecorderClient";
 import { ClobFeeScheduleResolver } from "@/domain/books/feeSchedule";
 import {
-  observationClock,
   syncObservationPoints,
+  type ObservationClock,
   type ObservationDescription,
   type ObservationPoint,
 } from "@/domain/pressure/observationClock";
@@ -70,6 +70,7 @@ export class MarketGroupModel {
 
   constructor(
     client: PublicClient,
+    observations: ObservationClock,
     readonly definition: ChartDefinition,
   ) {
     this.visibilityByMarketId = new SvelteMap(
@@ -151,7 +152,7 @@ export class MarketGroupModel {
       onMarketResolved: (resolution) => this.applyResolution(resolution),
     });
 
-    this.unregisterObservationSource = observationClock(client).register({
+    this.unregisterObservationSource = observations.register({
       points: this.observationPointsByToken,
       describe: (tokenId) => this.describeObservation(tokenId),
     });
