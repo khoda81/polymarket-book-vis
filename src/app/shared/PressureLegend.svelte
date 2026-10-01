@@ -22,28 +22,37 @@
   let ghostCanvas: HTMLCanvasElement;
   let shareWidth = 0;
   let shareDpr = 1;
-  let tuning: Readonly<AgeStripTuning> = getAgeStripTuning();
+  let shareTicks = [] as ReturnType<typeof shareLegendTicks>;
 
-  $: reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
-  $: shareTicks = shareLegendTicks(reserveShares, shareWidth, {
-    minSpacingPx: SHARE_TICK_MIN_SPACING_PX,
-    fullOpacitySpacingPx: SHARE_TICK_FULL_OPACITY_SPACING_PX,
-    dpr: shareDpr,
-  });
+  function refreshShareTicks(
+    next: Readonly<AgeStripTuning> = getAgeStripTuning(),
+  ): void {
+    shareTicks = shareLegendTicks(
+      next.volumePerCssPixel * AGE_ROW_BAND_PX,
+      shareWidth,
+      {
+        minSpacingPx: SHARE_TICK_MIN_SPACING_PX,
+        fullOpacitySpacingPx: SHARE_TICK_FULL_OPACITY_SPACING_PX,
+        dpr: shareDpr,
+      },
+    );
+  }
   $: negativeColor = signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
   $: positiveColor = signedVolumeColor(1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
 
   onMount(() => {
-    const unsubscribe = subscribeAgeStripTuning((next) => {
-      tuning = next;
-    });
-    const observer = new ResizeObserver(() => {
-      shareWidth = shareBar.clientWidth;
+    const unsubscribe = subscribeAgeStripTuning(refreshShareTicks);
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      shareWidth = entry.contentRect.width;
       shareDpr = window.devicePixelRatio || 1;
+      refreshShareTicks();
     });
     observer.observe(shareBar);
     shareWidth = shareBar.clientWidth;
     shareDpr = window.devicePixelRatio || 1;
+    refreshShareTicks();
 
     const ghost = new GhostMemoryScale(ghostCanvas, client);
 

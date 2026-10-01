@@ -46,6 +46,7 @@ export class GhostMemoryScale {
   );
   private raf: number | null = null;
   private textColor = "";
+  private width = 0;
   private styleDirty = true;
   private observationFrame: ObservationFrame = { kind: "unobserved" };
   private hoverPointer: GhostHoverPointer | null = null;
@@ -66,7 +67,12 @@ export class GhostMemoryScale {
     if (!ctx)
       throw new Error("Canvas2D is required for the ghost-memory scale");
     this.ctx = ctx;
-    this.resizeObserver = new ResizeObserver(() => this.requestPaint());
+    this.width = canvas.clientWidth;
+    this.resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) this.width = entry.contentRect.width;
+      this.requestPaint();
+    });
     this.resizeObserver.observe(canvas);
     this.unsubscribeTuning = subscribeAgeStripTuning(() => this.requestPaint());
 
@@ -114,7 +120,7 @@ export class GhostMemoryScale {
   private paint(): boolean {
     const frame = this.observationFrame;
     const { ghostHalfLifeMs } = getAgeStripTuning();
-    const width = this.canvas.clientWidth;
+    const width = this.width;
     if (width <= INSET * 2) return false;
     const dpr = window.devicePixelRatio || 1;
     const deviceWidth = Math.round(width * dpr);

@@ -75,6 +75,7 @@ export class AgeStripView {
   private pressureLayer: GpuPressureLayer | null = null;
   private readonly visibilityInitialized = new Set<string>();
   private readonly unsubscribeObservation: () => void;
+  private geometry: AgeStripGeometry | null = null;
   private layoutMode: "age" | "volume" | null = null;
 
   constructor(host: AgeStripHost) {
@@ -134,6 +135,7 @@ export class AgeStripView {
     this.visibilityInitialized.clear();
     this.clock.reset();
     this.tooltip.clear();
+    this.geometry = null;
     this.layoutMode = null;
   }
 
@@ -253,9 +255,6 @@ export class AgeStripView {
   }
 
   draw(): void {
-    const tuning = getAgeStripTuning();
-    const rowOrientation = this.host.getRowOrientation();
-
     const controls = this.collectControls();
     const activeControls = controls.filter((label) => this.isActive(label));
     const rowCount = Math.max(1, activeControls.length);
@@ -298,29 +297,50 @@ export class AgeStripView {
       canvasWidth: vp.l + vp.width + this.host.plotter.padding.r,
       canvasHeight: vp.t + vp.height + this.host.plotter.padding.b,
     };
+    this.geometry = geometry;
     this.clock.setEnabled(true);
     this.clock.setGeometry(geometry);
     this.tooltip.setGeometry(geometry);
+    this.renderPressure(geometry);
 
+    drawAgeAxes(frame, rowCount, activeControls, (tokenId) =>
+      this.host.getPressureColorScale(tokenId),
+    );
+  }
+
+  refreshPressure(): boolean {
+    const geometry = this.geometry;
+    if (this.host.getViewMode() !== "age" || !geometry) return false;
+    this.renderPressure(geometry);
+    return true;
+  }
+
+  private renderPressure(geometry: AgeStripGeometry): void {
+    const tuning = getAgeStripTuning();
+    const rowOrientation = this.host.getRowOrientation();
     const gpuRows: GpuPressureRow[] = [];
 
-    for (const [index, label] of activeControls.entries()) {
-      const tokenId = label.dataset.tokenId;
-      if (!tokenId) continue;
+    for (const row of geometry.rows) {
+      const tokenId = row.tokenId;
       const primaryMemory = this.pressure.memory(tokenId);
-      const oppositeTokenId = this.host.getOppositeTokenId(tokenId);
+      const oppositeTokenId = row.oppositeTokenId;
       const oppositeMemory = oppositeTokenId
         ? this.pressure.memory(oppositeTokenId)
         : undefined;
       if (!primaryMemory && !oppositeMemory) continue;
 
-      const y = rowCount - 1 - index;
-      const rowGeometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
       const colorScale = this.host.getPressureColorScale(tokenId);
+      const centerCss =
+        row.centerY ??
+        geometry.viewport.t +
+          ((geometry.rows.indexOf(row) + 0.5) / geometry.rows.length) *
+            geometry.viewport.height;
+      const topCss = row.topY ?? centerCss - AGE_ROW_BAND_PX / 2;
+      const bottomCss = row.bottomY ?? centerCss + AGE_ROW_BAND_PX / 2;
       gpuRows.push({
         key: tokenId,
-        centerCss: rowGeometry.centerCss,
-        heightCss: rowGeometry.heightCss,
+        centerCss,
+        heightCss: bottomCss - topCss,
         surfaces: [
           ...(primaryMemory
             ? [
@@ -367,12 +387,13 @@ export class AgeStripView {
     const pressureLayer =
       this.pressureLayer ??
       (this.pressureLayer = new GpuPressureLayer(this.host.pressureCanvas));
+    const theme = this.host.getTheme();
     pressureLayer.render({
       rows: gpuRows,
-      viewport: { l: vp.l, width: vp.width },
-      cssWidth: this.host.plotter.width,
-      cssHeight: this.host.plotter.height,
-      dpr,
+      viewport: { l: geometry.viewport.l, width: geometry.viewport.width },
+      cssWidth: geometry.canvasWidth,
+      cssHeight: geometry.canvasHeight,
+      dpr: window.devicePixelRatio || 1,
       volumePerCssPixel: tuning.volumePerCssPixel,
       ghostHalfLifeMs: tuning.ghostHalfLifeMs,
       opacityTimeMs: opacityReference(
@@ -380,14 +401,11 @@ export class AgeStripView {
       ),
       background: theme.bg,
     });
-
-    drawAgeAxes(frame, rowCount, activeControls, (tokenId) =>
-      this.host.getPressureColorScale(tokenId),
-    );
   }
 
   prepareVolumeView(): void {
     this.pressureLayer?.setVisible(false);
+    this.geometry = null;
     this.clock.setGeometry(null);
     this.clock.setEnabled(false);
     this.tooltip.clear();
