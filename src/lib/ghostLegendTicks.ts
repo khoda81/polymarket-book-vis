@@ -107,7 +107,13 @@ export function formatDurationTick(ageMs: number): string {
   return `${sign}${compact(magnitude / YEAR_MS)}y`;
 }
 
+const DURATION_REFINEMENT_STEPS = buildDurationRefinementSteps();
+
 export function durationRefinementSteps(): readonly number[] {
+  return DURATION_REFINEMENT_STEPS;
+}
+
+function buildDurationRefinementSteps(): readonly number[] {
   const steps: number[] = [];
 
   // Decimal coarse scales use the nested 1 / 0.5 pattern:
