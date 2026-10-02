@@ -6,7 +6,6 @@ import {
   opacityReference,
   type ObservationDescription,
   type ObservationPoint,
-  type ObservationReference,
 } from "./observationClock";
 import { stalenessAlpha } from "./pressureField";
 import {
@@ -54,11 +53,7 @@ test("one canonical point stream derives both newest time and token presentation
     observationTime(1_000),
   );
   expect(frame.newestMs).toBe(observationTime(2_000));
-  expect(
-    observationReference(
-      frame.kind === "observed" ? frame.tokens : [],
-    ),
-  ).toEqual({
+  expect(observationReference(frame.tokens)).toEqual({
     kind: "observed",
     newestMs: observationTime(2_000),
   });
@@ -75,31 +70,54 @@ test("one canonical point stream derives both newest time and token presentation
   expect(clock.read()).toEqual({ kind: "unobserved" });
 });
 
+test("local observation references do not advance each other", () => {
+  const first = new Map([["first", point("first", 1_000)]]);
+  const second = new Map([["second", point("second", 2_000)]]);
+
+  expect(opacityReference(observationReference(first.values()))).toBe(
+    observationTime(1_000),
+  );
+  expect(opacityReference(observationReference(second.values()))).toBe(
+    observationTime(2_000),
+  );
+
+  second.set("second", point("second", 3_000));
+
+  expect(opacityReference(observationReference(first.values()))).toBe(
+    observationTime(1_000),
+  );
+  expect(opacityReference(observationReference(second.values()))).toBe(
+    observationTime(3_000),
+  );
+});
+
 test("quiet periods advance real age without changing pressure opacity or dot positions", () => {
-  const clock = new ObservationClock();
   const data = new Map([
     ["new", point("new", 10_000)],
     ["old", point("old", 5_000)],
   ]);
-  clock.register({
-    points: data,
-    describe: (tokenId) => ({ name: tokenId, color: "red" }),
-  });
   const reference = opacityReference(observationReference(data.values()));
   const halfLife = 5_000;
   const dot = ghostPositionForAge(reference - 5_000, halfLife);
   expect(stalenessAlpha(5_000, reference, halfLife)).toBe(0.5);
+
   for (const wallNow of [10_000, 15_000, 60_000]) {
-    expect(opacityReference(observationReference(data.values()))).toBe(reference);
-    expect(
-      stalenessAlpha(5_000, opacityReference(observationReference(data.values())), halfLife),
-    ).toBe(0.5);
+    const currentReference = opacityReference(
+      observationReference(data.values()),
+    );
+    expect(currentReference).toBe(reference);
+    expect(stalenessAlpha(5_000, currentReference, halfLife)).toBe(0.5);
     const actualAge = wallNow - reference + ageAtGhostPosition(dot, halfLife);
     expect(actualAge).toBe(wallNow - 5_000);
   }
+
   data.set("new", point("new", 15_000));
   expect(
-    stalenessAlpha(5_000, opacityReference(observationReference(data.values())), halfLife),
+    stalenessAlpha(
+      5_000,
+      opacityReference(observationReference(data.values())),
+      halfLife,
+    ),
   ).toBe(0.25);
   expect(ghostPositionForAge(15_000 - 5_000, halfLife)).toBe(0.75);
 });
