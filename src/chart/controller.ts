@@ -29,6 +29,12 @@ export interface ChartRenderInput {
 
 export type ChartDrawKind = "opacity" | "pressure" | "full";
 
+export interface ChartPendingState {
+  readonly kind: ChartDrawKind;
+  readonly queueAgeMs: number;
+  readonly requestCount: number;
+}
+
 export interface ChartRenderedState {
   readonly kind: ChartDrawKind;
   readonly opacityTimeMs: ObservationTime;
@@ -76,6 +82,7 @@ export class ChartController {
     tuning: AgeStripTuningStore,
     initialState: ChartRenderInput,
     private readonly onRendered?: (state: ChartRenderedState) => void,
+    private readonly onPending?: (state: ChartPendingState | null) => void,
   ) {
     this.renderState = initialState;
     this.model.setViewMode(initialState.viewMode);
@@ -188,9 +195,16 @@ export class ChartController {
     )
       this.pendingDraw = kind;
 
-    if (this.raf !== null) return;
-    this.queuedAtMs = nowMs;
-    this.raf = requestAnimationFrame(() => this.performDraw());
+    if (this.raf === null) {
+      this.queuedAtMs = nowMs;
+      this.raf = requestAnimationFrame(() => this.performDraw());
+    }
+
+    this.onPending?.({
+      kind: this.pendingDraw,
+      queueAgeMs: nowMs - this.queuedAtMs,
+      requestCount: this.pendingRequestCount,
+    });
   }
 
   private performDraw(): void {
@@ -202,6 +216,7 @@ export class ChartController {
     const requestCount = this.pendingRequestCount;
     this.pendingDraw = null;
     this.pendingRequestCount = 0;
+    this.onPending?.(null);
 
     let renderedKind: ChartDrawKind = kind;
     if (this.renderState.viewMode === "age") {
