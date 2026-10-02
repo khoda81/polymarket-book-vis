@@ -122,6 +122,13 @@
       ? null
       : model.pressureRevision - lastRendered.pressureRevision,
   );
+  const debugRevisions = $derived(
+    [
+      model.pressureRevision,
+      lastSubmitted?.pressureRevision ?? "—",
+      lastRendered?.pressureRevision ?? "—",
+    ].join("/"),
+  );
 
   function userSetVisible(control: ChartMarketControl, visible: boolean): void {
     model.userSetMarketVisible(control, visible);
@@ -133,6 +140,11 @@
     return `${date.toLocaleTimeString([], { hour12: false })}.${String(
       date.getMilliseconds(),
     ).padStart(3, "0")}`;
+  }
+
+  function debugPending(state: ChartPendingState | null): string {
+    if (!state) return "—";
+    return `${state.kind} ${state.queueAgeMs.toFixed(1)}ms ×${state.requestCount}`;
   }
 
   function renderInput(): ChartRenderInput {
@@ -161,7 +173,7 @@
   $effect(() => {
     // Always read the reactive input, even before the imperative chart exists.
     // This also gives debug mode a boundary between Svelte propagation and the
-    // controller's rAF/draw queue.
+    // shared presentation queue.
     const input = renderInput();
     if (pressureDebug) lastSubmitted = input;
     chart?.update(input);
@@ -238,8 +250,8 @@
         {renderedFrontierLagMs ?? "—"}ms
       </span>
       <span>
-        rev {model.pressureRevision}/{lastSubmitted?.pressureRevision ?? "—"}/{lastRendered?.pressureRevision ?? "—"}
-        · Δsubmit {submittedPressureRevisionLag ?? "—"} · Δdraw
+        rev {debugRevisions} · Δsubmit {submittedPressureRevisionLag ?? "—"} ·
+        Δdraw
         {renderedPressureRevisionLag ?? "—"}
       </span>
       <span>
@@ -251,12 +263,7 @@
         CPU {lastRendered ? lastRendered.drawCpuMs.toFixed(1) : "—"}ms ·
         coalesced {lastRendered?.coalescedRequests ?? "—"}
       </span>
-      <span>
-        pending
-        {pendingRender
-          ? `${pendingRender.kind} ${pendingRender.queueAgeMs.toFixed(1)}ms ×${pendingRender.requestCount}`
-          : "—"}
-      </span>
+      <span>pending {debugPending(pendingRender)}</span>
     </div>
   {/if}
 
