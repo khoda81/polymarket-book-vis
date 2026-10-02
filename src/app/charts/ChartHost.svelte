@@ -9,7 +9,10 @@
     DEFAULT_AGE_ROW_ORIENTATION,
     type AgeRowOrientation,
   } from "../../chart/age/ageStripOrientation";
-  import { opacityReference } from "../../domain/pressure/observationClock";
+  import {
+    observationReference,
+    opacityReference,
+  } from "../../domain/pressure/observationClock";
   import { getVisualizationContext } from "../visualization/visualizationContext";
   import {
     buildChartDefinition,
@@ -92,7 +95,9 @@
 
   function renderInput(): ChartRenderInput {
     const tuning = visualization.tuning.get();
-    const reference = visualization.observations.readReference();
+    const reference = observationReference(
+      model.observationPointsByToken.values(),
+    );
 
     return {
       viewMode,

@@ -136,8 +136,6 @@ export class SeriesTimelineView {
   private lastAnchorEventId: string | null = null;
   private clockTimer: number | undefined;
   private readonly unregisterObservationSource: () => void;
-  private readonly observationPointsByToken =
-    new SvelteMap<string, ObservationPoint>();
   private observationGeometry: AgeStripGeometry | null = null;
   private renderInput: SeriesTimelineRenderInput;
   private raf: number | null = null;
@@ -148,6 +146,10 @@ export class SeriesTimelineView {
     pressureCanvas: HTMLCanvasElement,
     private readonly canvasWrap: HTMLElement,
     private readonly client: PublicClient,
+    private readonly observationPointsByToken: SvelteMap<
+      string,
+      ObservationPoint
+    >,
     private readonly observations: ObservationClock,
     private readonly tuning: AgeStripTuningStore,
     private readonly series: Series,
