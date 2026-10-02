@@ -77,6 +77,7 @@
   let canvasWrap: HTMLDivElement;
   let toggles: HTMLDivElement;
   let chart = $state<ChartController | null>(null);
+  let lastSubmitted = $state<ChartRenderInput | null>(null);
   let lastRendered = $state<ChartRenderedState | null>(null);
 
   const orderedAgeControls = $derived(
@@ -99,10 +100,20 @@
   const currentFrontierMs = $derived(
     opacityReference(localObservationReference),
   );
+  const submittedFrontierLagMs = $derived(
+    lastSubmitted === null
+      ? null
+      : currentFrontierMs - lastSubmitted.opacityTimeMs,
+  );
   const renderedFrontierLagMs = $derived(
     lastRendered === null
       ? null
       : currentFrontierMs - lastRendered.opacityTimeMs,
+  );
+  const submittedPressureRevisionLag = $derived(
+    lastSubmitted === null
+      ? null
+      : model.pressureRevision - lastSubmitted.pressureRevision,
   );
   const renderedPressureRevisionLag = $derived(
     lastRendered === null
@@ -146,7 +157,12 @@
   });
 
   $effect(() => {
-    chart?.update(renderInput());
+    // Always read the reactive input, even before the imperative chart exists.
+    // This also gives debug mode a boundary between Svelte propagation and the
+    // controller's rAF/draw queue.
+    const input = renderInput();
+    if (pressureDebug) lastSubmitted = input;
+    chart?.update(input);
   });
 
   onMount(() => {
@@ -209,12 +225,17 @@
         (renderedPressureRevisionLag ?? 0) !== 0}
     >
       <span>
-        frontier {debugTime(currentFrontierMs)} / drawn
+        frontier {debugTime(currentFrontierMs)} / submitted
+        {debugTime(lastSubmitted?.opacityTimeMs ?? 0)} / drawn
         {debugTime(lastRendered?.opacityTimeMs ?? 0)}
       </span>
       <span>
-        Δt {renderedFrontierLagMs ?? "—"}ms · rev
-        {model.pressureRevision}/{lastRendered?.pressureRevision ?? "—"} · Δrev
+        Δsubmit {submittedFrontierLagMs ?? "—"}ms · Δdraw
+        {renderedFrontierLagMs ?? "—"}ms
+      </span>
+      <span>
+        rev {model.pressureRevision}/{lastSubmitted?.pressureRevision ?? "—"}/{lastRendered?.pressureRevision ?? "—"}
+        · Δsubmit {submittedPressureRevisionLag ?? "—"} · Δdraw
         {renderedPressureRevisionLag ?? "—"}
       </span>
       <span>draw {lastRendered?.kind ?? "—"}</span>
