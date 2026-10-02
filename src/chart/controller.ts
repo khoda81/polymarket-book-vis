@@ -7,6 +7,10 @@ import { VolumeBookView } from "./volume/volumeBookView";
 import type { MarketGroupModel } from "./model/marketGroupModel.svelte";
 import type { ObservationTime } from "@/domain/pressure/observationClock";
 import type { AgeStripTuningStore } from "./age/ageStripTuningStore";
+import {
+  type PresentationTarget,
+  PresentationCoordinator,
+} from "./presentationCoordinator";
 
 export interface ChartSurfaceElements {
   readonly canvas: HTMLCanvasElement;
@@ -60,7 +64,7 @@ const DRAW_PRIORITY: Readonly<Record<ChartDrawKind, number>> = {
  * render snapshots through update(); this class only decides how much retained
  * canvas work that snapshot requires.
  */
-export class ChartController {
+export class ChartController implements PresentationTarget {
   private readonly themeQuery: MediaQueryList;
   private readonly resizeObserver: ResizeObserver;
   private readonly plotter: OrderBookPlotter;
@@ -69,7 +73,6 @@ export class ChartController {
 
   private theme: ChartTheme;
   private renderState: ChartRenderInput;
-  private raf: number | null = null;
   private pendingDraw: ChartDrawKind | null = null;
   private queuedAtMs = 0;
   private latestRequestAtMs = 0;
@@ -80,6 +83,7 @@ export class ChartController {
     surface: ChartSurfaceElements,
     private readonly model: MarketGroupModel,
     tuning: AgeStripTuningStore,
+    private readonly presentation: PresentationCoordinator,
     initialState: ChartRenderInput,
     private readonly onRendered?: (state: ChartRenderedState) => void,
     private readonly onPending?: (state: ChartPendingState | null) => void,
@@ -162,7 +166,7 @@ export class ChartController {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    if (this.raf !== null) cancelAnimationFrame(this.raf);
+    this.presentation.cancel(this);
     this.ageView.destroy();
     this.plotter.destroy();
     this.resizeObserver.disconnect();
@@ -186,6 +190,7 @@ export class ChartController {
 
   private reqDraw(kind: ChartDrawKind): void {
     const nowMs = performance.now();
+    const wasIdle = this.pendingDraw === null;
     this.latestRequestAtMs = nowMs;
     this.pendingRequestCount++;
 
@@ -195,10 +200,8 @@ export class ChartController {
     )
       this.pendingDraw = kind;
 
-    if (this.raf === null) {
-      this.queuedAtMs = nowMs;
-      this.raf = requestAnimationFrame(() => this.performDraw());
-    }
+    if (wasIdle) this.queuedAtMs = nowMs;
+    this.presentation.invalidate(this);
 
     this.onPending?.({
       kind: this.pendingDraw,
@@ -207,9 +210,9 @@ export class ChartController {
     });
   }
 
-  private performDraw(): void {
-    this.raf = null;
-    const kind = this.pendingDraw ?? "full";
+  renderFrame(_frameTimeMs: DOMHighResTimeStamp): void {
+    if (this.destroyed || this.pendingDraw === null) return;
+    const kind = this.pendingDraw;
     const startedAtMs = performance.now();
     const queueDelayMs = startedAtMs - this.queuedAtMs;
     const latestRequestDelayMs = startedAtMs - this.latestRequestAtMs;
