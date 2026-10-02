@@ -11,10 +11,7 @@
     type AgeRowOrientation,
   } from "../../chart/age/ageStripOrientation";
   import { getVisualizationContext } from "../visualization/visualizationContext";
-  import {
-    observationReference,
-    type ObservationPoint,
-  } from "../../domain/pressure/observationClock";
+  import type { ObservationPoint } from "../../domain/pressure/observationClock";
   import type { ConnectionStatus } from "../../domain/markets/chartState";
   import type { Event, Series } from "@polymarket/client";
 
@@ -54,9 +51,7 @@
     const tuning = visualization.tuning.get();
     return {
       ageRowOrientation,
-      observationReference: observationReference(
-        observationPointsByToken.values(),
-      ),
+      observationReference: visualization.observations.readReference(),
       volumePerCssPixel: tuning.volumePerCssPixel,
       ghostHalfLifeMs: tuning.ghostHalfLifeMs,
     };

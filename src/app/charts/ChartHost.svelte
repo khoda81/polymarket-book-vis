@@ -11,10 +11,7 @@
     DEFAULT_AGE_ROW_ORIENTATION,
     type AgeRowOrientation,
   } from "../../chart/age/ageStripOrientation";
-  import {
-    observationReference,
-    opacityReference,
-  } from "../../domain/pressure/observationClock";
+  import { opacityReference } from "../../domain/pressure/observationClock";
   import { getVisualizationContext } from "../visualization/visualizationContext";
   import {
     buildChartDefinition,
@@ -96,11 +93,11 @@
   const toggledControls = $derived(
     viewMode === "age" ? visibleControls : definition.controls,
   );
-  const localObservationReference = $derived(
-    observationReference(model.observationPointsByToken.values()),
+  const globalObservationReference = $derived(
+    visualization.observations.readReference(),
   );
   const currentFrontierMs = $derived(
-    opacityReference(localObservationReference),
+    opacityReference(globalObservationReference),
   );
   const submittedFrontierLagMs = $derived(
     lastSubmitted === null
