@@ -238,7 +238,15 @@
         · Δsubmit {submittedPressureRevisionLag ?? "—"} · Δdraw
         {renderedPressureRevisionLag ?? "—"}
       </span>
-      <span>draw {lastRendered?.kind ?? "—"}</span>
+      <span>
+        draw {lastRendered?.kind ?? "—"} · queue
+        {lastRendered ? lastRendered.queueDelayMs.toFixed(1) : "—"}ms · latest
+        {lastRendered ? lastRendered.latestRequestDelayMs.toFixed(1) : "—"}ms
+      </span>
+      <span>
+        CPU {lastRendered ? lastRendered.drawCpuMs.toFixed(1) : "—"}ms ·
+        coalesced {lastRendered?.coalescedRequests ?? "—"}
+      </span>
     </div>
   {/if}
 
