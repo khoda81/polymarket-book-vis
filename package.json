@@ -7,7 +7,7 @@
     "dev": "vite",
     "recorder": "bun backend/recorder.ts",
     "format": "prettier --write .",
-    "format:check": "prettier --write src/app/charts/ChartHost.svelte src/chart/presentationCoordinator.test.ts src/domain/pressure/observationClock.test.ts && git diff --exit-code",
+    "format:check": "prettier --check .",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "proto:generate": "buf generate && prettier --write src/gen",

@@ -96,7 +96,9 @@
   const globalObservationReference = $derived(
     visualization.observations.readReference(),
   );
-  const currentFrontierMs = $derived(opacityReference(globalObservationReference));
+  const currentFrontierMs = $derived(
+    opacityReference(globalObservationReference),
+  );
   const submittedFrontierLagMs = $derived(
     lastSubmitted === null
       ? null
@@ -245,8 +247,7 @@
         {renderedFrontierLagMs ?? "—"}ms
       </span>
       <span>
-        rev {debugRevisions} · Δsubmit {submittedPressureRevisionLag ?? "—"} ·
-        Δdraw
+        rev {debugRevisions} · Δsubmit {submittedPressureRevisionLag ?? "—"} · Δdraw
         {renderedPressureRevisionLag ?? "—"}
       </span>
       <span>
