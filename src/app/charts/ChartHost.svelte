@@ -179,6 +179,7 @@
       surface,
       model,
       visualization.tuning,
+      visualization.presentation,
       renderInput(),
       pressureDebug ? (state) => (lastRendered = state) : undefined,
       pressureDebug ? (state) => (pendingRender = state) : undefined,
