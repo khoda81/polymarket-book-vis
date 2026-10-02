@@ -268,6 +268,9 @@ export class MarketGroupModel {
           (tokenId) => this.getBook(tokenId),
           (tokenId) => this.getFeeSchedule(tokenId),
         );
+        this.advancePressureObservations(
+          Object.keys(hydration.pressureSnapshotsByToken),
+        );
         this.recordingRevision++;
         this.pressureRevision++;
         this.refreshObservations();
@@ -300,13 +303,18 @@ export class MarketGroupModel {
     };
   }
 
+  private advancePressureObservations(tokenIds: Iterable<string>): void {
+    for (const tokenId of tokenIds) {
+      const observedAtMs = this.pressure.observationTime(tokenId);
+      if (observedAtMs !== undefined) this.observations.advance(observedAtMs);
+    }
+  }
+
   private refreshObservations(): void {
     syncObservationPoints(
       this.observationPointsByToken,
       this.currentObservationPoints(),
     );
-    for (const point of this.observationPointsByToken.values())
-      this.observations.advance(point.observedAtMs);
   }
 
   private *currentObservationPoints(): Iterable<ObservationPoint> {
@@ -343,6 +351,13 @@ export class MarketGroupModel {
   }
 
   private applyResolution(resolution: MarketResolutionUpdate): void {
+    if (
+      resolution.resolvedAtMs !== null &&
+      Number.isFinite(resolution.resolvedAtMs) &&
+      resolution.resolvedAtMs >= 0
+    )
+      this.observations.advance(resolution.resolvedAtMs);
+
     for (const control of this.definition.controls) {
       const oppositeTokenId = control.market.outcomes.no.tokenId;
       const belongsToMarket =
