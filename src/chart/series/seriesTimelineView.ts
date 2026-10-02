@@ -5,6 +5,7 @@ import {
   type ObservationDescription,
   type ObservationPoint,
   type ObservationReference,
+  type ObservationTime,
 } from "@/domain/pressure/observationClock";
 import { SvelteMap } from "svelte/reactivity";
 import { signedVolumeColor } from "@/rendering/colors/signedVolume";
@@ -26,7 +27,10 @@ import { drawAgeRowRails } from "../age/ageStripRendering";
 import { GpuPressureLayer, type GpuPressureRow } from "../age/gpuPressureLayer";
 import { LiveBookFeed } from "../live/liveBookFeed";
 import { fetchRecorderHydration } from "@/recorder/ageRecorderClient";
-import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
+import {
+  AGE_ROW_BAND_PX,
+  ghostRefreshDelayMs,
+} from "@/chart/age/ageStripTuning";
 import type { AgeStripTuningStore } from "@/chart/age/ageStripTuningStore";
 import {
   type PresentationTarget,
@@ -142,6 +146,7 @@ export class SeriesTimelineView implements PresentationTarget {
   private readonly unregisterObservationSource: () => void;
   private observationGeometry: AgeStripGeometry | null = null;
   private renderInput: SeriesTimelineRenderInput;
+  private renderedOpacityTimeMs: ObservationTime | null = null;
   private destroyed = false;
 
   constructor(
@@ -284,7 +289,15 @@ export class SeriesTimelineView implements PresentationTarget {
     );
 
     if (orientationChanged) this.ageClock.refresh();
-    if (orientationChanged || tuningChanged || observationChanged)
+
+    const nextOpacityTimeMs = opacityReference(next.observationReference);
+    const opacityNeedsDraw =
+      observationChanged &&
+      (this.renderedOpacityTimeMs === null ||
+        nextOpacityTimeMs - this.renderedOpacityTimeMs >=
+          ghostRefreshDelayMs(next.ghostHalfLifeMs));
+
+    if (orientationChanged || tuningChanged || opacityNeedsDraw)
       this.requestDraw();
   }
 
@@ -631,6 +644,9 @@ export class SeriesTimelineView implements PresentationTarget {
     this.updateAnchorEvent(nowMs);
     this.refreshFeed(bufferedTokens);
     this.refreshWindowIfNeeded(centerMs, minMs, maxMs, nowMs);
+    this.renderedOpacityTimeMs = opacityReference(
+      this.renderInput.observationReference,
+    );
   }
 
   private drawTimeline(

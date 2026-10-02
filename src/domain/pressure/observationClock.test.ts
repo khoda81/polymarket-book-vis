@@ -59,63 +59,52 @@ test("one canonical point stream derives both newest time and token presentation
   });
 
   unregisterSecond();
-  expect(opacityReference(observationReference(first.values()))).toBe(
-    observationTime(1_000),
-  );
+  expect(opacityReference(clock.readReference())).toBe(observationTime(2_000));
+
   first.set("yes", point("yes", 3_000));
-  expect(opacityReference(observationReference(first.values()))).toBe(
-    observationTime(3_000),
-  );
+  clock.advance(3_000);
+  expect(opacityReference(clock.readReference())).toBe(observationTime(3_000));
+
   unregisterFirst();
   expect(clock.read()).toEqual({ kind: "unobserved" });
+  expect(opacityReference(clock.readReference())).toBe(observationTime(3_000));
 });
 
-test("local observation references do not advance each other", () => {
-  const first = new Map([["first", point("first", 1_000)]]);
-  const second = new Map([["second", point("second", 2_000)]]);
+test("global observation time advances across sources and never regresses", () => {
+  const clock = new ObservationClock();
 
-  expect(opacityReference(observationReference(first.values()))).toBe(
-    observationTime(1_000),
-  );
-  expect(opacityReference(observationReference(second.values()))).toBe(
-    observationTime(2_000),
-  );
+  clock.advance(1_000);
+  expect(opacityReference(clock.readReference())).toBe(observationTime(1_000));
 
-  second.set("second", point("second", 3_000));
+  clock.advance(2_000);
+  expect(opacityReference(clock.readReference())).toBe(observationTime(2_000));
 
-  expect(opacityReference(observationReference(first.values()))).toBe(
-    observationTime(1_000),
-  );
-  expect(opacityReference(observationReference(second.values()))).toBe(
-    observationTime(3_000),
-  );
+  clock.advance(1_500);
+  expect(opacityReference(clock.readReference())).toBe(observationTime(2_000));
 });
 
-test("quiet periods advance real age without changing pressure opacity or dot positions", () => {
-  const data = new Map([
-    ["new", point("new", 10_000)],
-    ["old", point("old", 5_000)],
-  ]);
-  const reference = opacityReference(observationReference(data.values()));
+test("quiet periods keep causal opacity fixed until the global clock advances", () => {
+  const clock = new ObservationClock();
+  clock.advance(10_000);
+
+  const reference = opacityReference(clock.readReference());
   const halfLife = 5_000;
   const dot = ghostPositionForAge(reference - 5_000, halfLife);
   expect(stalenessAlpha(5_000, reference, halfLife)).toBe(0.5);
 
   for (const wallNow of [10_000, 15_000, 60_000]) {
-    const currentReference = opacityReference(
-      observationReference(data.values()),
-    );
+    const currentReference = opacityReference(clock.readReference());
     expect(currentReference).toBe(reference);
     expect(stalenessAlpha(5_000, currentReference, halfLife)).toBe(0.5);
     const actualAge = wallNow - reference + ageAtGhostPosition(dot, halfLife);
     expect(actualAge).toBe(wallNow - 5_000);
   }
 
-  data.set("new", point("new", 15_000));
+  clock.advance(15_000);
   expect(
     stalenessAlpha(
       5_000,
-      opacityReference(observationReference(data.values())),
+      opacityReference(clock.readReference()),
       halfLife,
     ),
   ).toBe(0.25);
