@@ -11,18 +11,12 @@ export const GHOST_ALPHA_BUCKET_WIDTH = 1 / 256;
  * quantized rendering must schedule the next actual bucket boundary crossing.
  */
 export function ghostOpacityBucketDelayMs(halfLifeMs: number): number {
-  return stalenessAgeForOpacityErrorMs(
-    halfLifeMs,
-    GHOST_ALPHA_BUCKET_WIDTH,
-  );
+  return stalenessAgeForOpacityErrorMs(halfLifeMs, GHOST_ALPHA_BUCKET_WIDTH);
 }
 
 export function ghostRefreshDelayMs(halfLifeMs: number): number {
   if (!(halfLifeMs > 0) || !Number.isFinite(halfLifeMs))
     return MAX_GHOST_REFRESH_MS;
 
-  return Math.min(
-    MAX_GHOST_REFRESH_MS,
-    ghostOpacityBucketDelayMs(halfLifeMs),
-  );
+  return Math.min(MAX_GHOST_REFRESH_MS, ghostOpacityBucketDelayMs(halfLifeMs));
 }

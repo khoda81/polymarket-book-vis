@@ -4,7 +4,9 @@ import {
   type PresentationTarget,
 } from "./presentationCoordinator";
 
-test("one frame renders each dirty target once with its latest state", () => {
+function withFakeAnimationFrames(
+  run: (callbacks: Map<number, FrameRequestCallback>) => void,
+): void {
   const originalRequest = Object.getOwnPropertyDescriptor(
     globalThis,
     "requestAnimationFrame",
@@ -32,6 +34,37 @@ test("one frame renders each dirty target once with its latest state", () => {
   });
 
   try {
+    run(callbacks);
+  } finally {
+    if (originalRequest)
+      Object.defineProperty(
+        globalThis,
+        "requestAnimationFrame",
+        originalRequest,
+      );
+    else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+
+    if (originalCancel)
+      Object.defineProperty(
+        globalThis,
+        "cancelAnimationFrame",
+        originalCancel,
+      );
+    else Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
+  }
+}
+
+function runNextFrame(
+  callbacks: Map<number, FrameRequestCallback>,
+  timeMs: number,
+): void {
+  const next = [...callbacks.entries()][0]!;
+  callbacks.delete(next[0]);
+  next[1](timeMs);
+}
+
+test("one frame renders each dirty target once with its latest state", () => {
+  withFakeAnimationFrames((callbacks) => {
     const coordinator = new PresentationCoordinator();
     const frames: string[] = [];
     let aGeneration = 0;
@@ -54,52 +87,16 @@ test("one frame renders each dirty target once with its latest state", () => {
     coordinator.invalidate(b);
 
     expect(callbacks.size).toBe(1);
-    const first = [...callbacks.entries()][0]!;
-    callbacks.delete(first[0]);
-    first[1](10);
+    runNextFrame(callbacks, 10);
 
     expect(frames).toEqual(["a:2", "b"]);
     expect(callbacks.size).toBe(0);
     coordinator.destroy();
-  } finally {
-    if (originalRequest)
-      Object.defineProperty(globalThis, "requestAnimationFrame", originalRequest);
-    else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
-
-    if (originalCancel)
-      Object.defineProperty(globalThis, "cancelAnimationFrame", originalCancel);
-    else Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
-  }
+  });
 });
 
 test("reinvalidating while a frame is consumed schedules the next frame", () => {
-  const originalRequest = Object.getOwnPropertyDescriptor(
-    globalThis,
-    "requestAnimationFrame",
-  );
-  const originalCancel = Object.getOwnPropertyDescriptor(
-    globalThis,
-    "cancelAnimationFrame",
-  );
-
-  let nextId = 1;
-  const callbacks = new Map<number, FrameRequestCallback>();
-  Object.defineProperty(globalThis, "requestAnimationFrame", {
-    configurable: true,
-    value: (callback: FrameRequestCallback) => {
-      const id = nextId++;
-      callbacks.set(id, callback);
-      return id;
-    },
-  });
-  Object.defineProperty(globalThis, "cancelAnimationFrame", {
-    configurable: true,
-    value: (id: number) => {
-      callbacks.delete(id);
-    },
-  });
-
-  try {
+  withFakeAnimationFrames((callbacks) => {
     const coordinator = new PresentationCoordinator();
     let renders = 0;
     const target: PresentationTarget = {
@@ -110,27 +107,15 @@ test("reinvalidating while a frame is consumed schedules the next frame", () => 
     };
 
     coordinator.invalidate(target);
-    const first = [...callbacks.entries()][0]!;
-    callbacks.delete(first[0]);
-    first[1](10);
+    runNextFrame(callbacks, 10);
 
     expect(renders).toBe(1);
     expect(callbacks.size).toBe(1);
 
-    const second = [...callbacks.entries()][0]!;
-    callbacks.delete(second[0]);
-    second[1](20);
+    runNextFrame(callbacks, 20);
 
     expect(renders).toBe(2);
     expect(callbacks.size).toBe(0);
     coordinator.destroy();
-  } finally {
-    if (originalRequest)
-      Object.defineProperty(globalThis, "requestAnimationFrame", originalRequest);
-    else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
-
-    if (originalCancel)
-      Object.defineProperty(globalThis, "cancelAnimationFrame", originalCancel);
-    else Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
-  }
+  });
 });
