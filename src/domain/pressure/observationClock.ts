@@ -1,4 +1,4 @@
-import { SvelteSet } from "svelte/reactivity";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
 
 // Wall time cannot accidentally be passed as the pressure opacity reference.
 declare const observationTimeBrand: unique symbol;
@@ -103,9 +103,32 @@ export function syncObservationPoints(
  */
 export class ObservationClock {
   private readonly sources = new SvelteSet<ObservationSource>();
+  private readonly reference = new SvelteMap<"newest", ObservationTime>();
+
+  /**
+   * Advance the visualization-wide causal clock.
+   *
+   * The clock is monotonic and independent of source visibility. Removing or
+   * hiding the source that most recently advanced time must never make pressure
+   * become younger again.
+   */
+  advance(value: number | ObservationTime): void {
+    const next = observationTime(value);
+    const current = this.reference.get("newest");
+    if (current !== undefined && next <= current) return;
+    this.reference.set("newest", next);
+  }
+
+  readReference(): ObservationReference {
+    const newestMs = this.reference.get("newest");
+    return newestMs === undefined
+      ? { kind: "unobserved" }
+      : { kind: "observed", newestMs };
+  }
 
   register(source: ObservationSource): () => void {
     this.sources.add(source);
+    for (const point of source.points.values()) this.advance(point.observedAtMs);
     return () => {
       this.sources.delete(source);
     };
@@ -116,24 +139,22 @@ export class ObservationClock {
       string,
       { readonly point: ObservationPoint; readonly source: ObservationSource }
     >();
-    let newestMs: ObservationTime | undefined;
+    const reference = this.readReference();
 
     for (const source of this.sources) {
       for (const point of source.points.values()) {
-        if (newestMs === undefined || point.observedAtMs > newestMs)
-          newestMs = point.observedAtMs;
-
         const previous = tokens.get(point.tokenId);
         if (!previous || point.observedAtMs > previous.point.observedAtMs)
           tokens.set(point.tokenId, { point, source });
       }
     }
 
-    if (newestMs === undefined) return { kind: "unobserved" };
+    if (tokens.size === 0 || reference.kind === "unobserved")
+      return { kind: "unobserved" };
 
     return {
       kind: "observed",
-      newestMs,
+      newestMs: reference.newestMs,
       tokens: [...tokens.values()].map(({ point, source }) => ({
         ...point,
         ...source.describe(point.tokenId),

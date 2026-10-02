@@ -767,6 +767,8 @@ export class SeriesTimelineView implements PresentationTarget {
       this.observationPointsByToken,
       this.observationPoints(),
     );
+    for (const point of this.observationPointsByToken.values())
+      this.observations.advance(point.observedAtMs);
   }
 
   private *observationPoints(): Iterable<ObservationPoint> {
@@ -870,6 +872,7 @@ export class SeriesTimelineView implements PresentationTarget {
       },
       onBookUpdated: (tokenId, book, update) => {
         if (this.destroyed || generation !== this.feedGeneration) return;
+        this.observations.advance(update.validThroughMs);
         const key = tokenId;
         this.bookCache.set(key, book);
         this.pressure.applyBookUpdate(

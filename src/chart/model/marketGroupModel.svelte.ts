@@ -70,7 +70,7 @@ export class MarketGroupModel {
 
   constructor(
     client: PublicClient,
-    observations: ObservationClock,
+    private readonly observations: ObservationClock,
     readonly definition: ChartDefinition,
   ) {
     this.visibilityByMarketId = new SvelteMap(
@@ -134,6 +134,7 @@ export class MarketGroupModel {
         this.connectionStatus = status;
       },
       onBookUpdated: (tokenId, book, update) => {
+        this.observations.advance(update.validThroughMs);
         this.pressure.applyBookUpdate(
           tokenId,
           book,
@@ -152,7 +153,7 @@ export class MarketGroupModel {
       onMarketResolved: (resolution) => this.applyResolution(resolution),
     });
 
-    this.unregisterObservationSource = observations.register({
+    this.unregisterObservationSource = this.observations.register({
       points: this.observationPointsByToken,
       describe: (tokenId) => this.describeObservation(tokenId),
     });
@@ -304,6 +305,8 @@ export class MarketGroupModel {
       this.observationPointsByToken,
       this.currentObservationPoints(),
     );
+    for (const point of this.observationPointsByToken.values())
+      this.observations.advance(point.observedAtMs);
   }
 
   private *currentObservationPoints(): Iterable<ObservationPoint> {
