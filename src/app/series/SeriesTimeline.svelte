@@ -39,8 +39,7 @@
   }: Props = $props();
 
   const visualization = getVisualizationContext();
-  const observationPointsByToken =
-    new SvelteMap<string, ObservationPoint>();
+  const observationPointsByToken = new SvelteMap<string, ObservationPoint>();
 
   let canvas: HTMLCanvasElement;
   let pressureCanvas: HTMLCanvasElement;
