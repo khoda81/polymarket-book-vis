@@ -35,6 +35,10 @@ export interface ChartRenderedState {
   readonly pressureRevision: number;
   readonly bookRevision: number;
   readonly renderedAtMs: number;
+  readonly queueDelayMs: number;
+  readonly latestRequestDelayMs: number;
+  readonly drawCpuMs: number;
+  readonly coalescedRequests: number;
 }
 
 const DRAW_PRIORITY: Readonly<Record<ChartDrawKind, number>> = {
@@ -61,6 +65,9 @@ export class ChartController {
   private renderState: ChartRenderInput;
   private raf: number | null = null;
   private pendingDraw: ChartDrawKind | null = null;
+  private queuedAtMs = 0;
+  private latestRequestAtMs = 0;
+  private pendingRequestCount = 0;
   private destroyed = false;
 
   constructor(
@@ -171,6 +178,10 @@ export class ChartController {
   }
 
   private reqDraw(kind: ChartDrawKind): void {
+    const nowMs = performance.now();
+    this.latestRequestAtMs = nowMs;
+    this.pendingRequestCount++;
+
     if (
       this.pendingDraw === null ||
       DRAW_PRIORITY[kind] > DRAW_PRIORITY[this.pendingDraw]
@@ -178,40 +189,62 @@ export class ChartController {
       this.pendingDraw = kind;
 
     if (this.raf !== null) return;
+    this.queuedAtMs = nowMs;
     this.raf = requestAnimationFrame(() => this.performDraw());
   }
 
   private performDraw(): void {
     this.raf = null;
     const kind = this.pendingDraw ?? "full";
+    const startedAtMs = performance.now();
+    const queueDelayMs = startedAtMs - this.queuedAtMs;
+    const latestRequestDelayMs = startedAtMs - this.latestRequestAtMs;
+    const requestCount = this.pendingRequestCount;
     this.pendingDraw = null;
+    this.pendingRequestCount = 0;
 
+    let renderedKind: ChartDrawKind = kind;
     if (this.renderState.viewMode === "age") {
       if (kind === "opacity" && this.ageView.refreshOpacity()) {
-        this.recordRendered("opacity");
-        return;
+        renderedKind = "opacity";
+      } else if (kind !== "full" && this.ageView.refreshPressure()) {
+        renderedKind = "pressure";
+      } else {
+        this.ageView.draw();
+        renderedKind = "full";
       }
-      if (kind !== "full" && this.ageView.refreshPressure()) {
-        this.recordRendered("pressure");
-        return;
-      }
-      this.ageView.draw();
-      this.recordRendered("full");
-      return;
+    } else {
+      this.ageView.prepareVolumeView();
+      this.volumeView.draw();
+      renderedKind = "full";
     }
 
-    this.ageView.prepareVolumeView();
-    this.volumeView.draw();
-    this.recordRendered("full");
+    this.recordRendered(
+      renderedKind,
+      queueDelayMs,
+      latestRequestDelayMs,
+      requestCount,
+      performance.now() - startedAtMs,
+    );
   }
 
-  private recordRendered(kind: ChartDrawKind): void {
+  private recordRendered(
+    kind: ChartDrawKind,
+    queueDelayMs: number,
+    latestRequestDelayMs: number,
+    requestCount: number,
+    drawCpuMs: number,
+  ): void {
     this.onRendered?.({
       kind,
       opacityTimeMs: this.renderState.opacityTimeMs,
       pressureRevision: this.renderState.pressureRevision,
       bookRevision: this.renderState.bookRevision,
       renderedAtMs: performance.now(),
+      queueDelayMs,
+      latestRequestDelayMs,
+      drawCpuMs,
+      coalescedRequests: Math.max(0, requestCount - 1),
     });
   }
 }
