@@ -83,6 +83,25 @@ test("global observation time advances across sources and never regresses", () =
   expect(opacityReference(clock.readReference())).toBe(observationTime(2_000));
 });
 
+test("presentation source mutations do not define global causal time", () => {
+  const clock = new ObservationClock();
+  const points = new Map<string, ObservationPoint>();
+  const unregister = clock.register({
+    points,
+    describe: (tokenId) => ({ name: tokenId, color: "red" }),
+  });
+
+  points.set("yes", point("yes", 1_000));
+  expect(clock.readReference()).toEqual({ kind: "unobserved" });
+
+  clock.advance(1_000);
+  expect(opacityReference(clock.readReference())).toBe(observationTime(1_000));
+
+  points.clear();
+  unregister();
+  expect(opacityReference(clock.readReference())).toBe(observationTime(1_000));
+});
+
 test("quiet periods keep causal opacity fixed until the global clock advances", () => {
   const clock = new ObservationClock();
   clock.advance(10_000);

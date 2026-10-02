@@ -783,8 +783,6 @@ export class SeriesTimelineView implements PresentationTarget {
       this.observationPointsByToken,
       this.observationPoints(),
     );
-    for (const point of this.observationPointsByToken.values())
-      this.observations.advance(point.observedAtMs);
   }
 
   private *observationPoints(): Iterable<ObservationPoint> {
@@ -901,6 +899,12 @@ export class SeriesTimelineView implements PresentationTarget {
       },
       onMarketResolved: (resolution) => {
         if (this.destroyed || generation !== this.feedGeneration) return;
+        if (
+          resolution.resolvedAtMs !== null &&
+          Number.isFinite(resolution.resolvedAtMs) &&
+          resolution.resolvedAtMs >= 0
+        )
+          this.observations.advance(resolution.resolvedAtMs);
         this.resolutionByCondition.set(resolution.conditionId, resolution);
         for (const assetId of resolution.assetIds) {
           this.resolutionByAsset.set(assetId, resolution);
@@ -959,10 +963,20 @@ export class SeriesTimelineView implements PresentationTarget {
           this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId as TokenId),
         (tokenId) => this.feeSchedules.scheduleForToken(tokenId as TokenId),
       );
+      this.advancePressureObservations(
+        Object.keys(hydration.pressureSnapshotsByToken),
+      );
       this.pressureLayer.invalidate();
       this.ageClock.refresh();
       this.requestDraw();
     });
+  }
+
+  private advancePressureObservations(tokenIds: Iterable<string>): void {
+    for (const tokenId of tokenIds) {
+      const observedAtMs = this.pressure.observationTime(tokenId);
+      if (observedAtMs !== undefined) this.observations.advance(observedAtMs);
+    }
   }
 
   private updateAnchorEvent(nowMs: number): void {
