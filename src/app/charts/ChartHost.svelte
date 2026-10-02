@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import {
     ChartController,
+    type ChartPendingState,
     type ChartRenderedState,
     type ChartRenderInput,
     type ChartSurfaceElements,
@@ -78,6 +79,7 @@
   let toggles: HTMLDivElement;
   let chart = $state<ChartController | null>(null);
   let lastSubmitted = $state<ChartRenderInput | null>(null);
+  let pendingRender = $state<ChartPendingState | null>(null);
   let lastRendered = $state<ChartRenderedState | null>(null);
 
   const orderedAgeControls = $derived(
@@ -179,6 +181,7 @@
       visualization.tuning,
       renderInput(),
       pressureDebug ? (state) => (lastRendered = state) : undefined,
+      pressureDebug ? (state) => (pendingRender = state) : undefined,
     );
     chart = next;
 
@@ -246,6 +249,12 @@
       <span>
         CPU {lastRendered ? lastRendered.drawCpuMs.toFixed(1) : "—"}ms ·
         coalesced {lastRendered?.coalescedRequests ?? "—"}
+      </span>
+      <span>
+        pending
+        {pendingRender
+          ? `${pendingRender.kind} ${pendingRender.queueAgeMs.toFixed(1)}ms ×${pendingRender.requestCount}`
+          : "—"}
       </span>
     </div>
   {/if}
