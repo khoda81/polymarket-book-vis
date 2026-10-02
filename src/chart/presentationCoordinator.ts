@@ -42,8 +42,23 @@ export class PresentationCoordinator {
     const batch = [...this.dirty];
     this.dirty.clear();
 
-    for (const target of batch) target.renderFrame(frameTimeMs);
+    for (const target of batch) {
+      try {
+        target.renderFrame(frameTimeMs);
+      } catch (error) {
+        reportPresentationError(error);
+      }
+    }
 
     this.ensureFrame();
   };
+}
+
+function reportPresentationError(error: unknown): void {
+  const reporter = Reflect.get(globalThis, "reportError");
+  if (typeof reporter === "function") {
+    Reflect.apply(reporter, globalThis, [error]);
+    return;
+  }
+  console.error("Presentation target failed", error);
 }

@@ -119,3 +119,47 @@ test("reinvalidating while a frame is consumed schedules the next frame", () => 
     coordinator.destroy();
   });
 });
+
+test("one failing target does not block the rest of the frame", () => {
+  withFakeAnimationFrames((callbacks) => {
+    const originalReportError = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "reportError",
+    );
+    const reported: unknown[] = [];
+    Object.defineProperty(globalThis, "reportError", {
+      configurable: true,
+      value: (error: unknown) => reported.push(error),
+    });
+
+    try {
+      const coordinator = new PresentationCoordinator();
+      const rendered: string[] = [];
+      const failure = new Error("boom");
+
+      const failing: PresentationTarget = {
+        renderFrame() {
+          throw failure;
+        },
+      };
+      const healthy: PresentationTarget = {
+        renderFrame() {
+          rendered.push("healthy");
+        },
+      };
+
+      coordinator.invalidate(failing);
+      coordinator.invalidate(healthy);
+      runNextFrame(callbacks, 10);
+
+      expect(reported).toEqual([failure]);
+      expect(rendered).toEqual(["healthy"]);
+      expect(callbacks.size).toBe(0);
+      coordinator.destroy();
+    } finally {
+      if (originalReportError)
+        Object.defineProperty(globalThis, "reportError", originalReportError);
+      else Reflect.deleteProperty(globalThis, "reportError");
+    }
+  });
+});
