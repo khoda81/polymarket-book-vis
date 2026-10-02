@@ -27,9 +27,17 @@ export interface ChartRenderInput {
   readonly ghostHalfLifeMs: number;
 }
 
-type DrawKind = "opacity" | "pressure" | "full";
+export type ChartDrawKind = "opacity" | "pressure" | "full";
 
-const DRAW_PRIORITY: Readonly<Record<DrawKind, number>> = {
+export interface ChartRenderedState {
+  readonly kind: ChartDrawKind;
+  readonly opacityTimeMs: ObservationTime;
+  readonly pressureRevision: number;
+  readonly bookRevision: number;
+  readonly renderedAtMs: number;
+}
+
+const DRAW_PRIORITY: Readonly<Record<ChartDrawKind, number>> = {
   opacity: 0,
   pressure: 1,
   full: 2,
@@ -52,7 +60,7 @@ export class ChartController {
   private theme: ChartTheme;
   private renderState: ChartRenderInput;
   private raf: number | null = null;
-  private pendingDraw: DrawKind | null = null;
+  private pendingDraw: ChartDrawKind | null = null;
   private destroyed = false;
 
   constructor(
@@ -60,6 +68,7 @@ export class ChartController {
     private readonly model: MarketGroupModel,
     tuning: AgeStripTuningStore,
     initialState: ChartRenderInput,
+    private readonly onRendered?: (state: ChartRenderedState) => void,
   ) {
     this.renderState = initialState;
     this.model.setViewMode(initialState.viewMode);
@@ -114,7 +123,7 @@ export class ChartController {
     if (next.recordingRevision !== previous.recordingRevision)
       this.ageView.refreshAnnotations();
 
-    let kind: DrawKind | null = null;
+    let kind: ChartDrawKind | null = null;
     if (
       next.viewMode !== previous.viewMode ||
       next.ageRowOrientation !== previous.ageRowOrientation ||
@@ -161,7 +170,7 @@ export class ChartController {
     };
   }
 
-  private reqDraw(kind: DrawKind): void {
+  private reqDraw(kind: ChartDrawKind): void {
     if (
       this.pendingDraw === null ||
       DRAW_PRIORITY[kind] > DRAW_PRIORITY[this.pendingDraw]
@@ -178,13 +187,31 @@ export class ChartController {
     this.pendingDraw = null;
 
     if (this.renderState.viewMode === "age") {
-      if (kind === "opacity" && this.ageView.refreshOpacity()) return;
-      if (kind !== "full" && this.ageView.refreshPressure()) return;
+      if (kind === "opacity" && this.ageView.refreshOpacity()) {
+        this.recordRendered("opacity");
+        return;
+      }
+      if (kind !== "full" && this.ageView.refreshPressure()) {
+        this.recordRendered("pressure");
+        return;
+      }
       this.ageView.draw();
+      this.recordRendered("full");
       return;
     }
 
     this.ageView.prepareVolumeView();
     this.volumeView.draw();
+    this.recordRendered("full");
+  }
+
+  private recordRendered(kind: ChartDrawKind): void {
+    this.onRendered?.({
+      kind,
+      opacityTimeMs: this.renderState.opacityTimeMs,
+      pressureRevision: this.renderState.pressureRevision,
+      bookRevision: this.renderState.bookRevision,
+      renderedAtMs: performance.now(),
+    });
   }
 }
