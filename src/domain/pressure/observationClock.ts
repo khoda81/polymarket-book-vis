@@ -128,7 +128,8 @@ export class ObservationClock {
 
   register(source: ObservationSource): () => void {
     this.sources.add(source);
-    for (const point of source.points.values()) this.advance(point.observedAtMs);
+    for (const point of source.points.values())
+      this.advance(point.observedAtMs);
     return () => {
       this.sources.delete(source);
     };
