@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import {
     ChartController,
+    type ChartRenderedState,
     type ChartRenderInput,
     type ChartSurfaceElements,
   } from "../../chart/controller";
@@ -56,6 +57,9 @@
   }: Props = $props();
 
   const visualization = getVisualizationContext();
+  const pressureDebug =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("pressureDebug") === "1";
 
   // A ChartHost owns one market-group renderer for its entire component
   // lifetime. If bundle identity changes, the host itself must be recreated
@@ -73,6 +77,7 @@
   let canvasWrap: HTMLDivElement;
   let toggles: HTMLDivElement;
   let chart = $state<ChartController | null>(null);
+  let lastRendered = $state<ChartRenderedState | null>(null);
 
   const orderedAgeControls = $derived(
     [...definition.controls].sort((a, b) => a.order - b.order),
@@ -88,17 +93,37 @@
   const toggledControls = $derived(
     viewMode === "age" ? visibleControls : definition.controls,
   );
+  const localObservationReference = $derived(
+    observationReference(model.observationPointsByToken.values()),
+  );
+  const currentFrontierMs = $derived(
+    opacityReference(localObservationReference),
+  );
+  const renderedFrontierLagMs = $derived(
+    lastRendered === null
+      ? null
+      : currentFrontierMs - lastRendered.opacityTimeMs,
+  );
+  const renderedPressureRevisionLag = $derived(
+    lastRendered === null
+      ? null
+      : model.pressureRevision - lastRendered.pressureRevision,
+  );
 
   function userSetVisible(control: ChartMarketControl, visible: boolean): void {
     model.userSetMarketVisible(control, visible);
   }
 
+  function debugTime(value: number): string {
+    if (value <= 0) return "—";
+    const date = new Date(value);
+    return `${date.toLocaleTimeString([], { hour12: false })}.${String(
+      date.getMilliseconds(),
+    ).padStart(3, "0")}`;
+  }
+
   function renderInput(): ChartRenderInput {
     const tuning = visualization.tuning.get();
-    const reference = observationReference(
-      model.observationPointsByToken.values(),
-    );
-
     return {
       viewMode,
       ageRowOrientation,
@@ -106,7 +131,7 @@
       pressureRevision: model.pressureRevision,
       visibilityRevision: model.visibilityRevision,
       recordingRevision: model.recordingRevision,
-      opacityTimeMs: opacityReference(reference),
+      opacityTimeMs: currentFrontierMs,
       volumePerCssPixel: tuning.volumePerCssPixel,
       ghostHalfLifeMs: tuning.ghostHalfLifeMs,
     };
@@ -137,6 +162,7 @@
       model,
       visualization.tuning,
       renderInput(),
+      pressureDebug ? (state) => (lastRendered = state) : undefined,
     );
     chart = next;
 
@@ -176,6 +202,25 @@
 </div>
 
 <div class="cpv-chart-stage">
+  {#if pressureDebug && viewMode === "age"}
+    <div
+      class="cpv-pressure-debug"
+      class:cpv-pressure-debug--lagging={(renderedFrontierLagMs ?? 0) !== 0 ||
+        (renderedPressureRevisionLag ?? 0) !== 0}
+    >
+      <span>
+        frontier {debugTime(currentFrontierMs)} / drawn
+        {debugTime(lastRendered?.opacityTimeMs ?? 0)}
+      </span>
+      <span>
+        Δt {renderedFrontierLagMs ?? "—"}ms · rev
+        {model.pressureRevision}/{lastRendered?.pressureRevision ?? "—"} · Δrev
+        {renderedPressureRevisionLag ?? "—"}
+      </span>
+      <span>draw {lastRendered?.kind ?? "—"}</span>
+    </div>
+  {/if}
+
   {#if viewMode === "age" && visibleControls.length > 0}
     <div class="cpv-chart-row-flip">
       <AgeRowFlipButton orientation={ageRowOrientation} onflip={onrowflip} />
