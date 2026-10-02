@@ -1,5 +1,5 @@
 import type { ObservationTime } from "@/domain/pressure/observationClock";
-import { AGE_ROW_BAND_PX, getAgeStripTuning } from "@/chart/age/ageStripTuning";
+import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
 import { relativeTimeOffsetDisplay } from "@/shared/math";
 import {
   PRESSURE_MIN_VISIBLE_ALPHA,
@@ -38,6 +38,8 @@ export interface AgeStripTooltipHost {
   readonly canvas: HTMLCanvasElement;
   readonly getViewMode: () => ViewMode;
   readonly getRowOrientation: () => AgeRowOrientation;
+  readonly getVolumePerCssPixel: () => number;
+  readonly getGhostHalfLifeMs: () => number;
   readonly getPressureBand: (
     tokenId: string,
     price: Price,
@@ -173,7 +175,7 @@ export class AgeStripTooltip {
       sy,
       centerCss,
       rowHeightCss,
-      getAgeStripTuning().volumePerCssPixel,
+      this.host.getVolumePerCssPixel(),
     );
 
     const nowMs = Date.now();
@@ -189,7 +191,7 @@ export class AgeStripTooltip {
         const alpha = pressureValidityAlpha(
           band.validity,
           this.host.getOpacityTime(),
-          getAgeStripTuning().ghostHalfLifeMs,
+          this.host.getGhostHalfLifeMs(),
         );
         if (alpha > PRESSURE_MIN_VISIBLE_ALPHA)
           hover = {

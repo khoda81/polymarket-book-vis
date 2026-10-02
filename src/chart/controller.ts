@@ -1,31 +1,17 @@
-import { fetchRecorderHydration } from "@/recorder/ageRecorderClient";
-import type { ConnectionStatus, ViewMode } from "@/domain/markets/chartState";
-import { ClobFeeScheduleResolver } from "@/domain/books/feeSchedule";
-import type { AutoHiddenReason } from "@/domain/markets/marketVisibility";
-import {
-  resolveMarketLifecycle,
-  type MarketLifecycle,
-  type MarketResolutionUpdate,
-} from "@/domain/markets/marketLifecycle";
-import {
-  pressureScaleForToken,
-  type ChartDefinition,
-  type ChartMarketControl,
-} from "@/domain/markets/chartDefinition";
-import {
-  DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  type SignedVolumeColorScale,
-} from "@/rendering/colors/signedVolume";
+import type { ViewMode } from "@/domain/markets/chartState";
 import { OrderBookPlotter, type ChartTheme } from "@/rendering/renderer";
 import { chartThemeForDarkMode } from "./chartTheme";
-import { AgeStripView } from "./age/ageStripView";
-import {
-  DEFAULT_AGE_ROW_ORIENTATION,
-  type AgeRowOrientation,
-} from "./age/ageStripOrientation";
-import { LiveBookFeed } from "./live/liveBookFeed";
+import { AgeStripView, type AgeStripRenderState } from "./age/ageStripView";
+import type { AgeRowOrientation } from "./age/ageStripOrientation";
 import { VolumeBookView } from "./volume/volumeBookView";
-import type { MarketId, PublicClient, TokenId } from "@polymarket/client";
+import type { MarketGroupModel } from "./model/marketGroupModel.svelte";
+import type { ObservationTime } from "@/domain/pressure/observationClock";
+import type { AgeStripTuningStore } from "./age/ageStripTuningStore";
+import { ghostRefreshDelayMs } from "./age/ageStripTuning";
+import {
+  type PresentationTarget,
+  PresentationCoordinator,
+} from "./presentationCoordinator";
 
 export interface ChartSurfaceElements {
   readonly canvas: HTMLCanvasElement;
@@ -34,148 +20,103 @@ export interface ChartSurfaceElements {
   readonly toggles: HTMLElement;
 }
 
-export interface ChartControllerOptions {
-  readonly onConnectionStatus?: (status: ConnectionStatus) => void;
-  readonly onMarketAutoHidden?: (
-    marketId: MarketId,
-    reason: AutoHiddenReason,
-  ) => void;
-  readonly onMarketLifecycleChanged?: (
-    marketId: MarketId,
-    lifecycle: MarketLifecycle,
-  ) => void;
+export interface ChartRenderInput {
+  readonly viewMode: ViewMode;
+  readonly ageRowOrientation: AgeRowOrientation;
+  readonly bookRevision: number;
+  readonly pressureRevision: number;
+  readonly visibilityRevision: number;
+  readonly recordingRevision: number;
+  readonly opacityTimeMs: ObservationTime;
+  readonly volumePerCssPixel: number;
+  readonly ghostHalfLifeMs: number;
 }
 
-export class ChartController {
-  private readonly feed: LiveBookFeed;
-  private readonly feeSchedules: ClobFeeScheduleResolver;
-  private readonly onMarketAutoHidden: (
-    marketId: MarketId,
-    reason: AutoHiddenReason,
-  ) => void;
-  private readonly onMarketLifecycleChanged: (
-    marketId: MarketId,
-    lifecycle: MarketLifecycle,
-  ) => void;
-  private readonly lifecycleByMarketId = new Map<MarketId, MarketLifecycle>();
+export type ChartDrawKind = "opacity" | "pressure" | "full";
+
+export interface ChartPendingState {
+  readonly kind: ChartDrawKind;
+  readonly queueAgeMs: number;
+  readonly requestCount: number;
+}
+
+export interface ChartRenderedState {
+  readonly kind: ChartDrawKind;
+  readonly opacityTimeMs: ObservationTime;
+  readonly pressureRevision: number;
+  readonly bookRevision: number;
+  readonly renderedAtMs: number;
+  readonly queueDelayMs: number;
+  readonly latestRequestDelayMs: number;
+  readonly drawCpuMs: number;
+  readonly coalescedRequests: number;
+}
+
+const DRAW_PRIORITY: Readonly<Record<ChartDrawKind, number>> = {
+  opacity: 0,
+  pressure: 1,
+  full: 2,
+};
+
+/**
+ * Imperative canvas renderer for one market group.
+ *
+ * Domain/network state lives in MarketGroupModel. Svelte supplies coherent
+ * render snapshots through update(); this class only decides how much retained
+ * canvas work that snapshot requires.
+ */
+export class ChartController implements PresentationTarget {
   private readonly themeQuery: MediaQueryList;
   private readonly resizeObserver: ResizeObserver;
-  private readonly activeTokens = new Set<TokenId>();
-  private readonly controlByTokenValue = new Map<string, ChartMarketControl>();
+  private readonly plotter: OrderBookPlotter;
+  private readonly ageView: AgeStripView;
+  private readonly volumeView: VolumeBookView;
 
   private theme: ChartTheme;
-  private plotter!: OrderBookPlotter;
-  private ageView!: AgeStripView;
-  private volumeView!: VolumeBookView;
-  private raf: number | null = null;
-  private readonly definition: ChartDefinition;
-  private viewMode: ViewMode = "age";
-  private ageRowOrientation: AgeRowOrientation = DEFAULT_AGE_ROW_ORIENTATION;
-  private lifecycle: "new" | "started" | "destroyed" = "new";
+  private renderState: ChartRenderInput;
+  private pendingDraw: ChartDrawKind | null = null;
+  private queuedAtMs = 0;
+  private latestRequestAtMs = 0;
+  private pendingRequestCount = 0;
+  private renderedOpacityTimeMs: ObservationTime | null = null;
+  private destroyed = false;
 
   constructor(
     surface: ChartSurfaceElements,
-    polyMarketClient: PublicClient,
-    definition: ChartDefinition,
-    options: ChartControllerOptions = {},
+    private readonly model: MarketGroupModel,
+    tuning: AgeStripTuningStore,
+    private readonly presentation: PresentationCoordinator,
+    initialState: ChartRenderInput,
+    private readonly onRendered?: (state: ChartRenderedState) => void,
+    private readonly onPending?: (state: ChartPendingState | null) => void,
   ) {
-    this.definition = definition;
-    this.feeSchedules = new ClobFeeScheduleResolver(
-      polyMarketClient,
-      definition.controls.map((control) => control.market),
-    );
-    this.onMarketAutoHidden = options.onMarketAutoHidden ?? (() => undefined);
-    this.onMarketLifecycleChanged =
-      options.onMarketLifecycleChanged ?? (() => undefined);
-    for (const control of definition.controls) {
-      this.lifecycleByMarketId.set(control.market.id, control.lifecycle);
-      this.controlByTokenValue.set(control.tokenId, control);
-      const oppositeTokenId = control.market.outcomes.no.tokenId;
-      if (oppositeTokenId)
-        this.controlByTokenValue.set(oppositeTokenId, control);
-    }
-
-    this.feed = new LiveBookFeed(polyMarketClient, {
-      onConnectionStatus: options.onConnectionStatus ?? (() => undefined),
-      onBookUpdated: (tokenId, _book, update) => {
-        this.ageView.onBookUpdate(tokenId, update);
-        this.reqDraw();
-      },
-      onMarketResolved: (resolution) => {
-        this.applyResolution(resolution);
-      },
-    });
+    this.renderState = initialState;
+    this.model.setViewMode(initialState.viewMode);
 
     this.themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
     this.theme = chartThemeForDarkMode(this.themeQuery.matches);
 
     this.plotter = new OrderBookPlotter(surface.canvas);
-
     this.ageView = new AgeStripView({
-      client: polyMarketClient,
-      getMarketTokenName: (tokenId) => {
-        const control = this.controlForTokenValue(tokenId);
-        if (!control) return tokenId;
-        const tokenName =
-          control.tokenId === tokenId
-            ? control.market.outcomes.yes.label
-            : control.market.outcomes.no.label;
-        return `${tokenName} · ${control.title}`;
-      },
+      model,
+      tuning,
       canvas: surface.canvas,
       pressureCanvas: surface.pressureCanvas,
       canvasWrap: surface.canvasWrap,
       toggles: surface.toggles,
       plotter: this.plotter,
-      activeTokens: this.activeTokens,
-      getBook: (tokenId) => {
-        const id = this.knownTokenId(tokenId);
-        return id ? this.feed.getBook(id) : undefined;
-      },
-      getFeeSchedule: (tokenId) => {
-        const id = this.knownTokenId(tokenId);
-        if (!id) throw new Error(`unknown pressure token ${tokenId}`);
-        return this.feeSchedules.scheduleForToken(id);
-      },
-      getTokenName: (tokenId) => {
-        const control = this.controlForTokenValue(tokenId);
-        if (!control) return undefined;
-        if (control.tokenId === tokenId)
-          return control.market.outcomes.yes.label;
-        return control.market.outcomes.no.tokenId === tokenId
-          ? control.market.outcomes.no.label
-          : undefined;
-      },
-      getMarketName: (tokenId) =>
-        this.controlForTokenValue(tokenId)?.title ?? undefined,
-      getOppositeTokenId: (tokenId) => {
-        const control = this.controlForTokenValue(tokenId);
-        return control?.market.outcomes.no.tokenId ?? undefined;
-      },
-      getPressureColorScale: (tokenId) => {
-        const id = this.knownTokenId(tokenId);
-        return id
-          ? this.pressureColorScale(id)
-          : DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
-      },
       getTheme: () => this.theme,
-      getViewMode: () => this.viewMode,
-      getRowOrientation: () => this.ageRowOrientation,
-      hideToken: (tokenId) => {
-        const id = this.knownTokenId(tokenId);
-        if (id) this.autoHideToken(id, "empty-book");
-      },
-      requestDraw: () => this.reqDraw(),
+      getRenderState: () => this.ageRenderState(),
     });
 
     this.volumeView = new VolumeBookView({
       plotter: this.plotter,
-      definition: this.definition,
-      activeTokens: this.activeTokens,
-      getBook: (tokenId) => this.feed.getBook(tokenId),
+      definition: model.definition,
+      activeTokens: model.activeTokens,
+      getBook: (tokenId) => model.getBook(tokenId),
       getTheme: () => this.theme,
-      isActive: () => this.viewMode === "volume",
-      requestDraw: () => this.reqDraw(),
+      isActive: () => this.renderState.viewMode === "volume",
+      requestDraw: () => this.reqDraw("full"),
     });
     this.plotter.onZoom = (delta) => this.volumeView.zoom(delta);
     this.plotter.onPointer = (pointer) => this.volumeView.setPointer(pointer);
@@ -184,185 +125,153 @@ export class ChartController {
       const entry = entries[0];
       if (!entry) return;
       this.plotter.resizeTo(entry.contentRect.width, entry.contentRect.height);
-      this.reqDraw();
+      this.reqDraw("full");
     });
     this.resizeObserver.observe(surface.canvas);
     this.themeQuery.addEventListener("change", this.handleThemeChange);
+
+    this.reqDraw("full");
   }
 
-  private handleThemeChange = (event: MediaQueryListEvent) => {
-    this.theme = chartThemeForDarkMode(event.matches);
-    this.reqDraw();
-  };
+  update(next: ChartRenderInput): void {
+    if (this.destroyed) return;
 
-  async start(hiddenMarketIds: ReadonlySet<MarketId>): Promise<void> {
-    if (this.lifecycle !== "new")
-      throw new Error(`ChartController cannot start from ${this.lifecycle}`);
-    this.lifecycle = "started";
+    const previous = this.renderState;
+    this.renderState = next;
+    this.model.setViewMode(next.viewMode);
 
-    const allTokenIds = [
-      ...new Set(
-        this.definition.controls.flatMap((control) => {
-          const oppositeTokenId = control.market.outcomes.no.tokenId;
-          return oppositeTokenId
-            ? [control.tokenId, oppositeTokenId]
-            : [control.tokenId];
-        }),
-      ),
-    ];
-    const liveTokenIds = [
-      ...new Set(
-        this.definition.controls
-          .filter((control) => control.lifecycle.kind !== "resolved")
-          .flatMap((control) => {
-            const oppositeTokenId = control.market.outcomes.no.tokenId;
-            return oppositeTokenId
-              ? [control.tokenId, oppositeTokenId]
-              : [control.tokenId];
-          }),
-      ),
-    ];
+    if (next.recordingRevision !== previous.recordingRevision)
+      this.ageView.refreshAnnotations();
 
-    for (const control of this.definition.controls)
-      if (!hiddenMarketIds.has(control.market.id))
-        this.activeTokens.add(control.tokenId);
-
-    this.ageView.configureMarkets(this.definition.controls);
-
-    // Historical pressure remains meaningful after resolution, so hydrate every
-    // displayed token. Only unresolved markets need a live websocket feed.
-    if (allTokenIds.length > 0)
-      void fetchRecorderHydration(allTokenIds, (hydration) => {
-        if (this.lifecycle === "destroyed") return;
-        this.ageView.setRecordingCoverage(hydration.recordingSinceMsByToken);
-        this.ageView.hydratePressureMemory(hydration.pressureSnapshotsByToken);
-        this.reqDraw();
-      });
-
-    if (liveTokenIds.length > 0) {
-      // Fee metadata is part of the pressure snapshot barrier. Resolve it
-      // before subscribing so raw venue prices can never enter live pressure.
-      await this.feeSchedules.prepareTokens(liveTokenIds);
-      await this.feed.start(liveTokenIds);
+    let kind: ChartDrawKind | null = null;
+    if (
+      next.viewMode !== previous.viewMode ||
+      next.ageRowOrientation !== previous.ageRowOrientation ||
+      next.visibilityRevision !== previous.visibilityRevision
+    ) {
+      kind = "full";
+    } else if (next.viewMode === "volume") {
+      if (next.bookRevision !== previous.bookRevision) kind = "full";
+    } else if (
+      next.pressureRevision !== previous.pressureRevision ||
+      next.volumePerCssPixel !== previous.volumePerCssPixel ||
+      next.ghostHalfLifeMs !== previous.ghostHalfLifeMs
+    ) {
+      kind = "pressure";
+    } else if (next.opacityTimeMs !== previous.opacityTimeMs) {
+      const renderedOpacityTimeMs = this.renderedOpacityTimeMs;
+      if (
+        renderedOpacityTimeMs === null ||
+        next.opacityTimeMs - renderedOpacityTimeMs >=
+          ghostRefreshDelayMs(next.ghostHalfLifeMs)
+      )
+        kind = "opacity";
     }
-    if (this.lifecycle === "started") this.reqDraw();
+
+    if (kind) this.reqDraw(kind);
   }
 
-  setViewMode(mode: ViewMode): void {
-    if (mode === this.viewMode) return;
-    this.viewMode = mode;
-    this.reqDraw();
-  }
-
-  setAgeRowOrientation(orientation: AgeRowOrientation): void {
-    if (orientation === this.ageRowOrientation) return;
-    this.ageRowOrientation = orientation;
-    this.reqDraw();
-  }
-
-  setMarketVisible(marketId: MarketId, visible: boolean): void {
-    const control = this.definition.controls.find(
-      (candidate) => candidate.market.id === marketId,
-    );
-    if (!control) return;
-
-    if (visible) this.activeTokens.add(control.tokenId);
-    else this.activeTokens.delete(control.tokenId);
-    this.reqDraw();
-  }
-
-  destroy() {
-    if (this.lifecycle === "destroyed") return;
-    this.lifecycle = "destroyed";
-    this.feed.destroy();
-    if (this.raf !== null) cancelAnimationFrame(this.raf);
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.presentation.cancel(this);
     this.ageView.destroy();
     this.plotter.destroy();
     this.resizeObserver.disconnect();
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
   }
 
-  private knownTokenId(value: string): TokenId | null {
-    const control = this.controlByTokenValue.get(value);
-    if (!control) return null;
-    if (control.tokenId === value) return control.tokenId;
-    const oppositeTokenId = control.market.outcomes.no.tokenId;
-    return oppositeTokenId === value ? oppositeTokenId : null;
+  private readonly handleThemeChange = (event: MediaQueryListEvent) => {
+    this.theme = chartThemeForDarkMode(event.matches);
+    this.reqDraw("full");
+  };
+
+  private ageRenderState(): AgeStripRenderState {
+    return {
+      viewMode: this.renderState.viewMode,
+      rowOrientation: this.renderState.ageRowOrientation,
+      opacityTimeMs: this.renderState.opacityTimeMs,
+      volumePerCssPixel: this.renderState.volumePerCssPixel,
+      ghostHalfLifeMs: this.renderState.ghostHalfLifeMs,
+    };
   }
 
-  private controlForTokenValue(value: string): ChartMarketControl | undefined {
-    return this.controlByTokenValue.get(value);
+  private reqDraw(kind: ChartDrawKind): void {
+    const nowMs = performance.now();
+    const wasIdle = this.pendingDraw === null;
+    this.latestRequestAtMs = nowMs;
+    this.pendingRequestCount++;
+
+    if (
+      this.pendingDraw === null ||
+      DRAW_PRIORITY[kind] > DRAW_PRIORITY[this.pendingDraw]
+    )
+      this.pendingDraw = kind;
+
+    if (wasIdle) this.queuedAtMs = nowMs;
+    this.presentation.invalidate(this);
+
+    this.onPending?.({
+      kind: this.pendingDraw,
+      queueAgeMs: nowMs - this.queuedAtMs,
+      requestCount: this.pendingRequestCount,
+    });
   }
 
-  private pressureColorScale(tokenId: TokenId): SignedVolumeColorScale {
-    return pressureScaleForToken(this.definition, tokenId);
-  }
+  renderFrame(_frameTimeMs: DOMHighResTimeStamp): void {
+    if (this.destroyed || this.pendingDraw === null) return;
+    const kind = this.pendingDraw;
+    const startedAtMs = performance.now();
+    const queueDelayMs = startedAtMs - this.queuedAtMs;
+    const latestRequestDelayMs = startedAtMs - this.latestRequestAtMs;
+    const requestCount = this.pendingRequestCount;
+    this.pendingDraw = null;
+    this.pendingRequestCount = 0;
+    this.onPending?.(null);
 
-  private autoHideToken(tokenId: TokenId, reason: AutoHiddenReason): void {
-    const control = this.definition.controls.find(
-      (candidate) => candidate.tokenId === tokenId,
-    );
-    if (!control) return;
-
-    const lifecycle = this.lifecycleByMarketId.get(control.market.id);
-    if (lifecycle && lifecycle.kind !== "live") return;
-
-    if (!this.activeTokens.delete(tokenId)) return;
-    this.onMarketAutoHidden(control.market.id, reason);
-    this.reqDraw();
-  }
-
-  private applyResolution(resolution: MarketResolutionUpdate): void {
-    for (const control of this.definition.controls) {
-      const oppositeTokenId = control.market.outcomes.no.tokenId;
-      const belongsToMarket =
-        (control.market.conditionId !== null &&
-          control.market.conditionId === resolution.conditionId) ||
-        resolution.assetIds.includes(control.tokenId) ||
-        (oppositeTokenId !== null &&
-          resolution.assetIds.includes(oppositeTokenId)) ||
-        resolution.winningAssetId === control.tokenId ||
-        (oppositeTokenId !== null &&
-          resolution.winningAssetId === oppositeTokenId);
-      if (!belongsToMarket) continue;
-
-      const current =
-        this.lifecycleByMarketId.get(control.market.id) ?? control.lifecycle;
-      const next = resolveMarketLifecycle(
-        current,
-        resolution,
-        control.tokenId,
-        oppositeTokenId,
-        control.market.outcomes.yes.label,
-        control.market.outcomes.no.label,
-      );
-      if (next === current) continue;
-
-      this.lifecycleByMarketId.set(control.market.id, next);
-      this.activeTokens.add(control.tokenId);
-      if (next.kind === "resolved")
-        this.ageView.resolveMarket(
-          control.tokenId,
-          next.winningTokenId,
-          resolution.resolvedAtMs,
-        );
-      this.onMarketLifecycleChanged(control.market.id, next);
-    }
-    this.reqDraw();
-  }
-
-  private reqDraw() {
-    if (this.raf !== null) return;
-    this.raf = requestAnimationFrame(() => this.performDraw());
-  }
-
-  private performDraw() {
-    this.raf = null;
-
-    if (this.viewMode === "age") this.ageView.draw();
-    else {
+    let renderedKind: ChartDrawKind = kind;
+    if (this.renderState.viewMode === "age") {
+      if (kind === "opacity" && this.ageView.refreshOpacity()) {
+        renderedKind = "opacity";
+      } else if (kind !== "full" && this.ageView.refreshPressure()) {
+        renderedKind = "pressure";
+      } else {
+        this.ageView.draw();
+        renderedKind = "full";
+      }
+    } else {
       this.ageView.prepareVolumeView();
       this.volumeView.draw();
+      renderedKind = "full";
     }
+
+    this.renderedOpacityTimeMs = this.renderState.opacityTimeMs;
+    this.recordRendered(
+      renderedKind,
+      queueDelayMs,
+      latestRequestDelayMs,
+      requestCount,
+      performance.now() - startedAtMs,
+    );
+  }
+
+  private recordRendered(
+    kind: ChartDrawKind,
+    queueDelayMs: number,
+    latestRequestDelayMs: number,
+    requestCount: number,
+    drawCpuMs: number,
+  ): void {
+    this.onRendered?.({
+      kind,
+      opacityTimeMs: this.renderState.opacityTimeMs,
+      pressureRevision: this.renderState.pressureRevision,
+      bookRevision: this.renderState.bookRevision,
+      renderedAtMs: performance.now(),
+      queueDelayMs,
+      latestRequestDelayMs,
+      drawCpuMs,
+      coalescedRequests: Math.max(0, requestCount - 1),
+    });
   }
 }

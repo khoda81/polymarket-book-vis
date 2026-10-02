@@ -48,8 +48,6 @@ export interface GpuPressureFrame {
 
 const INSTANCE_FLOATS = 7;
 const INSTANCE_STRIDE = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
-const MAX_SUPERSAMPLE_X = 2;
-const MAX_SUPERSAMPLE_Y = 4;
 const MAX_TIME_ORIGIN_AGE_MS = 60 * 60 * 1_000;
 const PRESSURE_UPLOAD_DEBUG =
   typeof window !== "undefined" &&
@@ -124,14 +122,17 @@ void main() {
   }
 
   float reserveShares = uVolumePerCssPixel * uRowHeightCss;
+  float reserveSharesSq = reserveShares * reserveShares;
   float pressureLo =
-      aVolumeLo <= 0.0 ? 0.0 : aVolumeLo / (aVolumeLo + reserveShares);
+      aVolumeLo <= 0.0
+        ? 0.0
+        : aVolumeLo / sqrt(aVolumeLo * aVolumeLo + reserveSharesSq);
   float pressureHi =
       aVolumeHiUnbounded > 0.5
         ? 1.0
         : (aVolumeHi <= 0.0
             ? 0.0
-            : aVolumeHi / (aVolumeHi + reserveShares));
+            : aVolumeHi / sqrt(aVolumeHi * aVolumeHi + reserveSharesSq));
 
   float y0Css =
       uCenterCss + uYDirection * 0.5 * uRowHeightCss * pressureLo;
@@ -218,8 +219,6 @@ void main() {
 const DISPLAY_VERTEX = `#version 300 es
 precision highp float;
 
-out vec2 vUv;
-
 const vec2 POSITIONS[3] = vec2[3](
   vec2(-1.0, -1.0),
   vec2(3.0, -1.0),
@@ -227,9 +226,7 @@ const vec2 POSITIONS[3] = vec2[3](
 );
 
 void main() {
-  vec2 position = POSITIONS[gl_VertexID];
-  vUv = position * 0.5 + 0.5;
-  gl_Position = vec4(position, 0.0, 1.0);
+  gl_Position = vec4(POSITIONS[gl_VertexID], 0.0, 1.0);
 }
 `;
 
@@ -239,43 +236,19 @@ precision highp float;
 uniform sampler2D uDecayingColor;
 uniform sampler2D uPersistentColor;
 uniform float uGlobalDecay;
-uniform ivec2 uSupersample;
 
 out vec4 outColor;
 
 void main() {
-  ivec2 outputPixel = ivec2(gl_FragCoord.xy);
-  ivec2 base = outputPixel * uSupersample;
-
-  vec4 sum = vec4(0.0);
-  for (int y = 0; y < 4; ++y) {
-    for (int x = 0; x < 2; ++x) {
-      if (x >= uSupersample.x || y >= uSupersample.y) continue;
-      sum += texelFetch(uDecayingColor, base + ivec2(x, y), 0);
-    }
-  }
-
-  float sampleCount = float(uSupersample.x * uSupersample.y);
-  vec4 decaying = (sum / sampleCount) * uGlobalDecay;
-
-  vec4 persistentSum = vec4(0.0);
-  for (int y = 0; y < 4; ++y) {
-    for (int x = 0; x < 2; ++x) {
-      if (x >= uSupersample.x || y >= uSupersample.y) continue;
-      persistentSum += texelFetch(
-        uPersistentColor,
-        base + ivec2(x, y),
-        0
-      );
-    }
-  }
-  vec4 persistent = persistentSum / sampleCount;
+  ivec2 pixel = ivec2(gl_FragCoord.xy);
+  vec4 decaying = texelFetch(uDecayingColor, pixel, 0) * uGlobalDecay;
+  vec4 persistent = texelFetch(uPersistentColor, pixel, 0);
   vec4 resolved = persistent + decaying * (1.0 - persistent.a);
-  if (resolved.a <= 0.0039215686) discard;
 
-  // Decaying geometry factorizes through one global time scalar; persistent
-  // geometry composes over it without inheriting that decay.
-  outColor = resolved;
+  // Write transparent pixels instead of discarding them. The display pass
+  // covers the entire canvas, so this makes an explicit full-canvas clear
+  // unnecessary on opacity-only refreshes.
+  outColor = resolved.a <= 0.0039215686 ? vec4(0.0) : resolved;
 }
 `;
 
@@ -303,15 +276,12 @@ export class GpuPressureLayer {
 
   private displayWidth = 0;
   private displayHeight = 0;
-  private targetWidth = 0;
-  private targetHeight = 0;
-  private supersampleX = 1;
-  private supersampleY = 1;
   private rasterKey = "";
   private referenceTimeMs = 0;
   private referenceHalfLifeMs = 0;
   private displayedOpacityTimeMs = 0;
   private displayedHalfLifeMs = 0;
+  private displayStateReady = false;
   private visible = true;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -354,6 +324,7 @@ export class GpuPressureLayer {
     this.rasterKey = "";
     this.referenceTimeMs = 0;
     this.displayedOpacityTimeMs = 0;
+    this.displayStateReady = false;
   }
 
   render(frame: GpuPressureFrame): void {
@@ -362,21 +333,16 @@ export class GpuPressureLayer {
 
     const displayWidth = Math.max(1, Math.floor(frame.cssWidth * frame.dpr));
     const displayHeight = Math.max(1, Math.floor(frame.cssHeight * frame.dpr));
-    const [supersampleX, supersampleY] = supersampleFactors(frame.dpr);
-    const targetWidth = displayWidth * supersampleX;
-    const targetHeight = displayHeight * supersampleY;
-    const resized = this.resizeTargets(
-      displayWidth,
-      displayHeight,
-      targetWidth,
-      targetHeight,
-      supersampleX,
-      supersampleY,
-    );
+    const resized = this.resizeTargets(displayWidth, displayHeight);
 
     const buffersChanged = this.syncSurfaceBuffers(frame);
 
-    const nextRasterKey = rasterProjectionKey(frame, targetWidth, targetHeight);
+    const nextRasterKey = rasterProjectionKey(
+      frame,
+      displayWidth,
+      displayHeight,
+    );
+    let rasterized = false;
     if (
       resized ||
       buffersChanged ||
@@ -385,9 +351,14 @@ export class GpuPressureLayer {
     ) {
       this.rasterize(frame);
       this.rasterKey = nextRasterKey;
+      rasterized = true;
     }
 
-    this.drawDisplay(frame.opacityTimeMs, frame.ghostHalfLifeMs);
+    this.drawDisplay(
+      frame.opacityTimeMs,
+      frame.ghostHalfLifeMs,
+      rasterized || resized || buffersChanged,
+    );
   }
 
   /**
@@ -626,28 +597,16 @@ export class GpuPressureLayer {
     this.totalCachedInstanceCount = 0;
   }
 
-  private resizeTargets(
-    displayWidth: number,
-    displayHeight: number,
-    targetWidth: number,
-    targetHeight: number,
-    supersampleX: number,
-    supersampleY: number,
-  ): boolean {
+  private resizeTargets(displayWidth: number, displayHeight: number): boolean {
     if (
       displayWidth === this.displayWidth &&
-      displayHeight === this.displayHeight &&
-      targetWidth === this.targetWidth &&
-      targetHeight === this.targetHeight
+      displayHeight === this.displayHeight
     )
       return false;
 
     this.displayWidth = displayWidth;
     this.displayHeight = displayHeight;
-    this.targetWidth = targetWidth;
-    this.targetHeight = targetHeight;
-    this.supersampleX = supersampleX;
-    this.supersampleY = supersampleY;
+    this.displayStateReady = false;
     this.canvas.width = displayWidth;
     this.canvas.height = displayHeight;
 
@@ -658,8 +617,8 @@ export class GpuPressureLayer {
         gl.TEXTURE_2D,
         0,
         gl.RGBA8,
-        targetWidth,
-        targetHeight,
+        displayWidth,
+        displayHeight,
         0,
         gl.RGBA,
         gl.UNSIGNED_BYTE,
@@ -693,11 +652,12 @@ export class GpuPressureLayer {
 
   private rasterize(frame: GpuPressureFrame): void {
     const gl = this.gl;
+    this.displayStateReady = false;
     this.referenceTimeMs = frame.opacityTimeMs;
     this.referenceHalfLifeMs = frame.ghostHalfLifeMs;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
-    gl.viewport(0, 0, this.targetWidth, this.targetHeight);
+    gl.viewport(0, 0, this.displayWidth, this.displayHeight);
     gl.disable(gl.DEPTH_TEST);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -722,8 +682,8 @@ export class GpuPressureLayer {
         gl,
         this.geometryProgram,
         "uRasterScale",
-        this.targetWidth / frame.cssWidth,
-        this.targetHeight / frame.cssHeight,
+        this.displayWidth / frame.cssWidth,
+        this.displayHeight / frame.cssHeight,
       );
       uniform1f(
         gl,
@@ -805,27 +765,29 @@ export class GpuPressureLayer {
   private drawDisplay(
     opacityTimeMs: ObservationTime,
     ghostHalfLifeMs: number,
+    forceState = false,
   ): void {
     const gl = this.gl;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.displayWidth, this.displayHeight);
-    gl.disable(gl.DEPTH_TEST);
-    gl.disable(gl.BLEND);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    if (forceState || !this.displayStateReady) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.displayWidth, this.displayHeight);
+      gl.disable(gl.DEPTH_TEST);
+      gl.disable(gl.BLEND);
+      gl.useProgram(this.displayProgram);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
+      uniform1i(gl, this.displayProgram, "uDecayingColor", 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.persistentTexture);
+      uniform1i(gl, this.displayProgram, "uPersistentColor", 1);
+
+      gl.bindVertexArray(this.displayVao);
+      this.displayStateReady = true;
+    }
+
     this.displayedOpacityTimeMs = opacityTimeMs;
     this.displayedHalfLifeMs = ghostHalfLifeMs;
-
-    if (this.totalCachedInstanceCount === 0) return;
-
-    gl.useProgram(this.displayProgram);
-
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
-    uniform1i(gl, this.displayProgram, "uDecayingColor", 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.persistentTexture);
-    uniform1i(gl, this.displayProgram, "uPersistentColor", 1);
 
     const elapsedMs = Math.max(0, opacityTimeMs - this.referenceTimeMs);
     uniform1f(
@@ -834,17 +796,7 @@ export class GpuPressureLayer {
       "uGlobalDecay",
       2 ** (-elapsedMs / ghostHalfLifeMs),
     );
-    uniform2i(
-      gl,
-      this.displayProgram,
-      "uSupersample",
-      this.supersampleX,
-      this.supersampleY,
-    );
-
-    gl.bindVertexArray(this.displayVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.bindVertexArray(null);
   }
 }
 
@@ -1135,16 +1087,6 @@ function uniform1i(
   gl.uniform1i(uniformLocation(gl, program, name), value);
 }
 
-function uniform2i(
-  gl: WebGL2RenderingContext,
-  program: WebGLProgram,
-  name: string,
-  x: number,
-  y: number,
-): void {
-  gl.uniform2i(uniformLocation(gl, program, name), x, y);
-}
-
 function uniform2f(
   gl: WebGL2RenderingContext,
   program: WebGLProgram,
@@ -1167,14 +1109,6 @@ function uniform3f(
     value[1],
     value[2],
   );
-}
-
-function supersampleFactors(dpr: number): readonly [number, number] {
-  // Target at least ~2 horizontal and ~4 vertical raster samples per CSS
-  // pixel. HiDPI displays already supply some or all of that density.
-  const x = dpr < 2 ? 2 : 1;
-  const y = dpr < 2 ? 4 : dpr < 4 ? 2 : 1;
-  return [x, y];
 }
 
 function required<T>(value: T | null, label: string): T {

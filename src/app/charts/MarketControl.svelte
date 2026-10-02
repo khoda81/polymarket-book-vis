@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ChartMarketControl } from "../../domain/markets/chartDefinition";
+  import type { ChartMarketControl } from "../../chart/configuration/chartDefinition";
   import type { MarketLifecycle } from "../../domain/markets/marketLifecycle";
 
   export let control: ChartMarketControl;

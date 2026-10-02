@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import type { Event, MarketId } from "@polymarket/client";
-import { buildEventDetails, type EventDetails } from "./eventDetails";
+import {
+  buildEventDetails,
+  type EventDetails,
+} from "../../domain/markets/eventDetails";
 import { buildChartDefinition, pressureScaleForToken } from "./chartDefinition";
 import { signedVolumeColor } from "../../rendering/colors/signedVolume";
 import { buildThresholdPalette } from "../../rendering/colors/thresholdColors";

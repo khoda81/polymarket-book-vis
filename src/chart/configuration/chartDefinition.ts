@@ -2,9 +2,9 @@ import { marketColor, marketHue } from "../../shared/math";
 import {
   initialMarketLifecycle,
   type MarketLifecycle,
-} from "./marketLifecycle";
-import { sameDisplayTitle } from "./marketMetadata";
-import { isActiveOrderMarket } from "./marketTradability";
+} from "../../domain/markets/marketLifecycle";
+import { sameDisplayTitle } from "../../domain/markets/marketMetadata";
+import { isActiveOrderMarket } from "../../domain/markets/marketTradability";
 import { buildNegRiskPalette } from "../../rendering/colors/negRiskColors";
 import {
   buildThresholdPalette,
@@ -15,7 +15,7 @@ import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "../../rendering/colors/signedVolume";
-import type { EventDetails } from "./eventDetails";
+import type { EventDetails } from "../../domain/markets/eventDetails";
 import type { Event, Market, MarketId, TokenId } from "@polymarket/client";
 
 export interface ChartMarketControl {

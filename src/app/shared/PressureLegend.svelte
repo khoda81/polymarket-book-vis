@@ -1,56 +1,70 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import {
-    AGE_ROW_BAND_PX,
-    getAgeStripTuning,
-    subscribeAgeStripTuning,
-    type AgeStripTuning,
-  } from "../../chart/age/ageStripTuning";
+  import { AGE_ROW_BAND_PX } from "../../chart/age/ageStripTuning";
   import { GhostMemoryScale } from "../../chart/age/ghostMemoryScale";
-  import type { PublicClient } from "@polymarket/client";
+  import { getVisualizationContext } from "../visualization/visualizationContext";
   import { shareLegendTicks } from "../../rendering/legends/shareLegendTicks";
   import {
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     signedVolumeColor,
   } from "../../rendering/colors/signedVolume";
 
-  export let client: PublicClient;
+  const visualization = getVisualizationContext();
 
   const SHARE_TICK_MIN_SPACING_PX = 24;
   const SHARE_TICK_FULL_OPACITY_SPACING_PX = 32;
   let shareBar: HTMLDivElement;
   let ghostCanvas: HTMLCanvasElement;
-  let shareWidth = 0;
-  let shareDpr = 1;
-  let tuning: Readonly<AgeStripTuning> = getAgeStripTuning();
+  let shareWidth = $state(0);
+  let shareDpr = $state(1);
+  let ghost: GhostMemoryScale | null = null;
 
-  $: reserveShares = tuning.volumePerCssPixel * AGE_ROW_BAND_PX;
-  $: shareTicks = shareLegendTicks(reserveShares, shareWidth, {
-    minSpacingPx: SHARE_TICK_MIN_SPACING_PX,
-    fullOpacitySpacingPx: SHARE_TICK_FULL_OPACITY_SPACING_PX,
-    dpr: shareDpr,
+  const tuning = $derived(visualization.tuning.get());
+  const observationFrame = $derived(visualization.observations.read());
+  const shareTicks = $derived(
+    shareLegendTicks(tuning.volumePerCssPixel * AGE_ROW_BAND_PX, shareWidth, {
+      minSpacingPx: SHARE_TICK_MIN_SPACING_PX,
+      fullOpacitySpacingPx: SHARE_TICK_FULL_OPACITY_SPACING_PX,
+      dpr: shareDpr,
+    }),
+  );
+  const negativeColor = $derived(
+    signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE),
+  );
+  const positiveColor = $derived(
+    signedVolumeColor(1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE),
+  );
+
+  $effect(() => {
+    // Always read the reactive inputs, even before the imperative canvas
+    // resource exists. Optional-chaining the whole call here can otherwise
+    // short-circuit dependency discovery while ghost is still null.
+    const frame = observationFrame;
+    const halfLifeMs = tuning.ghostHalfLifeMs;
+    ghost?.setInputs(frame, halfLifeMs);
   });
-  $: negativeColor = signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
-  $: positiveColor = signedVolumeColor(1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE);
 
   onMount(() => {
-    const unsubscribe = subscribeAgeStripTuning((next) => {
-      tuning = next;
-    });
-    const observer = new ResizeObserver(() => {
-      shareWidth = shareBar.clientWidth;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      shareWidth = entry.contentRect.width;
       shareDpr = window.devicePixelRatio || 1;
     });
     observer.observe(shareBar);
     shareWidth = shareBar.clientWidth;
     shareDpr = window.devicePixelRatio || 1;
 
-    const ghost = new GhostMemoryScale(ghostCanvas, client);
+    const nextGhost = new GhostMemoryScale(ghostCanvas, visualization.tuning);
+    ghost = nextGhost;
+    // ghost itself is intentionally not reactive state. Seed the imperative
+    // resource explicitly, then the effect above keeps it synchronized.
+    nextGhost.setInputs(observationFrame, tuning.ghostHalfLifeMs);
 
     return () => {
-      ghost.destroy();
+      ghost = null;
+      nextGhost.destroy();
       observer.disconnect();
-      unsubscribe();
     };
   });
 </script>
