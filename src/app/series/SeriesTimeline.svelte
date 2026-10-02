@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { SvelteMap } from "svelte/reactivity";
   import AgeRowFlipButton from "../charts/AgeRowFlipButton.svelte";
   import {
     SeriesTimelineView,
@@ -10,6 +11,10 @@
     type AgeRowOrientation,
   } from "../../chart/age/ageStripOrientation";
   import { getVisualizationContext } from "../visualization/visualizationContext";
+  import {
+    observationReference,
+    type ObservationPoint,
+  } from "../../domain/pressure/observationClock";
   import type { ConnectionStatus } from "../../domain/markets/chartState";
   import type { Event, Series } from "@polymarket/client";
 
@@ -34,6 +39,8 @@
   }: Props = $props();
 
   const visualization = getVisualizationContext();
+  const observationPointsByToken =
+    new SvelteMap<string, ObservationPoint>();
 
   let canvas: HTMLCanvasElement;
   let pressureCanvas: HTMLCanvasElement;
@@ -48,7 +55,9 @@
     const tuning = visualization.tuning.get();
     return {
       ageRowOrientation,
-      observationReference: visualization.observations.readReference(),
+      observationReference: observationReference(
+        observationPointsByToken.values(),
+      ),
       volumePerCssPixel: tuning.volumePerCssPixel,
       ghostHalfLifeMs: tuning.ghostHalfLifeMs,
     };
@@ -80,6 +89,7 @@
       pressureCanvas,
       canvasWrap,
       visualization.client,
+      observationPointsByToken,
       visualization.observations,
       visualization.tuning,
       series,
