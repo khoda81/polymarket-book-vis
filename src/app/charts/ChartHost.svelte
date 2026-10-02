@@ -96,9 +96,7 @@
   const globalObservationReference = $derived(
     visualization.observations.readReference(),
   );
-  const currentFrontierMs = $derived(
-    opacityReference(globalObservationReference),
-  );
+  const currentFrontierMs = $derived(opacityReference(globalObservationReference));
   const submittedFrontierLagMs = $derived(
     lastSubmitted === null
       ? null

@@ -37,19 +37,11 @@ function withFakeAnimationFrames(
     run(callbacks);
   } finally {
     if (originalRequest)
-      Object.defineProperty(
-        globalThis,
-        "requestAnimationFrame",
-        originalRequest,
-      );
+      Object.defineProperty(globalThis, "requestAnimationFrame", originalRequest);
     else Reflect.deleteProperty(globalThis, "requestAnimationFrame");
 
     if (originalCancel)
-      Object.defineProperty(
-        globalThis,
-        "cancelAnimationFrame",
-        originalCancel,
-      );
+      Object.defineProperty(globalThis, "cancelAnimationFrame", originalCancel);
     else Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
   }
 }
