@@ -92,6 +92,7 @@
       observationPointsByToken,
       visualization.observations,
       visualization.tuning,
+      visualization.presentation,
       series,
       renderInput(),
       {
