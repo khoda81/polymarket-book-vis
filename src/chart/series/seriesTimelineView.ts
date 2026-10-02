@@ -28,6 +28,10 @@ import { LiveBookFeed } from "../live/liveBookFeed";
 import { fetchRecorderHydration } from "@/recorder/ageRecorderClient";
 import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
 import type { AgeStripTuningStore } from "@/chart/age/ageStripTuningStore";
+import {
+  type PresentationTarget,
+  PresentationCoordinator,
+} from "@/chart/presentationCoordinator";
 import { defaultPressureScaleForMarket } from "@/chart/configuration/chartDefinition";
 import { ClobFeeScheduleResolver } from "@/domain/books/feeSchedule";
 import type { TokenBook } from "@/domain/books/orderBook";
@@ -91,7 +95,7 @@ export interface SeriesTimelineViewOptions {
   readonly onError?: (message: string) => void;
 }
 
-export class SeriesTimelineView {
+export class SeriesTimelineView implements PresentationTarget {
   private readonly plotter: OrderBookPlotter;
   private readonly resizeObserver: ResizeObserver;
   private readonly themeQuery: MediaQueryList;
@@ -138,7 +142,6 @@ export class SeriesTimelineView {
   private readonly unregisterObservationSource: () => void;
   private observationGeometry: AgeStripGeometry | null = null;
   private renderInput: SeriesTimelineRenderInput;
-  private raf: number | null = null;
   private destroyed = false;
 
   constructor(
@@ -152,6 +155,7 @@ export class SeriesTimelineView {
     >,
     private readonly observations: ObservationClock,
     private readonly tuning: AgeStripTuningStore,
+    private readonly presentation: PresentationCoordinator,
     private readonly series: Series,
     initialRenderInput: SeriesTimelineRenderInput,
     options: SeriesTimelineViewOptions = {},
@@ -321,7 +325,7 @@ export class SeriesTimelineView {
     this.tooltip.destroy();
     this.pressureLayer.destroy();
     if (this.clockTimer !== undefined) window.clearTimeout(this.clockTimer);
-    if (this.raf !== null) cancelAnimationFrame(this.raf);
+    this.presentation.cancel(this);
     this.resizeObserver.disconnect();
     this.plotter.destroy();
     this.canvas.removeEventListener("wheel", this.handleWheel, true);
@@ -483,11 +487,12 @@ export class SeriesTimelineView {
   }
 
   private requestDraw(): void {
-    if (this.destroyed || this.raf !== null) return;
-    this.raf = requestAnimationFrame(() => {
-      this.raf = null;
-      this.draw();
-    });
+    if (this.destroyed) return;
+    this.presentation.invalidate(this);
+  }
+
+  renderFrame(_frameTimeMs: DOMHighResTimeStamp): void {
+    this.draw();
   }
 
   private draw(): void {
