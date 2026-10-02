@@ -7,6 +7,7 @@ import { VolumeBookView } from "./volume/volumeBookView";
 import type { MarketGroupModel } from "./model/marketGroupModel.svelte";
 import type { ObservationTime } from "@/domain/pressure/observationClock";
 import type { AgeStripTuningStore } from "./age/ageStripTuningStore";
+import { ghostRefreshDelayMs } from "./age/ageStripTuning";
 import {
   type PresentationTarget,
   PresentationCoordinator,
@@ -77,6 +78,7 @@ export class ChartController implements PresentationTarget {
   private queuedAtMs = 0;
   private latestRequestAtMs = 0;
   private pendingRequestCount = 0;
+  private renderedOpacityTimeMs: ObservationTime | null = null;
   private destroyed = false;
 
   constructor(
@@ -157,7 +159,13 @@ export class ChartController implements PresentationTarget {
     ) {
       kind = "pressure";
     } else if (next.opacityTimeMs !== previous.opacityTimeMs) {
-      kind = "opacity";
+      const renderedOpacityTimeMs = this.renderedOpacityTimeMs;
+      if (
+        renderedOpacityTimeMs === null ||
+        next.opacityTimeMs - renderedOpacityTimeMs >=
+          ghostRefreshDelayMs(next.ghostHalfLifeMs)
+      )
+        kind = "opacity";
     }
 
     if (kind) this.reqDraw(kind);
@@ -237,6 +245,7 @@ export class ChartController implements PresentationTarget {
       renderedKind = "full";
     }
 
+    this.renderedOpacityTimeMs = this.renderState.opacityTimeMs;
     this.recordRendered(
       renderedKind,
       queueDelayMs,
