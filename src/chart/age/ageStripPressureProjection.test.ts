@@ -141,12 +141,7 @@ test("screen y exactly inverts the renderer's volume transfer", () => {
   ).toBeCloseTo(2_800 / Math.sqrt(3));
 
   expect(
-    pressureVolumeAtY(
-      center + halfHeight,
-      center,
-      halfHeight,
-      reserveShares,
-    ),
+    pressureVolumeAtY(center + halfHeight, center, halfHeight, reserveShares),
   ).toBeNull();
 });
 
@@ -173,11 +168,6 @@ test("asymmetric snapped half-rows invert the same share pressure", () => {
     ),
   ).toBeCloseTo(reserveShares / Math.sqrt(3));
   expect(
-    pressureVolumeAtY(
-      center + lowerHeight,
-      center,
-      lowerHeight,
-      reserveShares,
-    ),
+    pressureVolumeAtY(center + lowerHeight, center, lowerHeight, reserveShares),
   ).toBeNull();
 });

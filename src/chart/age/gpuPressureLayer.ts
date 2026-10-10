@@ -736,12 +736,7 @@ export class GpuPressureLayer {
               ? (surface.currentValidThroughMs! - cached.timeOriginMs) / 1_000
               : 0,
           );
-          uniform1f(
-            gl,
-            this.geometryProgram,
-            "uRowTopDevice",
-            row.topDevice,
-          );
+          uniform1f(gl, this.geometryProgram, "uRowTopDevice", row.topDevice);
           uniform1f(
             gl,
             this.geometryProgram,
