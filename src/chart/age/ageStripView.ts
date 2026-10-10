@@ -10,7 +10,7 @@ import {
   VOLUME_RIGHT_PADDING_PX,
   ageLabelGutterWidth,
   positionRowControls,
-  rowRasterGeometry,
+  rasterizeAgeRows,
 } from "./ageStripLayout";
 import { drawAgeAxes } from "./ageStripRendering";
 import { GpuPressureLayer, type GpuPressureRow } from "./gpuPressureLayer";
@@ -108,10 +108,15 @@ export class AgeStripView {
       },
       { transparentBackground: true },
     );
-    positionRowControls(activeControls, frame, rowCount);
-
     const vp = frame.viewport;
-    const dpr = window.devicePixelRatio || 1;
+    const rasterRows = rasterizeAgeRows(
+      vp.t,
+      vp.height,
+      rowCount,
+      this.host.plotter.height,
+      Math.max(1, frame.canvas.height),
+    );
+    positionRowControls(activeControls, rasterRows);
     const geometry: AgeStripGeometry = {
       viewport: {
         l: vp.l,
@@ -121,19 +126,18 @@ export class AgeStripView {
       },
       rows: activeControls.map((label, index) => {
         const tokenId = label.dataset.tokenId ?? `missing-row-${index}`;
-        const y = rowCount - 1 - index;
-        const raster = rowRasterGeometry(frame.toScreenY(0, y), dpr);
+        const raster = rasterRows[index]!;
 
         return {
           tokenId,
           oppositeTokenId: this.host.model.oppositeTokenId(tokenId),
           centerY: raster.centerCss,
           topY: raster.topCss,
-          bottomY: raster.topCss + raster.heightCss,
+          bottomY: raster.bottomCss,
         };
       }),
-      canvasWidth: vp.l + vp.width + this.host.plotter.padding.r,
-      canvasHeight: vp.t + vp.height + this.host.plotter.padding.b,
+      canvasWidth: this.host.plotter.width,
+      canvasHeight: this.host.plotter.height,
     };
     this.geometry = geometry;
     this.clock.setEnabled(true);
@@ -141,7 +145,7 @@ export class AgeStripView {
     this.tooltip.setGeometry(geometry);
     this.renderPressure(geometry);
 
-    drawAgeAxes(frame, rowCount, activeControls, (tokenId) =>
+    drawAgeAxes(frame, activeControls, rasterRows, (tokenId) =>
       this.host.model.pressureColorScale(tokenId),
     );
   }
@@ -172,6 +176,10 @@ export class AgeStripView {
   private renderPressure(geometry: AgeStripGeometry): void {
     const state = this.host.getRenderState();
     const rowOrientation = state.rowOrientation;
+    const dpr = window.devicePixelRatio || 1;
+    const scaleY =
+      Math.max(1, Math.floor(geometry.canvasHeight * dpr)) /
+      geometry.canvasHeight;
     const gpuRows: GpuPressureRow[] = [];
 
     for (const row of geometry.rows) {
@@ -193,8 +201,9 @@ export class AgeStripView {
       const bottomCss = row.bottomY ?? centerCss + AGE_ROW_BAND_PX / 2;
       gpuRows.push({
         key: tokenId,
-        centerCss,
-        heightCss: bottomCss - topCss,
+        topDevice: Math.round(topCss * scaleY),
+        centerDevice: Math.round(centerCss * scaleY),
+        bottomDevice: Math.round(bottomCss * scaleY),
         surfaces: [
           ...(primaryMemory
             ? [
@@ -249,7 +258,7 @@ export class AgeStripView {
       viewport: { l: geometry.viewport.l, width: geometry.viewport.width },
       cssWidth: geometry.canvasWidth,
       cssHeight: geometry.canvasHeight,
-      dpr: window.devicePixelRatio || 1,
+      dpr,
       volumePerCssPixel: state.volumePerCssPixel,
       ghostHalfLifeMs: state.ghostHalfLifeMs,
       opacityTimeMs: state.opacityTimeMs,

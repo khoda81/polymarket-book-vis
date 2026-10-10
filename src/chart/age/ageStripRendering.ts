@@ -3,26 +3,24 @@ import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "@/rendering/colors/signedVolume";
-import { rowRasterGeometry, type RowRasterGeometry } from "./ageStripLayout";
+import type { RowRasterGeometry } from "./ageStripLayout";
 
 /** Draw per-row probability rails using each market's semantic token colors. */
 export function drawAgeAxes(
   frame: Frame,
-  rowCount: number,
   labels: readonly HTMLLabelElement[],
+  rows: readonly RowRasterGeometry[],
   colorScaleForToken: (tokenId: string) => SignedVolumeColorScale,
 ): void {
   const { ctx, viewport: vp } = frame;
-  const dpr = window.devicePixelRatio || 1;
 
   ctx.lineWidth = 1;
   for (const [index, label] of labels.entries()) {
     const tokenId = label.dataset.tokenId;
-    if (!tokenId) continue;
+    const row = rows[index];
+    if (!tokenId || !row) continue;
 
-    const y = rowCount - 1 - index;
-    const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
-    drawAgeRowRails(frame, geometry, colorScaleForToken(tokenId));
+    drawAgeRowRails(frame, row, colorScaleForToken(tokenId));
   }
 
   ctx.beginPath();
@@ -44,13 +42,13 @@ export function drawAgeRowRails(
   ctx.strokeStyle = colors.negative;
   ctx.beginPath();
   ctx.moveTo(vp.l, geometry.topCss);
-  ctx.lineTo(vp.l, geometry.topCss + geometry.heightCss);
+  ctx.lineTo(vp.l, geometry.bottomCss);
   ctx.stroke();
 
   ctx.strokeStyle = colors.positive;
   ctx.beginPath();
   ctx.moveTo(vp.l + vp.width, geometry.topCss);
-  ctx.lineTo(vp.l + vp.width, geometry.topCss + geometry.heightCss);
+  ctx.lineTo(vp.l + vp.width, geometry.bottomCss);
   ctx.stroke();
 }
 

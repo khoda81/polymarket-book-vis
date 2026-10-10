@@ -146,16 +146,14 @@ export function pressurePriceAtDisplayX(
 export function pressureVolumeAtY(
   yCss: number,
   centerCss: number,
-  rowHeightCss: number,
-  volumePerCssPixel: number,
+  sideHeightCss: number,
+  reserveShares: number,
 ): number | null {
-  if (!(rowHeightCss > 0) || !(volumePerCssPixel > 0)) return null;
+  if (!(sideHeightCss > 0) || !(reserveShares > 0)) return null;
 
-  const halfHeight = rowHeightCss / 2;
-  const pressure = Math.abs(yCss - centerCss) / halfHeight;
+  const pressure = Math.abs(yCss - centerCss) / sideHeightCss;
   if (!(pressure >= 0) || pressure >= 1) return null;
 
-  const reserveShares = volumePerCssPixel * rowHeightCss;
   return shareVolumeAtPressure(pressure, reserveShares);
 }
 

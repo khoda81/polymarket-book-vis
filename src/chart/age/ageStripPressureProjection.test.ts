@@ -115,7 +115,8 @@ test("semantic price complements the source field without moving geometry", () =
 
 test("screen y exactly inverts the renderer's volume transfer", () => {
   const rowHeight = 28;
-  const volumePerCssPixel = 100;
+  const halfHeight = rowHeight / 2;
+  const reserveShares = rowHeight * 100;
   const center = 14;
 
   // Halfway to the row edge means pressure = 0.5. With reserve
@@ -123,28 +124,60 @@ test("screen y exactly inverts the renderer's volume transfer", () => {
   // v = R / sqrt(3).
   expect(
     pressureVolumeAtY(
-      center + rowHeight / 4,
+      center + halfHeight / 2,
       center,
-      rowHeight,
-      volumePerCssPixel,
+      halfHeight,
+      reserveShares,
     ),
   ).toBeCloseTo(2_800 / Math.sqrt(3));
 
   expect(
     pressureVolumeAtY(
-      center - rowHeight / 4,
+      center - halfHeight / 2,
       center,
-      rowHeight,
-      volumePerCssPixel,
+      halfHeight,
+      reserveShares,
     ),
   ).toBeCloseTo(2_800 / Math.sqrt(3));
 
   expect(
     pressureVolumeAtY(
-      center + rowHeight / 2,
+      center + halfHeight,
       center,
-      rowHeight,
-      volumePerCssPixel,
+      halfHeight,
+      reserveShares,
+    ),
+  ).toBeNull();
+});
+
+test("asymmetric snapped half-rows invert the same share pressure", () => {
+  const center = 29;
+  const upperHeight = 26;
+  const lowerHeight = 27;
+  const reserveShares = 48 * 100;
+
+  expect(
+    pressureVolumeAtY(
+      center - upperHeight / 2,
+      center,
+      upperHeight,
+      reserveShares,
+    ),
+  ).toBeCloseTo(reserveShares / Math.sqrt(3));
+  expect(
+    pressureVolumeAtY(
+      center + lowerHeight / 2,
+      center,
+      lowerHeight,
+      reserveShares,
+    ),
+  ).toBeCloseTo(reserveShares / Math.sqrt(3));
+  expect(
+    pressureVolumeAtY(
+      center + lowerHeight,
+      center,
+      lowerHeight,
+      reserveShares,
     ),
   ).toBeNull();
 });
