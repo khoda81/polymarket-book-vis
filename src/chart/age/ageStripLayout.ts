@@ -156,6 +156,28 @@ export interface RowRasterGeometry {
  * Quantizing absolute boundaries (rather than each row's length) partitions
  * pixels exactly, even at fractional DPR. Nominal CSS-space layout is kept.
  */
+/** Snap a moving series row's edges and centerline to the same pixel grid. */
+export function rasterizeCenteredAgeRow(
+  desiredCenterCss: number,
+  canvasHeightCss: number,
+  framebufferHeight: number,
+): RowRasterGeometry {
+  const scaleY = framebufferHeight / canvasHeightCss;
+  const topDevice = Math.round(
+    (desiredCenterCss - AGE_ROW_BAND_PX / 2) * scaleY,
+  );
+  const centerDevice = Math.round(desiredCenterCss * scaleY);
+  const bottomDevice = Math.round(
+    (desiredCenterCss + AGE_ROW_BAND_PX / 2) * scaleY,
+  );
+  return {
+    topCss: topDevice / scaleY,
+    centerCss: centerDevice / scaleY,
+    bottomCss: bottomDevice / scaleY,
+    heightCss: (bottomDevice - topDevice) / scaleY,
+  };
+}
+
 export function rasterizeAgeRows(
   viewportTopCss: number,
   viewportHeightCss: number,

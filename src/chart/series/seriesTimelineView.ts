@@ -14,7 +14,7 @@ import { AgeStripTooltip } from "../age/ageStripTooltip";
 import { handleAgeStripTuningWheel } from "../age/ageStripInteraction";
 import {
   AGE_TIME_GUTTER_PX,
-  rowRasterGeometry,
+  rasterizeCenteredAgeRow,
   type AgeStripGeometry,
 } from "../age/ageStripLayout";
 import { AgeStripPressureState } from "../age/ageStripPressureState";
@@ -563,6 +563,7 @@ export class SeriesTimelineView implements PresentationTarget {
 
     const gpuRows: GpuPressureRow[] = [];
     const dpr = window.devicePixelRatio || 1;
+    const scaleY = Math.max(1, frame.canvas.height) / this.plotter.height;
 
     for (const row of visibleRows) {
       const market = primaryMarket(row.event);
@@ -579,11 +580,12 @@ export class SeriesTimelineView implements PresentationTarget {
         : undefined;
       if (!primaryMemory && !oppositeMemory) continue;
 
-      const geometry = seriesRowGeometry(frame, row.centerMs, dpr);
+      const geometry = seriesRowGeometry(frame, row.centerMs);
       gpuRows.push({
         key,
-        centerCss: geometry.centerCss,
-        heightCss: geometry.heightCss,
+        topDevice: Math.round(geometry.topCss * scaleY),
+        centerDevice: Math.round(geometry.centerCss * scaleY),
+        bottomDevice: Math.round(geometry.bottomCss * scaleY),
         surfaces: [
           ...(primaryMemory
             ? [
@@ -655,7 +657,6 @@ export class SeriesTimelineView implements PresentationTarget {
     nowMs: number,
   ): void {
     const { ctx, viewport: vp, theme } = frame;
-    const dpr = window.devicePixelRatio || 1;
     const timelineX = vp.l + vp.width + TIMELINE_RELATIVE_GUTTER_PX;
 
     ctx.lineWidth = 1;
@@ -675,7 +676,7 @@ export class SeriesTimelineView implements PresentationTarget {
       const tokenId = market?.outcomes.yes.tokenId;
       if (!market || !tokenId) continue;
 
-      const geometry = seriesRowGeometry(frame, row.centerMs, dpr);
+      const geometry = seriesRowGeometry(frame, row.centerMs);
       if (
         geometry.topCss > vp.t + vp.height ||
         geometry.topCss + geometry.heightCss < vp.t
@@ -746,7 +747,6 @@ export class SeriesTimelineView implements PresentationTarget {
     rows: readonly TimedSeriesEvent[],
   ): void {
     const vp = frame.viewport;
-    const dpr = window.devicePixelRatio || 1;
     const geometry: AgeStripGeometry = {
       viewport: {
         l: vp.l,
@@ -759,7 +759,7 @@ export class SeriesTimelineView implements PresentationTarget {
         const tokenId = market?.outcomes.yes.tokenId;
         if (!tokenId) return [];
 
-        const raster = seriesRowGeometry(frame, row.centerMs, dpr);
+        const raster = seriesRowGeometry(frame, row.centerMs);
 
         return [
           {
@@ -769,7 +769,7 @@ export class SeriesTimelineView implements PresentationTarget {
               : undefined,
             centerY: raster.centerCss,
             topY: raster.topCss,
-            bottomY: raster.topCss + raster.heightCss,
+            bottomY: raster.bottomCss,
           },
         ];
       }),
@@ -1093,15 +1093,12 @@ function formatCompactDuration(value: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
-function seriesRowGeometry(frame: Frame, y: number, dpr: number) {
-  const desiredCenter = frame.toScreenY(0, y);
-  const geometry = rowRasterGeometry(desiredCenter, dpr);
-  const offsetCss = desiredCenter - geometry.centerCss;
-  return {
-    ...geometry,
-    topCss: geometry.topCss + offsetCss,
-    centerCss: desiredCenter,
-  };
+function seriesRowGeometry(frame: Frame, y: number) {
+  return rasterizeCenteredAgeRow(
+    frame.toScreenY(0, y),
+    frame.plotter.height,
+    Math.max(1, frame.canvas.height),
+  );
 }
 
 function sameObservationReference(
