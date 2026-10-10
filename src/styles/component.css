@@ -263,6 +263,23 @@
   min-width: 0;
 }
 
+.cpv-market-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.cpv-market-deadline {
+  color: var(--color-text-secondary, #666);
+  font-size: 9px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .cpv-market-resolution-hidden {
   display: none;
 }
@@ -303,7 +320,7 @@
   position: absolute;
   left: 8px;
   right: 8px;
-  height: 28px;
+  height: 36px;
   margin: 0;
   transform: translateY(-50%);
   display: flex;
@@ -664,8 +681,4 @@
 .cpv-token-age {
   pointer-events: auto;
   opacity: 0.8;
-}
-.cpv-row-resolution {
-  color: var(--color-text-secondary, #666);
-  opacity: 0.75;
 }

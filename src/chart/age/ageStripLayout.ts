@@ -29,7 +29,9 @@ export function ageLabelGutterWidth(
     ? AGE_MARKET_ICON_SIZE_PX + AGE_MARKET_ICON_GAP_PX
     : 0;
 
-  let widest = 0;
+  // Deadline text has a stable reserved width, so clock updates do not resize
+  // the chart or invalidate pressure geometry.
+  let widest = 68;
   for (const label of labels) {
     const titleWidth = measureAgeLabelTextWidth(label.dataset.ageLabel ?? "");
     const status = label.dataset.ageStatus ?? "";
@@ -151,7 +153,7 @@ export interface RowRasterGeometry {
   readonly heightCss: number;
 }
 
-/** Snap a moving series row's edges and centerline to the same pixel grid. */
+/** Snap a scrolled row's edges and centerline to the same pixel grid. */
 export function rasterizeCenteredAgeRow(
   desiredCenterCss: number,
   canvasHeightCss: number,

@@ -1,4 +1,4 @@
-import { relativeTimeDisplay, relativeTimeOffsetDisplay } from "@/shared/math";
+import { relativeTimeOffsetDisplay } from "@/shared/math";
 import type { ViewMode } from "@/domain/markets/chartState";
 import type { ObservationTime } from "@/domain/pressure/observationClock";
 import {
@@ -124,28 +124,6 @@ export class AgeStripClock {
           element.title = title;
           element.setAttribute("aria-label", title);
         }
-      }
-
-      const resolutionMs = this.host.getTiming(row.tokenId)?.resolutionMs;
-      if (resolutionMs != null && Number.isFinite(resolutionMs)) {
-        const display = relativeTimeDisplay(
-          Math.max(0, resolutionMs - nowMs) / 1000,
-          "remaining",
-        );
-        const label = this.label(`resolution:${row.tokenId}`, retained);
-        const element = label.element;
-        if (element.className !== "cpv-row-resolution")
-          element.className = "cpv-row-resolution";
-        const left = `${timeX}px`;
-        const top = `${center + 19}px`;
-        if (element.style.left !== left) element.style.left = left;
-        if (element.style.top !== top) element.style.top = top;
-        this.setLabelText(
-          label,
-          display.text === "due" ? "due" : `T−${display.text}`,
-        );
-        if (display.nextChangeMs != null)
-          nextChangeMs = Math.min(nextChangeMs, display.nextChangeMs);
       }
     }
 

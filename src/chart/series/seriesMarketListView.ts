@@ -36,7 +36,10 @@ import {
   type PresentationTarget,
   PresentationCoordinator,
 } from "@/chart/presentationCoordinator";
-import { defaultPressureScaleForMarket } from "@/chart/configuration/chartDefinition";
+import {
+  buildChartDefinition,
+  defaultPressureScaleForMarket,
+} from "@/chart/configuration/chartDefinition";
 import { ClobFeeScheduleResolver } from "@/domain/books/feeSchedule";
 import type { TokenBook } from "@/domain/books/orderBook";
 import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "@/domain/pressure/pressureField";
@@ -58,12 +61,15 @@ import {
 } from "@/rendering/colors/signedVolume";
 import {
   SERIES_VISIBLE_ROWS,
-  SERIES_WINDOW_ROWS,
-  inferSeriesCadenceMs,
-  loadSeriesEventsAround,
-  timedSeriesEvent,
-  type TimedSeriesEvent,
-} from "@/domain/series/seriesTimeline";
+  SeriesEventPager,
+  mergeSeriesEvents,
+  seriesMarketRows,
+  seriesCurrentRowIndex,
+  type SeriesMarketRow,
+  type SeriesPageDirection,
+} from "@/domain/series/seriesMarkets";
+import type { EventDetails } from "@/domain/markets/eventDetails";
+import { isActiveOrderMarket } from "@/domain/markets/marketTradability";
 import type { ConnectionStatus } from "@/domain/markets/chartState";
 import type {
   ClobAssetId,
@@ -77,29 +83,43 @@ import type {
 
 export const SERIES_ROW_HEIGHT_PX = AGE_ROW_BAND_PX;
 const LEFT_PADDING_PX = AGE_TIME_GUTTER_PX;
-const RIGHT_PADDING_PX = 108;
+export const SERIES_LABEL_GUTTER_PX = 120;
+const RIGHT_PADDING_PX = SERIES_LABEL_GUTTER_PX;
 const TOP_PADDING_PX = 0;
 const BOTTOM_PADDING_PX = 0;
-const TIMELINE_RELATIVE_GUTTER_PX = 42;
 const SUBSCRIPTION_BUFFER_ROWS = 2;
-const WINDOW_RELOAD_FRACTION = 0.45;
+const SERIES_REFRESH_MS = 30_000;
 
-export interface SeriesTimelineRenderInput {
+export interface SeriesMarketListRenderInput {
   readonly ageRowOrientation: AgeRowOrientation;
   readonly observationReference: ObservationReference;
   readonly volumePerCssPixel: number;
   readonly ghostHalfLifeMs: number;
 }
 
-export interface SeriesTimelineViewOptions {
+export interface SeriesVisibleMarket {
+  readonly row: SeriesMarketRow;
+  readonly centerY: number;
+  readonly lifecycle: MarketLifecycle;
+}
+
+export interface SeriesPagingState {
+  readonly loading: boolean;
+}
+
+export interface SeriesMarketListViewOptions {
   readonly onConnectionStatus?: (status: ConnectionStatus) => void;
   readonly onFollowingChanged?: (following: boolean) => void;
-  readonly onWindowChanged?: (eventCount: number) => void;
+  readonly onEventsChanged?: () => void;
+  readonly onVisibleMarketsChanged?: (
+    markets: readonly SeriesVisibleMarket[],
+  ) => void;
+  readonly onPagingChanged?: (state: SeriesPagingState) => void;
   readonly onAnchorEventChanged?: (event: Event | null) => void;
   readonly onError?: (message: string) => void;
 }
 
-export class SeriesTimelineView implements PresentationTarget {
+export class SeriesMarketListView implements PresentationTarget {
   private readonly plotter: OrderBookPlotter;
   private readonly resizeObserver: ResizeObserver;
   private readonly themeQuery: MediaQueryList;
@@ -110,7 +130,7 @@ export class SeriesTimelineView implements PresentationTarget {
   private readonly tooltip: AgeStripTooltip;
   private readonly onConnectionStatus: (status: ConnectionStatus) => void;
   private readonly onFollowingChanged: (following: boolean) => void;
-  private readonly onWindowChanged: (eventCount: number) => void;
+  private readonly onEventsChanged: () => void;
   private readonly onAnchorEventChanged: (event: Event | null) => void;
   private readonly onError: (message: string) => void;
   private readonly resolutionByCondition = new Map<
@@ -124,28 +144,32 @@ export class SeriesTimelineView implements PresentationTarget {
   private readonly bookCache = new Map<string, TokenBook>();
   private readonly scaleByToken = new Map<string, SignedVolumeColorScale>();
   private readonly marketByToken = new Map<string, Market>();
-  private readonly absoluteTimeLabelByStart = new Map<number, string>();
   private readonly hydratedTokens = new Set<string>();
 
   private theme: ChartTheme;
-  private rows: TimedSeriesEvent[];
-  private cadenceMs: number;
-  private userOffsetMs = 0;
+  private rows: SeriesMarketRow[] = [];
+  private readonly details = new Map<string, EventDetails>();
+  private readonly pager: SeriesEventPager;
+  private readonly loading = new Set<SeriesPageDirection>();
+  private readonly failedPages = new Set<SeriesPageDirection>();
+  private scrollLoadDirection: SeriesPageDirection | null = null;
+  private refreshTask: Promise<void> | null = null;
+  private readonly onVisibleMarketsChanged: (
+    markets: readonly SeriesVisibleMarket[],
+  ) => void;
+  private readonly onPagingChanged: (state: SeriesPagingState) => void;
+  private visibleMarketsKey = "";
   private following = true;
+  private programmaticScrollTop: number | null = null;
   private feed: LiveBookFeed | null = null;
   private feedGeneration = 0;
   private feedKey = "";
-  private loadGeneration = 0;
-  private loadedCenterMs: number | null = null;
-  private loadedMinStartMs: number | null = null;
-  private loadedMaxStartMs: number | null = null;
-  private loadingCenterMs: number | null = null;
-  private lastEdgeRefreshMs = 0;
+  private retainedPressureTokens = new Set<string>();
   private lastAnchorEventId: string | null = null;
   private clockTimer: number | undefined;
   private readonly unregisterObservationSource: () => void;
   private observationGeometry: AgeStripGeometry | null = null;
-  private renderInput: SeriesTimelineRenderInput;
+  private renderInput: SeriesMarketListRenderInput;
   private renderedOpacityTimeMs: ObservationTime | null = null;
   private destroyed = false;
 
@@ -153,6 +177,8 @@ export class SeriesTimelineView implements PresentationTarget {
     private readonly canvas: HTMLCanvasElement,
     pressureCanvas: HTMLCanvasElement,
     private readonly canvasWrap: HTMLElement,
+    private readonly scrollContainer: HTMLElement,
+    private readonly scrollContent: HTMLElement,
     private readonly client: PublicClient,
     private readonly observationPointsByToken: SvelteMap<
       string,
@@ -161,21 +187,20 @@ export class SeriesTimelineView implements PresentationTarget {
     private readonly observations: ObservationClock,
     private readonly tuning: AgeStripTuningStore,
     private readonly presentation: PresentationCoordinator,
-    private readonly series: Series,
-    initialRenderInput: SeriesTimelineRenderInput,
-    options: SeriesTimelineViewOptions = {},
+    series: Series,
+    initialRenderInput: SeriesMarketListRenderInput,
+    options: SeriesMarketListViewOptions = {},
   ) {
     this.renderInput = initialRenderInput;
     this.feeSchedules = new ClobFeeScheduleResolver(client);
-    const seedEvents = [...(series.events ?? [])];
-    this.cadenceMs = inferSeriesCadenceMs(seedEvents, series.recurrence);
-    this.rows = seedEvents
-      .map((event) => timedSeriesEvent(event, this.cadenceMs))
-      .filter((row): row is TimedSeriesEvent => row !== null);
+    this.pager = new SeriesEventPager(client, series);
     this.pressureLayer = new GpuPressureLayer(pressureCanvas);
     this.onConnectionStatus = options.onConnectionStatus ?? (() => undefined);
     this.onFollowingChanged = options.onFollowingChanged ?? (() => undefined);
-    this.onWindowChanged = options.onWindowChanged ?? (() => undefined);
+    this.onEventsChanged = options.onEventsChanged ?? (() => undefined);
+    this.onVisibleMarketsChanged =
+      options.onVisibleMarketsChanged ?? (() => undefined);
+    this.onPagingChanged = options.onPagingChanged ?? (() => undefined);
     this.onAnchorEventChanged =
       options.onAnchorEventChanged ?? (() => undefined);
     this.onError = options.onError ?? (() => undefined);
@@ -193,7 +218,8 @@ export class SeriesTimelineView implements PresentationTarget {
         1,
         this.plotter.height - TOP_PADDING_PX - BOTTOM_PADDING_PX,
       );
-      this.panByCssPixels(fraction * chartHeight);
+      this.scrollContainer.scrollTop -= fraction * chartHeight;
+      this.loadAtScrollEdge(-fraction);
     };
     this.plotter.onResetZoom = () => this.followLive();
 
@@ -258,6 +284,12 @@ export class SeriesTimelineView implements PresentationTarget {
       BOTTOM_PADDING_PX +
       SERIES_VISIBLE_ROWS * SERIES_ROW_HEIGHT_PX;
     this.canvasWrap.style.height = `${height}px`;
+    this.scrollContainer.style.height = `${height}px`;
+    this.scrollContent.style.height = `${height}px`;
+    this.scrollContainer.addEventListener("scroll", this.handleScroll, {
+      passive: true,
+    });
+    this.scrollContainer.addEventListener("keydown", this.handleKeydown);
 
     this.resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -267,14 +299,14 @@ export class SeriesTimelineView implements PresentationTarget {
     });
     this.resizeObserver.observe(canvas);
 
-    this.canvas.addEventListener("wheel", this.handleWheel, {
+    this.scrollContainer.addEventListener("wheel", this.handleWheel, {
       capture: true,
       passive: false,
     });
     this.themeQuery.addEventListener("change", this.handleThemeChange);
   }
 
-  updateRenderInputs(next: SeriesTimelineRenderInput): void {
+  updateRenderInputs(next: SeriesMarketListRenderInput): void {
     const previous = this.renderInput;
     this.renderInput = next;
 
@@ -302,28 +334,38 @@ export class SeriesTimelineView implements PresentationTarget {
   }
 
   async start(): Promise<void> {
-    await this.ensureWindow(Date.now(), true);
+    const results = await Promise.allSettled([
+      this.loadPage("older"),
+      this.loadPage("newer"),
+    ]);
     if (this.destroyed) return;
-
+    if (this.rows.length === 0) {
+      const failure = results.find((result) => result.status === "rejected");
+      throw failure?.status === "rejected"
+        ? failure.reason
+        : new Error("No binary markets were found in this series");
+    }
     this.scheduleWindowRefresh();
     this.requestDraw();
   }
 
-  jumpTo(timeMs: number): void {
-    if (!Number.isFinite(timeMs)) return;
-    const reference = this.renderInput.observationReference;
-    this.userOffsetMs =
-      timeMs -
-      (reference.kind === "observed" ? reference.newestMs : Date.now());
-    this.setFollowing(false);
-    void this.ensureWindow(timeMs, true);
-    this.requestDraw();
+  retryLoading(): void {
+    const failed = [...this.failedPages];
+    this.failedPages.clear();
+    for (const direction of failed) {
+      if (this.atScrollEdge(direction)) {
+        this.scrollLoadDirection = direction;
+        this.continueScrollLoading();
+      } else void this.loadPage(direction).catch(() => undefined);
+    }
+    if (failed.length === 0) void this.refreshEvents();
   }
 
   followLive(): void {
-    this.userOffsetMs = 0;
+    this.scrollLoadDirection = null;
     this.setFollowing(true);
-    void this.ensureWindow(Date.now(), true);
+    this.scrollToCurrent();
+    void this.refreshEvents();
     this.requestDraw();
   }
 
@@ -341,7 +383,9 @@ export class SeriesTimelineView implements PresentationTarget {
     this.presentation.cancel(this);
     this.resizeObserver.disconnect();
     this.plotter.destroy();
-    this.canvas.removeEventListener("wheel", this.handleWheel, true);
+    this.scrollContainer.removeEventListener("wheel", this.handleWheel, true);
+    this.scrollContainer.removeEventListener("scroll", this.handleScroll);
+    this.scrollContainer.removeEventListener("keydown", this.handleKeydown);
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
   }
 
@@ -358,23 +402,122 @@ export class SeriesTimelineView implements PresentationTarget {
       return;
     }
 
-    let delta = event.deltaY;
-    if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
-    else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE)
-      delta *= Math.max(1, this.plotter.height);
-
-    this.panByCssPixels(-delta);
-    event.preventDefault();
+    // Keep ordinary wheel scrolling native; the plotter must not zoom it.
+    if (event.deltaY !== 0) this.loadAtScrollEdge(event.deltaY);
     event.stopImmediatePropagation();
   };
 
-  private panByCssPixels(deltaPx: number): void {
-    if (!Number.isFinite(deltaPx) || deltaPx === 0) return;
-    this.userOffsetMs += (deltaPx / SERIES_ROW_HEIGHT_PX) * this.cadenceMs;
-    this.setFollowing(false);
-    const center = Date.now() + this.userOffsetMs;
-    void this.ensureWindow(center);
+  private readonly handleKeydown = (event: KeyboardEvent) => {
+    const direction =
+      event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home"
+        ? -1
+        : event.key === "ArrowDown" ||
+            event.key === "PageDown" ||
+            event.key === "End" ||
+            event.key === " "
+          ? event.key === " " && event.shiftKey
+            ? -1
+            : 1
+          : 0;
+    if (direction !== 0) this.loadAtScrollEdge(direction);
+  };
+
+  private readonly handleScroll = () => {
+    if (this.programmaticScrollTop === this.scrollContainer.scrollTop) {
+      this.programmaticScrollTop = null;
+      this.requestDraw();
+      return;
+    }
+    this.programmaticScrollTop = null;
+    this.setFollowing(
+      Math.abs(this.scrollContainer.scrollTop - this.currentScrollTop()) < 1,
+    );
     this.requestDraw();
+    this.loadAtScrollEdge();
+  };
+
+  private loadAtScrollEdge(direction = 0): void {
+    const requested =
+      direction <= 0 && this.atScrollEdge("older")
+        ? "older"
+        : direction >= 0 && this.atScrollEdge("newer")
+          ? "newer"
+          : null;
+    this.scrollLoadDirection =
+      requested && this.pager.hasMore(requested) ? requested : null;
+    if (this.scrollLoadDirection) {
+      this.setFollowing(false);
+      this.failedPages.delete(this.scrollLoadDirection);
+      this.continueScrollLoading();
+    }
+  }
+
+  private atScrollEdge(direction: SeriesPageDirection): boolean {
+    const top = this.scrollContainer.scrollTop;
+    const padding = SUBSCRIPTION_BUFFER_ROWS * SERIES_ROW_HEIGHT_PX;
+    return direction === "older"
+      ? top <= padding
+      : top + this.scrollContainer.clientHeight >=
+          this.scrollContainer.scrollHeight - padding;
+  }
+
+  private continueScrollLoading(): void {
+    const direction = this.scrollLoadDirection;
+    if (
+      direction === null ||
+      this.loading.size > 0 ||
+      this.refreshTask !== null ||
+      this.failedPages.has(direction)
+    )
+      return;
+    if (!this.pager.hasMore(direction) || !this.atScrollEdge(direction)) {
+      this.scrollLoadDirection = null;
+      return;
+    }
+    this.scrollLoadDirection = null;
+    const rowCount = this.rows.length;
+    void this.loadPage(direction)
+      .then(() => {
+        // Empty or duplicate pages must not strand the user at an edge. A page
+        // adding rows satisfies this gesture; further scrolling requests more.
+        if (
+          !this.destroyed &&
+          !this.following &&
+          this.rows.length === rowCount &&
+          this.loading.size === 0 &&
+          this.scrollLoadDirection === null &&
+          this.pager.hasMore(direction)
+        )
+          this.scrollLoadDirection = direction;
+        this.continueScrollLoading();
+      })
+      .catch(() => undefined);
+  }
+
+  private currentScrollTop(): number {
+    const index = seriesCurrentRowIndex(
+      this.rows,
+      Date.now(),
+      (row) =>
+        isActiveOrderMarket(row.market) &&
+        this.marketLifecycle(row.market).kind === "live",
+    );
+    const max = Math.max(
+      0,
+      this.rows.length * SERIES_ROW_HEIGHT_PX - this.plotter.height,
+    );
+    return Math.min(max, Math.max(0, index) * SERIES_ROW_HEIGHT_PX);
+  }
+
+  private scrollToCurrent(): void {
+    this.scrollTo(this.currentScrollTop());
+  }
+
+  private scrollTo(top: number): void {
+    const previous = this.scrollContainer.scrollTop;
+    this.scrollContainer.scrollTop = top;
+    if (previous !== this.scrollContainer.scrollTop)
+      this.programmaticScrollTop = this.scrollContainer.scrollTop;
   }
 
   private setFollowing(value: boolean): void {
@@ -383,120 +526,85 @@ export class SeriesTimelineView implements PresentationTarget {
     this.onFollowingChanged(value);
   }
 
-  private async ensureWindow(centerMs: number, force = false): Promise<void> {
-    if (this.destroyed) return;
+  private emitPagingState(): void {
+    this.onPagingChanged({
+      loading: this.loading.size > 0 || this.refreshTask !== null,
+    });
+  }
 
-    const reloadDistance =
-      SERIES_WINDOW_ROWS * this.cadenceMs * WINDOW_RELOAD_FRACTION;
+  private async loadPage(direction: SeriesPageDirection): Promise<void> {
     if (
-      !force &&
-      this.loadedCenterMs !== null &&
-      Math.abs(centerMs - this.loadedCenterMs) < reloadDistance
+      this.destroyed ||
+      this.refreshTask !== null ||
+      this.loading.has(direction) ||
+      !this.pager.hasMore(direction)
     )
       return;
-    if (
-      !force &&
-      this.loadingCenterMs !== null &&
-      Math.abs(centerMs - this.loadingCenterMs) < reloadDistance
-    )
-      return;
-
-    const generation = ++this.loadGeneration;
-    this.loadingCenterMs = centerMs;
-
+    this.loading.add(direction);
+    this.emitPagingState();
     try {
-      const loaded = await loadSeriesEventsAround(
-        this.client,
-        this.series,
-        centerMs,
-        this.cadenceMs,
-      );
-      if (this.destroyed || generation !== this.loadGeneration) return;
-
-      const compatible = loaded.filter((event) =>
-        event.markets.some((market) => market.outcomes.yes.tokenId),
-      );
-      if (compatible.length === 0)
-        throw new Error(
-          "No timed binary events were found in this series window",
-        );
-
-      this.cadenceMs = inferSeriesCadenceMs(compatible, this.series.recurrence);
-      this.feeSchedules.primeMarkets(
-        compatible.flatMap((event) => event.markets),
-      );
-      this.rows = compatible
-        .map((event) => timedSeriesEvent(event, this.cadenceMs))
-        .filter((row): row is TimedSeriesEvent => row !== null);
-      this.absoluteTimeLabelByStart.clear();
-      for (const row of this.rows)
-        this.absoluteTimeLabelByStart.set(
-          row.startMs,
-          this.absoluteTimeLabelByStart.get(row.startMs) ??
-            formatTimelineTime(row.startMs, this.cadenceMs),
-        );
-
-      const keepTokens = new Set<string>();
-      this.scaleByToken.clear();
-      this.marketByToken.clear();
-      for (const row of this.rows) {
-        for (const [marketIndex, market] of row.event.markets.entries()) {
-          const tokenId = market.outcomes.yes.tokenId;
-          if (!tokenId) continue;
-          const key = tokenId;
-          keepTokens.add(key);
-          this.scaleByToken.set(
-            key,
-            defaultPressureScaleForMarket(row.event, marketIndex),
-          );
-          this.marketByToken.set(key, market);
-          this.pressure.ensure(key, row.endMs);
-
-          const oppositeTokenId = market.outcomes.no.tokenId;
-          if (oppositeTokenId) {
-            const oppositeKey = oppositeTokenId;
-            keepTokens.add(oppositeKey);
-            this.marketByToken.set(oppositeKey, market);
-            this.pressure.ensure(oppositeKey, row.endMs);
-          }
-
-          const lifecycle = this.marketLifecycle(market);
-          if (lifecycle.kind === "resolved")
-            this.applyResolvedPressure(
-              tokenId,
-              oppositeTokenId,
-              lifecycle.winningTokenId,
-            );
-          else {
-            this.pressure.setExtents(tokenId, []);
-            if (oppositeTokenId) this.pressure.setExtents(oppositeTokenId, []);
-          }
-        }
-      }
-
-      for (const tokenId of this.bookCache.keys())
-        if (!keepTokens.has(tokenId)) this.bookCache.delete(tokenId);
-      this.pressure.retain(keepTokens);
-      for (const tokenId of [...this.hydratedTokens])
-        if (!keepTokens.has(tokenId)) this.hydratedTokens.delete(tokenId);
-
-      this.loadedCenterMs = centerMs;
-      this.loadedMinStartMs =
-        this.rows.length > 0 ? this.rows[0]!.startMs : null;
-      this.loadedMaxStartMs =
-        this.rows.length > 0 ? this.rows.at(-1)!.startMs : null;
-      this.loadingCenterMs = null;
-      this.lastEdgeRefreshMs = Date.now();
-      this.onWindowChanged(compatible.length);
-      this.updateAnchorEvent(Date.now());
-      this.scheduleWindowRefresh();
-      this.requestDraw();
+      const details = await this.pager.load(direction);
+      if (!this.destroyed) this.installEvents(details);
     } catch (error) {
-      if (this.destroyed || generation !== this.loadGeneration) return;
-      this.loadingCenterMs = null;
-      this.onError(error instanceof Error ? error.message : String(error));
-      if (this.rows.length === 0) throw error;
+      this.failedPages.add(direction);
+      if (!this.destroyed)
+        this.onError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      this.loading.delete(direction);
+      if (!this.destroyed) {
+        this.emitPagingState();
+        this.requestDraw();
+        // A scroll made during loading remains pending.
+        this.continueScrollLoading();
+      }
     }
+  }
+
+  private installEvents(loaded: readonly EventDetails[]): void {
+    const scrollTop = this.scrollContainer.scrollTop;
+    const anchor =
+      this.rows[Math.floor(scrollTop / SERIES_ROW_HEIGHT_PX)]?.tokenId;
+    const offset = scrollTop % SERIES_ROW_HEIGHT_PX;
+    for (const detail of loaded) this.details.set(detail.event.id, detail);
+    const events = mergeSeriesEvents(
+      [...this.details.values()].map((detail) => detail.event),
+    );
+    this.rows = seriesMarketRows(events);
+    this.feeSchedules.primeMarkets(
+      loaded.flatMap((detail) => detail.event.markets),
+    );
+
+    for (const detail of loaded) {
+      const definition = buildChartDefinition(detail);
+      for (const [index, market] of detail.event.markets.entries()) {
+        const primary = market.outcomes.yes.tokenId;
+        if (!primary) continue;
+        this.scaleByToken.set(
+          primary,
+          definition.pressureScales.get(primary) ??
+            defaultPressureScaleForMarket(detail.event, index),
+        );
+        this.marketByToken.set(primary, market);
+        const opposite = market.outcomes.no.tokenId;
+        if (opposite) this.marketByToken.set(opposite, market);
+      }
+    }
+
+    const height =
+      Math.max(1, Math.min(SERIES_VISIBLE_ROWS, this.rows.length)) *
+      SERIES_ROW_HEIGHT_PX;
+    this.scrollContainer.style.height = `${height}px`;
+    this.canvasWrap.style.height = `${height}px`;
+    this.scrollContent.style.height = `${Math.max(height, this.rows.length * SERIES_ROW_HEIGHT_PX)}px`;
+    if (this.following) this.scrollToCurrent();
+    else if (anchor) {
+      const index = this.rows.findIndex((row) => row.tokenId === anchor);
+      if (index >= 0) this.scrollTo(index * SERIES_ROW_HEIGHT_PX + offset);
+    }
+    this.visibleMarketsKey = "";
+    this.onEventsChanged();
+    this.requestDraw();
   }
 
   private requestDraw(): void {
@@ -510,51 +618,60 @@ export class SeriesTimelineView implements PresentationTarget {
 
   private draw(): void {
     if (this.destroyed) return;
-    const nowMs = Date.now();
-    const reference = this.renderInput.observationReference;
-    const referenceMs =
-      reference.kind === "observed" ? reference.newestMs : nowMs;
-    const centerMs = referenceMs + this.userOffsetMs;
-    const spanMs = SERIES_VISIBLE_ROWS * this.cadenceMs;
-    const minMs = centerMs - spanMs / 2;
-    const maxMs = centerMs + spanMs / 2;
-
+    const scrollTop = this.scrollContainer.scrollTop;
+    const height = this.plotter.height;
     const frame = this.plotter.beginFrame(
       this.theme,
       {
         xRange: { min: 0, max: 1 },
-        yRange: { min: minMs, max: maxMs },
+        yRange: { min: 0, max: SERIES_VISIBLE_ROWS },
       },
       { transparentBackground: true },
     );
-
-    const subscriptionPaddingMs = SUBSCRIPTION_BUFFER_ROWS * this.cadenceMs;
-    const wallCenterMs = nowMs + this.userOffsetMs;
-    const bufferedRows = this.rows.filter(
-      (row) =>
-        (row.centerMs >= minMs - subscriptionPaddingMs &&
-          row.centerMs <= maxMs + subscriptionPaddingMs) ||
-        (row.centerMs >= wallCenterMs - spanMs / 2 - subscriptionPaddingMs &&
-          row.centerMs <= wallCenterMs + spanMs / 2 + subscriptionPaddingMs),
+    const firstIndex = Math.max(
+      0,
+      Math.floor(scrollTop / SERIES_ROW_HEIGHT_PX),
     );
-    const visibleRows = bufferedRows.filter(
-      (row) =>
-        row.centerMs >= minMs - this.cadenceMs &&
-        row.centerMs <= maxMs + this.cadenceMs,
+    const lastIndex = Math.min(
+      this.rows.length,
+      Math.ceil((scrollTop + height) / SERIES_ROW_HEIGHT_PX),
     );
+    const bufferedRows = this.rows.slice(
+      Math.max(0, firstIndex - SUBSCRIPTION_BUFFER_ROWS),
+      lastIndex + SUBSCRIPTION_BUFFER_ROWS,
+    );
+    const visibleRows = this.rows.slice(firstIndex, lastIndex);
+    const retained = new Set<string>();
+    for (const row of bufferedRows) {
+      const { market, tokenId, deadlineMs } = row;
+      retained.add(tokenId);
+      this.pressure.ensure(tokenId, deadlineMs);
+      const opposite = market.outcomes.no.tokenId;
+      if (opposite) {
+        retained.add(opposite);
+        this.pressure.ensure(opposite, deadlineMs);
+      }
+      const lifecycle = this.marketLifecycle(market);
+      if (lifecycle.kind === "resolved")
+        this.applyResolvedPressure(tokenId, opposite, lifecycle.winningTokenId);
+    }
+    this.retainedPressureTokens = retained;
+    this.pressure.retain(retained);
+    for (const tokenId of this.bookCache.keys())
+      if (!retained.has(tokenId)) this.bookCache.delete(tokenId);
+    for (const tokenId of this.hydratedTokens)
+      if (!retained.has(tokenId)) this.hydratedTokens.delete(tokenId);
 
     const bufferedTokens: TokenId[] = [];
     const hydratableTokens: string[] = [];
     for (const row of bufferedRows) {
-      const market = primaryMarket(row.event);
-      const tokenId = market?.outcomes.yes.tokenId;
-      if (!market || !tokenId) continue;
+      const { market, tokenId } = row;
 
       const lifecycle = this.marketLifecycle(market);
       const oppositeTokenId = market.outcomes.no.tokenId;
       hydratableTokens.push(tokenId);
       if (oppositeTokenId) hydratableTokens.push(oppositeTokenId);
-      if (lifecycle.kind === "live") {
+      if (lifecycle.kind === "live" && isActiveOrderMarket(market)) {
         bufferedTokens.push(tokenId);
         if (oppositeTokenId) bufferedTokens.push(oppositeTokenId);
       }
@@ -566,9 +683,7 @@ export class SeriesTimelineView implements PresentationTarget {
     const scaleY = Math.max(1, frame.canvas.height) / this.plotter.height;
 
     for (const row of visibleRows) {
-      const market = primaryMarket(row.event);
-      const tokenId = market?.outcomes.yes.tokenId;
-      if (!market || !tokenId) continue;
+      const { market, tokenId } = row;
 
       const key = tokenId;
       const scale = this.pressureScale(row.event, market);
@@ -580,7 +695,7 @@ export class SeriesTimelineView implements PresentationTarget {
         : undefined;
       if (!primaryMemory && !oppositeMemory) continue;
 
-      const geometry = seriesRowGeometry(frame, row.centerMs);
+      const geometry = this.rowGeometry(frame, row);
       gpuRows.push({
         key,
         topDevice: Math.round(geometry.topCss * scaleY),
@@ -642,109 +757,51 @@ export class SeriesTimelineView implements PresentationTarget {
       background: this.theme.bg,
     });
 
-    this.drawTimeline(frame, visibleRows, referenceMs);
-    this.updateAnchorEvent(nowMs);
+    for (const row of visibleRows)
+      drawAgeRowRails(
+        frame,
+        this.rowGeometry(frame, row),
+        this.pressureScale(row.event, row.market),
+      );
+    this.updateVisibleMarkets(frame, visibleRows);
+    this.updateAnchorEvent(visibleRows[0]?.event ?? null);
     this.refreshFeed(bufferedTokens);
-    this.refreshWindowIfNeeded(centerMs, minMs, maxMs, nowMs);
     this.renderedOpacityTimeMs = opacityReference(
       this.renderInput.observationReference,
     );
   }
 
-  private drawTimeline(
+  private rowGeometry(frame: Frame, row: SeriesMarketRow) {
+    return rasterizeCenteredAgeRow(
+      (row.index + 0.5) * SERIES_ROW_HEIGHT_PX - this.scrollContainer.scrollTop,
+      this.plotter.height,
+      Math.max(1, frame.canvas.height),
+    );
+  }
+
+  private updateVisibleMarkets(
     frame: Frame,
-    rows: readonly TimedSeriesEvent[],
-    nowMs: number,
+    rows: readonly SeriesMarketRow[],
   ): void {
-    const { ctx, viewport: vp, theme } = frame;
-    const timelineX = vp.l + vp.width + TIMELINE_RELATIVE_GUTTER_PX;
-
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = theme.axis;
-    ctx.beginPath();
-    ctx.moveTo(timelineX, 0);
-    ctx.lineTo(timelineX, this.plotter.height);
-    ctx.stroke();
-
-    ctx.font = "10px sans-serif";
-    ctx.textBaseline = "middle";
-
-    // Event boundaries are the absolute clock: these drift past the independent
-    // relative-time ticks as wall time advances.
-    for (const row of rows) {
-      const market = primaryMarket(row.event);
-      const tokenId = market?.outcomes.yes.tokenId;
-      if (!market || !tokenId) continue;
-
-      const geometry = seriesRowGeometry(frame, row.centerMs);
-      if (
-        geometry.topCss > vp.t + vp.height ||
-        geometry.topCss + geometry.heightCss < vp.t
+    const markets = rows.map((row) => ({
+      row,
+      centerY: this.rowGeometry(frame, row).centerCss,
+      lifecycle: this.marketLifecycle(row.market),
+    }));
+    const key = markets
+      .map(
+        ({ row, centerY, lifecycle }) =>
+          `${row.tokenId}:${centerY}:${lifecycle.kind}:${lifecycle.kind === "resolved" ? lifecycle.winningTokenId : ""}`,
       )
-        continue;
-
-      const scale = this.pressureScale(row.event, market);
-      drawAgeRowRails(frame, geometry, scale);
-
-      const startY = frame.toScreenY(0, row.startMs);
-      if (startY >= vp.t - 1 && startY <= vp.t + vp.height + 1) {
-        ctx.strokeStyle = theme.axis;
-        ctx.beginPath();
-        ctx.moveTo(timelineX, startY);
-        ctx.lineTo(timelineX + 3, startY);
-        ctx.stroke();
-
-        ctx.fillStyle = theme.text;
-        ctx.textAlign = "left";
-        ctx.fillText(
-          formatTimelineTime(row.startMs, this.cadenceMs),
-          timelineX + 6,
-          startY,
-        );
-      }
-    }
-
-    // Relative ticks are anchored to "now", not to event boundaries.
-    const minK = Math.ceil((frame.domain.yRange.min - nowMs) / this.cadenceMs);
-    const maxK = Math.floor((frame.domain.yRange.max - nowMs) / this.cadenceMs);
-    for (let k = minK; k <= maxK; k++) {
-      const tickTime = nowMs + k * this.cadenceMs;
-      const tickY = frame.toScreenY(0, tickTime);
-      if (tickY < vp.t - 1 || tickY > vp.t + vp.height + 1) continue;
-
-      ctx.strokeStyle = theme.axis;
-      ctx.beginPath();
-      ctx.moveTo(timelineX - 3, tickY);
-      ctx.lineTo(timelineX, tickY);
-      ctx.stroke();
-
-      ctx.fillStyle = theme.text;
-      ctx.textAlign = "right";
-      ctx.fillText(
-        relativeCadenceLabel(k, this.cadenceMs),
-        timelineX - 6,
-        tickY,
-      );
-    }
-
-    const nowY = frame.toScreenY(0, nowMs);
-    if (nowY >= vp.t && nowY <= vp.t + vp.height) {
-      ctx.save();
-      ctx.fillStyle = this.theme.bg;
-      ctx.beginPath();
-      ctx.arc(timelineX, nowY, 4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = this.theme.text;
-      ctx.beginPath();
-      ctx.arc(timelineX, nowY, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
+      .join("|");
+    if (key === this.visibleMarketsKey) return;
+    this.visibleMarketsKey = key;
+    this.onVisibleMarketsChanged(markets);
   }
 
   private updateAgeOverlays(
     frame: Frame,
-    rows: readonly TimedSeriesEvent[],
+    rows: readonly SeriesMarketRow[],
   ): void {
     const vp = frame.viewport;
     const geometry: AgeStripGeometry = {
@@ -755,11 +812,9 @@ export class SeriesTimelineView implements PresentationTarget {
         height: vp.height,
       },
       rows: rows.flatMap((row) => {
-        const market = primaryMarket(row.event);
-        const tokenId = market?.outcomes.yes.tokenId;
-        if (!tokenId) return [];
+        const { market, tokenId } = row;
 
-        const raster = seriesRowGeometry(frame, row.centerMs);
+        const raster = this.rowGeometry(frame, row);
 
         return [
           {
@@ -912,9 +967,7 @@ export class SeriesTimelineView implements PresentationTarget {
         }
 
         for (const row of this.rows) {
-          const market = primaryMarket(row.event);
-          const tokenId = market?.outcomes.yes.tokenId;
-          if (!market || !tokenId) continue;
+          const { market, tokenId } = row;
           const lifecycle = this.marketLifecycle(market);
           if (lifecycle.kind !== "resolved") continue;
           this.applyResolvedPressure(
@@ -963,9 +1016,8 @@ export class SeriesTimelineView implements PresentationTarget {
           this.bookCache.get(tokenId) ?? this.feed?.getBook(tokenId as TokenId),
         (tokenId) => this.feeSchedules.scheduleForToken(tokenId as TokenId),
       );
-      this.advancePressureObservations(
-        Object.keys(hydration.pressureSnapshotsByToken),
-      );
+      this.pressure.retain(this.retainedPressureTokens);
+      this.advancePressureObservations(this.retainedPressureTokens);
       this.pressureLayer.invalidate();
       this.ageClock.refresh();
       this.requestDraw();
@@ -979,126 +1031,54 @@ export class SeriesTimelineView implements PresentationTarget {
     }
   }
 
-  private updateAnchorEvent(nowMs: number): void {
-    if (this.rows.length === 0) {
-      if (this.lastAnchorEventId !== null) {
-        this.lastAnchorEventId = null;
-        this.onAnchorEventChanged(null);
-      }
-      return;
-    }
-
-    const anchor =
-      this.rows.find((row) => row.startMs <= nowMs && nowMs < row.endMs) ??
-      this.rows.reduce((best, row) =>
-        Math.abs(row.centerMs - nowMs) < Math.abs(best.centerMs - nowMs)
-          ? row
-          : best,
-      );
-
-    const id = anchor.event.id;
+  private updateAnchorEvent(event: Event | null): void {
+    const id = event?.id ?? null;
     if (id === this.lastAnchorEventId) return;
     this.lastAnchorEventId = id;
-    this.onAnchorEventChanged(anchor.event);
+    this.onAnchorEventChanged(event);
   }
 
-  private refreshWindowIfNeeded(
-    centerMs: number,
-    minMs: number,
-    maxMs: number,
-    nowMs: number,
-  ): void {
-    const edgePaddingMs = Math.max(SERIES_VISIBLE_ROWS, 3) * this.cadenceMs;
-    const nearPastEdge =
-      this.loadedMinStartMs === null ||
-      minMs <= this.loadedMinStartMs + edgePaddingMs;
-    const nearFutureEdge =
-      this.loadedMaxStartMs === null ||
-      maxMs >= this.loadedMaxStartMs - edgePaddingMs;
+  private refreshEvents(): Promise<void> {
+    if (this.refreshTask) return this.refreshTask;
+    if (this.destroyed || this.loading.size > 0) return Promise.resolve();
+    this.refreshTask = this.performRefresh().finally(() => {
+      this.refreshTask = null;
+      if (!this.destroyed) {
+        this.emitPagingState();
+        this.requestDraw();
+        this.continueScrollLoading();
+      }
+    });
+    this.emitPagingState();
+    return this.refreshTask;
+  }
 
-    if (!nearPastEdge && !nearFutureEdge) {
-      void this.ensureWindow(centerMs);
-      return;
+  private async performRefresh(): Promise<void> {
+    try {
+      const details = await this.pager.refresh(
+        this.following ? Date.now() : undefined,
+      );
+      if (!this.destroyed) {
+        this.installEvents(details);
+        this.emitPagingState();
+      }
+    } catch (error) {
+      if (!this.destroyed)
+        this.onError(error instanceof Error ? error.message : String(error));
     }
-
-    const refreshEveryMs = Math.max(
-      5_000,
-      Math.min(60_000, this.cadenceMs / 2),
-    );
-    if (nowMs - this.lastEdgeRefreshMs < refreshEveryMs) return;
-    this.lastEdgeRefreshMs = nowMs;
-    void this.ensureWindow(centerMs, true);
   }
 
   private scheduleWindowRefresh(): void {
     if (this.destroyed) return;
-    if (this.clockTimer !== undefined) window.clearTimeout(this.clockTimer);
-    // Discover new events even during a stream outage, without repainting pressure.
-    const delayMs = Math.max(5_000, Math.min(60_000, this.cadenceMs / 2));
     this.clockTimer = window.setTimeout(() => {
       this.clockTimer = undefined;
-      const nowMs = Date.now();
-      const centerMs = nowMs + this.userOffsetMs;
-      const halfSpanMs = (SERIES_VISIBLE_ROWS * this.cadenceMs) / 2;
-      this.refreshWindowIfNeeded(
-        centerMs,
-        centerMs - halfSpanMs,
-        centerMs + halfSpanMs,
-        nowMs,
-      );
-      this.updateAnchorEvent(nowMs);
-      this.scheduleWindowRefresh();
-    }, delayMs);
+      void this.refreshEvents().finally(() => this.scheduleWindowRefresh());
+    }, SERIES_REFRESH_MS);
   }
 }
 
 function marketDisplayName(market: Market): string {
   return market.groupItemTitle ?? market.question ?? "(untitled)";
-}
-
-function primaryMarket(event: Event): Market | null {
-  return event.markets.find((market) => market.outcomes.yes.tokenId) ?? null;
-}
-
-function formatTimelineTime(timestampMs: number, cadenceMs: number): string {
-  const date = new Date(timestampMs);
-  if (cadenceMs >= 24 * 60 * 60_000)
-    return date.toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-    });
-  return date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-function relativeCadenceLabel(offset: number, cadenceMs: number): string {
-  if (offset === 0) return "now";
-
-  const magnitudeMs = Math.abs(offset) * cadenceMs;
-  const sign = offset < 0 ? "−" : "";
-
-  if (magnitudeMs < 60_000) return `${sign}${Math.round(magnitudeMs / 1_000)}s`;
-  if (magnitudeMs < 60 * 60_000)
-    return `${sign}${formatCompactDuration(magnitudeMs / 60_000)}m`;
-  if (magnitudeMs < 48 * 60 * 60_000)
-    return `${sign}${formatCompactDuration(magnitudeMs / (60 * 60_000))}h`;
-  return `${sign}${formatCompactDuration(magnitudeMs / (24 * 60 * 60_000))}d`;
-}
-
-function formatCompactDuration(value: number): string {
-  const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
-}
-
-function seriesRowGeometry(frame: Frame, y: number) {
-  return rasterizeCenteredAgeRow(
-    frame.toScreenY(0, y),
-    frame.plotter.height,
-    Math.max(1, frame.canvas.height),
-  );
 }
 
 function sameObservationReference(
@@ -1109,18 +1089,5 @@ function sameObservationReference(
     a.kind === b.kind &&
     (a.kind === "unobserved" ||
       (b.kind === "observed" && a.newestMs === b.newestMs))
-  );
-}
-
-function sameObservationRows(
-  a: AgeStripGeometry | null,
-  b: AgeStripGeometry | null,
-): boolean {
-  if (a === b) return true;
-  if (!a || !b || a.rows.length !== b.rows.length) return false;
-  return a.rows.every(
-    (row, index) =>
-      row.tokenId === b.rows[index]!.tokenId &&
-      row.oppositeTokenId === b.rows[index]!.oppositeTokenId,
   );
 }

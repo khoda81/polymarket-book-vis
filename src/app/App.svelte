@@ -222,8 +222,8 @@
   }
 
   async function recurringSeriesFor(event: Event): Promise<Series | null> {
-    // Series view currently means one recurring binary event per timeline row.
-    // Multi-market events retain the ordinary event-card representation.
+    // Opening a single-market recurring event also opens its series history.
+    // Multi-market event slugs still select their own event card.
     if (event.markets.length !== 1) return null;
 
     for (const reference of event.series) {

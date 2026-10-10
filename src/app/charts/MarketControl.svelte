@@ -1,11 +1,14 @@
 <script lang="ts">
   import type { ChartMarketControl } from "../../chart/configuration/chartDefinition";
   import type { MarketLifecycle } from "../../domain/markets/marketLifecycle";
+  import { marketDeadlineMs } from "../../domain/markets/marketDeadline";
+  import MarketDeadline from "./MarketDeadline.svelte";
 
   export let control: ChartMarketControl;
   export let checked: boolean;
   export let lifecycle: MarketLifecycle;
   export let onchange: (checked: boolean) => void;
+  export let showDeadline = true;
 
   let iconFailed = false;
 
@@ -69,7 +72,12 @@
       onerror={() => (iconFailed = true)}
     />
   {/if}
-  <span class="cpv-market-label-text">{control.title}</span>
+  <span class="cpv-market-copy">
+    <span class="cpv-market-label-text">{control.title}</span>
+    {#if showDeadline}
+      <MarketDeadline deadlineMs={marketDeadlineMs(control.market)} />
+    {/if}
+  </span>
   {#if lifecycle.kind === "resolved"}
     <span class="cpv-market-resolution-hidden">
       · {resolutionOutcome}

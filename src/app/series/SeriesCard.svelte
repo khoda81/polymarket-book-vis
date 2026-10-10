@@ -1,6 +1,6 @@
 <script lang="ts">
   import SeriesHeader from "./SeriesHeader.svelte";
-  import SeriesTimeline from "./SeriesTimeline.svelte";
+  import SeriesMarkets from "./SeriesMarkets.svelte";
   import {
     cardReorderSurface,
     reorderHandleClick,
@@ -41,7 +41,7 @@
     );
   }
 
-  function timelineReady(): void {
+  function marketsReady(): void {
     if (ready) return;
     ready = true;
     onready();
@@ -131,11 +131,11 @@
       </p>
     {/if}
 
-    <SeriesTimeline
+    <SeriesMarkets
       {series}
       {ageRowOrientation}
       onrowflip={flipRows}
-      onready={timelineReady}
+      onready={marketsReady}
       {onfailure}
       onanchorevent={(event) => (anchorEvent = event)}
     />

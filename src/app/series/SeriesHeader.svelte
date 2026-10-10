@@ -34,7 +34,10 @@
           {series.title ?? "(untitled series)"}
         </h5>
         {#if series.recurrence}
-          <span class="series-recurrence">{series.recurrence}</span>
+          <span
+            class="series-recurrence"
+            title="Recurrence reported by Polymarket">{series.recurrence}</span
+          >
         {/if}
       </div>
 

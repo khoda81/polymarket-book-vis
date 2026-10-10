@@ -223,6 +223,7 @@
       <MarketControl
         {control}
         checked={false}
+        showDeadline={false}
         lifecycle={model.lifecycleFor(control.market.id)}
         onchange={(checked) => userSetVisible(control, checked)}
       />
