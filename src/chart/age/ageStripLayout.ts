@@ -1,5 +1,4 @@
 import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
-import type { Frame } from "@/rendering/renderer";
 import type { TokenBook } from "@/domain/books/orderBook";
 
 const AGE_LABEL_MIN_GUTTER_PX = 16;
@@ -64,14 +63,12 @@ export function sameDisplayTitle(
 
 export function positionRowControls(
   labels: readonly HTMLLabelElement[],
-  frame: Frame,
-  rowCount: number,
+  rows: readonly RowRasterGeometry[],
 ): void {
-  const dpr = window.devicePixelRatio || 1;
   for (const [index, label] of labels.entries()) {
-    const y = rowCount - 1 - index;
-    const geometry = rowRasterGeometry(frame.toScreenY(0, y), dpr);
-    const top = `${geometry.centerCss}px`;
+    const row = rows[index];
+    if (!row) continue;
+    const top = `${row.centerCss}px`;
     if (label.style.top !== top) label.style.top = top;
   }
 }
@@ -102,7 +99,7 @@ export function ageStripRowAtY(
   y: number,
 ): AgeStripGeometry["rows"][number] | null {
   const { viewport: vp, rows } = geometry;
-  if (rows.length === 0 || y < vp.t || y >= vp.t + vp.height) return null;
+  if (rows.length === 0) return null;
 
   const hasExplicitGeometry = rows.some(
     (row) =>
@@ -129,6 +126,7 @@ export function ageStripRowAtY(
     return explicit ?? null;
   }
 
+  if (y < vp.t || y >= vp.t + vp.height) return null;
   const rowIndex = Math.floor(((y - vp.t) / vp.height) * rows.length);
   return rows[rowIndex] ?? null;
 }
@@ -147,26 +145,44 @@ export function ageStripRowCenterY(
 }
 
 export interface RowRasterGeometry {
-  readonly deviceHeight: number;
   readonly topCss: number;
-  readonly heightCss: number;
   readonly centerCss: number;
+  readonly bottomCss: number;
+  readonly heightCss: number;
 }
 
-export function rowRasterGeometry(
-  desiredCenterCss: number,
-  dpr: number,
-): RowRasterGeometry {
-  const deviceHeight = Math.max(1, Math.round(AGE_ROW_BAND_PX * dpr));
-  const topDevice = Math.round(desiredCenterCss * dpr - deviceHeight / 2);
-  const topCss = topDevice / dpr;
-  const heightCss = deviceHeight / dpr;
-  return {
-    deviceHeight,
-    topCss,
-    heightCss,
-    centerCss: topCss + heightCss / 2,
-  };
+/**
+ * Snap every shared row edge and centerline to a single device-pixel grid.
+ * Quantizing absolute boundaries (rather than each row's length) partitions
+ * pixels exactly, even at fractional DPR. Nominal CSS-space layout is kept.
+ */
+export function rasterizeAgeRows(
+  viewportTopCss: number,
+  viewportHeightCss: number,
+  rowCount: number,
+  canvasHeightCss: number,
+  framebufferHeight: number,
+): readonly RowRasterGeometry[] {
+  if (rowCount <= 0) return [];
+  const scaleY = framebufferHeight / canvasHeightCss;
+  const halfRowCount = rowCount * 2;
+  const boundaries = Array.from({ length: halfRowCount + 1 }, (_, index) =>
+    Math.round(
+      (viewportTopCss + (viewportHeightCss * index) / halfRowCount) * scaleY,
+    ),
+  );
+
+  return Array.from({ length: rowCount }, (_, index) => {
+    const topDevice = boundaries[index * 2]!;
+    const centerDevice = boundaries[index * 2 + 1]!;
+    const bottomDevice = boundaries[index * 2 + 2]!;
+    return {
+      topCss: topDevice / scaleY,
+      centerCss: centerDevice / scaleY,
+      bottomCss: bottomDevice / scaleY,
+      heightCss: (bottomDevice - topDevice) / scaleY,
+    };
+  });
 }
 
 export function hasRealOrders(book: TokenBook): boolean {

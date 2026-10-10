@@ -1,4 +1,5 @@
 import type { ObservationTime } from "@/domain/pressure/observationClock";
+import { AGE_ROW_BAND_PX } from "./ageStripTuning";
 import {
   PRESSURE_MIN_VISIBLE_ALPHA,
   type PressureExtent,
@@ -26,8 +27,10 @@ export interface GpuPressureSurface {
 
 export interface GpuPressureRow {
   readonly key: string;
-  readonly centerCss: number;
-  readonly heightCss: number;
+  /** Shared row boundaries, snapped to integer framebuffer pixels. */
+  readonly topDevice: number;
+  readonly centerDevice: number;
+  readonly bottomDevice: number;
   readonly surfaces: readonly GpuPressureSurface[];
 }
 
@@ -73,15 +76,17 @@ layout(location = 5) in float aBandValidThroughSec;
 layout(location = 6) in float aValidityMode;
 
 uniform vec2 uCanvasCssSize;
+uniform float uCanvasDeviceHeight;
 uniform vec2 uPriceViewport;
 uniform vec2 uRasterScale;
-uniform float uVolumePerCssPixel;
+uniform float uReserveShares;
 uniform float uNowOffsetSec;
 uniform float uGhostHalfLifeSec;
 uniform bool uHasCurrentValidThrough;
 uniform float uCurrentValidThroughSec;
-uniform float uCenterCss;
-uniform float uRowHeightCss;
+uniform float uRowTopDevice;
+uniform float uRowCenterDevice;
+uniform float uRowBottomDevice;
 uniform float uMirrorPrice;
 uniform float uYDirection;
 uniform vec3 uColor;
@@ -121,8 +126,7 @@ void main() {
     referenceAlpha = exp2(-ageSec / halfLifeSec);
   }
 
-  float reserveShares = uVolumePerCssPixel * uRowHeightCss;
-  float reserveSharesSq = reserveShares * reserveShares;
+  float reserveSharesSq = uReserveShares * uReserveShares;
   float pressureLo =
       aVolumeLo <= 0.0
         ? 0.0
@@ -134,12 +138,13 @@ void main() {
             ? 0.0
             : aVolumeHi / sqrt(aVolumeHi * aVolumeHi + reserveSharesSq));
 
-  float y0Css =
-      uCenterCss + uYDirection * 0.5 * uRowHeightCss * pressureLo;
-  float y1Css =
-      uCenterCss + uYDirection * 0.5 * uRowHeightCss * pressureHi;
-  float yMinCss = min(y0Css, y1Css);
-  float yMaxCss = max(y0Css, y1Css);
+  float halfSpanDevice = uYDirection < 0.0
+      ? uRowCenterDevice - uRowTopDevice
+      : uRowBottomDevice - uRowCenterDevice;
+  float y0Device = uRowCenterDevice + uYDirection * halfSpanDevice * pressureLo;
+  float y1Device = uRowCenterDevice + uYDirection * halfSpanDevice * pressureHi;
+  float yMinDevice = min(y0Device, y1Device);
+  float yMaxDevice = max(y0Device, y1Device);
 
   float p0 = uMirrorPrice > 0.5 ? 1.0 - aPriceLo : aPriceLo;
   float p1 = uMirrorPrice > 0.5 ? 1.0 - aPriceHi : aPriceHi;
@@ -150,9 +155,9 @@ void main() {
 
   vRectPx = vec4(
     xMinCss * uRasterScale.x,
-    (uCanvasCssSize.y - yMaxCss) * uRasterScale.y,
+    uCanvasDeviceHeight - yMaxDevice,
     xMaxCss * uRasterScale.x,
-    (uCanvasCssSize.y - yMinCss) * uRasterScale.y
+    uCanvasDeviceHeight - yMinDevice
   );
   vColor = uColor;
   vReferenceAlpha = referenceAlpha;
@@ -163,21 +168,17 @@ void main() {
     return;
   }
 
-  vec2 halfPixelCss = 0.5 / uRasterScale;
+  float halfPixelCss = 0.5 / uRasterScale.x;
   float xCss = mix(
-    xMinCss - halfPixelCss.x,
-    xMaxCss + halfPixelCss.x,
+    xMinCss - halfPixelCss,
+    xMaxCss + halfPixelCss,
     corner.x
   );
-  float yCss = mix(
-    yMinCss - halfPixelCss.y,
-    yMaxCss + halfPixelCss.y,
-    corner.y
-  );
+  float yDevice = mix(yMinDevice - 0.5, yMaxDevice + 0.5, corner.y);
 
   vec2 clip = vec2(
     2.0 * xCss / uCanvasCssSize.x - 1.0,
-    1.0 - 2.0 * yCss / uCanvasCssSize.y
+    1.0 - 2.0 * yDevice / uCanvasDeviceHeight
   );
 
   gl_Position = vec4(clip, 0.0, 1.0);
@@ -671,6 +672,12 @@ export class GpuPressureLayer {
         frame.cssWidth,
         frame.cssHeight,
       );
+      uniform1f(
+        gl,
+        this.geometryProgram,
+        "uCanvasDeviceHeight",
+        this.displayHeight,
+      );
       uniform2f(
         gl,
         this.geometryProgram,
@@ -688,8 +695,8 @@ export class GpuPressureLayer {
       uniform1f(
         gl,
         this.geometryProgram,
-        "uVolumePerCssPixel",
-        frame.volumePerCssPixel,
+        "uReserveShares",
+        frame.volumePerCssPixel * AGE_ROW_BAND_PX,
       );
       uniform1f(
         gl,
@@ -729,8 +736,24 @@ export class GpuPressureLayer {
               ? (surface.currentValidThroughMs! - cached.timeOriginMs) / 1_000
               : 0,
           );
-          uniform1f(gl, this.geometryProgram, "uCenterCss", row.centerCss);
-          uniform1f(gl, this.geometryProgram, "uRowHeightCss", row.heightCss);
+          uniform1f(
+            gl,
+            this.geometryProgram,
+            "uRowTopDevice",
+            row.topDevice,
+          );
+          uniform1f(
+            gl,
+            this.geometryProgram,
+            "uRowCenterDevice",
+            row.centerDevice,
+          );
+          uniform1f(
+            gl,
+            this.geometryProgram,
+            "uRowBottomDevice",
+            row.bottomDevice,
+          );
           uniform1f(
             gl,
             this.geometryProgram,
@@ -950,7 +973,7 @@ function rasterProjectionKey(
   const rows = frame.rows
     .map(
       (row) =>
-        `${row.key}@${row.centerCss}:${row.heightCss}:${row.surfaces
+        `${row.key}@${row.topDevice}:${row.centerDevice}:${row.bottomDevice}:${row.surfaces
           .map(
             (surface) =>
               `${surface.key}:${surface.dataRevision}:${surface.extentRevision}:${surface.currentValidThroughMs ?? ""}:${surface.color}:${surface.mirrorPrice ? 1 : 0}:${surface.yDirection}`,

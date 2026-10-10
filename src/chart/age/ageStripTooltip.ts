@@ -130,9 +130,7 @@ export class AgeStripTooltip {
     const { viewport: vp } = geometry;
     if (
       sx < vp.l ||
-      sx > vp.l + vp.width ||
-      sy < vp.t ||
-      sy >= vp.t + vp.height
+      sx > vp.l + vp.width
     ) {
       this.hide();
       return;
@@ -170,12 +168,15 @@ export class AgeStripTooltip {
       this.host.getPressureColorScale(row.tokenId),
     );
 
-    const rowHeightCss = rowHeight(geometry, row);
+    const topCss = row.topY ?? centerCss - AGE_ROW_BAND_PX / 2;
+    const bottomCss = row.bottomY ?? centerCss + AGE_ROW_BAND_PX / 2;
+    const sideHeightCss =
+      sy < centerCss ? centerCss - topCss : bottomCss - centerCss;
     const volume = pressureVolumeAtY(
       sy,
       centerCss,
-      rowHeightCss,
-      this.host.getVolumePerCssPixel(),
+      sideHeightCss,
+      this.host.getVolumePerCssPixel() * AGE_ROW_BAND_PX,
     );
 
     const nowMs = Date.now();
@@ -311,15 +312,6 @@ export function renderAgeTooltip(
 
   overlay.appendChild(tooltipRow("Shares", formatPressureVolume(volume)));
   overlay.appendChild(tooltipRow("Age", ageText ?? "∞"));
-}
-
-function rowHeight(
-  geometry: AgeStripGeometry,
-  row: AgeStripGeometry["rows"][number],
-): number {
-  if (row.topY !== undefined && row.bottomY !== undefined)
-    return row.bottomY - row.topY;
-  return AGE_ROW_BAND_PX;
 }
 
 function tooltipRow(name: string, value: string): HTMLDivElement {
