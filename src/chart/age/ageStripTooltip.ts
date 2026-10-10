@@ -128,10 +128,7 @@ export class AgeStripTooltip {
     }
 
     const { viewport: vp } = geometry;
-    if (
-      sx < vp.l ||
-      sx > vp.l + vp.width
-    ) {
+    if (sx < vp.l || sx > vp.l + vp.width) {
       this.hide();
       return;
     }
