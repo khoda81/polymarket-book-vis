@@ -151,11 +151,6 @@ export interface RowRasterGeometry {
   readonly heightCss: number;
 }
 
-/**
- * Snap every shared row edge and centerline to a single device-pixel grid.
- * Quantizing absolute boundaries (rather than each row's length) partitions
- * pixels exactly, even at fractional DPR. Nominal CSS-space layout is kept.
- */
 /** Snap a moving series row's edges and centerline to the same pixel grid. */
 export function rasterizeCenteredAgeRow(
   desiredCenterCss: number,
@@ -178,6 +173,11 @@ export function rasterizeCenteredAgeRow(
   };
 }
 
+/**
+ * Snap every shared row edge and centerline to a single device-pixel grid.
+ * Quantizing absolute boundaries (rather than each row's length) partitions
+ * pixels exactly, even at fractional DPR. Nominal CSS-space layout is kept.
+ */
 export function rasterizeAgeRows(
   viewportTopCss: number,
   viewportHeightCss: number,
