@@ -26,7 +26,7 @@
   import AgeRowFlipButton from "./AgeRowFlipButton.svelte";
   import { hiddenMarketDisplayOrder } from "./hiddenMarketOrder";
   import MarketControl from "./MarketControl.svelte";
-  import { chartViewport, type ChartWindow } from "./chartViewport";
+  import { chartViewport, type ChartViewport } from "./chartViewport";
   import { CHART_VERTICAL_PADDING_PX } from "../../rendering/renderer";
   import { AGE_ROW_BAND_PX } from "../../chart/age/ageStripTuning";
 
@@ -59,7 +59,11 @@
 
   const definition = $derived(model.definition);
   let mounted = $state(false);
-  let rowWindow = $state<ChartWindow>({ start: 0, end: 0 });
+  let viewport = $state<ChartViewport>({
+    rows: { start: 0, end: 0 },
+    visible: false,
+  });
+  const rowWindow = $derived(viewport.rows);
   let canvas = $state<HTMLCanvasElement>();
   let pressureCanvas = $state<HTMLCanvasElement>();
   let canvasWrap: HTMLDivElement;
@@ -179,6 +183,7 @@
           (control) => control.tokenId,
         )
       : [];
+    const visible = viewport.visible;
     // Network mutations and renderer construction do not become effect dependencies.
     untrack(() => {
       void model
@@ -203,6 +208,7 @@
         chart.destroy();
         chart = null;
       }
+      chart?.setVisible(visible);
     });
   });
 
@@ -245,7 +251,7 @@
   use:chartViewport={{
     rowCount: visibleControls.length,
     viewMode,
-    onchange: (value) => (rowWindow = value),
+    onchange: (value) => (viewport = value),
   }}
 >
   <div

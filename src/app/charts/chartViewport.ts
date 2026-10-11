@@ -9,6 +9,11 @@ export interface ChartWindow {
   readonly end: number;
 }
 
+export interface ChartViewport {
+  readonly rows: ChartWindow;
+  readonly visible: boolean;
+}
+
 export function chartWindow(
   rowCount: number,
   top: number,
@@ -39,14 +44,14 @@ export function chartWindow(
 interface ViewportOptions {
   readonly rowCount: number;
   readonly viewMode: ViewMode;
-  readonly onchange: (window: ChartWindow) => void;
+  readonly onchange: (viewport: ChartViewport) => void;
 }
 
 /** Shared clipping boundary for both dashboard cards and nested series views. */
 export function chartViewport(node: HTMLElement, options: ViewportOptions) {
   const root = node.closest<HTMLElement>(".series-market-scroll");
   let frame = 0;
-  let previous: ChartWindow | undefined;
+  let previous: ChartViewport | undefined;
   const measure = () => {
     const bounds = node.getBoundingClientRect();
     const clip = root?.getBoundingClientRect();
@@ -55,15 +60,19 @@ export function chartViewport(node: HTMLElement, options: ViewportOptions) {
       window.innerHeight,
       clip?.bottom ?? window.innerHeight,
     );
-    const next =
-      options.viewMode === "age"
+    const visible = bounds.bottom > top && bounds.top < bottom && bottom > top;
+    const rows = root
+      ? options.viewMode === "age"
         ? chartWindow(options.rowCount, bounds.top, bounds.bottom, top, bottom)
-        : {
-            start: 0,
-            end:
-              bounds.bottom > top && bounds.top < bottom ? options.rowCount : 0,
-          };
-    if (previous?.start === next.start && previous.end === next.end) return;
+        : { start: 0, end: visible ? options.rowCount : 0 }
+      : { start: 0, end: options.rowCount };
+    const next = { rows, visible };
+    if (
+      previous?.rows.start === rows.start &&
+      previous.rows.end === rows.end &&
+      previous.visible === visible
+    )
+      return;
     previous = next;
     options.onchange(next);
   };

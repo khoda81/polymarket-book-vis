@@ -298,6 +298,11 @@ export class AgeStripView {
     this.layoutMode = "volume";
   }
 
+  setPaused(paused: boolean): void {
+    this.clock.setPaused(paused);
+    if (paused) this.tooltip.clear();
+  }
+
   destroy(): void {
     this.host.canvas.removeEventListener("wheel", this.handleWheel, true);
     this.clock.destroy();

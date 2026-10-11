@@ -31,8 +31,7 @@ import { AgeStripPressureState } from "@/chart/age/ageStripPressureState";
 import { LiveBookFeed } from "@/chart/live/liveBookFeed";
 import type { LiveBookFeedCallbacks } from "@/chart/live/liveBookContracts";
 import type { ConnectionStatus, ViewMode } from "@/domain/markets/chartState";
-import { emptyTokenBook, type TokenBook } from "@/domain/books/orderBook";
-import { ViewportCache } from "./viewportCache";
+import type { TokenBook } from "@/domain/books/orderBook";
 import type {
   FeeSchedule,
   FeeScheduleResolver,
@@ -54,16 +53,14 @@ const DEFAULT_SERVICES: MarketGroupServices = {
   createFees: (client) => new ClobFeeScheduleResolver(client),
   createFeed: (client, callbacks) => new LiveBookFeed(client, callbacks),
 };
-interface ViewportActivity {
+interface LiveActivity {
   readonly key: string;
-  readonly primaryTokens: ReadonlySet<TokenId>;
   readonly tokens: ReadonlySet<TokenId>;
   readonly feed: ReturnType<MarketGroupServices["createFeed"]>;
-  readonly hydration: AbortController;
   ready: Promise<void>;
 }
 
-/** Metadata and recent CPU data outlive viewport surfaces and live feeds. */
+/** A group's initialized history and feeds live until the group is removed. */
 export class MarketGroupModel {
   readonly pressure = new AgeStripPressureState();
   readonly activeTokens = new SvelteSet<TokenId>();
@@ -81,8 +78,11 @@ export class MarketGroupModel {
   private readonly unsubscribeMarkets: () => void;
   private readonly visibilityInitialized = new Set<TokenId>();
   private readonly books = new Map<TokenId, TokenBook>();
+  private readonly initializedTokens = new Set<TokenId>();
+  private readonly requestedHistory = new Set<TokenId>();
+  private readonly hydration = new AbortController();
   private requestedTokens: readonly TokenId[] = [];
-  private activity: ViewportActivity | null = null;
+  private activity: LiveActivity | null = null;
   private destroyed = false;
   private viewMode: ViewMode = "age";
   volumeScale = 4.5;
@@ -94,7 +94,6 @@ export class MarketGroupModel {
     private readonly markets: MarketState,
     private readonly onfailure: (message: string) => void = () => undefined,
     private readonly services: MarketGroupServices = DEFAULT_SERVICES,
-    private readonly cache: ViewportCache = new ViewportCache(),
   ) {
     this.source = definition;
     this.feeSchedules = services.createFees(client);
@@ -137,6 +136,10 @@ export class MarketGroupModel {
     }
     this.metadataRevision++;
     this.pressureRevision++;
+    // Only removal from the group ends a token's data lifetime.
+    this.pressure.retain(new Set(this.controlByTokenValue.keys()));
+    for (const tokenId of this.books.keys())
+      if (!this.controlByTokenValue.has(tokenId)) this.books.delete(tokenId);
     this.refreshActiveTokens();
   }
 
@@ -225,7 +228,14 @@ export class MarketGroupModel {
   }
 
   setViewport(primaryTokens: readonly TokenId[]): Promise<void> {
+    if (
+      primaryTokens.length !== this.requestedTokens.length ||
+      primaryTokens.some((id, index) => id !== this.requestedTokens[index])
+    )
+      this.visibilityRevision++;
     this.requestedTokens = primaryTokens;
+    for (const tokenId of primaryTokens) this.initializedTokens.add(tokenId);
+    this.refreshObservations();
     return this.syncActivity();
   }
 
@@ -239,10 +249,8 @@ export class MarketGroupModel {
 
   private syncActivity(): Promise<void> {
     if (this.destroyed) return Promise.resolve();
-    const controls = this.source.controls.filter(
-      (control) =>
-        this.requestedTokens.includes(control.tokenId) &&
-        this.activeTokens.has(control.tokenId),
+    const controls = this.source.controls.filter((control) =>
+      this.initializedTokens.has(control.tokenId),
     );
     const tokenIds = controls.flatMap((control) =>
       control.market.outcomes.no.tokenId
@@ -260,24 +268,6 @@ export class MarketGroupModel {
           ? [control.tokenId, control.market.outcomes.no.tokenId]
           : [control.tokenId],
       );
-    const key = `${tokenIds.toSorted().join(",")};${liveTokens.toSorted().join(",")}`;
-    if (this.activity?.key === key) return this.activity.ready;
-    const previous = this.activity;
-    this.activity = null;
-    previous?.hydration.abort();
-    if (tokenIds.length === 0 && (previous || this.books.size > 0))
-      this.retainViewportData(previous);
-    previous?.feed.destroy();
-    this.connectionStatus = "disconnected";
-    this.pressureRevision++;
-    if (tokenIds.length === 0) {
-      this.refreshObservations();
-      return Promise.resolve();
-    }
-    this.cache.forget(this);
-    this.pressure.retain(new Set(tokenIds));
-    for (const tokenId of this.books.keys())
-      if (!tokenIds.includes(tokenId)) this.books.delete(tokenId);
     for (const control of controls) {
       this.pressure.ensure(control.tokenId, control.resolutionMs);
       if (control.market.outcomes.no.tokenId)
@@ -286,12 +276,23 @@ export class MarketGroupModel {
           control.resolutionMs,
         );
     }
-    const activity: ViewportActivity = {
+    this.applyKnownResolutions(controls);
+    this.loadHistory(tokenIds);
+    const key = liveTokens.toSorted().join(",");
+    if (this.activity?.key === key) return this.activity.ready;
+    const previous = this.activity;
+    this.activity = null;
+    previous?.feed.destroy();
+    this.connectionStatus = "disconnected";
+    this.pressureRevision++;
+    if (liveTokens.length === 0) {
+      this.refreshObservations();
+      return Promise.resolve();
+    }
+    const activity: LiveActivity = {
       key,
-      primaryTokens: new Set(controls.map((control) => control.tokenId)),
-      tokens: new Set(tokenIds),
+      tokens: new Set(liveTokens),
       ready: Promise.resolve(),
-      hydration: new AbortController(),
       feed: this.services.createFeed(this.client, {
         onConnectionStatus: (status) => {
           if (this.activity === activity) this.connectionStatus = status;
@@ -326,39 +327,15 @@ export class MarketGroupModel {
       }),
     };
     this.activity = activity;
-    this.applyKnownResolutions(controls);
     this.refreshObservations();
-    void this.services.hydrate(
-      tokenIds,
-      (hydration) => {
-        if (this.activity !== activity) return;
-        this.pressure.setRecordingCoverage(hydration.recordingSinceMsByToken);
-        this.pressure.hydrate(
-          hydration.pressureSnapshotsByToken,
-          (id) => this.getBook(id),
-          (id) => this.getFeeSchedule(id),
-        );
-        this.applyKnownResolutions(controls);
-        this.advancePressureObservations(
-          Object.keys(hydration.pressureSnapshotsByToken),
-        );
-        this.recordingRevision++;
-        this.pressureRevision++;
-        this.refreshObservations();
-      },
-      activity.hydration.signal,
-    );
     activity.ready = (async () => {
       try {
-        if (liveTokens.length === 0) return;
         await this.feeSchedules.prepareTokens(liveTokens);
         if (this.activity !== activity) return;
         await activity.feed.start(liveTokens);
       } catch (error) {
         if (this.activity === activity) {
           this.activity = null;
-          activity.hydration.abort();
-          this.retainViewportData(activity);
           activity.feed.destroy();
           this.refreshObservations();
           throw error;
@@ -373,9 +350,8 @@ export class MarketGroupModel {
     this.destroyed = true;
     const previous = this.activity;
     this.activity = null;
-    previous?.hydration.abort();
+    this.hydration.abort();
     previous?.feed.destroy();
-    this.cache.forget(this);
     this.pressure.reset();
     this.books.clear();
     this.observationPointsByToken.clear();
@@ -383,31 +359,42 @@ export class MarketGroupModel {
     this.unsubscribeMarkets();
   }
 
-  private retainViewportData(activity: ViewportActivity | null): void {
-    const tokens = activity?.tokens ?? this.books.keys();
-    let weight = 0;
-    for (const tokenId of tokens) {
-      weight++;
-      const book = activity?.feed.getBook(tokenId) ?? this.books.get(tokenId);
-      if (book) {
-        // Other views can keep mutating the coordinator's canonical book.
-        // The cached display must stay at its last observed geometry and time.
-        const copy = emptyTokenBook();
-        for (const side of ["usdToYes", "yesToUsd"] as const)
-          for (const order of book[side].asOrders())
-            copy[side].setLevel(order.price, order.take);
-        this.books.set(tokenId, copy);
-        weight += copy.usdToYes.size + copy.yesToUsd.size;
-      }
-      for (const run of this.pressure.memory(tokenId)?.renderRuns() ?? [])
-        weight += 1 + run.frozenSteps.length;
-    }
-    this.cache.retain(this, weight, () => {
-      this.pressure.reset();
-      this.books.clear();
-      this.pressureRevision++;
-      this.bookRevision++;
-    });
+  private loadHistory(tokenIds: readonly TokenId[]): void {
+    const missing = tokenIds.filter((id) => !this.requestedHistory.has(id));
+    if (missing.length === 0) return;
+    for (const id of missing) this.requestedHistory.add(id);
+    void this.services
+      .hydrate(
+        missing,
+        (hydration) => {
+          if (this.destroyed) return;
+          // Metadata refresh may remove a token while its request completes.
+          const known = <T>(entries: Readonly<Record<string, T>>) =>
+            Object.fromEntries(
+              Object.entries(entries).filter(([id]) =>
+                this.controlByTokenValue.has(id),
+              ),
+            );
+          const snapshots = known(hydration.pressureSnapshotsByToken);
+          this.pressure.setRecordingCoverage(
+            known(hydration.recordingSinceMsByToken),
+          );
+          this.pressure.hydrate(
+            snapshots,
+            (id) => this.getBook(id),
+            (id) => this.getFeeSchedule(id),
+          );
+          this.applyKnownResolutions(this.source.controls);
+          this.advancePressureObservations(Object.keys(snapshots));
+          this.recordingRevision++;
+          this.pressureRevision++;
+          this.refreshObservations();
+        },
+        this.hydration.signal,
+      )
+      .catch((error: unknown) => {
+        if (!this.destroyed) this.reportFailure(error);
+      });
   }
 
   private reportFailure(error: unknown): void {
@@ -446,7 +433,11 @@ export class MarketGroupModel {
     if (this.viewMode !== "age") return;
 
     for (const control of this.definition.controls) {
-      if (!this.activity?.primaryTokens.has(control.tokenId)) continue;
+      if (
+        !this.requestedTokens.includes(control.tokenId) ||
+        !this.activeTokens.has(control.tokenId)
+      )
+        continue;
       for (const tokenId of [
         control.tokenId,
         control.market.outcomes.no.tokenId,
@@ -496,7 +487,7 @@ export class MarketGroupModel {
       const lifecycle = this.lifecycleFor(control.market.id);
       if (
         lifecycle.kind !== "resolved" ||
-        !this.activity?.primaryTokens.has(control.tokenId)
+        !this.pressure.memory(control.tokenId)
       )
         continue;
       this.applyResolvedPressure(

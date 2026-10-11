@@ -46,7 +46,7 @@ export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
     if (!tokenId) return [];
 
     const lifecycle = initialMarketLifecycle(market);
-    // Keep displayable metadata; trading eligibility belongs to viewport feeds.
+    // Keep displayable metadata; trading eligibility belongs to live feeds.
     return [{ market, tokenId, lifecycle }];
   });
   const markets = eligible.map(({ market }) => market);

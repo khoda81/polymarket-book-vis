@@ -38,6 +38,7 @@ export class AgeStripClock {
   private geometry: AgeStripGeometry | null = null;
   private orientation: AgeRowOrientation;
   private enabled = true;
+  private paused = false;
   private pending:
     { kind: "frame"; id: number } | { kind: "timer"; id: number } | null = null;
 
@@ -70,8 +71,16 @@ export class AgeStripClock {
     else this.clear();
   }
 
+  setPaused(paused: boolean): void {
+    if (paused === this.paused) return;
+    this.paused = paused;
+    if (paused) this.cancelPending();
+    else this.refresh();
+  }
+
   refresh(): void {
     this.cancelPending();
+    if (this.paused) return;
     const geometry = this.geometry;
     if (!this.enabled || !geometry || this.host.getViewMode() !== "age") {
       this.clear();

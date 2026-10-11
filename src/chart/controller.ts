@@ -80,6 +80,7 @@ export class ChartController implements PresentationTarget {
   private pendingRequestCount = 0;
   private renderedOpacityTimeMs: ObservationTime | null = null;
   private destroyed = false;
+  private visible = true;
 
   constructor(
     surface: ChartSurfaceElements,
@@ -185,6 +186,15 @@ export class ChartController implements PresentationTarget {
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
   }
 
+  /** Pause display work without destroying retained geometry and GPU buffers. */
+  setVisible(visible: boolean): void {
+    if (visible === this.visible) return;
+    this.visible = visible;
+    this.ageView.setPaused(!visible);
+    if (visible) this.reqDraw("opacity");
+    else this.presentation.cancel(this);
+  }
+
   private readonly handleThemeChange = (event: MediaQueryListEvent) => {
     this.theme = chartThemeForDarkMode(event.matches);
     this.reqDraw("full");
@@ -213,7 +223,7 @@ export class ChartController implements PresentationTarget {
       this.pendingDraw = kind;
 
     if (wasIdle) this.queuedAtMs = nowMs;
-    this.presentation.invalidate(this);
+    if (this.visible) this.presentation.invalidate(this);
 
     this.onPending?.({
       kind: this.pendingDraw,
@@ -223,7 +233,7 @@ export class ChartController implements PresentationTarget {
   }
 
   renderFrame(_frameTimeMs: DOMHighResTimeStamp): void {
-    if (this.destroyed || this.pendingDraw === null) return;
+    if (this.destroyed || !this.visible || this.pendingDraw === null) return;
     const kind = this.pendingDraw;
     const startedAtMs = performance.now();
     const queueDelayMs = startedAtMs - this.queuedAtMs;

@@ -15,7 +15,7 @@ import { buildEventDetails } from "../../domain/markets/eventDetails";
 import type { LiveBookFeedCallbacks } from "../live/liveBookContracts";
 import type { RecorderHydrationProgress } from "../../recorder/ageRecorderClient";
 import type { MarketGroupServices } from "./marketGroupModel.svelte";
-import { ViewportCache } from "./viewportCache";
+import { PressureFrontierMemory } from "../../domain/pressure/pressureFrontierMemory";
 
 // Exercise the real compiled runes model; no global $state/$derived shims.
 plugin({
@@ -61,10 +61,7 @@ function definition() {
   return buildChartDefinition(buildEventDetails(event, {}));
 }
 
-function harness(
-  feesReady: Promise<void> = Promise.resolve(),
-  cache = new ViewportCache(),
-) {
+function harness(feesReady: Promise<void> = Promise.resolve()) {
   const markets = new MarketState(null);
   const observations = new ObservationClock();
   const feeds: {
@@ -77,6 +74,7 @@ function harness(
     progress: RecorderHydrationProgress;
     signal: AbortSignal;
   }[] = [];
+  let recorderOnline = true;
   const services: MarketGroupServices = {
     createFees: () => ({
       primeMarkets() {},
@@ -102,6 +100,7 @@ function harness(
     },
     hydrate: async (ids, progress, signal) => {
       hydration.push({ ids, progress: progress!, signal: signal! });
+      if (!recorderOnline) throw new Error("recorder offline");
       return { recordingSinceMsByToken: {}, pressureSnapshotsByToken: {} };
     },
   };
@@ -112,7 +111,6 @@ function harness(
     markets,
     undefined,
     services,
-    cache,
   );
   return {
     model,
@@ -120,45 +118,62 @@ function harness(
     observations,
     feeds,
     hydration,
-    holdFees: () =>
-      new Promise<() => void>((resolve) => {
-        feesReady = new Promise<void>((finish) => resolve(finish));
-      }),
+    disconnectRecorder: () => (recorderOnline = false),
   };
 }
 
-test("scrolling bounds active pressure/subscriptions and preserves recent CPU data", async () => {
-  const { model, feeds, hydration } = harness();
+function recordedHistory(ids: readonly string[]) {
+  const memory = new PressureFrontierMemory();
+  memory.observeLevels([{ price: parsePrice("0.6"), shares: 100 }], 1_000);
+  memory.updateLevels([{ price: parsePrice("0.6"), shares: 40 }], 2_000);
+  return {
+    recordingSinceMsByToken: Object.fromEntries(ids.map((id) => [id, 500])),
+    pressureSnapshotsByToken: Object.fromEntries(
+      ids.map((id) => [id, memory.snapshot()]),
+    ),
+  };
+}
+
+test("partial scrolling preserves hydrated history and recording age without requesting it again", async () => {
+  const { model, feeds, hydration, disconnectRecorder } = harness();
   const [a, b] = model.definition.controls;
   try {
     await model.setViewport([a!.tokenId]);
-    expect(feeds[0]!.started).toEqual([
-      a!.tokenId,
-      a!.market.outcomes.no.tokenId!,
-    ]);
-    expect(hydration[0]!.ids).toHaveLength(2);
+    hydration[0]!.progress(recordedHistory(hydration[0]!.ids));
+    const memory = model.pressure.memory(a!.tokenId)!;
+    const snapshot = memory.snapshot();
+    expect(memory.renderRuns()[0]!.frozenSteps.length).toBeGreaterThan(0);
     expect(model.pressure.memory(b!.tokenId)).toBeUndefined();
     await model.setViewport([b!.tokenId]);
-    expect(feeds[0]!.closed).toBe(true);
-    expect(hydration[0]!.signal.aborted).toBe(true);
-    expect(model.pressure.memory(a!.tokenId)).toBeUndefined();
-    expect(model.visibilityFor(a!.market.id)).toEqual({ kind: "visible" });
-    // A retired recorder request may still complete; its data cannot recreate pressure.
-    hydration[0]!.progress({
-      recordingSinceMsByToken: { [a!.tokenId]: 1 },
-      pressureSnapshotsByToken: {},
-    });
-    expect(model.pressure.memory(a!.tokenId)).toBeUndefined();
+    hydration[1]!.progress(recordedHistory(hydration[1]!.ids));
+    expect(hydration[1]!.ids).toEqual([
+      b!.tokenId,
+      b!.market.outcomes.no.tokenId!,
+    ]);
+    expect(model.pressure.memory(a!.tokenId)).toBe(memory);
+    disconnectRecorder();
+    const revision = model.visibilityRevision;
+    await model.setViewport([a!.tokenId]);
+    expect(model.visibilityRevision).toBeGreaterThan(revision);
+    model.userSetMarketVisible(a!, false);
+    model.userSetMarketVisible(a!, true);
     await model.setViewport([]);
-    expect(model.pressure.memory(b!.tokenId)).toBeDefined();
     expect(model.observationPointsByToken.size).toBe(0);
+    await model.setViewport([a!.tokenId, b!.tokenId]);
+    expect(hydration).toHaveLength(2);
+    expect(feeds).toHaveLength(2);
+    expect(hydration[0]!.signal.aborted).toBe(false);
+    expect(model.pressure.memory(a!.tokenId)).toBe(memory);
+    expect(memory.snapshot()).toEqual(snapshot);
+    expect(model.pressure.timing(a!.tokenId)!.recordingSinceMs).toBe(500);
+    expect(model.visibilityFor(a!.market.id)).toEqual({ kind: "visible" });
   } finally {
     model.destroy();
   }
 });
 
-test("returning draws last observed geometry before network readiness, without advancing its time", async () => {
-  const { model, feeds, holdFees } = harness();
+test("offscreen feeds keep accumulating observed pressure without a reconnect or hydration", async () => {
+  const { model, feeds, hydration } = harness();
   const control = model.definition.controls[0]!;
   try {
     await model.setViewport([control.tokenId]);
@@ -168,27 +183,11 @@ test("returning draws last observed geometry before network readiness, without a
       kind: "snapshot",
       validThroughMs: 1_000,
     });
-    const pressure = model.pressure.memory(control.tokenId)!.snapshot();
     await model.setViewport([]);
-    // An overlapping view can keep mutating the original shared live book.
-    book.yesToUsd.setLevel(parsePrice("0.6"), 200);
-    const release = await holdFees();
-    const pending = model.setViewport([control.tokenId]);
-    expect(feeds[1]!.started).toHaveLength(0);
-    expect(model.pressure.memory(control.tokenId)!.snapshot()).toEqual(
-      pressure,
-    );
-    expect(model.pressure.observationTime(control.tokenId)).toBe(
-      observationTime(1_000),
-    );
-    expect([
-      ...model.getBook(control.tokenId)!.yesToUsd.asSellOrders(),
-    ]).toEqual([{ price: parsePrice("0.6"), take: 100 }]);
-    release();
-    await pending;
+    expect(feeds[0]!.closed).toBe(false);
     const fresh = emptyTokenBook();
     fresh.yesToUsd.setLevel(parsePrice("0.7"), 50);
-    feeds[1]!.callbacks.onBookUpdated(control.tokenId, fresh, {
+    feeds[0]!.callbacks.onBookUpdated(control.tokenId, fresh, {
       kind: "snapshot",
       validThroughMs: 2_000,
     });
@@ -198,46 +197,67 @@ test("returning draws last observed geometry before network readiness, without a
     expect(model.pressure.memory(control.tokenId)!.currentLevels()).toEqual([
       { price: parsePrice("0.7"), shares: 50 },
     ]);
+    await model.setViewport([control.tokenId]);
+    expect(model.getBook(control.tokenId)).toBe(fresh);
+    expect(hydration).toHaveLength(1);
+    expect(feeds).toHaveLength(1);
   } finally {
     model.destroy();
   }
 });
 
-test("recent data is evicted by a dashboard-wide count and pressure-history budget", async () => {
-  for (const cache of [new ViewportCache(1), new ViewportCache(8, 1)]) {
-    const first = harness(Promise.resolve(), cache);
-    const second = harness(Promise.resolve(), cache);
-    const token = first.model.definition.controls[0]!.tokenId;
-    try {
-      await first.model.setViewport([token]);
-      await first.model.setViewport([]);
-      await second.model.setViewport([token]);
-      await second.model.setViewport([]);
-      expect(first.model.pressure.memory(token)).toBeUndefined();
-      expect(first.model.observationPointsByToken.size).toBe(0);
-      expect(first.feeds[0]!.closed).toBe(true);
-      expect(
-        first.model.visibilityFor(
-          first.model.definition.controls[0]!.market.id,
-        ),
-      ).toEqual({ kind: "visible" });
-    } finally {
-      first.model.destroy();
-      second.model.destroy();
+test("history survives browsing more than eight cards with the recorder then unavailable", async () => {
+  const cards = Array.from({ length: 12 }, () => harness());
+  try {
+    for (const card of cards) {
+      await card.model.setViewport([
+        card.model.definition.controls[0]!.tokenId,
+      ]);
+      card.hydration[0]!.progress(recordedHistory(card.hydration[0]!.ids));
+      await card.model.setViewport([]);
+      card.disconnectRecorder();
     }
+    for (const card of cards) {
+      const token = card.model.definition.controls[0]!.tokenId;
+      const memory = card.model.pressure.memory(token)!;
+      const before = memory.snapshot();
+      await card.model.setViewport([token]);
+      expect(card.hydration).toHaveLength(1);
+      expect(card.model.pressure.memory(token)).toBe(memory);
+      expect(memory.snapshot()).toEqual(before);
+      expect(card.model.pressure.timing(token)!.recordingSinceMs).toBe(500);
+    }
+  } finally {
+    for (const card of cards) card.model.destroy();
   }
 });
 
-test("late fee preparation cannot resurrect an offscreen or destroyed feed", async () => {
+test("hydration can finish offscreen but actual removal cancels it and rejects late results", async () => {
+  const { model, hydration } = harness();
+  const token = model.definition.controls[0]!.tokenId;
+  await model.setViewport([token]);
+  await model.setViewport([]);
+  expect(hydration[0]!.signal.aborted).toBe(false);
+  hydration[0]!.progress(recordedHistory(hydration[0]!.ids));
+  await model.setViewport([token]);
+  expect(model.pressure.timing(token)!.recordingSinceMs).toBe(500);
+  expect(hydration).toHaveLength(1);
+  model.destroy();
+  expect(hydration[0]!.signal.aborted).toBe(true);
+  hydration[0]!.progress(recordedHistory(hydration[0]!.ids));
+  expect(model.pressure.memory(token)).toBeUndefined();
+});
+
+test("late fee preparation cannot resurrect a destroyed group", async () => {
   let finish!: () => void;
   const { model, feeds } = harness(
     new Promise<void>((resolve) => (finish = resolve)),
   );
   const pending = model.setViewport([model.definition.controls[0]!.tokenId]);
-  await model.setViewport([]);
+  const offscreen = model.setViewport([]);
   model.destroy();
   finish();
-  await pending;
+  await Promise.all([pending, offscreen]);
   expect(feeds[0]!.closed).toBe(true);
   expect(feeds[0]!.started).toHaveLength(0);
 });
@@ -266,7 +286,8 @@ test("resolution survives viewport release, stale metadata and explicit revealin
         .memory(control.market.outcomes.no.tokenId!)!
         .isResolvedUnbounded(),
     ).toBe(true);
-    expect(feeds.at(-1)!.started).toHaveLength(0);
+    expect(feeds).toHaveLength(1);
+    expect(feeds[0]!.closed).toBe(true);
     await model.setViewport([]);
     await model.setViewport([control.tokenId]);
     expect(

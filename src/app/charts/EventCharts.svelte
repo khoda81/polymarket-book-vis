@@ -69,8 +69,6 @@
             chartDefinition,
             visualization.markets,
             (message) => onfailure(message),
-            undefined,
-            visualization.viewportCache,
           ),
           orientation: initialOrientation(definition),
           ready: false,
