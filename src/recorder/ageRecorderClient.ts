@@ -43,11 +43,13 @@ let nextHydrationRunId = 0;
 const hydrationRuns = new Map<number, HydrationRunNetworkState>();
 const recorderNetworkSubscribers = new Set<RecorderNetworkSubscriber>();
 const RECORDER_DEBUG =
+  typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("recorderDebug") === "1";
 
 export async function fetchRecorderHydration(
   tokenIds: readonly string[],
   onProgress: RecorderHydrationProgress = () => undefined,
+  signal?: AbortSignal,
 ): Promise<RecorderHydration> {
   const requested = [...new Set(tokenIds.filter(Boolean))];
   if (requested.length === 0) return emptyHydration();
@@ -69,12 +71,13 @@ export async function fetchRecorderHydration(
 
   try {
     for (let attempt = 0; ; attempt++) {
+      if (signal?.aborted) break;
       run.attempt = attempt + 1;
       run.retryAtMs = null;
       emitRecorderNetworkState();
 
       try {
-        const body = await fetchRecorderState(run.remaining);
+        const body = await fetchRecorderState(run.remaining, signal);
         lastError = null;
 
         recorderDebug("hydrate-response", {
@@ -101,6 +104,10 @@ export async function fetchRecorderHydration(
         emitRecorderNetworkState();
         if (run.remaining.length === 0) break;
       } catch (error) {
+        if (signal?.aborted) {
+          lastError = null;
+          break;
+        }
         lastError = error;
         recorderDebug("hydrate-error", {
           attempt: attempt + 1,
@@ -113,7 +120,7 @@ export async function fetchRecorderHydration(
       if (delayMs === undefined) break;
       run.retryAtMs = Date.now() + delayMs;
       emitRecorderNetworkState();
-      await delay(delayMs);
+      await delay(delayMs, signal);
     }
 
     if (lastError) console.warn("Age recorder unavailable", lastError);
@@ -138,6 +145,7 @@ export async function fetchRecorderHydration(
 
 async function fetchRecorderState(
   tokenIds: readonly string[],
+  signal?: AbortSignal,
 ): Promise<RecorderStateResponse> {
   const params = new URLSearchParams();
   for (const tokenId of tokenIds) params.append("tokenId", tokenId);
@@ -152,7 +160,9 @@ async function fetchRecorderState(
 
     try {
       const response = await fetch(`/api/recorder/state?${params}`, {
-        signal: controller.signal,
+        signal: signal
+          ? AbortSignal.any([signal, controller.signal])
+          : controller.signal,
       });
       if (!response.ok) throw new Error(`recorder returned ${response.status}`);
       const body = decodeRecorderStateResponse(
@@ -174,7 +184,7 @@ async function fetchRecorderState(
     } finally {
       clearTimeout(timeout);
     }
-  });
+  }, signal);
 }
 
 function mergeRecorderResponse(
@@ -269,21 +279,35 @@ function emitRecorderNetworkState(): void {
   }
 }
 
-async function withRecorderRequestSlot<T>(task: () => Promise<T>): Promise<T> {
+async function withRecorderRequestSlot<T>(
+  task: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  signal?.throwIfAborted();
   if (activeRecorderRequests >= MAX_CONCURRENT_RECORDER_REQUESTS) {
-    await new Promise<void>((resolve) => {
-      recorderRequestWaiters.push(resolve);
+    await new Promise<void>((resolve, reject) => {
+      const release = () => {
+        signal?.removeEventListener("abort", cancel);
+        resolve();
+      };
+      const cancel = () => {
+        const index = recorderRequestWaiters.indexOf(release);
+        if (index >= 0) recorderRequestWaiters.splice(index, 1);
+        reject(signal?.reason);
+      };
+      recorderRequestWaiters.push(release);
+      signal?.addEventListener("abort", cancel, { once: true });
       emitRecorderNetworkState();
     });
-  }
-
-  activeRecorderRequests++;
+  } else activeRecorderRequests++;
   emitRecorderNetworkState();
   try {
+    signal?.throwIfAborted();
     return await task();
   } finally {
-    activeRecorderRequests--;
-    recorderRequestWaiters.shift()?.();
+    const next = recorderRequestWaiters.shift();
+    if (next) next();
+    else activeRecorderRequests--;
     emitRecorderNetworkState();
   }
 }
@@ -308,6 +332,15 @@ function shortToken(tokenId: string): string {
     : `${tokenId.slice(0, 6)}…${tokenId.slice(-4)}`;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    if (signal?.aborted) finish();
+    else signal?.addEventListener("abort", finish, { once: true });
+  });
 }

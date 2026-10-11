@@ -1,18 +1,12 @@
 <script lang="ts">
-  import type { Event, Series } from "@polymarket/client";
+  import type { Series } from "@polymarket/client";
   import CopySlug from "../shared/CopySlug.svelte";
 
   export let series: Series;
-  export let event: Event | null = null;
 
   let iconFailed = false;
 
-  $: iconUrl =
-    event?.icon?.trim() ||
-    event?.image?.trim() ||
-    series.icon?.trim() ||
-    series.image?.trim() ||
-    null;
+  $: iconUrl = series.icon?.trim() || series.image?.trim() || null;
   $: if (iconUrl) iconFailed = false;
 </script>
 

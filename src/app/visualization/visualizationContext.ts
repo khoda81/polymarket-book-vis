@@ -2,6 +2,8 @@ import { getContext, setContext } from "svelte";
 import { AgeStripTuningStore } from "@/chart/age/ageStripTuningStore";
 import { ObservationClock } from "@/domain/pressure/observationClock";
 import { PresentationCoordinator } from "@/chart/presentationCoordinator";
+import { MarketState } from "@/domain/markets/marketState";
+import { ViewportCache } from "@/chart/model/viewportCache";
 import type { PublicClient } from "@polymarket/client";
 
 const VISUALIZATION_CONTEXT = Symbol("lobservatory.visualization");
@@ -11,6 +13,8 @@ export interface VisualizationContext {
   readonly observations: ObservationClock;
   readonly tuning: AgeStripTuningStore;
   readonly presentation: PresentationCoordinator;
+  readonly markets: MarketState;
+  readonly viewportCache: ViewportCache;
 }
 
 /**
@@ -29,6 +33,10 @@ export function provideVisualizationContext(
       typeof window === "undefined" ? null : window.localStorage,
     ),
     presentation: new PresentationCoordinator(),
+    markets: new MarketState(
+      typeof window === "undefined" ? null : window.localStorage,
+    ),
+    viewportCache: new ViewportCache(),
   };
   setContext(VISUALIZATION_CONTEXT, context);
   return context;

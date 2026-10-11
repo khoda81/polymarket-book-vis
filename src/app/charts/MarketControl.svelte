@@ -75,7 +75,18 @@
   <span class="cpv-market-copy">
     <span class="cpv-market-label-text">{control.title}</span>
     {#if showDeadline}
-      <MarketDeadline deadlineMs={marketDeadlineMs(control.market)} />
+      <span class="cpv-market-meta">
+        <MarketDeadline deadlineMs={marketDeadlineMs(control.market)} />
+        {#if control.market.state.closed}<span class="cpv-market-state"
+            >closed</span
+          >{/if}
+        {#if control.market.state.archived}<span class="cpv-market-state"
+            >archived</span
+          >{/if}
+        {#if lifecycle.kind === "resolved"}<span class="cpv-market-state"
+            >Resolved · {resolutionOutcome}</span
+          >{/if}
+      </span>
     {/if}
   </span>
   {#if lifecycle.kind === "resolved"}

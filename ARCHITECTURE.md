@@ -45,9 +45,9 @@ The browser entry point is `src/main.ts`; `src/app/App.svelte` composes the dash
 | `src/domain/books`                                          | Exact prices, order books, ingestion and fee schedules                                |
 | `src/domain/markets`                                        | Presentation-independent market metadata, lifecycle, ordering and visibility          |
 | `src/domain/pressure`                                       | Pressure history, snapshots and observation time                                      |
-| `src/domain/discovery`, `series`                            | Discovery queries and series timeline models                                          |
+| `src/domain/discovery`, `series`                            | Discovery queries and cursor-based series event paging                                |
 | `src/chart/configuration`                                   | Chart definitions, palette selection and event grouping policy                        |
-| `src/chart/age`, `volume`, `series`                         | Chart views and their layout/interaction code                                         |
+| `src/chart/age`, `volume`                                   | Chart views and their layout/interaction code                                         |
 | `src/chart/live`                                            | Shared canonical live books, token stream state and REST/WebSocket reconciliation     |
 | `src/rendering`                                             | Canvas rendering, transforms, tooltips, colors and ticks                              |
 | `src/recorder`                                              | Recorder HTTP hydration and protobuf decoding                                         |
@@ -62,7 +62,10 @@ Tests live beside their modules. `backend/recorder.ts` remains the recorder entr
 
 - Treat persisted browser values, protobuf messages, exchange responses and DOM measurements as external boundaries. Validate them before use. Recorder decoding produces validated pressure snapshots; hydration merges those snapshots without reparsing them.
 - Dashboard discovery owns its filters, request generation and status. The reorder controller owns the complete pointer session, global listeners and animation frame lifecycle; `App.svelte` only receives order and active-key updates.
-- A live token is `idle`, `awaiting-snapshot`, or `live`. Cached geometry may remain visible during reconnect, but only the `live` state exposes a book for stream mutation. Chart groups own their orientation, readiness and market status together, rather than keeping partially populated maps in sync.
+- A live token is `idle`, `awaiting-snapshot`, or `live`. Cached geometry may remain visible during reconnect, but only the `live` state exposes a book for stream mutation. REST refresh evidence cannot cross a replacement stream's snapshot barrier.
+- `EventContent` owns the common event header, rules and chart groups, whether rendered in a dashboard card or a paginated series section. Series preserve actual parent events and their canonical market order; recurrence metadata does not imply market relationships or deadline spacing.
+- Both views consume the existing event palette and grouping policy. Viewport slicing happens after the full group definition is built, so scrolling and visibility controls do not redefine its colors.
+- The visualization context owns market lifecycle facts and stored visibility choices by market ID. Chart-group models retain lightweight metadata and local view settings; `ChartHost` owns viewport surfaces. Only visible rows hydrate pressure history and subscribe to eligible live books. Leaving the viewport cancels that work and releases GPU resources. A dashboard-wide cache retains CPU data for up to eight recently viewed groups, bounded by book levels and pressure history size, so returning charts draw immediately with their original observation timestamps while refreshing. Eviction releases that data without changing user choices.
 - Derive secondary information where possible: stable sorting preserves insertion order; chart readiness follows group readiness; recorder network reporting reads the same pending-token list as the request loop.
 - Keep policy constants with their owner. Discovery limits drive both queries and UI bounds/help text. Dashboard storage owns persisted keys and viewport defaults. Protocol versions come from the snapshot schema module.
 - Preserve compatibility at boundaries: storage keys, protobuf field numbers, recorder schema versions, exact price/pressure semantics and live REST/WebSocket ordering must not change during organizational refactors.

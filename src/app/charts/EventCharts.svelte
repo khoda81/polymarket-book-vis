@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy, untrack } from "svelte";
   import {
     flipAgeRowOrientation,
     type AgeRowOrientation,
@@ -9,63 +10,106 @@
     eventMarketGroups,
     type EventMarketGroup,
   } from "../../chart/configuration/eventMarketGroups";
-  import type { EventMarketStatus } from "../../domain/markets/marketLifecycle";
+  import { buildChartDefinition } from "../../chart/configuration/chartDefinition";
+  import { MarketGroupModel } from "../../chart/model/marketGroupModel.svelte";
+  import {
+    summarizeEventMarketStatus,
+    type EventMarketStatus,
+  } from "../../domain/markets/marketLifecycle";
+  import { getVisualizationContext } from "../visualization/visualizationContext";
   import {
     loadStoredAgeRowOrientation,
     persistAgeRowOrientation,
   } from "./ageRowOrientationStorage";
   import ChartHost from "./ChartHost.svelte";
 
-  export let bundle: EventDetails;
-  export let viewMode: ViewMode;
-  export let onready: () => void = () => undefined;
-  export let onfailure: (message: string) => void = () => undefined;
-  export let onmarketstatus: (status: EventMarketStatus) => void = () =>
-    undefined;
-
+  let {
+    bundle,
+    viewMode,
+    orientationFallback = null,
+    onready = () => undefined,
+    onfailure = () => undefined,
+    onmarketstatus = () => undefined,
+  }: {
+    bundle: EventDetails;
+    viewMode: ViewMode;
+    orientationFallback?: AgeRowOrientation | null;
+    onready?: () => void;
+    onfailure?: (message: string) => void;
+    onmarketstatus?: (status: EventMarketStatus) => void;
+  } = $props();
   interface ChartGroupState {
     readonly definition: EventMarketGroup;
+    readonly model: MarketGroupModel;
     orientation: AgeRowOrientation;
     ready: boolean;
-    marketStatus: EventMarketStatus;
   }
+  const visualization = getVisualizationContext();
+  let groups = $state<ChartGroupState[]>([]);
 
-  let groups: ChartGroupState[] = eventMarketGroups(bundle).map(
-    (definition) => ({
-      definition,
-      orientation: initialOrientation(definition),
-      ready: false,
-      marketStatus: { kind: "trading" },
-    }),
+  $effect(() => {
+    const definitions = eventMarketGroups(bundle);
+    untrack(() => {
+      const existing = new Map(
+        groups.map((group) => [group.definition.key, group]),
+      );
+      groups = definitions.map((definition) => {
+        const previous = existing.get(definition.key);
+        existing.delete(definition.key);
+        const chartDefinition = buildChartDefinition(definition.bundle);
+        if (previous) {
+          previous.model.updateDefinition(chartDefinition);
+          return { ...previous, definition };
+        }
+        return {
+          definition,
+          model: new MarketGroupModel(
+            visualization.client,
+            visualization.observations,
+            chartDefinition,
+            visualization.markets,
+            (message) => onfailure(message),
+            undefined,
+            visualization.viewportCache,
+          ),
+          orientation: initialOrientation(definition),
+          ready: false,
+        };
+      });
+      for (const group of existing.values()) group.model.destroy();
+    });
+  });
+  $effect(() =>
+    onmarketstatus(
+      summarizeEventMarketStatus(
+        groups.flatMap((group) =>
+          group.model.definition.controls.map((control) =>
+            group.model.lifecycleFor(control.market.id),
+          ),
+        ),
+      ),
+    ),
   );
-
-  $: onmarketstatus(
-    combinedMarketStatus(groups.map((group) => group.marketStatus)),
-  );
+  onDestroy(() => {
+    for (const group of groups) group.model.destroy();
+  });
 
   function initialOrientation(group: EventMarketGroup): AgeRowOrientation {
-    const groupOrientation = loadStoredAgeRowOrientation({
-      kind: "event-group",
-      eventId: bundle.event.id,
-      groupKey: group.key,
-    });
-    if (groupOrientation) return groupOrientation;
-
-    // Preserve the old single-chart preference while migrating event cards to
-    // group-local settings. Split groups intentionally start from new defaults.
-    if (group.key === "all") {
-      const legacyOrientation = loadStoredAgeRowOrientation({
-        kind: "event",
-        id: bundle.event.id,
-      });
-      if (legacyOrientation) return legacyOrientation;
-    }
-    return group.defaultAgeRowOrientation;
+    return (
+      loadStoredAgeRowOrientation({
+        kind: "event-group",
+        eventId: bundle.event.id,
+        groupKey: group.key,
+      }) ??
+      (group.key === "all"
+        ? loadStoredAgeRowOrientation({ kind: "event", id: bundle.event.id })
+        : null) ??
+      orientationFallback ??
+      group.defaultAgeRowOrientation
+    );
   }
-
   function flipGroupRows(group: ChartGroupState): void {
     group.orientation = flipAgeRowOrientation(group.orientation);
-    groups = [...groups];
     persistAgeRowOrientation(
       {
         kind: "event-group",
@@ -75,72 +119,31 @@
       group.orientation,
     );
   }
-
   function groupReady(group: ChartGroupState): void {
-    if (group.ready) return;
     group.ready = true;
     if (groups.every((candidate) => candidate.ready)) onready();
   }
-
-  function groupMarketStatusChanged(
-    group: ChartGroupState,
-    status: EventMarketStatus,
-  ): void {
-    group.marketStatus = status;
-    onmarketstatus(
-      combinedMarketStatus(groups.map((candidate) => candidate.marketStatus)),
-    );
-  }
-
-  function combinedMarketStatus(
-    statuses: Iterable<EventMarketStatus>,
-  ): EventMarketStatus {
-    const values = [...statuses];
-    if (
-      values.length > 0 &&
-      values.every((status) => status.kind === "resolved")
-    )
-      return { kind: "resolved" };
-    if (
-      values.length > 0 &&
-      values.every((status) => status.kind !== "trading")
-    )
-      return { kind: "awaiting-resolution" };
-    return { kind: "trading" };
-  }
 </script>
 
-{#if groups.length === 1}
-  {@const group = groups[0]!}
-  <ChartHost
-    bundle={group.definition.bundle}
-    {viewMode}
-    ageRowOrientation={group.orientation}
-    onrowflip={() => flipGroupRows(group)}
-    onready={() => groupReady(group)}
-    {onfailure}
-    onmarketstatus={(status) => groupMarketStatusChanged(group, status)}
-  />
-{:else}
-  <div class="cpv-chart-groups">
-    {#each groups as group (group.definition.key)}
-      <section
-        class="cpv-chart-group"
-        aria-label={group.definition.label ?? undefined}
-      >
+<div class="cpv-chart-groups">
+  {#each groups as group (group.definition.key)}
+    <section
+      class:cpv-chart-group={groups.length > 1}
+      aria-label={group.definition.label ?? undefined}
+    >
+      {#if group.definition.label}
         <div class="cpv-chart-group-header">
           <div class="cpv-chart-group-title">{group.definition.label}</div>
         </div>
-        <ChartHost
-          bundle={group.definition.bundle}
-          {viewMode}
-          ageRowOrientation={group.orientation}
-          onrowflip={() => flipGroupRows(group)}
-          onready={() => groupReady(group)}
-          {onfailure}
-          onmarketstatus={(status) => groupMarketStatusChanged(group, status)}
-        />
-      </section>
-    {/each}
-  </div>
-{/if}
+      {/if}
+      <ChartHost
+        model={group.model}
+        {viewMode}
+        ageRowOrientation={group.orientation}
+        onrowflip={() => flipGroupRows(group)}
+        onready={() => groupReady(group)}
+        {onfailure}
+      />
+    </section>
+  {/each}
+</div>

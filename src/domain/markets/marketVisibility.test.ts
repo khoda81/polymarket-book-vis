@@ -3,13 +3,12 @@ import type { MarketId } from "@polymarket/client";
 import {
   initialMarketVisibility,
   isMarketVisible,
-  loadMarketVisibility,
   loadStoredMarketVisibility,
   partitionMarketVisibility,
   persistStoredMarketVisibility,
-  setUserMarketVisible,
-  storedVisibilityForUserChoice,
 } from "./marketVisibility";
+
+import { MarketState } from "./marketState";
 
 const marketId = (value: string): MarketId => value as MarketId;
 
@@ -86,40 +85,13 @@ test("visibility partition preserves the card order supplied by its caller", () 
   ]);
 });
 
-test("user visibility update replaces state without a second source of truth", () => {
-  const initial = new Map<
-    MarketId,
-    import("./marketVisibility").MarketVisibility
-  >([
-    [marketId("a"), { kind: "visible" }],
-    [marketId("b"), { kind: "hidden", reason: "empty-book" }],
-  ]);
-
-  const hidden = setUserMarketVisible(initial, marketId("a"), false);
-  expect(initial.get(marketId("a"))).toEqual({ kind: "visible" });
-  expect(hidden.get(marketId("a"))).toEqual({
-    kind: "hidden",
-    reason: "user",
-  });
-
-  const visible = setUserMarketVisible(hidden, marketId("a"), true);
-  expect(visible.get(marketId("a"))).toEqual({ kind: "visible" });
-  expect(visible.get(marketId("b"))).toEqual({
-    kind: "hidden",
-    reason: "empty-book",
-  });
-});
-
 test("resolved auto-hide survives reload even before resolution metadata catches up", () => {
   const storage = new MemoryStorage();
   persistStoredMarketVisibility("market-a", "hidden-resolved", storage);
 
-  const visibility = loadMarketVisibility(
-    [{ market: { id: marketId("market-a") }, lifecycle: { kind: "live" } }],
-    storage,
-  );
-
-  expect(visibility.get(marketId("market-a"))).toEqual({
+  const state = new MarketState(storage);
+  state.reconcile(marketId("market-a"), { kind: "live" });
+  expect(state.visibilityFor(marketId("market-a"))).toEqual({
     kind: "hidden",
     reason: "resolved-default",
   });
@@ -129,12 +101,9 @@ test("empty-book auto-hide survives reload by market id", () => {
   const storage = new MemoryStorage();
   persistStoredMarketVisibility("market-a", "hidden-empty", storage);
 
-  const visibility = loadMarketVisibility(
-    [{ market: { id: marketId("market-a") }, lifecycle: { kind: "live" } }],
-    storage,
-  );
-
-  expect(visibility.get(marketId("market-a"))).toEqual({
+  const state = new MarketState(storage);
+  state.reconcile(marketId("market-a"), { kind: "live" });
+  expect(state.visibilityFor(marketId("market-a"))).toEqual({
     kind: "hidden",
     reason: "empty-book",
   });
@@ -144,35 +113,24 @@ test("explicitly showing a resolved market survives reload", () => {
   const storage = new MemoryStorage();
   persistStoredMarketVisibility("market-a", "visible-user", storage);
 
-  const visibility = loadMarketVisibility(
-    [
-      {
-        market: { id: marketId("market-a") },
-        lifecycle: {
-          kind: "resolved",
-          winningTokenId: "winner" as never,
-          winningOutcome: "Yes",
-        },
-      },
-    ],
-    storage,
-  );
-
-  expect(visibility.get(marketId("market-a"))).toEqual({ kind: "visible" });
+  const state = new MarketState(storage);
+  state.reconcile(marketId("market-a"), {
+    kind: "resolved",
+    winningTokenId: "winner" as never,
+    winningOutcome: "Yes",
+  });
+  expect(state.visibilityFor(marketId("market-a"))).toEqual({
+    kind: "visible",
+  });
 });
 
-test("live visible choice returns to default while resolved visible is explicit", () => {
-  expect(storedVisibilityForUserChoice(true, { kind: "live" })).toBeNull();
-  expect(storedVisibilityForUserChoice(false, { kind: "live" })).toBe(
-    "hidden-user",
-  );
+test("explicit showing is persisted for live and closed markets", () => {
   expect(
-    storedVisibilityForUserChoice(true, {
-      kind: "resolved",
-      winningTokenId: "winner" as never,
-      winningOutcome: "Yes",
-    }),
-  ).toBe("visible-user");
+    initialMarketVisibility(undefined, { kind: "awaiting-resolution" }),
+  ).toEqual({ kind: "hidden", reason: "closed-default" });
+  expect(
+    initialMarketVisibility("visible-user", { kind: "awaiting-resolution" }),
+  ).toEqual({ kind: "visible" });
 });
 
 test("v2 visibility storage preserves legacy user-hidden markets", () => {

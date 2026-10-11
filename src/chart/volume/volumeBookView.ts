@@ -29,17 +29,18 @@ export interface VolumeBookViewHost {
   readonly getTheme: () => ChartTheme;
   readonly isActive: () => boolean;
   readonly requestDraw: () => void;
+  readonly getScale: () => number;
+  readonly setScale: (scale: number) => void;
 }
 
 export class VolumeBookView {
   private pointer: { sx: number; sy: number } | null = null;
-  private scale = 4.5;
 
   constructor(private readonly host: VolumeBookViewHost) {}
 
   zoom(delta: number): boolean {
     if (!this.host.isActive()) return false;
-    this.scale += delta;
+    this.host.setScale(this.host.getScale() + delta);
     this.host.requestDraw();
     return true;
   }
@@ -50,7 +51,7 @@ export class VolumeBookView {
   }
 
   draw(): void {
-    const yAbsMax = Math.pow(10, this.scale);
+    const yAbsMax = Math.pow(10, this.host.getScale());
     const frame = this.host.plotter.beginFrame(this.host.getTheme(), {
       xRange: { min: 0, max: 1 },
       yRange: { min: -yAbsMax, max: yAbsMax },

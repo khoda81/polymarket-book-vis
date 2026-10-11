@@ -190,9 +190,16 @@ export class BoxPen {
 
 // --- Plotter: canvas + events only ---------------------------------------
 
+export const CHART_VERTICAL_PADDING_PX = 48;
+
 export class OrderBookPlotter {
   readonly ctx: CanvasRenderingContext2D;
-  readonly padding = { l: 60, r: 16, t: 24, b: 24 };
+  readonly padding = {
+    l: 60,
+    r: 16,
+    t: CHART_VERTICAL_PADDING_PX / 2,
+    b: CHART_VERTICAL_PADDING_PX / 2,
+  };
 
   public onZoom?: (delta: number, verticalAnchor: number) => boolean;
   public onPan?: (verticalDelta: number) => void;

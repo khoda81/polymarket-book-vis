@@ -46,9 +46,7 @@ export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
     if (!tokenId) return [];
 
     const lifecycle = initialMarketLifecycle(market);
-    if (!isActiveOrderMarket(market) && lifecycle.kind !== "resolved")
-      return [];
-
+    // Keep displayable metadata; trading eligibility belongs to viewport feeds.
     return [{ market, tokenId, lifecycle }];
   });
   const markets = eligible.map(({ market }) => market);

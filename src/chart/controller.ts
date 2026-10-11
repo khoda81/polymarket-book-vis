@@ -111,12 +111,16 @@ export class ChartController implements PresentationTarget {
 
     this.volumeView = new VolumeBookView({
       plotter: this.plotter,
-      definition: model.definition,
+      get definition() {
+        return model.definition;
+      },
       activeTokens: model.activeTokens,
       getBook: (tokenId) => model.getBook(tokenId),
       getTheme: () => this.theme,
       isActive: () => this.renderState.viewMode === "volume",
       requestDraw: () => this.reqDraw("full"),
+      getScale: () => model.volumeScale,
+      setScale: (scale) => (model.volumeScale = scale),
     });
     this.plotter.onZoom = (delta) => this.volumeView.zoom(delta);
     this.plotter.onPointer = (pointer) => this.volumeView.setPointer(pointer);

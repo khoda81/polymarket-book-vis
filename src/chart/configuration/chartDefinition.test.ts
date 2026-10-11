@@ -78,13 +78,15 @@ function fakeBundle(): EventDetails {
   };
 }
 
-test("chart definition keeps tradable and resolved markets, not broken ones", () => {
+test("chart definition preserves closed and inactive markets for shared controls", () => {
   const definition = buildChartDefinition(fakeBundle());
 
-  expect(definition.controls).toHaveLength(2);
+  expect(definition.controls).toHaveLength(4);
   expect(definition.event.markets.map((market) => String(market.id))).toEqual([
     "m1",
     "m2",
+    "m3",
+    "m4",
   ]);
   expect(definition.controls[0]).toMatchObject({
     market: {
@@ -117,6 +119,7 @@ test("chart definition keeps tradable and resolved markets, not broken ones", ()
       winningOutcome: "Yes",
     },
   });
+  expect(definition.controls[2]!.lifecycle.kind).toBe("awaiting-resolution");
 });
 
 test("single-market wrapper metadata survives DOM recreation", () => {

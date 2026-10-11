@@ -366,6 +366,7 @@ export class LiveBookCoordinator {
 
         // A replacement subscription is a new causal stream. Every token must
         // bootstrap from a fresh book snapshot; no state crosses this barrier.
+        this.refreshContexts.clear();
         for (const [tokenKey] of desired) {
           const token = this.tokens.get(tokenKey);
           if (!token) continue;
@@ -762,7 +763,7 @@ export class LiveBookCoordinator {
   ): void {
     const tokenKey = tokenId;
     const token = this.tokens.get(tokenKey);
-    if (!token?.stream.book || token.watchers.size === 0) return;
+    if (!token?.stream.synchronized || token.watchers.size === 0) return;
 
     this.refreshContexts.set(tokenKey, {
       requestId,
@@ -784,6 +785,7 @@ export class LiveBookCoordinator {
     if (
       !context ||
       !token ||
+      !token.stream.synchronized ||
       token.watchers.size === 0 ||
       context.requestId !== requestId ||
       context.requestedAtMs !== requestedAtMs ||

@@ -792,53 +792,18 @@ body {
   position: relative;
 }
 
-.series-market-scroll .series-canvas-wrap {
-  position: sticky;
-  top: 0;
-  border: 0;
+.series-event {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--color-border-tertiary, #ddd);
 }
-
-.series-market-labels {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 6;
-  overflow: hidden;
-  pointer-events: none;
+.series-event .cpv-header {
+  padding-right: 0;
 }
-
-.series-market-label {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  transform: translateY(-50%);
-  color: var(--color-text-primary, #111);
-  font-size: 11px;
-  line-height: 1.2;
-  text-decoration: none;
-  pointer-events: auto;
+.series-scroll-view {
+  position: relative;
 }
-
-.series-market-label:hover {
-  opacity: 0.75;
-}
-
-.series-market-label .cpv-market-label-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.series-market-status {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-secondary, #666);
-  font-size: 9px;
+.series-market-scroll {
+  height: min(24rem, 60vh);
 }
 
 @media (max-width: 35rem) {

@@ -5,7 +5,6 @@
     type ChartPendingState,
     type ChartRenderedState,
     type ChartRenderInput,
-    type ChartSurfaceElements,
   } from "../../chart/controller";
   import {
     DEFAULT_AGE_ROW_ORIENTATION,
@@ -13,16 +12,12 @@
   } from "../../chart/age/ageStripOrientation";
   import { opacityReference } from "../../domain/pressure/observationClock";
   import { getVisualizationContext } from "../visualization/visualizationContext";
-  import {
-    buildChartDefinition,
-    type ChartMarketControl,
-  } from "../../chart/configuration/chartDefinition";
-  import { MarketGroupModel } from "../../chart/model/marketGroupModel.svelte";
+  import { type ChartMarketControl } from "../../chart/configuration/chartDefinition";
+  import type { MarketGroupModel } from "../../chart/model/marketGroupModel.svelte";
   import type {
     ConnectionStatus,
     ViewMode,
   } from "../../domain/markets/chartState";
-  import type { EventDetails } from "../../domain/markets/eventDetails";
   import type { EventMarketStatus } from "../../domain/markets/marketLifecycle";
   import {
     isMarketVisible,
@@ -31,9 +26,12 @@
   import AgeRowFlipButton from "./AgeRowFlipButton.svelte";
   import { hiddenMarketDisplayOrder } from "./hiddenMarketOrder";
   import MarketControl from "./MarketControl.svelte";
+  import { chartViewport, type ChartWindow } from "./chartViewport";
+  import { CHART_VERTICAL_PADDING_PX } from "../../rendering/renderer";
+  import { AGE_ROW_BAND_PX } from "../../chart/age/ageStripTuning";
 
   interface Props {
-    bundle: EventDetails;
+    model: MarketGroupModel;
     viewMode: ViewMode;
     ageRowOrientation?: AgeRowOrientation;
     onready?: () => void;
@@ -44,7 +42,7 @@
   }
 
   let {
-    bundle,
+    model,
     viewMode,
     ageRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
     onready = () => undefined,
@@ -59,19 +57,11 @@
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("pressureDebug") === "1";
 
-  // A ChartHost owns one market-group renderer for its entire component
-  // lifetime. If bundle identity changes, the host itself must be recreated
-  // rather than retargeting a live feed and retained renderer.
-  const sourceBundle = untrack(() => bundle);
-  const definition = buildChartDefinition(sourceBundle);
-  const model = new MarketGroupModel(
-    visualization.client,
-    visualization.observations,
-    definition,
-  );
-
-  let canvas: HTMLCanvasElement;
-  let pressureCanvas: HTMLCanvasElement;
+  const definition = $derived(model.definition);
+  let mounted = $state(false);
+  let rowWindow = $state<ChartWindow>({ start: 0, end: 0 });
+  let canvas = $state<HTMLCanvasElement>();
+  let pressureCanvas = $state<HTMLCanvasElement>();
   let canvasWrap: HTMLDivElement;
   let toggles: HTMLDivElement;
   let chart = $state<ChartController | null>(null);
@@ -91,7 +81,9 @@
     hiddenMarketDisplayOrder(hiddenControls, ageRowOrientation),
   );
   const toggledControls = $derived(
-    viewMode === "age" ? visibleControls : definition.controls,
+    viewMode === "age"
+      ? visibleControls.slice(rowWindow.start, rowWindow.end)
+      : definition.controls,
   );
   const globalObservationReference = $derived(
     visualization.observations.readReference(),
@@ -176,40 +168,51 @@
     chart?.update(input);
   });
 
+  $effect(() => {
+    const active =
+      mounted &&
+      rowWindow.end > rowWindow.start &&
+      !!canvas &&
+      !!pressureCanvas;
+    const tokens = active
+      ? (viewMode === "age" ? toggledControls : visibleControls).map(
+          (control) => control.tokenId,
+        )
+      : [];
+    // Network mutations and renderer construction do not become effect dependencies.
+    untrack(() => {
+      void model
+        .setViewport(tokens)
+        .catch((error: unknown) =>
+          onfailure(error instanceof Error ? error.message : String(error)),
+        );
+    });
+    if (!mounted) return;
+    untrack(() => {
+      if (active && canvas && pressureCanvas && !chart) {
+        chart = new ChartController(
+          { canvas, pressureCanvas, canvasWrap, toggles },
+          model,
+          visualization.tuning,
+          visualization.presentation,
+          renderInput(),
+          pressureDebug ? (state) => (lastRendered = state) : undefined,
+          pressureDebug ? (state) => (pendingRender = state) : undefined,
+        );
+      } else if (!active && chart) {
+        chart.destroy();
+        chart = null;
+      }
+    });
+  });
+
   onMount(() => {
-    let alive = true;
-    const surface: ChartSurfaceElements = {
-      canvas,
-      pressureCanvas,
-      canvasWrap,
-      toggles,
-    };
-    const next = new ChartController(
-      surface,
-      model,
-      visualization.tuning,
-      visualization.presentation,
-      renderInput(),
-      pressureDebug ? (state) => (lastRendered = state) : undefined,
-      pressureDebug ? (state) => (pendingRender = state) : undefined,
-    );
-    chart = next;
-
-    void model.start().then(
-      () => {
-        if (alive) onready();
-      },
-      (error: unknown) => {
-        if (alive)
-          onfailure(error instanceof Error ? error.message : String(error));
-      },
-    );
-
+    mounted = true;
+    onready();
     return () => {
-      alive = false;
+      chart?.destroy();
       chart = null;
-      next.destroy();
-      model.destroy();
+      void model.setViewport([]);
     };
   });
 </script>
@@ -231,71 +234,97 @@
   {/if}
 </div>
 
-<div class="cpv-chart-stage">
-  {#if pressureDebug && viewMode === "age"}
+<div
+  class="cpv-chart-stage"
+  data-visible-market-ids={visibleControls
+    .map((control) => control.market.id)
+    .join(" ")}
+  style:height={viewMode === "age" && visibleControls.length > 0
+    ? `${visibleControls.length * AGE_ROW_BAND_PX + CHART_VERTICAL_PADDING_PX}px`
+    : undefined}
+  use:chartViewport={{
+    rowCount: visibleControls.length,
+    viewMode,
+    onchange: (value) => (rowWindow = value),
+  }}
+>
+  <div
+    class="cpv-chart-window"
+    class:cpv-chart-window--age={viewMode === "age"}
+    style:top={viewMode === "age"
+      ? `${rowWindow.start * AGE_ROW_BAND_PX}px`
+      : undefined}
+  >
+    {#if pressureDebug && viewMode === "age"}
+      <div
+        class="cpv-pressure-debug"
+        class:cpv-pressure-debug--lagging={(renderedFrontierLagMs ?? 0) !== 0 ||
+          (renderedPressureRevisionLag ?? 0) !== 0}
+      >
+        <span>
+          frontier {debugTime(currentFrontierMs)} / submitted
+          {debugTime(lastSubmitted?.opacityTimeMs ?? 0)} / drawn
+          {debugTime(lastRendered?.opacityTimeMs ?? 0)}
+        </span>
+        <span>
+          Δsubmit {submittedFrontierLagMs ?? "—"}ms · Δdraw
+          {renderedFrontierLagMs ?? "—"}ms
+        </span>
+        <span>
+          rev {debugRevisions} · Δsubmit {submittedPressureRevisionLag ?? "—"} · Δdraw
+          {renderedPressureRevisionLag ?? "—"}
+        </span>
+        <span>
+          draw {lastRendered?.kind ?? "—"} · queue
+          {lastRendered ? lastRendered.queueDelayMs.toFixed(1) : "—"}ms · latest
+          {lastRendered ? lastRendered.latestRequestDelayMs.toFixed(1) : "—"}ms
+        </span>
+        <span>
+          CPU {lastRendered ? lastRendered.drawCpuMs.toFixed(1) : "—"}ms ·
+          coalesced {lastRendered?.coalescedRequests ?? "—"}
+        </span>
+        <span>pending {debugPending(pendingRender)}</span>
+      </div>
+    {/if}
+
+    {#if viewMode === "age" && visibleControls.length > 0}
+      <div class="cpv-chart-row-flip">
+        <AgeRowFlipButton orientation={ageRowOrientation} onflip={onrowflip} />
+      </div>
+    {/if}
+
     <div
-      class="cpv-pressure-debug"
-      class:cpv-pressure-debug--lagging={(renderedFrontierLagMs ?? 0) !== 0 ||
-        (renderedPressureRevisionLag ?? 0) !== 0}
+      class="cpv-canvas-wrap"
+      hidden={viewMode === "age" && rowWindow.end === rowWindow.start}
+      style:height={viewMode === "age"
+        ? `${(rowWindow.end - rowWindow.start) * AGE_ROW_BAND_PX + CHART_VERTICAL_PADDING_PX}px`
+        : undefined}
+      bind:this={canvasWrap}
     >
-      <span>
-        frontier {debugTime(currentFrontierMs)} / submitted
-        {debugTime(lastSubmitted?.opacityTimeMs ?? 0)} / drawn
-        {debugTime(lastRendered?.opacityTimeMs ?? 0)}
-      </span>
-      <span>
-        Δsubmit {submittedFrontierLagMs ?? "—"}ms · Δdraw
-        {renderedFrontierLagMs ?? "—"}ms
-      </span>
-      <span>
-        rev {debugRevisions} · Δsubmit {submittedPressureRevisionLag ?? "—"} · Δdraw
-        {renderedPressureRevisionLag ?? "—"}
-      </span>
-      <span>
-        draw {lastRendered?.kind ?? "—"} · queue
-        {lastRendered ? lastRendered.queueDelayMs.toFixed(1) : "—"}ms · latest
-        {lastRendered ? lastRendered.latestRequestDelayMs.toFixed(1) : "—"}ms
-      </span>
-      <span>
-        CPU {lastRendered ? lastRendered.drawCpuMs.toFixed(1) : "—"}ms ·
-        coalesced {lastRendered?.coalescedRequests ?? "—"}
-      </span>
-      <span>pending {debugPending(pendingRender)}</span>
+      {#if rowWindow.end > rowWindow.start}
+        <canvas
+          class="cpv-pressure-canvas"
+          aria-hidden="true"
+          bind:this={pressureCanvas}
+        ></canvas>
+        <canvas class="cpv-main-canvas" bind:this={canvas}></canvas>
+      {/if}
     </div>
-  {/if}
 
-  {#if viewMode === "age" && visibleControls.length > 0}
-    <div class="cpv-chart-row-flip">
-      <AgeRowFlipButton orientation={ageRowOrientation} onflip={onrowflip} />
+    <div
+      class="cpv-toggles"
+      class:cpv-toggles--age-axis={viewMode === "age"}
+      hidden={viewMode === "age" && rowWindow.end === rowWindow.start}
+      bind:this={toggles}
+    >
+      {#each toggledControls as control (control.market.id)}
+        <MarketControl
+          {control}
+          checked={isMarketVisible(model.visibilityFor(control.market.id))}
+          lifecycle={model.lifecycleFor(control.market.id)}
+          onchange={(checked) => userSetVisible(control, checked)}
+        />
+      {/each}
     </div>
-  {/if}
-
-  <div
-    class="cpv-canvas-wrap"
-    hidden={visibleControls.length === 0}
-    bind:this={canvasWrap}
-  >
-    <canvas
-      class="cpv-pressure-canvas"
-      aria-hidden="true"
-      bind:this={pressureCanvas}
-    ></canvas>
-    <canvas class="cpv-main-canvas" bind:this={canvas}></canvas>
-  </div>
-
-  <div
-    class="cpv-toggles"
-    class:cpv-toggles--age-axis={viewMode === "age"}
-    hidden={viewMode === "age" && visibleControls.length === 0}
-    bind:this={toggles}
-  >
-    {#each toggledControls as control (control.market.id)}
-      <MarketControl
-        {control}
-        checked={isMarketVisible(model.visibilityFor(control.market.id))}
-        lifecycle={model.lifecycleFor(control.market.id)}
-        onchange={(checked) => userSetVisible(control, checked)}
-      />
-    {/each}
   </div>
 </div>

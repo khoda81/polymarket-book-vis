@@ -291,6 +291,53 @@ test("identical REST snapshot safely confirms freshness without reconnecting", a
   watch.close();
 });
 
+test("REST responses cannot cross a replacement stream's snapshot barrier", async () => {
+  const client = new FakeClient();
+  const refresh = new FakeRefreshScheduler();
+  const coordinator = createCoordinator(client, refresh);
+  const log = callbackLog();
+  const first = coordinator.watch([TOKEN_A], log.callbacks);
+  await first.ready;
+  client.latest().push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
+  await flush();
+  refresh.start(TOKEN_A, 1, 2_000);
+
+  const second = coordinator.watch([TOKEN_B], callbackLog().callbacks);
+  await second.ready;
+  log.updates.length = 0;
+  // A cached book is displayable while waiting, but cannot confirm freshness.
+  refresh.start(TOKEN_A, 2, 2_100);
+  refresh.snapshot(
+    TOKEN_A,
+    2,
+    2_100,
+    refreshSnapshot(TOKEN_A, 2_150, "0.40", "0.60", "10"),
+  );
+  expect(log.updates).toHaveLength(0);
+
+  client.latest().push(bookEvent(TOKEN_A, 2_200, "0.45", "0.65"));
+  await flush();
+  // A request started on the old stream cannot invalidate the new snapshot.
+  refresh.snapshot(
+    TOKEN_A,
+    1,
+    2_000,
+    refreshSnapshot(TOKEN_A, 2_250, "0.30", "0.70", "100"),
+  );
+  await flush();
+  expect(client.streams).toHaveLength(2);
+  expect(canonicalSpread(coordinator.getBook(TOKEN_A)!)).toEqual({
+    bid: parsePrice("0.45"),
+    ask: parsePrice("0.65"),
+  });
+  expect(log.updates.at(-1)).toMatchObject({
+    kind: "snapshot",
+    validThroughMs: 2_200,
+  });
+  first.close();
+  second.close();
+});
+
 test("differing REST snapshot forces a fresh websocket barrier", async () => {
   const client = new FakeClient();
   const refresh = new FakeRefreshScheduler();
