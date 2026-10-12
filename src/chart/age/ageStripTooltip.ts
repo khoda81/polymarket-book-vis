@@ -34,6 +34,7 @@ import {
 } from "./ageStripPressureProjection";
 
 export interface AgeStripTooltipHost {
+  readonly getGeometry: () => AgeStripGeometry | null;
   readonly getOpacityTime: () => ObservationTime;
   readonly canvas: HTMLCanvasElement;
   readonly getViewMode: () => ViewMode;
@@ -65,7 +66,6 @@ interface PressureHover {
 
 export class AgeStripTooltip {
   private readonly tooltipOwner = Symbol("age-strip-tooltip");
-  private geometry: AgeStripGeometry | null = null;
   private pointer: HoverPointer | null = null;
   private refreshTimer: number | undefined;
   private refreshRaf: number | undefined;
@@ -75,14 +75,12 @@ export class AgeStripTooltip {
     host.canvas.addEventListener("pointerleave", this.handlePointerLeave);
   }
 
-  setGeometry(geometry: AgeStripGeometry | null): void {
-    this.geometry = geometry;
+  refresh(): void {
     if (this.pointer) this.render(this.pointer);
-    else if (!geometry) this.hide();
+    else if (!this.host.getGeometry()) this.hide();
   }
 
   clear(): void {
-    this.geometry = null;
     this.pointer = null;
     this.hide();
   }
@@ -121,7 +119,7 @@ export class AgeStripTooltip {
       return;
     }
 
-    const geometry = this.geometry;
+    const geometry = this.host.getGeometry();
     if (!geometry || geometry.rows.length === 0) {
       this.hide();
       return;

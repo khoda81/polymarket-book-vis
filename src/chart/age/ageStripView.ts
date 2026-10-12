@@ -59,9 +59,8 @@ export class AgeStripView {
     this.host = host;
     this.clock = new AgeStripClock({
       canvasWrap: host.canvasWrap,
+      getGeometry: () => this.geometry,
       getViewMode: () => host.getRenderState().viewMode,
-      getObservationTime: (tokenId) =>
-        host.model.pressure.observationTime(tokenId),
       getTiming: (tokenId) => host.model.pressure.timing(tokenId),
       getRowOrientation: () => host.getRenderState().rowOrientation,
       getTokenName: (tokenId) => host.model.marketTokenName(tokenId),
@@ -72,6 +71,7 @@ export class AgeStripView {
         ),
     });
     this.tooltip = new AgeStripTooltip({
+      getGeometry: () => this.geometry,
       getOpacityTime: () => host.getRenderState().opacityTimeMs,
       canvas: host.canvas,
       getViewMode: () => host.getRenderState().viewMode,
@@ -139,15 +139,19 @@ export class AgeStripView {
       canvasWidth: this.host.plotter.width,
       canvasHeight: this.host.plotter.height,
     };
-    this.geometry = geometry;
-    this.clock.setEnabled(true);
-    this.clock.setGeometry(geometry);
-    this.tooltip.setGeometry(geometry);
     this.renderPressure(geometry);
 
     drawAgeAxes(frame, activeControls, rasterRows, (tokenId) =>
       this.host.model.pressureColorScale(tokenId),
     );
+    this.setGeometry(geometry);
+  }
+
+  /** Publish the drawn layout once; annotations and hit testing only read it. */
+  private setGeometry(geometry: AgeStripGeometry | null): void {
+    this.geometry = geometry;
+    this.clock.refresh();
+    this.tooltip.refresh();
   }
 
   refreshAnnotations(): void {
@@ -268,9 +272,7 @@ export class AgeStripView {
 
   prepareVolumeView(): void {
     this.pressureLayer?.setVisible(false);
-    this.geometry = null;
-    this.clock.setGeometry(null);
-    this.clock.setEnabled(false);
+    this.setGeometry(null);
     this.tooltip.clear();
     if (this.layoutMode === "volume") return;
 
