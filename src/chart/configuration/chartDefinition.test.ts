@@ -5,6 +5,7 @@ import {
   type EventDetails,
 } from "../../domain/markets/eventDetails";
 import { buildChartDefinition, pressureScaleForToken } from "./chartDefinition";
+import { eventCardDetails } from "./subsetEventDetails";
 import { signedVolumeColor } from "../../rendering/colors/signedVolume";
 import { buildThresholdPalette } from "../../rendering/colors/thresholdColors";
 
@@ -120,6 +121,15 @@ test("chart definition preserves closed and inactive markets for shared controls
     },
   });
   expect(definition.controls[2]!.lifecycle.kind).toBe("awaiting-resolution");
+});
+
+test("standalone event cards keep only trading and resolved markets", () => {
+  const definition = buildChartDefinition(eventCardDetails(fakeBundle()));
+
+  expect(
+    definition.controls.map((control) => String(control.market.id)),
+  ).toEqual(["m1", "m2"]);
+  expect(definition.controls[1]!.lifecycle.kind).toBe("resolved");
 });
 
 test("single-market wrapper metadata survives DOM recreation", () => {

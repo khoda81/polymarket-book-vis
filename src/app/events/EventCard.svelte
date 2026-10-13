@@ -11,6 +11,7 @@
     loadEventDetails,
     type EventDetails,
   } from "../../domain/markets/eventDetails";
+  import { eventCardDetails } from "../../chart/configuration/subsetEventDetails";
   import { getVisualizationContext } from "../visualization/visualizationContext";
   import type { Event } from "@polymarket/client";
 
@@ -62,7 +63,7 @@
         if (!alive) return;
         runtime = {
           kind: "chart-loading",
-          bundle: loaded,
+          bundle: eventCardDetails(loaded),
         };
       },
       (error: unknown) => {
