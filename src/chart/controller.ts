@@ -176,6 +176,15 @@ export class ChartController implements PresentationTarget {
     if (kind) this.reqDraw(kind);
   }
 
+  /** Publish a changed DOM row window together with its drawn geometry. */
+  updateLayout(next: ChartRenderInput): void {
+    if (this.destroyed) return;
+    this.update(next);
+    this.reqDraw("full");
+    this.presentation.cancel(this);
+    this.renderFrame(performance.now());
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;

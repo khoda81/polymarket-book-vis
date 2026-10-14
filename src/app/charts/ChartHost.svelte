@@ -209,6 +209,9 @@
         chart = null;
       }
       chart?.setVisible(visible);
+      // The DOM row slice has already changed. Commit its canvas and label
+      // geometry in this flush so the browser cannot paint the old layout.
+      if (active) chart?.updateLayout(renderInput());
     });
   });
 
@@ -302,9 +305,6 @@
     <div
       class="cpv-canvas-wrap"
       hidden={viewMode === "age" && rowWindow.end === rowWindow.start}
-      style:height={viewMode === "age"
-        ? `${(rowWindow.end - rowWindow.start) * AGE_ROW_BAND_PX + CHART_VERTICAL_PADDING_PX}px`
-        : undefined}
       bind:this={canvasWrap}
     >
       {#if rowWindow.end > rowWindow.start}
