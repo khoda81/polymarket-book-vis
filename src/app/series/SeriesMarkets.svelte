@@ -141,7 +141,10 @@
           visualization.markets.lifecycles.get(market.id) ??
           initialMarketLifecycle(market)
         ).kind === "live" &&
-        visualization.markets.visibilityFor(market.id).kind === "visible",
+        visualization.markets.visibilityFor(
+          market.id,
+          isActiveOrderMarket(market),
+        ).kind === "visible",
     );
     await tick();
     if (!alive) return;

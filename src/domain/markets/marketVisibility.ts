@@ -2,7 +2,11 @@ import type { Market, MarketId } from "@polymarket/client";
 import type { MarketLifecycle } from "./marketLifecycle";
 
 export type HiddenMarketReason =
-  "user" | "empty-book" | "resolved-default" | "closed-default";
+  | "user"
+  | "empty-book"
+  | "resolved-default"
+  | "closed-default"
+  | "unavailable-default";
 
 export type MarketVisibility =
   | { readonly kind: "visible" }
@@ -26,6 +30,7 @@ const LEGACY_HIDDEN_STORAGE_KEY =
 export function initialMarketVisibility(
   stored: StoredMarketVisibility | undefined,
   lifecycle: MarketLifecycle,
+  availableForLiveOrders: boolean,
 ): MarketVisibility {
   if (stored === "hidden-user") return { kind: "hidden", reason: "user" };
   if (stored === "visible-user") return { kind: "visible" };
@@ -38,6 +43,8 @@ export function initialMarketVisibility(
     return { kind: "hidden", reason: "resolved-default" };
   if (lifecycle.kind === "awaiting-resolution")
     return { kind: "hidden", reason: "closed-default" };
+  if (!availableForLiveOrders)
+    return { kind: "hidden", reason: "unavailable-default" };
   return { kind: "visible" };
 }
 

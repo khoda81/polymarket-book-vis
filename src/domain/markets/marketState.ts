@@ -33,10 +33,11 @@ export class MarketState {
     this.notify();
   }
 
-  visibilityFor(marketId: MarketId) {
+  visibilityFor(marketId: MarketId, availableForLiveOrders: boolean) {
     return initialMarketVisibility(
       this.choices.get(marketId),
       this.lifecycles.get(marketId) ?? { kind: "live" },
+      availableForLiveOrders,
     );
   }
 

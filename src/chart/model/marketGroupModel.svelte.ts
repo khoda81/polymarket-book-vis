@@ -73,6 +73,7 @@ export class MarketGroupModel {
   private metadataRevision = $state(0);
   private source: ChartDefinition;
   private readonly feeSchedules: ReturnType<MarketGroupServices["createFees"]>;
+  private readonly controlByMarketId = new Map<MarketId, ChartMarketControl>();
   private readonly controlByTokenValue = new Map<string, ChartMarketControl>();
   private readonly unregisterObservationSource: () => void;
   private readonly unsubscribeMarkets: () => void;
@@ -120,8 +121,10 @@ export class MarketGroupModel {
     this.feeSchedules.primeMarkets(
       definition.controls.map((control) => control.market),
     );
+    this.controlByMarketId.clear();
     this.controlByTokenValue.clear();
     for (const control of definition.controls) {
+      this.controlByMarketId.set(control.market.id, control);
       this.controlByTokenValue.set(control.tokenId, control);
       const opposite = control.market.outcomes.no.tokenId;
       if (opposite) this.controlByTokenValue.set(opposite, control);
@@ -213,7 +216,11 @@ export class MarketGroupModel {
     return this.markets.lifecycles.get(marketId)!;
   }
   visibilityFor(marketId: MarketId) {
-    return this.markets.visibilityFor(marketId);
+    const control = this.controlByMarketId.get(marketId);
+    return this.markets.visibilityFor(
+      marketId,
+      control !== undefined && isActiveOrderMarket(control.market),
+    );
   }
   isTokenActive(tokenId: string): boolean {
     const id = this.knownTokenId(tokenId);

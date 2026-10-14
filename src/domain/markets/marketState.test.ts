@@ -16,7 +16,7 @@ test("shared visibility choices survive reload and override closed/resolved defa
   first.userSetVisible(id, false);
   const reloaded = new MarketState(storage);
   reloaded.reconcile(id, { kind: "awaiting-resolution" });
-  expect(reloaded.visibilityFor(id)).toEqual({
+  expect(reloaded.visibilityFor(id, true)).toEqual({
     kind: "hidden",
     reason: "user",
   });
@@ -28,10 +28,10 @@ test("shared visibility choices survive reload and override closed/resolved defa
   );
   reloaded.reconcile(id, { kind: "live" });
   expect(reloaded.lifecycles.get(id)?.kind).toBe("resolved");
-  expect(reloaded.visibilityFor(id)).toEqual({ kind: "visible" });
+  expect(reloaded.visibilityFor(id, true)).toEqual({ kind: "visible" });
   const again = new MarketState(storage);
   again.reconcile(id, { kind: "awaiting-resolution" });
-  expect(again.visibilityFor(id)).toEqual({ kind: "visible" });
+  expect(again.visibilityFor(id, true)).toEqual({ kind: "visible" });
 });
 
 test("a stream winner supersedes metadata-derived endpoint prices", () => {

@@ -34,7 +34,12 @@ plugin({
 });
 const { MarketGroupModel } = await import("./marketGroupModel.svelte");
 
-function definition() {
+function definition(
+  firstMarketOrderState: Readonly<{
+    active: boolean;
+    acceptingOrders: boolean;
+  }> = { active: true, acceptingOrders: true },
+) {
   const event = {
     id: "1038648",
     title: "Ceasefire",
@@ -45,9 +50,10 @@ function definition() {
       conditionId: `condition-${id}`,
       groupItemTitle: index === 0 ? "October 15" : "October 31",
       state: {
-        active: true,
+        active: index === 0 ? firstMarketOrderState.active : true,
         closed: false,
-        acceptingOrders: true,
+        acceptingOrders:
+          index === 0 ? firstMarketOrderState.acceptingOrders : true,
         endDate: index === 0 ? "2026-10-16T03:59:00Z" : "2026-10-31T23:59:00Z",
       },
       trading: { feesEnabled: false },
@@ -61,7 +67,10 @@ function definition() {
   return buildChartDefinition(buildEventDetails(event, {}));
 }
 
-function harness(feesReady: Promise<void> = Promise.resolve()) {
+function harness(
+  feesReady: Promise<void> = Promise.resolve(),
+  chartDefinition = definition(),
+) {
   const markets = new MarketState(null);
   const observations = new ObservationClock();
   const feeds: {
@@ -107,7 +116,7 @@ function harness(feesReady: Promise<void> = Promise.resolve()) {
   const model = new MarketGroupModel(
     {} as never,
     observations,
-    definition(),
+    chartDefinition,
     markets,
     undefined,
     services,
@@ -260,6 +269,32 @@ test("late fee preparation cannot resurrect a destroyed group", async () => {
   await Promise.all([pending, offscreen]);
   expect(feeds[0]!.closed).toBe(true);
   expect(feeds[0]!.started).toHaveLength(0);
+});
+
+test("markets excluded from live-order feeds default hidden without being discarded", async () => {
+  const { model, feeds } = harness(
+    Promise.resolve(),
+    definition({ active: false, acceptingOrders: true }),
+  );
+  const control = model.definition.controls[0]!;
+  try {
+    expect(model.lifecycleFor(control.market.id).kind).toBe("live");
+    expect(model.visibilityFor(control.market.id)).toEqual({
+      kind: "hidden",
+      reason: "unavailable-default",
+    });
+    expect(model.activeTokens.has(control.tokenId)).toBe(false);
+
+    await model.setViewport([control.tokenId]);
+    expect(feeds).toHaveLength(0);
+
+    model.userSetMarketVisible(control, true);
+    expect(model.visibilityFor(control.market.id)).toEqual({ kind: "visible" });
+    expect(model.activeTokens.has(control.tokenId)).toBe(true);
+    expect(feeds).toHaveLength(0);
+  } finally {
+    model.destroy();
+  }
 });
 
 test("resolution survives viewport release, stale metadata and explicit revealing", async () => {
