@@ -4,12 +4,29 @@ import {
   type RelativeTimeDisplay,
 } from "../../shared/math";
 
+export type MarketTimeMarker =
+  | { readonly kind: "game-start"; readonly timeMs: number }
+  | { readonly kind: "reported-end"; readonly timeMs: number };
+
 /** The reported market end date, without substituting event or settlement dates. */
 export function marketDeadlineMs(market: Pick<Market, "state">): number | null {
-  const value = market.state.endDate;
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return timestampMs(market.state.endDate);
+}
+
+/**
+ * The honest schedule marker for a market row.
+ *
+ * Gamma can use `endDate` as kickoff for sports markets. Prefer its explicit
+ * `gameStartTime` there so a live match is never presented as already ended.
+ */
+export function marketTimeMarker(
+  market: Pick<Market, "sports" | "state">,
+): MarketTimeMarker | null {
+  const gameStartMs = timestampMs(market.sports.gameStartTime);
+  if (gameStartMs !== null) return { kind: "game-start", timeMs: gameStartMs };
+
+  const endMs = marketDeadlineMs(market);
+  return endMs === null ? null : { kind: "reported-end", timeMs: endMs };
 }
 
 /** Compact wall-clock offset. A passed deadline says nothing about resolution. */
@@ -32,4 +49,32 @@ export function deadlineDisplay(
     text: remainingMs > 0 ? `in ${duration.text}` : `${duration.text} ago`,
     nextChangeMs: duration.nextChangeMs,
   };
+}
+
+export function marketTimeDisplay(
+  marker: MarketTimeMarker | null,
+  nowMs: number,
+): RelativeTimeDisplay {
+  if (marker === null) return deadlineDisplay(null, nowMs);
+
+  const display = deadlineDisplay(marker.timeMs, nowMs);
+  if (marker.kind === "reported-end") return display;
+  if (display.text === "now") return { ...display, text: "starts now" };
+  return {
+    ...display,
+    text: display.text.startsWith("in ")
+      ? `starts ${display.text}`
+      : `started ${display.text}`,
+  };
+}
+
+function timestampMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  // Gamma sports timestamps currently use SQL-style ` ` and `+00`; normalize
+  // them to the ISO 8601 form whose parsing is portable across browsers.
+  const normalized = value
+    .replace(/^([0-9]{4}-[0-9]{2}-[0-9]{2}) /, "$1T")
+    .replace(/([+-][0-9]{2})$/, "$1:00");
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }

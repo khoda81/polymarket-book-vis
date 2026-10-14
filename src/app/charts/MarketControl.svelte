@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { ChartMarketControl } from "../../chart/configuration/chartDefinition";
   import type { MarketLifecycle } from "../../domain/markets/marketLifecycle";
-  import { marketDeadlineMs } from "../../domain/markets/marketDeadline";
   import MarketDeadline from "./MarketDeadline.svelte";
 
   export let control: ChartMarketControl;
@@ -76,7 +75,7 @@
     <span class="cpv-market-label-text">{control.title}</span>
     {#if showDeadline}
       <span class="cpv-market-meta">
-        <MarketDeadline deadlineMs={marketDeadlineMs(control.market)} />
+        <MarketDeadline market={control.market} />
         {#if control.market.state.closed}<span class="cpv-market-state"
             >closed</span
           >{/if}

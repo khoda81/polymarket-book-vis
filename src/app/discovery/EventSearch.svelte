@@ -9,7 +9,8 @@
     initialMarketLifecycle,
     summarizeEventMarketStatus,
   } from "../../domain/markets/marketLifecycle";
-  import { fmtVol, relativeTimeDisplay } from "../../shared/math";
+  import { eventTimingDisplay } from "../../domain/markets/eventTiming";
+  import { fmtVol } from "../../shared/math";
   import { errorMessage } from "../dashboard/model";
   import {
     type PublicClient,
@@ -121,34 +122,6 @@
       event.subtitle?.trim() ??
       ""
     );
-  }
-
-  function timestampMs(value: unknown): number | null {
-    if (value instanceof Date) return value.getTime();
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value !== "string") return null;
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  function nextResolutionMs(event: Event): number | null {
-    const liveTimes = event.markets.flatMap((market) => {
-      if (initialMarketLifecycle(market).kind !== "live") return [];
-      const value = timestampMs(market.state.endDate);
-      return value === null ? [] : [value];
-    });
-    return liveTimes.length > 0 ? Math.min(...liveTimes) : null;
-  }
-
-  function timeUntilResolution(event: Event): string {
-    const resolutionMs = nextResolutionMs(event);
-    if (resolutionMs === null) return "";
-
-    const display = relativeTimeDisplay(
-      Math.max(0, resolutionMs - Date.now()) / 1000,
-      "remaining",
-    );
-    return display.text === "due" ? "due" : `T−${display.text}`;
   }
 
   function resolvedRowsFromEvent(event: Event): ResolvedRow[] {
@@ -472,6 +445,7 @@
       {#each sortedMatches as match, index (match.event.id)}
         {@const lifecycle = eventLifecycle(match.event)}
         {@const resolution = resolutionSummary(match)}
+        {@const timing = eventTimingDisplay(match.event, Date.now())}
         <button
           type="button"
           class="dashboard-search-result"
@@ -534,12 +508,9 @@
                 ></span>
                 <span>{resolution.text}</span>
               </span>
-            {:else if lifecycle === "open" && timeUntilResolution(match.event)}
-              <span
-                class="dashboard-search-result-time"
-                title="Time until next live market resolution"
-              >
-                {timeUntilResolution(match.event)}
+            {:else if lifecycle === "open" && timing}
+              <span class="dashboard-search-result-time" title={timing.title}>
+                {timing.text}
               </span>
             {:else if statusText(match.event)}
               <span class="dashboard-search-result-state">

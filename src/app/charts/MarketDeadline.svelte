@@ -1,22 +1,27 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { deadlineDisplay } from "../../domain/markets/marketDeadline";
+  import type { Market } from "@polymarket/client";
+  import {
+    marketTimeDisplay,
+    marketTimeMarker,
+  } from "../../domain/markets/marketDeadline";
 
-  export let deadlineMs: number | null;
+  export let market: Market;
 
   let element: HTMLSpanElement;
   let refresh: () => void = () => undefined;
-  $: (deadlineMs, refresh());
+  $: marker = marketTimeMarker(market);
+  $: (marker, refresh());
   $: title =
-    deadlineMs === null
+    marker === null
       ? "Polymarket does not report an end date for this market"
-      : `Reported end: ${new Date(deadlineMs).toLocaleString()} (${new Date(deadlineMs).toISOString()})`;
+      : `${marker.kind === "game-start" ? "Reported game start" : "Reported end"}: ${new Date(marker.timeMs).toLocaleString()} (${new Date(marker.timeMs).toISOString()})`;
 
   onMount(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     refresh = () => {
       if (timer !== undefined) clearTimeout(timer);
-      const display = deadlineDisplay(deadlineMs, Date.now());
+      const display = marketTimeDisplay(marker, Date.now());
       const node = element.firstChild as Text;
       if (node.data !== display.text) node.data = display.text;
       if (display.nextChangeMs !== null)
@@ -35,7 +40,8 @@
 <span
   class="cpv-market-deadline"
   data-masonry-layout-neutral
-  data-deadline-ms={deadlineMs ?? undefined}
+  data-market-time-kind={marker?.kind}
+  data-market-time-ms={marker?.timeMs}
   {title}
-  bind:this={element}>{deadlineDisplay(deadlineMs, Date.now()).text}</span
+  bind:this={element}>{marketTimeDisplay(marker, Date.now()).text}</span
 >
