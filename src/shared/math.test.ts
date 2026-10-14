@@ -19,7 +19,9 @@ test("fmtRelativeTime uses compact significant digits", () => {
   expect(fmtRelativeTime(263)).toBe("4.3m");
   expect(fmtRelativeTime(18.01 * 60)).toBe("18m");
   expect(fmtRelativeTime(7_200)).toBe("2h");
-  expect(fmtRelativeTime(104 * 86_400)).toBe("3.4mo");
+  expect(fmtRelativeTime(6 * 86_400)).toBe("6d");
+  expect(fmtRelativeTime(7 * 86_400)).toBe("1w");
+  expect(fmtRelativeTime(104 * 86_400)).toBe("14w");
 });
 
 test("signed relative offsets preserve clock skew", () => {
@@ -27,6 +29,8 @@ test("signed relative offsets preserve clock skew", () => {
   expect(fmtRelativeTimeOffset(0.053)).toBe("53ms");
   expect(fmtRelativeTimeOffset(-0.053)).toBe("−53ms");
   expect(fmtRelativeTimeOffset(-3.4)).toBe("−3.4s");
+  expect(fmtRelativeTimeOffset(0.0001)).toBe("100µs");
+  expect(fmtRelativeTimeOffset(0.0000001)).toBe("100ns");
 });
 
 test("relativeTimeDisplay exposes semantic redraw deadlines", () => {

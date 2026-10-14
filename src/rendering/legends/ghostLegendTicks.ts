@@ -1,3 +1,4 @@
+import { fmtRelativeTimeOffset } from "@/shared/math";
 import { tickDensityOpacity } from "../ticks/density";
 import { placeQuantileTicks } from "../ticks/quantileTicks";
 
@@ -5,10 +6,7 @@ const SECOND_MS = 1_000;
 const MINUTE_MS = 60 * SECOND_MS;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
-const MONTH_MS = 30 * DAY_MS;
-// These are display-duration units, not calendar arithmetic. Keeping a year
-// exactly 12 fixed 30-day months lets the entire tick lattice remain nested.
-const YEAR_MS = 12 * MONTH_MS;
+const WEEK_MS = 7 * DAY_MS;
 
 export interface GhostLegendTick {
   readonly ageMs: number;
@@ -70,7 +68,7 @@ export function ghostLegendTicks(
         position: placement.position,
         opacity,
         stepMs: placement.step,
-        label: formatDurationTick(placement.value),
+        label: fmtRelativeTimeOffset(placement.value / SECOND_MS),
       };
     })
     .filter((tick) => tick.opacity > 1 / 255);
@@ -89,24 +87,6 @@ export function ageAtGhostPosition(
   return -halfLifeMs * Math.log2(1 - position);
 }
 
-export function formatDurationTick(ageMs: number): string {
-  if (Object.is(ageMs, -0) || ageMs === 0) return "now";
-  const magnitude = Math.abs(ageMs);
-  const sign = ageMs < 0 ? "−" : "";
-  if (magnitude < 1) {
-    const microseconds = magnitude * 1_000;
-    if (microseconds >= 1) return `${sign}${compact(microseconds)}µs`;
-    return `${sign}${compact(magnitude * 1_000_000)}ns`;
-  }
-  if (magnitude < SECOND_MS) return `${sign}${compact(magnitude)}ms`;
-  if (magnitude < MINUTE_MS) return `${sign}${compact(magnitude / SECOND_MS)}s`;
-  if (magnitude < HOUR_MS) return `${sign}${compact(magnitude / MINUTE_MS)}m`;
-  if (magnitude < DAY_MS) return `${sign}${compact(magnitude / HOUR_MS)}h`;
-  if (magnitude < MONTH_MS) return `${sign}${compact(magnitude / DAY_MS)}d`;
-  if (magnitude < YEAR_MS) return `${sign}${compact(magnitude / MONTH_MS)}mo`;
-  return `${sign}${compact(magnitude / YEAR_MS)}y`;
-}
-
 const DURATION_REFINEMENT_STEPS = buildDurationRefinementSteps();
 
 export function durationRefinementSteps(): readonly number[] {
@@ -116,20 +96,17 @@ export function durationRefinementSteps(): readonly number[] {
 function buildDurationRefinementSteps(): readonly number[] {
   const steps: number[] = [];
 
-  // Decimal coarse scales use the nested 1 / 0.5 pattern:
-  // ... 100y, 50y, 10y, 5y, 1y ...
-  for (let exponent = 9; exponent >= 0; exponent--) {
-    steps.push(YEAR_MS * 10 ** exponent);
-    steps.push(0.5 * YEAR_MS * 10 ** exponent);
+  // Decimal coarse scales use the nested 1 / 0.5 pattern, but only for exact
+  // interval units: ... 100w, 50w, 10w, 5w, 1w.
+  for (let exponent = 9; exponent >= 1; exponent--) {
+    steps.push(WEEK_MS * 10 ** exponent);
+    steps.push(0.5 * WEEK_MS * 10 ** exponent);
   }
 
   // Human-unit bridges. Every next step divides the previous one exactly, so
   // every coarse grid is a literal subset of every finer grid.
   steps.push(
-    3 * MONTH_MS,
-    MONTH_MS,
-    15 * DAY_MS,
-    5 * DAY_MS,
+    WEEK_MS,
     DAY_MS,
     12 * HOUR_MS,
     6 * HOUR_MS,
@@ -154,14 +131,4 @@ function buildDurationRefinementSteps(): readonly number[] {
   }
 
   return steps;
-}
-
-function compact(value: number): string {
-  if (!Number.isFinite(value)) return String(value);
-  const rounded = Number(value.toPrecision(3));
-  return rounded.toString();
-}
-
-function addStep(target: Set<number>, value: number): void {
-  if (value > 0 && Number.isFinite(value)) target.add(value);
 }

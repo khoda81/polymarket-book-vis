@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
+import { fmtRelativeTimeOffset } from "@/shared/math";
 import {
   ageAtGhostPosition,
   durationRefinementSteps,
-  formatDurationTick,
   ghostLegendTicks,
   ghostPositionForAge,
 } from "./ghostLegendTicks";
@@ -60,13 +60,14 @@ test("duration ticks use human unit families and fade by local density", () => {
   expect(values.some((tick) => tick.opacity < 1)).toBe(true);
 });
 
-test("duration labels remain readable below milliseconds and above months", () => {
-  expect(formatDurationTick(0)).toBe("now");
-  expect(formatDurationTick(-50)).toBe("−50ms");
-  expect(formatDurationTick(0.1)).toBe("100µs");
-  expect(formatDurationTick(1_000)).toBe("1s");
-  expect(formatDurationTick(60 * 60 * 1_000)).toBe("1h");
-  expect(formatDurationTick(360 * 24 * 60 * 60 * 1_000)).toBe("1y");
+test("duration labels share the recorder formatter across the full tick range", () => {
+  expect(fmtRelativeTimeOffset(0)).toBe("now");
+  expect(fmtRelativeTimeOffset(-0.05)).toBe("−50ms");
+  expect(fmtRelativeTimeOffset(0.0001)).toBe("100µs");
+  expect(fmtRelativeTimeOffset(1)).toBe("1s");
+  expect(fmtRelativeTimeOffset(60 * 60)).toBe("1h");
+  expect(fmtRelativeTimeOffset(7 * 24 * 60 * 60)).toBe("1w");
+  expect(fmtRelativeTimeOffset(360 * 24 * 60 * 60)).toBe("51w");
 });
 
 test("absolute-age ticks are reprojected when the newest observation gets older", () => {
@@ -84,7 +85,7 @@ test("absolute-age ticks are reprojected when the newest observation gets older"
 
   const exact = ghostPositionForAge(sharedAge! - 1_000, 5_000);
   expect(Math.abs(staleTick.position - exact)).toBeLessThanOrEqual(0.5 / 600);
-  expect(staleTick.label).toBe(formatDurationTick(sharedAge!));
+  expect(staleTick.label).toBe(fmtRelativeTimeOffset(sharedAge! / 1_000));
 });
 
 test("signed clock offsets put now in the physical pixel covering it", () => {

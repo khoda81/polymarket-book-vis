@@ -18,7 +18,8 @@ test("relative dates distinguish past, future and missing without asserting reso
   const now = Date.parse("2026-10-10T00:00:00Z");
   expect(deadlineDisplay(now + 6 * 86_400_000, now).text).toBe("in 6d");
   expect(deadlineDisplay(now - 6 * 86_400_000, now).text).toBe("6d ago");
-  expect(deadlineDisplay(now + 60 * 86_400_000, now).text).toBe("in 60d");
+  expect(deadlineDisplay(now + 7 * 86_400_000, now).text).toBe("in 1w");
+  expect(deadlineDisplay(now + 60 * 86_400_000, now).text).toBe("in 8.6w");
   expect(deadlineDisplay(null, now)).toEqual({
     text: "No end date",
     nextChangeMs: null,
