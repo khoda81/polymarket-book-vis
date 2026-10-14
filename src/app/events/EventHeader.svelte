@@ -39,7 +39,8 @@
               href={`https://polymarket.com/event/${encodeURIComponent(slug)}`}
               target="_blank"
               rel="noopener noreferrer"
-              title="Open on Polymarket">{event.title ?? "(untitled)"} ↗</a
+              title={event.title ?? "(untitled)"}
+              >{event.title ?? "(untitled)"}</a
             >
           {:else}
             {event.title ?? "(untitled)"}
