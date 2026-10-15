@@ -4,6 +4,7 @@
   import {
     marketTimeDisplay,
     marketTimeMarker,
+    marketTimeTooltip,
   } from "../../domain/markets/marketDeadline";
 
   export let market: Market;
@@ -12,10 +13,7 @@
   let refresh: () => void = () => undefined;
   $: marker = marketTimeMarker(market);
   $: (marker, refresh());
-  $: title =
-    marker === null
-      ? "Polymarket does not report an end date for this market"
-      : `${marker.kind === "game-start" ? "Reported game start" : "Reported end"}: ${new Date(marker.timeMs).toLocaleString()} (${new Date(marker.timeMs).toISOString()})`;
+  $: title = marketTimeTooltip(marker);
 
   onMount(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;

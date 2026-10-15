@@ -68,6 +68,16 @@ export function marketTimeDisplay(
   };
 }
 
+export function marketTimeTooltip(marker: MarketTimeMarker | null): string {
+  if (marker === null)
+    return "Polymarket does not report an end date for this market";
+
+  const label =
+    marker.kind === "game-start" ? "Reported game start" : "Reported end";
+  const date = new Date(marker.timeMs);
+  return `${label}: ${date.toLocaleString()} (${date.toISOString()})`;
+}
+
 function timestampMs(value: string | null | undefined): number | null {
   if (!value) return null;
   // Gamma sports timestamps currently use SQL-style ` ` and `+00`; normalize
