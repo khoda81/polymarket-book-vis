@@ -1,6 +1,7 @@
 import type { ObservationTime } from "@/domain/pressure/observationClock";
 import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
 import { relativeTimeOffsetDisplay } from "@/shared/math";
+import type { WallClock, WallClockWatch } from "@/shared/wallClock";
 import {
   PRESSURE_MIN_VISIBLE_ALPHA,
   pressureValidityAlpha,
@@ -34,6 +35,7 @@ import {
 } from "./ageStripPressureProjection";
 
 export interface AgeStripTooltipHost {
+  readonly wallClock: WallClock;
   readonly getGeometry: () => AgeStripGeometry | null;
   readonly getOpacityTime: () => ObservationTime;
   readonly canvas: HTMLCanvasElement;
@@ -66,27 +68,26 @@ interface PressureHover {
 
 export class AgeStripTooltip {
   private readonly tooltipOwner = Symbol("age-strip-tooltip");
+  private readonly watch: WallClockWatch;
   private pointer: HoverPointer | null = null;
-  private refreshTimer: number | undefined;
-  private refreshRaf: number | undefined;
 
   constructor(private readonly host: AgeStripTooltipHost) {
     host.canvas.addEventListener("pointermove", this.handlePointerMove);
     host.canvas.addEventListener("pointerleave", this.handlePointerLeave);
+    this.watch = host.wallClock.watch((nowMs) => this.render(nowMs));
   }
 
   refresh(): void {
-    if (this.pointer) this.render(this.pointer);
-    else if (!this.host.getGeometry()) this.hide();
+    this.watch.refresh();
   }
 
   clear(): void {
     this.pointer = null;
-    this.hide();
+    this.refresh();
   }
 
   destroy(): void {
-    this.cancelRefresh();
+    this.watch.destroy();
     this.host.canvas.removeEventListener("pointermove", this.handlePointerMove);
     this.host.canvas.removeEventListener(
       "pointerleave",
@@ -102,39 +103,41 @@ export class AgeStripTooltip {
       canvasLeft: event.clientX - event.offsetX,
       canvasTop: event.clientY - event.offsetY,
     };
-    this.render(this.pointer);
+    this.refresh();
   };
 
   private readonly handlePointerLeave = () => {
-    this.pointer = null;
-    this.hide();
+    this.clear();
   };
 
-  private render(pointer: HoverPointer): void {
-    this.cancelRefresh();
-
+  private render(nowMs: number): number | null {
+    const pointer = this.pointer;
+    if (!pointer) {
+      this.hide();
+      return null;
+    }
     const { sx, sy } = pointer;
     if (this.host.getViewMode() !== "age") {
       this.hide();
-      return;
+      return null;
     }
 
     const geometry = this.host.getGeometry();
     if (!geometry || geometry.rows.length === 0) {
       this.hide();
-      return;
+      return null;
     }
 
     const { viewport: vp } = geometry;
     if (sx < vp.l || sx > vp.l + vp.width) {
       this.hide();
-      return;
+      return null;
     }
 
     const row = ageStripRowAtY(geometry, sy);
     if (!row) {
       this.hide();
-      return;
+      return null;
     }
 
     const centerCss = ageStripRowCenterY(geometry, row);
@@ -150,7 +153,7 @@ export class AgeStripTooltip {
         : (row.oppositeTokenId ?? null);
     if (!sourceTokenId || !semanticTokenId) {
       this.hide();
-      return;
+      return null;
     }
 
     const displayPrice = clamp01((sx - vp.l) / vp.width);
@@ -174,7 +177,6 @@ export class AgeStripTooltip {
       this.host.getVolumePerCssPixel() * AGE_ROW_BAND_PX,
     );
 
-    const nowMs = Date.now();
     let hover: PressureHover | null = null;
     if (volume !== null) {
       const band = this.host.getPressureBand(
@@ -238,41 +240,12 @@ export class AgeStripTooltip {
       perspective.yDirection < 0 ? "below" : "above",
     );
 
-    if (ageDisplay?.nextChangeMs != null)
-      this.scheduleRefresh(ageDisplay.nextChangeMs);
-  }
-
-  private scheduleRefresh(delayMs: number): void {
-    if (delayMs <= 34) {
-      this.refreshRaf = requestAnimationFrame(() => {
-        this.refreshRaf = undefined;
-        if (this.pointer) this.render(this.pointer);
-      });
-      return;
-    }
-
-    this.refreshTimer = window.setTimeout(
-      () => {
-        this.refreshTimer = undefined;
-        if (this.pointer) this.render(this.pointer);
-      },
-      Math.max(1, Math.ceil(delayMs) + 1),
-    );
-  }
-
-  private cancelRefresh(): void {
-    if (this.refreshTimer !== undefined) {
-      clearTimeout(this.refreshTimer);
-      this.refreshTimer = undefined;
-    }
-    if (this.refreshRaf !== undefined) {
-      cancelAnimationFrame(this.refreshRaf);
-      this.refreshRaf = undefined;
-    }
+    return ageDisplay?.nextChangeMs != null
+      ? nowMs + Math.ceil(ageDisplay.nextChangeMs) + 1
+      : null;
   }
 
   private hide(): void {
-    this.cancelRefresh();
     hideSharedTooltip(this.tooltipOwner);
   }
 }

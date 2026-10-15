@@ -1,4 +1,5 @@
 import { relativeTimeOffsetDisplay } from "@/shared/math";
+import type { WallClock, WallClockWatch } from "@/shared/wallClock";
 import type { ViewMode } from "@/domain/markets/chartState";
 import {
   ageRowYDirection,
@@ -17,6 +18,7 @@ export interface AgeStripTiming {
 
 export interface AgeStripClockHost {
   readonly canvasWrap: HTMLElement;
+  readonly wallClock: WallClock;
   readonly getGeometry: () => AgeStripGeometry | null;
   readonly getViewMode: () => ViewMode;
   readonly getTiming: (tokenId: string) => AgeStripTiming | undefined;
@@ -34,9 +36,8 @@ interface ClockLabel {
 export class AgeStripClock {
   private readonly layer: HTMLDivElement;
   private readonly labels = new Map<string, ClockLabel>();
+  private readonly watch: WallClockWatch;
   private paused = false;
-  private pending:
-    { kind: "frame"; id: number } | { kind: "timer"; id: number } | null = null;
 
   constructor(private readonly host: AgeStripClockHost) {
     this.layer = document.createElement("div");
@@ -45,24 +46,26 @@ export class AgeStripClock {
     // Masonry can therefore ignore its internal mutations entirely.
     this.layer.setAttribute("data-masonry-layout-neutral", "");
     host.canvasWrap.appendChild(this.layer);
+    this.watch = host.wallClock.watch((nowMs) => this.render(nowMs));
   }
 
   setPaused(paused: boolean): void {
     if (paused === this.paused) return;
     this.paused = paused;
-    if (paused) this.cancelPending();
-    else this.refresh();
+    this.refresh();
   }
 
   refresh(): void {
-    this.cancelPending();
-    if (this.paused) return;
+    this.watch.refresh();
+  }
+
+  private render(nowMs: number): number | null {
+    if (this.paused) return null;
     const geometry = this.host.getGeometry();
     if (!geometry || this.host.getViewMode() !== "age") {
       this.clear();
-      return;
+      return null;
     }
-    const nowMs = Date.now();
     const retained = new Set<string>();
     const { viewport: vp } = geometry;
     const timeX = Math.max(4, vp.l - AGE_LABEL_HORIZONTAL_INSET_PX);
@@ -118,21 +121,9 @@ export class AgeStripClock {
       this.labels.delete(key);
     }
 
-    if (Number.isFinite(nextChangeMs)) {
-      if (nextChangeMs < 34)
-        this.pending = {
-          kind: "frame",
-          id: requestAnimationFrame(() => this.refresh()),
-        };
-      else
-        this.pending = {
-          kind: "timer",
-          id: window.setTimeout(
-            () => this.refresh(),
-            Math.min(2_147_483_647, Math.ceil(nextChangeMs) + 1),
-          ),
-        };
-    }
+    return Number.isFinite(nextChangeMs)
+      ? nowMs + Math.ceil(nextChangeMs) + 1
+      : null;
   }
 
   private label(key: string, retained: Set<string>): ClockLabel {
@@ -155,20 +146,13 @@ export class AgeStripClock {
     if (label.text.data !== text) label.text.data = text;
   }
 
-  private cancelPending(): void {
-    if (this.pending?.kind === "frame") cancelAnimationFrame(this.pending.id);
-    else if (this.pending?.kind === "timer")
-      window.clearTimeout(this.pending.id);
-    this.pending = null;
-  }
-
   private clear(): void {
-    this.cancelPending();
     this.layer.replaceChildren();
     this.labels.clear();
   }
 
   destroy(): void {
+    this.watch.destroy();
     this.clear();
     this.layer.remove();
   }

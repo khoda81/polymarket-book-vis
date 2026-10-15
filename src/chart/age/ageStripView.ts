@@ -1,6 +1,7 @@
 import type { ObservationTime } from "@/domain/pressure/observationClock";
 import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
 import type { AgeStripTuningStore } from "@/chart/age/ageStripTuningStore";
+import type { WallClock } from "@/shared/wallClock";
 import type { ChartTheme, OrderBookPlotter } from "@/rendering/renderer";
 import type { MarketGroupModel } from "@/chart/model/marketGroupModel.svelte";
 import {
@@ -32,6 +33,7 @@ export interface AgeStripRenderState {
 export interface AgeStripHost {
   readonly model: MarketGroupModel;
   readonly tuning: AgeStripTuningStore;
+  readonly wallClock: WallClock;
   readonly canvas: HTMLCanvasElement;
   readonly pressureCanvas: HTMLCanvasElement;
   readonly canvasWrap: HTMLElement;
@@ -58,6 +60,7 @@ export class AgeStripView {
   constructor(host: AgeStripHost) {
     this.host = host;
     this.clock = new AgeStripClock({
+      wallClock: host.wallClock,
       canvasWrap: host.canvasWrap,
       getGeometry: () => this.geometry,
       getViewMode: () => host.getRenderState().viewMode,
@@ -71,6 +74,7 @@ export class AgeStripView {
         ),
     });
     this.tooltip = new AgeStripTooltip({
+      wallClock: host.wallClock,
       getGeometry: () => this.geometry,
       getOpacityTime: () => host.getRenderState().opacityTimeMs,
       canvas: host.canvas,

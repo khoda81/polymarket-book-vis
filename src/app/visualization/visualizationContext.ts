@@ -1,8 +1,9 @@
-import { getContext, setContext } from "svelte";
+import { getContext, onMount, setContext } from "svelte";
 import { AgeStripTuningStore } from "@/chart/age/ageStripTuningStore";
 import { ObservationClock } from "@/domain/pressure/observationClock";
 import { PresentationCoordinator } from "@/chart/presentationCoordinator";
 import { MarketState } from "@/domain/markets/marketState";
+import { startWallClock, WallClock } from "@/shared/wallClock";
 import type { PublicClient } from "@polymarket/client";
 
 const VISUALIZATION_CONTEXT = Symbol("lobservatory.visualization");
@@ -10,6 +11,7 @@ const VISUALIZATION_CONTEXT = Symbol("lobservatory.visualization");
 export interface VisualizationContext {
   readonly client: PublicClient;
   readonly observations: ObservationClock;
+  readonly wallClock: WallClock;
   readonly tuning: AgeStripTuningStore;
   readonly presentation: PresentationCoordinator;
   readonly markets: MarketState;
@@ -27,6 +29,7 @@ export function provideVisualizationContext(
   const context: VisualizationContext = {
     client,
     observations: new ObservationClock(),
+    wallClock: new WallClock(),
     tuning: new AgeStripTuningStore(
       typeof window === "undefined" ? null : window.localStorage,
     ),
@@ -36,6 +39,7 @@ export function provideVisualizationContext(
     ),
   };
   setContext(VISUALIZATION_CONTEXT, context);
+  onMount(() => startWallClock(context.wallClock));
   return context;
 }
 

@@ -7,6 +7,7 @@ import { VolumeBookView } from "./volume/volumeBookView";
 import type { MarketGroupModel } from "./model/marketGroupModel.svelte";
 import type { ObservationTime } from "@/domain/pressure/observationClock";
 import type { AgeStripTuningStore } from "./age/ageStripTuningStore";
+import type { WallClock } from "@/shared/wallClock";
 import { ghostRefreshDelayMs } from "./age/ageStripTuning";
 import {
   type PresentationTarget,
@@ -86,6 +87,7 @@ export class ChartController implements PresentationTarget {
     surface: ChartSurfaceElements,
     private readonly model: MarketGroupModel,
     tuning: AgeStripTuningStore,
+    wallClock: WallClock,
     private readonly presentation: PresentationCoordinator,
     initialState: ChartRenderInput,
     private readonly onRendered?: (state: ChartRenderedState) => void,
@@ -101,6 +103,7 @@ export class ChartController implements PresentationTarget {
     this.ageView = new AgeStripView({
       model,
       tuning,
+      wallClock,
       canvas: surface.canvas,
       pressureCanvas: surface.pressureCanvas,
       canvasWrap: surface.canvasWrap,

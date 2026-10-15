@@ -199,6 +199,7 @@
           { canvas, pressureCanvas, canvasWrap, toggles },
           model,
           visualization.tuning,
+          visualization.wallClock,
           visualization.presentation,
           renderInput(),
           pressureDebug ? (state) => (lastRendered = state) : undefined,

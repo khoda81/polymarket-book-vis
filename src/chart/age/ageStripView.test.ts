@@ -7,6 +7,7 @@ import type { GpuPressureFrame } from "./gpuPressureLayer";
 import { observationTime } from "../../domain/pressure/observationClock";
 import { DEFAULT_SIGNED_VOLUME_COLOR_SCALE } from "../../rendering/colors/signedVolume";
 import { parsePrice } from "../../domain/books/price";
+import { WallClock } from "../../shared/wallClock";
 
 type TestNode = TestElement | { data: string };
 class TestElement {
@@ -124,12 +125,13 @@ function createView(flushFrame: () => void) {
   const canvasWrap = new TestElement();
   const toggles = new TestElement();
   const tuning = new AgeStripTuningStore(null);
+  const wallClock = new WallClock(1_800_000_000_000);
   const pressure = new AgeStripPressureState();
   const frames: GpuPressureFrame[] = [];
   const state: AgeStripRenderState = {
     viewMode: "age",
     rowOrientation: "negative-above",
-    opacityTimeMs: observationTime(Date.now()),
+    opacityTimeMs: observationTime(wallClock.nowMs),
     volumePerCssPixel: tuning.get().volumePerCssPixel,
     ghostHalfLifeMs: tuning.get().ghostHalfLifeMs,
   };
@@ -177,7 +179,7 @@ function createView(flushFrame: () => void) {
             state.opacityTimeMs,
           );
         pressure.setRecordingCoverage({
-          [tokenId]: Date.now() - 4 * 86_400_000,
+          [tokenId]: wallClock.nowMs - 4 * 86_400_000,
         });
       }
       return label;
@@ -195,6 +197,7 @@ function createView(flushFrame: () => void) {
       tokenName: (id: string) => (id.endsWith("-yes") ? "Yes" : "No"),
     },
     tuning,
+    wallClock,
     canvas,
     pressureCanvas: new TestElement("canvas"),
     canvasWrap,
@@ -218,12 +221,12 @@ function createView(flushFrame: () => void) {
     )!;
   const clocks = () =>
     (canvasWrap.children[0] as TestElement).children as TestElement[];
-  function hover(row: number) {
+  function hover(row: number, displayPrice = 0.5) {
     const frame = frames.at(-1)!;
     const geometry = frame.rows[row]!;
     const scaleY = Math.floor(frame.cssHeight * 1.25) / frame.cssHeight;
     const y = (geometry.topDevice + geometry.centerDevice) / (2 * scaleY);
-    const x = frame.viewport.l + frame.viewport.width / 2;
+    const x = frame.viewport.l + frame.viewport.width * displayPrice;
     canvas.listeners.get("pointermove")!({
       offsetX: x,
       offsetY: y,
@@ -236,6 +239,7 @@ function createView(flushFrame: () => void) {
     view,
     canvas,
     tuning,
+    wallClock,
     state,
     frames,
     rows,
@@ -295,6 +299,39 @@ test("hover and recording ages survive pause and an opacity-only return", () =>
       "4d",
     ]);
   }));
+
+test("wall-time jumps catch up clocks and hover without repainting pressure", () =>
+  harness(
+    ({ view, tuning, wallClock, state, frames, hover, overlay, clocks }) => {
+      tuning.scale(1 / tuning.get().volumePerCssPixel, 1);
+      view.draw();
+      expect(hover(0, 0.3).textContent).toContain("Agenow");
+      const opacityTimeMs = state.opacityTimeMs;
+      const positions = clocks().map((label) => label.style.top);
+
+      // No timeout or animation timestamp advances during simulated sleep.
+      wallClock.tick(wallClock.nowMs + 8 * 3_600_000);
+
+      expect(clocks().map((label) => label.textContent)).toEqual([
+        "4.3d",
+        "4.3d",
+        "4.3d",
+        "4.3d",
+      ]);
+      expect(overlay().textContent).toContain("Age8h");
+      expect(clocks().map((label) => label.style.top)).toEqual(positions);
+      expect(state.opacityTimeMs).toBe(opacityTimeMs);
+      expect(frames).toHaveLength(1);
+
+      view.setPaused(true);
+      wallClock.tick(wallClock.nowMs + 86_400_000);
+      expect(clocks()[0]!.textContent).toBe("4.3d");
+      expect(overlay().style.display).toBe("none");
+      view.setPaused(false);
+      expect(clocks()[0]!.textContent).toBe("5.3d");
+      expect(frames).toHaveLength(1);
+    },
+  ));
 
 test("replacing drawn rows updates hover and clocks together, including mode changes", () =>
   harness(({ view, state, frames, rows, hover, overlay, clocks }) => {
