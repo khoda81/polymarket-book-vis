@@ -117,6 +117,11 @@ export class MarketGroupModel {
   }
 
   updateDefinition(definition: ChartDefinition): void {
+    // Reconcile facts before publishing the new definition. Subscribers may
+    // run synchronously, so they must never see half-built token lookup maps
+    // or controls whose lifecycle has not been initialized yet.
+    for (const control of definition.controls)
+      this.markets.reconcile(control.market.id, control.lifecycle);
     this.source = definition;
     this.feeSchedules.primeMarkets(
       definition.controls.map((control) => control.market),
@@ -128,7 +133,6 @@ export class MarketGroupModel {
       this.controlByTokenValue.set(control.tokenId, control);
       const opposite = control.market.outcomes.no.tokenId;
       if (opposite) this.controlByTokenValue.set(opposite, control);
-      this.markets.reconcile(control.market.id, control.lifecycle);
       const timestamp =
         this.markets.resolvedAtMs.get(control.market.id) ??
         control.resolutionMs;
@@ -144,6 +148,9 @@ export class MarketGroupModel {
     for (const tokenId of this.books.keys())
       if (!this.controlByTokenValue.has(tokenId)) this.books.delete(tokenId);
     this.refreshActiveTokens();
+    void this.syncActivity().catch((error: unknown) =>
+      this.reportFailure(error),
+    );
   }
 
   get visibilityByMarketId() {

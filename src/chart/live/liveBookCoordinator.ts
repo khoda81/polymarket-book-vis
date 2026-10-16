@@ -150,6 +150,15 @@ export class LiveBookCoordinator {
       this.beginBookRefresh(tokenId, requestId, requestedAtMs),
     onBookRefreshSnapshot: (tokenId, requestId, requestedAtMs, snapshot) =>
       this.applyBookRefresh(tokenId, requestId, requestedAtMs, snapshot),
+    onBookRefreshUnavailable: (tokenId, requestId, requestedAtMs) => {
+      const context = this.refreshContexts.get(tokenId);
+      if (
+        context?.requestId === requestId &&
+        context.requestedAtMs === requestedAtMs &&
+        !context.superseded
+      )
+        this.requestMetadataRecovery([tokenId]);
+    },
     onBookRefreshFinished: (tokenId, requestId) =>
       this.finishBookRefresh(tokenId, requestId),
   };
@@ -161,6 +170,9 @@ export class LiveBookCoordinator {
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private retryAtMs: number | null = null;
   private readonly networkSubscribers = new Set<LiveBookNetworkSubscriber>();
+  private readonly recoverySubscribers = new Set<
+    (tokenIds: readonly TokenId[]) => void
+  >();
 
   constructor(
     private readonly client: PublicClient,
@@ -234,6 +246,19 @@ export class LiveBookCoordinator {
     return () => {
       this.networkSubscribers.delete(subscriber);
     };
+  }
+
+  subscribeRecovery(
+    subscriber: (tokenIds: readonly TokenId[]) => void,
+  ): () => void {
+    this.recoverySubscribers.add(subscriber);
+    return () => this.recoverySubscribers.delete(subscriber);
+  }
+
+  /** A wake/reconnect needs a new snapshot barrier, not replay into old books. */
+  recover(): void {
+    if (this.active) this.handleTerminalSubscription(this.active);
+    else if (this.watches.size > 0) this.requestReconcile();
   }
 
   private closeWatch(watch: WatchState): void {
@@ -366,6 +391,9 @@ export class LiveBookCoordinator {
 
         // A replacement subscription is a new causal stream. Every token must
         // bootstrap from a fresh book snapshot; no state crosses this barrier.
+        const reconnecting = desired.some(
+          ([tokenKey]) => this.tokens.get(tokenKey)?.stream.book !== undefined,
+        );
         this.refreshContexts.clear();
         for (const [tokenKey] of desired) {
           const token = this.tokens.get(tokenKey);
@@ -376,6 +404,8 @@ export class LiveBookCoordinator {
         this.active = next;
         void this.readEvents(next);
         this.markCoveredWatchesLive();
+        if (reconnecting)
+          this.requestMetadataRecovery(desired.map(([, tokenId]) => tokenId));
         if (previous) await this.closeSubscription(previous);
         this.pruneUnwatchedTokens();
         if (revision === this.desiredRevision) return;
@@ -817,6 +847,11 @@ export class LiveBookCoordinator {
       this.refreshContexts.delete(tokenKey);
       this.emitNetworkState();
     }
+  }
+
+  private requestMetadataRecovery(tokenIds: readonly TokenId[]): void {
+    for (const subscriber of [...this.recoverySubscribers])
+      this.callSafely(() => subscriber(tokenIds));
   }
 
   private notifyToken(token: TokenState, update: LiveBookUpdate): void {

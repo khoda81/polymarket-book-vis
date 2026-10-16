@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { plugin } from "bun";
 import { compileModule } from "svelte/compiler";
-import type { Event, TokenId } from "@polymarket/client";
+import type { DecimalString, Event, TokenId } from "@polymarket/client";
 import { MarketState } from "../../domain/markets/marketState";
 import {
   ObservationClock,
@@ -358,6 +358,99 @@ test("an explicit visible choice survives empty books and a subsequent resolutio
     expect(model.pressure.memory(control.tokenId)!.validThroughMs()).toBe(
       2_000,
     );
+  } finally {
+    model.destroy();
+  }
+});
+
+test("metadata alone recovers outcomes and automatic hiding without erasing history or user choices", async () => {
+  const { model, markets, feeds, hydration, observations } = harness();
+  const original = model.definition;
+  const [a, b, c] = original.controls;
+  try {
+    model.userSetMarketVisible(a!, true);
+    model.userSetMarketVisible(c!, false);
+    await model.setViewport(
+      original.controls.map((control) => control.tokenId),
+    );
+    hydration[0]!.progress(recordedHistory(hydration[0]!.ids));
+    const memory = model.pressure.memory(a!.tokenId)!;
+    const frontier = memory.validThroughMs();
+    const freshEvent: Event = {
+      ...original.event,
+      markets: original.event.markets.map((market) => ({
+        ...market,
+        state: { ...market.state, closed: true, acceptingOrders: false },
+        resolution: {
+          ...market.resolution,
+          umaResolutionStatus:
+            "resolved" as typeof market.resolution.umaResolutionStatus,
+        },
+        outcomes: {
+          yes: { ...market.outcomes.yes, price: "1" as DecimalString },
+          no: { ...market.outcomes.no, price: "0" as DecimalString },
+        },
+      })),
+    };
+    // No onMarketResolved callback arrives: Gamma is the recovery evidence.
+    model.updateDefinition(
+      buildChartDefinition(buildEventDetails(freshEvent, {})),
+    );
+    await Promise.resolve();
+    expect(model.marketStatus).toEqual({ kind: "resolved" });
+    expect(model.lifecycleFor(b!.market.id)).toMatchObject({
+      winningOutcome: "Yes",
+    });
+    expect(model.visibilityFor(a!.market.id)).toEqual({ kind: "visible" });
+    expect(model.visibilityFor(b!.market.id)).toEqual({
+      kind: "hidden",
+      reason: "resolved-default",
+    });
+    expect(model.visibilityFor(c!.market.id)).toEqual({
+      kind: "hidden",
+      reason: "user",
+    });
+    expect(feeds.every((feed) => feed.closed)).toBe(true);
+    expect(model.pressure.memory(a!.tokenId)).toBe(memory);
+    expect(memory.validThroughMs()).toBe(frontier);
+    expect(
+      model.pressure
+        .memory(a!.market.outcomes.no.tokenId!)!
+        .isResolvedUnbounded(),
+    ).toBe(true);
+    expect(hydration).toHaveLength(1);
+    expect(markets.resolvedAtMs.has(a!.market.id)).toBe(false);
+    expect(observations.readReference()).toEqual({
+      kind: "observed",
+      newestMs: observationTime(2_000),
+    });
+
+    model.updateDefinition(original); // An older response cannot undo resolution.
+    expect(model.marketStatus).toEqual({ kind: "resolved" });
+    expect(feeds.every((feed) => feed.closed)).toBe(true);
+  } finally {
+    model.destroy();
+  }
+});
+
+test("metadata-only tradability changes stop and restart feeds while retaining initialized history", async () => {
+  const { model, feeds, hydration } = harness();
+  const original = model.definition;
+  const control = original.controls[0]!;
+  try {
+    await model.setViewport([control.tokenId]);
+    hydration[0]!.progress(recordedHistory(hydration[0]!.ids));
+    const memory = model.pressure.memory(control.tokenId);
+    model.updateDefinition(
+      definition({ active: false, acceptingOrders: false }),
+    );
+    expect(model.lifecycleFor(control.market.id).kind).toBe("live");
+    expect(feeds[0]!.closed).toBe(true);
+    model.updateDefinition(original);
+    await Promise.resolve();
+    expect(feeds.at(-1)!.started).toContain(control.tokenId);
+    expect(model.pressure.memory(control.tokenId)).toBe(memory);
+    expect(hydration).toHaveLength(1);
   } finally {
     model.destroy();
   }
