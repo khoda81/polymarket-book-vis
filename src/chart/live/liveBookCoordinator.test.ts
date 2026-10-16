@@ -291,6 +291,53 @@ test("identical REST snapshot safely confirms freshness without reconnecting", a
   watch.close();
 });
 
+test("REST responses cannot cross a replacement stream's snapshot barrier", async () => {
+  const client = new FakeClient();
+  const refresh = new FakeRefreshScheduler();
+  const coordinator = createCoordinator(client, refresh);
+  const log = callbackLog();
+  const first = coordinator.watch([TOKEN_A], log.callbacks);
+  await first.ready;
+  client.latest().push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
+  await flush();
+  refresh.start(TOKEN_A, 1, 2_000);
+
+  const second = coordinator.watch([TOKEN_B], callbackLog().callbacks);
+  await second.ready;
+  log.updates.length = 0;
+  // A cached book is displayable while waiting, but cannot confirm freshness.
+  refresh.start(TOKEN_A, 2, 2_100);
+  refresh.snapshot(
+    TOKEN_A,
+    2,
+    2_100,
+    refreshSnapshot(TOKEN_A, 2_150, "0.40", "0.60", "10"),
+  );
+  expect(log.updates).toHaveLength(0);
+
+  client.latest().push(bookEvent(TOKEN_A, 2_200, "0.45", "0.65"));
+  await flush();
+  // A request started on the old stream cannot invalidate the new snapshot.
+  refresh.snapshot(
+    TOKEN_A,
+    1,
+    2_000,
+    refreshSnapshot(TOKEN_A, 2_250, "0.30", "0.70", "100"),
+  );
+  await flush();
+  expect(client.streams).toHaveLength(2);
+  expect(canonicalSpread(coordinator.getBook(TOKEN_A)!)).toEqual({
+    bid: parsePrice("0.45"),
+    ask: parsePrice("0.65"),
+  });
+  expect(log.updates.at(-1)).toMatchObject({
+    kind: "snapshot",
+    validThroughMs: 2_200,
+  });
+  first.close();
+  second.close();
+});
+
 test("differing REST snapshot forces a fresh websocket barrier", async () => {
   const client = new FakeClient();
   const refresh = new FakeRefreshScheduler();
@@ -336,6 +383,86 @@ test("differing REST snapshot forces a fresh websocket barrier", async () => {
     kind: "snapshot",
     validThroughMs: 2_200,
   });
+  watch.close();
+});
+
+test("an unavailable book requests metadata recovery without clearing cached evidence", async () => {
+  const client = new FakeClient();
+  const refresh = new FakeRefreshScheduler();
+  const coordinator = createCoordinator(client, refresh);
+  const log = callbackLog();
+  const recovery: (readonly TokenId[])[] = [];
+  const unsubscribe = coordinator.subscribeRecovery((ids) =>
+    recovery.push(ids),
+  );
+  const watch = coordinator.watch([TOKEN_A], log.callbacks);
+  await watch.ready;
+  client.latest().push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
+  await flush();
+  const book = coordinator.getBook(TOKEN_A);
+  const updates = log.updates.length;
+
+  refresh.start(TOKEN_A, 1, 2_000);
+  refresh.unavailable(TOKEN_A, 1, 2_000);
+  expect(recovery).toEqual([[TOKEN_A]]);
+  expect(coordinator.getBook(TOKEN_A)).toBe(book);
+  expect(log.updates).toHaveLength(updates);
+  expect(log.resolutions).toHaveLength(0);
+  expect(client.streams).toHaveLength(1);
+
+  refresh.start(TOKEN_A, 2, 3_000);
+  client.latest().push(bookEvent(TOKEN_A, 3_100, "0.42", "0.62"));
+  await flush();
+  refresh.unavailable(TOKEN_A, 2, 3_000);
+  // A response overtaken by stream evidence is not a fresh unavailability signal.
+  expect(recovery).toEqual([[TOKEN_A]]);
+  unsubscribe();
+  watch.close();
+});
+
+test("wake recovery replaces the stream, preserves the cache and requires a fresh snapshot", async () => {
+  const client = new FakeClient();
+  const refresh = new FakeRefreshScheduler();
+  const coordinator = createCoordinator(client, refresh);
+  const log = callbackLog();
+  const recovery: (readonly TokenId[])[] = [];
+  const unsubscribe = coordinator.subscribeRecovery((ids) =>
+    recovery.push(ids),
+  );
+  const watch = coordinator.watch([TOKEN_A], log.callbacks);
+  await watch.ready;
+  const oldStream = client.latest();
+  oldStream.push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
+  await flush();
+  const cached = coordinator.getBook(TOKEN_A);
+
+  coordinator.recover();
+  await waitFor(() => client.streams.length === 2);
+  expect(oldStream.closeCount).toBe(1);
+  expect(recovery).toEqual([[TOKEN_A]]);
+  expect(coordinator.getBook(TOKEN_A)).toBe(cached);
+  client
+    .latest()
+    .push(
+      priceChangeEvent(2_000, [
+        { tokenId: TOKEN_A, side: "BUY", price: "0.40", size: "99" },
+      ]),
+    );
+  await flush();
+  expect([...coordinator.getBook(TOKEN_A)!.usdToYes.asOrders()][0]!.take).toBe(
+    10,
+  );
+  client.latest().push(bookEvent(TOKEN_A, 2_100, "0.45", "0.65"));
+  await flush();
+  expect(log.updates.at(-1)).toMatchObject({
+    kind: "snapshot",
+    validThroughMs: 2_100,
+  });
+  expect(canonicalSpread(coordinator.getBook(TOKEN_A)!)).toEqual({
+    bid: parsePrice("0.45"),
+    ask: parsePrice("0.65"),
+  });
+  unsubscribe();
   watch.close();
 });
 
@@ -673,6 +800,18 @@ class FakeRefreshScheduler {
       requestId,
       requestedAtMs,
       snapshot,
+    );
+  }
+
+  unavailable(
+    tokenId: TokenId,
+    requestId: number,
+    requestedAtMs: number,
+  ): void {
+    this.expectSubscriber().onBookRefreshUnavailable?.(
+      tokenId,
+      requestId,
+      requestedAtMs,
     );
   }
 

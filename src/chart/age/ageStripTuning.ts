@@ -1,5 +1,5 @@
 import { stalenessAgeForOpacityErrorMs } from "../../domain/pressure/pressureField";
-export const AGE_ROW_BAND_PX = 48;
+export const AGE_ROW_BAND_PX = 32;
 // Browsers clamp setTimeout to a signed 32-bit millisecond delay.
 const MAX_GHOST_REFRESH_MS = 2_147_483_647;
 export const GHOST_ALPHA_BUCKET_WIDTH = 1 / 256;

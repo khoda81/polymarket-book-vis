@@ -41,24 +41,26 @@ export interface RelativeTimeDisplay {
 }
 
 interface RelativeTimeUnit {
-  readonly suffix: "ms" | "s" | "m" | "h" | "d" | "mo";
+  readonly suffix: "ns" | "µs" | "ms" | "s" | "m" | "h" | "d" | "w";
   readonly seconds: number;
   readonly minSeconds: number;
   readonly maxSeconds: number;
 }
 
 const RELATIVE_TIME_UNITS: readonly RelativeTimeUnit[] = [
+  { suffix: "ns", seconds: 1e-9, minSeconds: 0, maxSeconds: 1e-6 },
+  { suffix: "µs", seconds: 1e-6, minSeconds: 1e-6, maxSeconds: 0.001 },
   // Seconds are shorter than milliseconds once we can write at least 0.1s:
   // 0.53s beats 530ms. Below that, 53ms beats 0.053s.
-  { suffix: "ms", seconds: 0.001, minSeconds: 0, maxSeconds: 0.1 },
+  { suffix: "ms", seconds: 0.001, minSeconds: 0.001, maxSeconds: 0.1 },
   { suffix: "s", seconds: 1, minSeconds: 0.1, maxSeconds: 60 },
   { suffix: "m", seconds: 60, minSeconds: 60, maxSeconds: 3_600 },
   { suffix: "h", seconds: 3_600, minSeconds: 3_600, maxSeconds: 86_400 },
-  { suffix: "d", seconds: 86_400, minSeconds: 86_400, maxSeconds: 30 * 86_400 },
+  { suffix: "d", seconds: 86_400, minSeconds: 86_400, maxSeconds: 7 * 86_400 },
   {
-    suffix: "mo",
-    seconds: 30 * 86_400,
-    minSeconds: 30 * 86_400,
+    suffix: "w",
+    seconds: 7 * 86_400,
+    minSeconds: 7 * 86_400,
     maxSeconds: Infinity,
   },
 ];
@@ -73,8 +75,8 @@ const RELATIVE_TIME_UNITS: readonly RelativeTimeUnit[] = [
  * Elapsed timers floor to the current display quantum so they never claim time
  * that has not happened yet. Remaining timers ceil for the inverse reason.
  *
- * Month labels remain approximate 30-day buckets because this helper receives
- * only an interval, not calendar endpoints.
+ * Weeks are the coarsest unit because they are exact intervals. Months and
+ * years require calendar endpoints, which this duration-only helper lacks.
  */
 export function relativeTimeDisplay(
   seconds: number,
@@ -179,23 +181,6 @@ export function fmtRelativeTimeOffset(seconds: number): string {
 /** Human-readable elapsed duration. */
 export function fmtRelativeTime(seconds: number): string {
   return relativeTimeDisplay(seconds, "elapsed").text;
-}
-
-function formatRelativeTimeInUnit(
-  seconds: number,
-  unit: RelativeTimeUnit,
-): string {
-  if (unit.suffix === "ms")
-    return `${Math.max(0, Math.round(seconds * 1000))}ms`;
-
-  const value = seconds / unit.seconds;
-  const rounded = Math.round(value * 100) / 100;
-  return `${formatMaxTwoDecimals(rounded)}${unit.suffix}`;
-}
-
-function formatMaxTwoDecimals(value: number): string {
-  if (Number.isInteger(value)) return String(value);
-  return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 export const MARKET_COLOR_LUMINANCE = 0.72;

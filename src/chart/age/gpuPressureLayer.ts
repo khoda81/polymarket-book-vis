@@ -399,6 +399,8 @@ export class GpuPressureLayer {
     gl.deleteVertexArray(this.displayVao);
     gl.deleteProgram(this.geometryProgram);
     gl.deleteProgram(this.displayProgram);
+    // ChartHost releases the canvas node together with this renderer.
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
   }
 
   private syncSurfaceBuffers(frame: GpuPressureFrame): boolean {

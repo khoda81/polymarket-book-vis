@@ -3,7 +3,7 @@ import type {
   Market,
   PublicClient,
   Series,
-  TokenId,
+  MarketId,
 } from "@polymarket/client";
 import {
   buildEventDetails,
@@ -12,54 +12,30 @@ import {
 } from "../markets/eventDetails";
 import { marketDeadlineMs } from "../markets/marketDeadline";
 
-export const SERIES_VISIBLE_ROWS = 7;
 export const SERIES_PAGE_SIZE = 20;
 export type SeriesPageDirection = "older" | "newer";
 
-export interface SeriesMarketRow {
-  readonly index: number;
-  readonly event: Event;
-  readonly market: Market;
-  readonly tokenId: TokenId;
-  readonly deadlineMs: number | null;
-}
-
-/** Each binary market owns one ordinal row; dates never determine its height. */
-export function seriesMarketRows(events: readonly Event[]): SeriesMarketRow[] {
-  const rows: SeriesMarketRow[] = [];
-  const seen = new Set<Market["id"]>();
+/** Navigate by each market's reported deadline, keeping parent grouping intact. */
+export function seriesCurrentMarket(
+  events: readonly Event[],
+  nowMs: number,
+  eligible: (market: Market) => boolean,
+): MarketId | null {
+  let next: Market | undefined;
+  let past: Market | undefined;
+  let fallback: Market | undefined;
   for (const event of events)
     for (const market of event.markets) {
-      const tokenId = market.outcomes.yes.tokenId;
-      if (!tokenId || seen.has(market.id)) continue;
-      seen.add(market.id);
-      rows.push({
-        index: rows.length,
-        event,
-        market,
-        tokenId,
-        deadlineMs: marketDeadlineMs(market),
-      });
+      if (!market.outcomes.yes.tokenId || !eligible(market)) continue;
+      fallback ??= market;
+      const deadline = marketDeadlineMs(market);
+      if (deadline === null) continue;
+      if (deadline >= nowMs && (!next || deadline < marketDeadlineMs(next)!))
+        next = market;
+      if (deadline < nowMs && (!past || deadline > marketDeadlineMs(past)!))
+        past = market;
     }
-  return rows;
-}
-
-/** Navigate by reported deadlines without inferring an interval or lifecycle. */
-export function seriesCurrentRowIndex(
-  rows: readonly SeriesMarketRow[],
-  nowMs: number,
-  eligible: (row: SeriesMarketRow) => boolean,
-): number {
-  const candidates = rows.filter(eligible);
-  let next: SeriesMarketRow | undefined;
-  let past: SeriesMarketRow | undefined;
-  for (const row of candidates) {
-    const deadline = row.deadlineMs;
-    if (deadline === null) continue;
-    if (deadline >= nowMs && (!next || deadline < next.deadlineMs!)) next = row;
-    if (deadline < nowMs && (!past || deadline > past.deadlineMs!)) past = row;
-  }
-  return (next ?? past ?? candidates[0] ?? rows.at(-1))?.index ?? 0;
+  return (next ?? past ?? fallback)?.id ?? null;
 }
 
 type EventPages = ReturnType<PublicClient["listEvents"]>;

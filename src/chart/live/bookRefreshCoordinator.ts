@@ -14,6 +14,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 export const STALE_BOOK_VERIFY_MS = 5_000;
 const INITIAL_FAILURE_BACKOFF_MS = 1_000;
 const MAX_FAILURE_BACKOFF_MS = 30_000;
+const MAX_MISSING_BOOK_BACKOFF_MS = 60_000;
 
 export type BookRefreshSnapshot = Awaited<
   ReturnType<PublicClient["fetchOrderBooks"]>
@@ -31,12 +32,20 @@ export interface BookRefreshSubscriber {
     requestedAtMs: number,
     snapshot: BookRefreshSnapshot,
   ) => void;
+  /** A successful /books response omitted this token; it is not an empty book. */
+  readonly onBookRefreshUnavailable?: (
+    tokenId: TokenId,
+    requestId: number,
+    requestedAtMs: number,
+  ) => void;
   readonly onBookRefreshFinished: (tokenId: TokenId, requestId: number) => void;
 }
 
 interface TokenRefreshState {
   readonly tokenId: TokenId;
   readonly watchers: Map<BookRefreshSubscriber, number>;
+  missingCount: number;
+  retryAtMs: number;
 }
 
 interface RefreshHeapNode {
@@ -48,6 +57,7 @@ interface BatchToken {
   readonly tokenKey: TokenId;
   readonly tokenId: TokenId;
   readonly watchers: readonly BookRefreshSubscriber[];
+  readonly state: TokenRefreshState;
 }
 
 const coordinators = new WeakMap<PublicClient, BookRefreshCoordinator>();
@@ -103,13 +113,22 @@ export class BookRefreshCoordinator {
       state = {
         tokenId,
         watchers: new Map(),
+        missingCount: 0,
+        retryAtMs: 0,
       };
       this.states.set(tokenKey, state);
     }
 
     const previous = state.watchers.get(subscriber);
-    if (previous === undefined || validThroughMs > previous)
+    if (previous === undefined || validThroughMs > previous) {
       state.watchers.set(subscriber, validThroughMs);
+      // New book evidence ends an unavailable-book backoff. Merely repeating
+      // the old observation must not bypass it.
+      if (previous !== undefined) {
+        state.missingCount = 0;
+        state.retryAtMs = 0;
+      }
+    }
 
     let owned = this.tokensBySubscriber.get(subscriber);
     if (!owned) {
@@ -162,7 +181,10 @@ export class BookRefreshCoordinator {
     for (const observedThroughMs of state.watchers.values())
       oldestObservationMs = Math.min(oldestObservationMs, observedThroughMs);
 
-    this.heap.set(state.tokenId, oldestObservationMs + STALE_BOOK_VERIFY_MS);
+    this.heap.set(
+      state.tokenId,
+      Math.max(oldestObservationMs + STALE_BOOK_VERIFY_MS, state.retryAtMs),
+    );
   }
 
   private schedulePump(): void {
@@ -229,19 +251,37 @@ export class BookRefreshCoordinator {
       );
 
       for (const token of batch) {
-        const snapshot = snapshotByToken.get(token.tokenKey);
-        if (!snapshot) continue;
-
         const current = this.states.get(token.tokenKey);
+        if (current !== token.state) continue;
+        const snapshot = snapshotByToken.get(token.tokenKey);
+        current.missingCount = snapshot ? 0 : current.missingCount + 1;
         for (const watcher of token.watchers) {
-          if (!current?.watchers.has(watcher)) continue;
-          watcher.onBookRefreshSnapshot(
-            token.tokenId,
-            requestId,
-            requestedAtMs,
-            snapshot,
-          );
+          if (!current.watchers.has(watcher)) continue;
+          if (snapshot)
+            watcher.onBookRefreshSnapshot(
+              token.tokenId,
+              requestId,
+              requestedAtMs,
+              snapshot,
+            );
+          else
+            watcher.onBookRefreshUnavailable?.(
+              token.tokenId,
+              requestId,
+              requestedAtMs,
+            );
         }
+        // Set this after delivery: accepting a snapshot can synchronously
+        // report a newer observation. A slow request's start timestamp must
+        // not make its next check immediately overdue again.
+        current.retryAtMs =
+          Date.now() +
+          (snapshot
+            ? STALE_BOOK_VERIFY_MS
+            : Math.min(
+                MAX_MISSING_BOOK_BACKOFF_MS,
+                STALE_BOOK_VERIFY_MS * 2 ** (current.missingCount - 1),
+              ));
       }
 
       this.failureCount = 0;
@@ -290,6 +330,7 @@ export class BookRefreshCoordinator {
         tokenKey: next.tokenKey,
         tokenId: state.tokenId,
         watchers: [...state.watchers.keys()],
+        state,
       });
     }
 

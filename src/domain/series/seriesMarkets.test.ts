@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import type { Event, Market, PublicClient, Series } from "@polymarket/client";
 import {
   mergeSeriesEvents,
-  seriesMarketRows,
-  seriesCurrentRowIndex,
+  seriesCurrentMarket,
   SeriesEventPager,
 } from "./seriesMarkets";
 
@@ -29,32 +28,6 @@ function event(
     markets,
   } as unknown as Event;
 }
-
-test("all markets have distinct ordinal rows even with identical names and dates", () => {
-  const sameEnd = "2026-10-31T23:59:00Z";
-  const events = [
-    event("old", [market("1", "October 31", sameEnd)], sameEnd),
-    event(
-      "new",
-      [
-        market("2", "October 15", "2026-10-16T03:59:00Z"),
-        market("3", "October 31", sameEnd),
-        market("4", "Undated"),
-      ],
-      sameEnd,
-    ),
-  ];
-  const rows = seriesMarketRows(events);
-  expect(rows.map((row) => [row.index, String(row.market.id)])).toEqual([
-    [0, "1"],
-    [1, "2"],
-    [2, "3"],
-    [3, "4"],
-  ]);
-  expect(rows[1]!.deadlineMs).toBe(Date.parse("2026-10-16T03:59:00Z"));
-  expect(rows[3]!.deadlineMs).toBeNull();
-  expect(seriesMarketRows([...events, events[0]!])).toHaveLength(4);
-});
 
 test("event merging updates by identity and retains coincident and undated events", () => {
   const old = event("1", [], "2026-10-31T23:59:00Z");
@@ -119,19 +92,21 @@ test("pagination retains equal-date and undated events while focus uses the actu
 
 test("current navigation skips stale open deadlines without changing their lifecycle", () => {
   const now = Date.parse("2026-10-10T00:00:00Z");
-  const rows = seriesMarketRows([
+  const events = [
     event("event", [
       market("old", "Still open", "2025-12-19T16:40:00Z"),
       market("far", "Far future", "2026-12-31T23:59:00Z"),
       market("next", "Next deadline", "2026-10-10T00:05:00Z"),
       market("unknown", "Undated"),
     ]),
-  ]);
-  expect(seriesCurrentRowIndex(rows, now, () => true)).toBe(2);
+  ];
+  expect(String(seriesCurrentMarket(events, now, () => true))).toBe("next");
   expect(
-    seriesCurrentRowIndex(rows, now, (row) => row.market.id === "unknown"),
-  ).toBe(3);
-  expect(rows[0]!.market.state.closed).toBeUndefined();
+    String(
+      seriesCurrentMarket(events, now, (market) => market.id === "unknown"),
+    ),
+  ).toBe("unknown");
+  expect(events[0]!.markets[0]!.state.closed).toBeUndefined();
 });
 
 test("new undated open events stay reachable after refresh", async () => {
@@ -151,9 +126,7 @@ test("new undated open events stay reachable after refresh", async () => {
   await pager.load("newer");
   open.push(event("new-undated", [market("undated", "Undated")]));
   const refreshed = await pager.refresh();
-  expect(
-    seriesMarketRows(refreshed.map((detail) => detail.event))[0]!.deadlineMs,
-  ).toBeNull();
+  expect(refreshed[0]!.event.markets[0]!.state.endDate).toBeUndefined();
 });
 
 test("failed metadata loading retries the same page before advancing its cursor", async () => {

@@ -1,6 +1,6 @@
 import { relativeTimeOffsetDisplay } from "@/shared/math";
+import type { WallClock, WallClockWatch } from "@/shared/wallClock";
 import type { ViewMode } from "@/domain/markets/chartState";
-import type { ObservationTime } from "@/domain/pressure/observationClock";
 import {
   ageRowYDirection,
   type AgeRowOrientation,
@@ -18,8 +18,9 @@ export interface AgeStripTiming {
 
 export interface AgeStripClockHost {
   readonly canvasWrap: HTMLElement;
+  readonly wallClock: WallClock;
+  readonly getGeometry: () => AgeStripGeometry | null;
   readonly getViewMode: () => ViewMode;
-  readonly getObservationTime: (tokenId: string) => ObservationTime | undefined;
   readonly getTiming: (tokenId: string) => AgeStripTiming | undefined;
   readonly getRowOrientation: () => AgeRowOrientation;
   readonly getTokenName: (tokenId: string) => string;
@@ -35,49 +36,36 @@ interface ClockLabel {
 export class AgeStripClock {
   private readonly layer: HTMLDivElement;
   private readonly labels = new Map<string, ClockLabel>();
-  private geometry: AgeStripGeometry | null = null;
-  private orientation: AgeRowOrientation;
-  private enabled = true;
-  private pending:
-    { kind: "frame"; id: number } | { kind: "timer"; id: number } | null = null;
+  private readonly watch: WallClockWatch;
+  private paused = false;
 
   constructor(private readonly host: AgeStripClockHost) {
-    this.orientation = host.getRowOrientation();
     this.layer = document.createElement("div");
     this.layer.className = "cpv-clock-annotations";
     // This overlay is absolutely positioned and cannot affect card geometry.
     // Masonry can therefore ignore its internal mutations entirely.
     this.layer.setAttribute("data-masonry-layout-neutral", "");
     host.canvasWrap.appendChild(this.layer);
+    this.watch = host.wallClock.watch((nowMs) => this.render(nowMs));
   }
 
-  setGeometry(geometry: AgeStripGeometry | null): void {
-    const previous = this.geometry;
-    const orientation = this.host.getRowOrientation();
-    const presentationChanged =
-      orientation !== this.orientation || !sameGeometry(previous, geometry);
-
-    this.geometry = geometry;
-    this.orientation = orientation;
-    if (presentationChanged) this.refresh();
-  }
-
-  setEnabled(enabled: boolean): void {
-    if (enabled === this.enabled) return;
-    this.enabled = enabled;
-    this.layer.hidden = !enabled;
-    if (enabled) this.refresh();
-    else this.clear();
+  setPaused(paused: boolean): void {
+    if (paused === this.paused) return;
+    this.paused = paused;
+    this.refresh();
   }
 
   refresh(): void {
-    this.cancelPending();
-    const geometry = this.geometry;
-    if (!this.enabled || !geometry || this.host.getViewMode() !== "age") {
+    this.watch.refresh();
+  }
+
+  private render(nowMs: number): number | null {
+    if (this.paused) return null;
+    const geometry = this.host.getGeometry();
+    if (!geometry || this.host.getViewMode() !== "age") {
       this.clear();
-      return;
+      return null;
     }
-    const nowMs = Date.now();
     const retained = new Set<string>();
     const { viewport: vp } = geometry;
     const timeX = Math.max(4, vp.l - AGE_LABEL_HORIZONTAL_INSET_PX);
@@ -133,21 +121,9 @@ export class AgeStripClock {
       this.labels.delete(key);
     }
 
-    if (Number.isFinite(nextChangeMs)) {
-      if (nextChangeMs < 34)
-        this.pending = {
-          kind: "frame",
-          id: requestAnimationFrame(() => this.refresh()),
-        };
-      else
-        this.pending = {
-          kind: "timer",
-          id: window.setTimeout(
-            () => this.refresh(),
-            Math.min(2_147_483_647, Math.ceil(nextChangeMs) + 1),
-          ),
-        };
-    }
+    return Number.isFinite(nextChangeMs)
+      ? nowMs + Math.ceil(nextChangeMs) + 1
+      : null;
   }
 
   private label(key: string, retained: Set<string>): ClockLabel {
@@ -170,55 +146,14 @@ export class AgeStripClock {
     if (label.text.data !== text) label.text.data = text;
   }
 
-  private cancelPending(): void {
-    if (this.pending?.kind === "frame") cancelAnimationFrame(this.pending.id);
-    else if (this.pending?.kind === "timer")
-      window.clearTimeout(this.pending.id);
-    this.pending = null;
-  }
-
-  clear(): void {
-    this.cancelPending();
+  private clear(): void {
     this.layer.replaceChildren();
     this.labels.clear();
   }
 
-  reset(): void {
-    this.setGeometry(null);
-    this.clear();
-  }
-
   destroy(): void {
+    this.watch.destroy();
     this.clear();
     this.layer.remove();
   }
-}
-
-function sameGeometry(
-  a: AgeStripGeometry | null,
-  b: AgeStripGeometry | null,
-): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  if (
-    a.canvasWidth !== b.canvasWidth ||
-    a.canvasHeight !== b.canvasHeight ||
-    a.viewport.l !== b.viewport.l ||
-    a.viewport.t !== b.viewport.t ||
-    a.viewport.width !== b.viewport.width ||
-    a.viewport.height !== b.viewport.height ||
-    a.rows.length !== b.rows.length
-  )
-    return false;
-
-  return a.rows.every((row, index) => {
-    const other = b.rows[index]!;
-    return (
-      row.tokenId === other.tokenId &&
-      row.oppositeTokenId === other.oppositeTokenId &&
-      row.centerY === other.centerY &&
-      row.topY === other.topY &&
-      row.bottomY === other.bottomY
-    );
-  });
 }

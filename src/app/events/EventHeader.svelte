@@ -33,18 +33,19 @@
     <div class="cpv-heading-copy">
       <div class="cpv-title-line">
         <h5 class="cpv-title" title={event.title ?? "(untitled)"}>
-          {event.title ?? "(untitled)"}
+          {#if slug}
+            <a
+              class="cpv-title-link"
+              href={`https://polymarket.com/event/${encodeURIComponent(slug)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={event.title ?? "(untitled)"}
+              >{event.title ?? "(untitled)"}</a
+            >
+          {:else}
+            {event.title ?? "(untitled)"}
+          {/if}
         </h5>
-        {#if slug}
-          <a
-            class="cpv-event-link"
-            href={`https://polymarket.com/event/${encodeURIComponent(slug)}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Open event on Polymarket"
-            title="Open on Polymarket">↗</a
-          >
-        {/if}
       </div>
 
       {#if slug}

@@ -7,6 +7,7 @@ import { VolumeBookView } from "./volume/volumeBookView";
 import type { MarketGroupModel } from "./model/marketGroupModel.svelte";
 import type { ObservationTime } from "@/domain/pressure/observationClock";
 import type { AgeStripTuningStore } from "./age/ageStripTuningStore";
+import type { WallClock } from "@/shared/wallClock";
 import { ghostRefreshDelayMs } from "./age/ageStripTuning";
 import {
   type PresentationTarget,
@@ -80,11 +81,13 @@ export class ChartController implements PresentationTarget {
   private pendingRequestCount = 0;
   private renderedOpacityTimeMs: ObservationTime | null = null;
   private destroyed = false;
+  private visible = true;
 
   constructor(
     surface: ChartSurfaceElements,
     private readonly model: MarketGroupModel,
     tuning: AgeStripTuningStore,
+    wallClock: WallClock,
     private readonly presentation: PresentationCoordinator,
     initialState: ChartRenderInput,
     private readonly onRendered?: (state: ChartRenderedState) => void,
@@ -100,6 +103,7 @@ export class ChartController implements PresentationTarget {
     this.ageView = new AgeStripView({
       model,
       tuning,
+      wallClock,
       canvas: surface.canvas,
       pressureCanvas: surface.pressureCanvas,
       canvasWrap: surface.canvasWrap,
@@ -111,12 +115,16 @@ export class ChartController implements PresentationTarget {
 
     this.volumeView = new VolumeBookView({
       plotter: this.plotter,
-      definition: model.definition,
+      get definition() {
+        return model.definition;
+      },
       activeTokens: model.activeTokens,
       getBook: (tokenId) => model.getBook(tokenId),
       getTheme: () => this.theme,
       isActive: () => this.renderState.viewMode === "volume",
       requestDraw: () => this.reqDraw("full"),
+      getScale: () => model.volumeScale,
+      setScale: (scale) => (model.volumeScale = scale),
     });
     this.plotter.onZoom = (delta) => this.volumeView.zoom(delta);
     this.plotter.onPointer = (pointer) => this.volumeView.setPointer(pointer);
@@ -171,6 +179,15 @@ export class ChartController implements PresentationTarget {
     if (kind) this.reqDraw(kind);
   }
 
+  /** Publish a changed DOM row window together with its drawn geometry. */
+  updateLayout(next: ChartRenderInput): void {
+    if (this.destroyed) return;
+    this.update(next);
+    this.reqDraw("full");
+    this.presentation.cancel(this);
+    this.renderFrame(performance.now());
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -179,6 +196,15 @@ export class ChartController implements PresentationTarget {
     this.plotter.destroy();
     this.resizeObserver.disconnect();
     this.themeQuery.removeEventListener("change", this.handleThemeChange);
+  }
+
+  /** Pause display work without destroying retained geometry and GPU buffers. */
+  setVisible(visible: boolean): void {
+    if (visible === this.visible) return;
+    this.visible = visible;
+    this.ageView.setPaused(!visible);
+    if (visible) this.reqDraw("opacity");
+    else this.presentation.cancel(this);
   }
 
   private readonly handleThemeChange = (event: MediaQueryListEvent) => {
@@ -209,7 +235,7 @@ export class ChartController implements PresentationTarget {
       this.pendingDraw = kind;
 
     if (wasIdle) this.queuedAtMs = nowMs;
-    this.presentation.invalidate(this);
+    if (this.visible) this.presentation.invalidate(this);
 
     this.onPending?.({
       kind: this.pendingDraw,
@@ -219,7 +245,7 @@ export class ChartController implements PresentationTarget {
   }
 
   renderFrame(_frameTimeMs: DOMHighResTimeStamp): void {
-    if (this.destroyed || this.pendingDraw === null) return;
+    if (this.destroyed || !this.visible || this.pendingDraw === null) return;
     const kind = this.pendingDraw;
     const startedAtMs = performance.now();
     const queueDelayMs = startedAtMs - this.queuedAtMs;

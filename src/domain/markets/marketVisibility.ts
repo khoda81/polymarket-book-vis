@@ -1,8 +1,12 @@
 import type { Market, MarketId } from "@polymarket/client";
 import type { MarketLifecycle } from "./marketLifecycle";
 
-export type HiddenMarketReason = "user" | "empty-book" | "resolved-default";
-export type AutoHiddenReason = Extract<HiddenMarketReason, "empty-book">;
+export type HiddenMarketReason =
+  | "user"
+  | "empty-book"
+  | "resolved-default"
+  | "closed-default"
+  | "unavailable-default";
 
 export type MarketVisibility =
   | { readonly kind: "visible" }
@@ -14,7 +18,7 @@ export type MarketVisibility =
 export type StoredMarketVisibility =
   "hidden-user" | "visible-user" | "hidden-empty" | "hidden-resolved";
 
-interface KeyValueStorage {
+export interface KeyValueStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }
@@ -26,6 +30,7 @@ const LEGACY_HIDDEN_STORAGE_KEY =
 export function initialMarketVisibility(
   stored: StoredMarketVisibility | undefined,
   lifecycle: MarketLifecycle,
+  availableForLiveOrders: boolean,
 ): MarketVisibility {
   if (stored === "hidden-user") return { kind: "hidden", reason: "user" };
   if (stored === "visible-user") return { kind: "visible" };
@@ -36,6 +41,10 @@ export function initialMarketVisibility(
 
   if (lifecycle.kind === "resolved")
     return { kind: "hidden", reason: "resolved-default" };
+  if (lifecycle.kind === "awaiting-resolution")
+    return { kind: "hidden", reason: "closed-default" };
+  if (!availableForLiveOrders)
+    return { kind: "hidden", reason: "unavailable-default" };
   return { kind: "visible" };
 }
 
@@ -129,51 +138,4 @@ export function partitionMarketVisibility<T extends MarketIdentified>(
   }
 
   return { visible, hidden };
-}
-
-export interface VisibilityInitializableMarket extends MarketIdentified {
-  readonly lifecycle: MarketLifecycle;
-}
-
-export function loadMarketVisibility(
-  markets: readonly VisibilityInitializableMarket[],
-  storage: KeyValueStorage = window.localStorage,
-): Map<MarketId, MarketVisibility> {
-  const stored = loadStoredMarketVisibility(storage);
-  return new Map(
-    markets.map((market) => [
-      market.market.id,
-      initialMarketVisibility(stored.get(market.market.id), market.lifecycle),
-    ]),
-  );
-}
-
-export function setMarketVisibility(
-  current: ReadonlyMap<MarketId, MarketVisibility>,
-  marketId: MarketId,
-  next: MarketVisibility,
-): Map<MarketId, MarketVisibility> {
-  const updated = new Map(current);
-  updated.set(marketId, next);
-  return updated;
-}
-
-export function setUserMarketVisible(
-  current: ReadonlyMap<MarketId, MarketVisibility>,
-  marketId: MarketId,
-  visible: boolean,
-): Map<MarketId, MarketVisibility> {
-  return setMarketVisibility(
-    current,
-    marketId,
-    visible ? { kind: "visible" } : { kind: "hidden", reason: "user" },
-  );
-}
-
-export function storedVisibilityForUserChoice(
-  visible: boolean,
-  lifecycle: MarketLifecycle,
-): StoredMarketVisibility | null {
-  if (!visible) return "hidden-user";
-  return lifecycle.kind === "resolved" ? "visible-user" : null;
 }

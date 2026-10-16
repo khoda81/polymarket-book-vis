@@ -1,19 +1,32 @@
 import type { Market } from "@polymarket/client";
-import type { RelativeTimeDisplay } from "../../shared/math";
+import {
+  relativeTimeDisplay,
+  type RelativeTimeDisplay,
+} from "../../shared/math";
 
-const DEADLINE_UNITS = [
-  { ms: 1_000, suffix: "s", min: 1_000, max: 60_000 },
-  { ms: 60_000, suffix: "m", min: 60_000, max: 3_600_000 },
-  { ms: 3_600_000, suffix: "h", min: 3_600_000, max: 86_400_000 },
-  { ms: 86_400_000, suffix: "d", min: 86_400_000, max: Infinity },
-] as const;
+export type MarketTimeMarker =
+  | { readonly kind: "game-start"; readonly timeMs: number }
+  | { readonly kind: "reported-end"; readonly timeMs: number };
 
 /** The reported market end date, without substituting event or settlement dates. */
 export function marketDeadlineMs(market: Pick<Market, "state">): number | null {
-  const value = market.state.endDate;
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return timestampMs(market.state.endDate);
+}
+
+/**
+ * The honest schedule marker for a market row.
+ *
+ * Gamma can use `endDate` as kickoff for sports markets. Prefer its explicit
+ * `gameStartTime` there so a live match is never presented as already ended.
+ */
+export function marketTimeMarker(
+  market: Pick<Market, "sports" | "state">,
+): MarketTimeMarker | null {
+  const gameStartMs = timestampMs(market.sports.gameStartTime);
+  if (gameStartMs !== null) return { kind: "game-start", timeMs: gameStartMs };
+
+  const endMs = marketDeadlineMs(market);
+  return endMs === null ? null : { kind: "reported-end", timeMs: endMs };
 }
 
 /** Compact wall-clock offset. A passed deadline says nothing about resolution. */
@@ -24,27 +37,54 @@ export function deadlineDisplay(
   if (deadlineMs === null) return { text: "No end date", nextChangeMs: null };
 
   const remainingMs = deadlineMs - nowMs;
-  const magnitudeMs = Math.abs(remainingMs);
-  if (magnitudeMs < 1_000)
-    return { text: "now", nextChangeMs: Math.max(1, 1_000 + remainingMs) };
+  if (remainingMs === 0) return { text: "now", nextChangeMs: 1 };
 
-  const unit = DEADLINE_UNITS.find((candidate) => magnitudeMs < candidate.max)!;
-  const quantumMs =
-    unit.ms *
-    10 ** Math.max(-1, Math.floor(Math.log10(magnitudeMs / unit.ms)) - 1);
-  const ticks =
-    remainingMs > 0
-      ? Math.ceil(magnitudeMs / quantumMs)
-      : Math.floor(magnitudeMs / quantumMs);
-  const value = Number(((ticks * quantumMs) / unit.ms).toFixed(1));
-  const duration = `${value}${unit.suffix}`;
-  const nextChangeMs =
-    remainingMs > 0
-      ? magnitudeMs - Math.max(unit.min, (ticks - 1) * quantumMs)
-      : Math.min((ticks + 1) * quantumMs, unit.max) - magnitudeMs;
+  const direction = remainingMs > 0 ? "remaining" : "elapsed";
+  const duration = relativeTimeDisplay(
+    Math.abs(remainingMs) / 1_000,
+    direction,
+  );
 
   return {
-    text: remainingMs > 0 ? `in ${duration}` : `${duration} ago`,
-    nextChangeMs: Math.max(1, nextChangeMs),
+    text: remainingMs > 0 ? `in ${duration.text}` : `${duration.text} ago`,
+    nextChangeMs: duration.nextChangeMs,
   };
+}
+
+export function marketTimeDisplay(
+  marker: MarketTimeMarker | null,
+  nowMs: number,
+): RelativeTimeDisplay {
+  if (marker === null) return deadlineDisplay(null, nowMs);
+
+  const display = deadlineDisplay(marker.timeMs, nowMs);
+  if (marker.kind === "reported-end") return display;
+  if (display.text === "now") return { ...display, text: "starts now" };
+  return {
+    ...display,
+    text: display.text.startsWith("in ")
+      ? `starts ${display.text}`
+      : `started ${display.text}`,
+  };
+}
+
+export function marketTimeTooltip(marker: MarketTimeMarker | null): string {
+  if (marker === null)
+    return "Polymarket does not report an end date for this market";
+
+  const label =
+    marker.kind === "game-start" ? "Reported game start" : "Reported end";
+  const date = new Date(marker.timeMs);
+  return `${label}: ${date.toLocaleString()} (${date.toISOString()})`;
+}
+
+function timestampMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  // Gamma sports timestamps currently use SQL-style ` ` and `+00`; normalize
+  // them to the ISO 8601 form whose parsing is portable across browsers.
+  const normalized = value
+    .replace(/^([0-9]{4}-[0-9]{2}-[0-9]{2}) /, "$1T")
+    .replace(/([+-][0-9]{2})$/, "$1:00");
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }
