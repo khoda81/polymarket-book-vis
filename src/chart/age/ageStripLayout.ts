@@ -1,6 +1,6 @@
-import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
 import { clamp } from "@/shared/math";
 import type { TokenBook } from "@/domain/books/orderBook";
+import type { PressureRow } from "./pressureRows";
 
 const AGE_LABEL_MIN_GUTTER_PX = 16;
 const AGE_LABEL_MAX_GUTTER_PX = 100;
@@ -57,15 +57,20 @@ function measureAgeLabelTextWidth(text: string): number {
 }
 
 export function positionRowControls(
-  labels: readonly HTMLLabelElement[],
+  labels: readonly (HTMLLabelElement | null)[],
   rows: readonly RowRasterGeometry[],
 ): void {
   for (const [index, label] of labels.entries()) {
     const row = rows[index];
-    if (!row) continue;
+    if (!label || !row) continue;
     const top = `${row.centerCss}px`;
     if (label.style.top !== top) label.style.top = top;
   }
+}
+
+/** A row as drawn: its content and its snapped screen-space band. */
+export interface DrawnAgeRow extends RowRasterGeometry {
+  readonly row: PressureRow;
 }
 
 export interface AgeStripGeometry {
@@ -75,16 +80,7 @@ export interface AgeStripGeometry {
     readonly width: number;
     readonly height: number;
   };
-  readonly rows: readonly {
-    /** Primary token for this displayed market row. */
-    readonly tokenId: string;
-    /** Opposing token rendered on the other side of the row centerline. */
-    readonly oppositeTokenId?: string;
-    /** Optional explicit screen-space geometry for moving/non-uniform rows. */
-    readonly centerY?: number;
-    readonly topY?: number;
-    readonly bottomY?: number;
-  }[];
+  readonly rows: readonly DrawnAgeRow[];
   readonly canvasWidth: number;
   readonly canvasHeight: number;
 }
@@ -92,51 +88,10 @@ export interface AgeStripGeometry {
 export function ageStripRowAtY(
   geometry: AgeStripGeometry,
   y: number,
-): AgeStripGeometry["rows"][number] | null {
-  const { viewport: vp, rows } = geometry;
-  if (rows.length === 0) return null;
-
-  const hasExplicitGeometry = rows.some(
-    (row) =>
-      row.centerY !== undefined ||
-      row.topY !== undefined ||
-      row.bottomY !== undefined,
+): DrawnAgeRow | null {
+  return (
+    geometry.rows.find((row) => y >= row.topCss && y < row.bottomCss) ?? null
   );
-  if (hasExplicitGeometry) {
-    const explicit = rows.find((row) => {
-      const top =
-        row.topY ??
-        (row.centerY !== undefined
-          ? row.centerY - AGE_ROW_BAND_PX / 2
-          : undefined);
-      const bottom =
-        row.bottomY ??
-        (row.centerY !== undefined
-          ? row.centerY + AGE_ROW_BAND_PX / 2
-          : undefined);
-      return (
-        top !== undefined && bottom !== undefined && y >= top && y < bottom
-      );
-    });
-    return explicit ?? null;
-  }
-
-  if (y < vp.t || y >= vp.t + vp.height) return null;
-  const rowIndex = Math.floor(((y - vp.t) / vp.height) * rows.length);
-  return rows[rowIndex] ?? null;
-}
-
-export function ageStripRowCenterY(
-  geometry: AgeStripGeometry,
-  row: AgeStripGeometry["rows"][number],
-): number {
-  if (row.centerY !== undefined) return row.centerY;
-
-  const index = geometry.rows.indexOf(row);
-  if (index < 0) return geometry.viewport.t;
-
-  const { viewport: vp } = geometry;
-  return vp.t + ((index + 0.5) / geometry.rows.length) * vp.height;
 }
 
 export interface RowRasterGeometry {

@@ -5,7 +5,7 @@ import { AgeStripPressureState } from "./ageStripPressureState";
 import type { AgeStripRenderState } from "./ageStripView";
 import type { GpuPressureFrame } from "./gpuPressureLayer";
 import { observationTime } from "../../domain/pressure/observationClock";
-import { DEFAULT_SIGNED_VOLUME_COLOR_SCALE } from "../../rendering/colors/signedVolume";
+import type { PressureRow } from "./pressureRows";
 import { parsePrice } from "../../domain/books/price";
 import { WallClock } from "../../shared/wallClock";
 
@@ -130,7 +130,6 @@ function createView(flushFrame: () => void) {
   const frames: GpuPressureFrame[] = [];
   const state: AgeStripRenderState = {
     viewMode: "age",
-    rowOrientation: "negative-above",
     opacityTimeMs: observationTime(wallClock.nowMs),
     volumePerCssPixel: tuning.get().volumePerCssPixel,
     ghostHalfLifeMs: tuning.get().ghostHalfLifeMs,
@@ -162,14 +161,26 @@ function createView(flushFrame: () => void) {
       };
     },
   };
+  let drawnRows: PressureRow[] = [];
   function rows(...ids: string[]) {
-    toggles.children = ids.map((id, index) => {
+    drawnRows = ids.map((id) => ({
+      key: id,
+      label: `Market ${id}`,
+      bars: (["yes", "no"] as const).map((side) => ({
+        track: `${id}-${side}`,
+        trackLabel: `${id}-${side}`,
+        color: side === "yes" ? "red" : "blue",
+        side: side === "yes" ? "above" : "below",
+        priceAxis: side === "yes" ? "descending" : "ascending",
+        quote: {
+          label: side === "yes" ? "No" : "Yes",
+          price: (price: number) => 1 - price,
+        },
+      })),
+    }));
+    toggles.children = ids.map((id) => {
       const label = new TestElement("label");
-      Object.assign(label.dataset, {
-        tokenId: `${id}-yes`,
-        ageLabel: `Market ${id}`,
-        marketOrder: String(index),
-      });
+      Object.assign(label.dataset, { rowKey: id, ageLabel: `Market ${id}` });
       for (const side of ["yes", "no"]) {
         const tokenId = `${id}-${side}`;
         pressure
@@ -187,15 +198,8 @@ function createView(flushFrame: () => void) {
   }
   rows("a", "b");
   const view = new AgeStripView({
-    model: {
-      pressure,
-      isTokenActive: () => true,
-      oppositeTokenId: (id: string) => id.replace("-yes", "-no"),
-      pressureColorScale: () => DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-      marketTokenName: (id: string) => id,
-      marketName: (id: string) => `Market ${id.split("-")[0]}`,
-      tokenName: (id: string) => (id.endsWith("-yes") ? "Yes" : "No"),
-    },
+    pressure,
+    getRows: () => drawnRows,
     tuning,
     wallClock,
     canvas,
@@ -339,10 +343,7 @@ test("replacing drawn rows updates hover and clocks together, including mode cha
     expect(hover(0).textContent).toContain("Market a");
     rows("c", "d");
     view.draw();
-    expect(frames.at(-1)!.rows.map((row) => row.key)).toEqual([
-      "c-yes",
-      "d-yes",
-    ]);
+    expect(frames.at(-1)!.rows.map((row) => row.key)).toEqual(["c", "d"]);
     expect(overlay().textContent).toContain("Market c");
     expect(clocks().map((label) => label.title.split(" · ")[0])).toEqual([
       "c-yes",

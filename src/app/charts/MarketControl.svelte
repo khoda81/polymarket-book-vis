@@ -42,9 +42,7 @@
 </script>
 
 <label
-  data-token-id={control.tokenId}
-  data-market-id={control.market.id}
-  data-market-order={control.order}
+  data-row-key={control.market.id}
   data-age-label={control.ageLabel}
   data-age-status={ageStatus}
   data-age-suppress-market-identity={control.suppressAgeIdentity}

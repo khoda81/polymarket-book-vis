@@ -21,13 +21,11 @@ import {
   type ChartDefinition,
   type ChartMarketControl,
 } from "@/chart/configuration/chartDefinition";
-import {
-  DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
-  signedVolumeColor,
-  type SignedVolumeColorScale,
-} from "@/rendering/colors/signedVolume";
+import { signedVolumeColor } from "@/rendering/colors/signedVolume";
 import { hasRealOrders } from "@/chart/age/ageStripLayout";
-import { agePressureSourceTokenForSemanticToken } from "@/chart/age/ageStripPressureProjection";
+import type { AgeRowOrientation } from "@/chart/age/ageStripOrientation";
+import type { PressureRow } from "@/chart/age/pressureRows";
+import { marketPressureRow, pressureTrackForToken } from "./marketPressureRows";
 import { AgeStripPressureState } from "@/chart/age/ageStripPressureState";
 import { LiveBookFeed } from "@/chart/live/liveBookFeed";
 import type { LiveBookFeedCallbacks } from "@/chart/live/liveBookContracts";
@@ -183,43 +181,6 @@ export class MarketGroupModel {
     return this.feeSchedules.scheduleForToken(id);
   }
 
-  marketTokenName(tokenId: string): string {
-    const control = this.controlForTokenValue(tokenId);
-    if (!control) return tokenId;
-    const tokenName =
-      control.tokenId === tokenId
-        ? control.market.outcomes.yes.label
-        : control.market.outcomes.no.label;
-    return `${tokenName} · ${control.title}`;
-  }
-
-  tokenName(tokenId: string): string | undefined {
-    const control = this.controlForTokenValue(tokenId);
-    if (!control) return undefined;
-    if (control.tokenId === tokenId) return control.market.outcomes.yes.label;
-    return control.market.outcomes.no.tokenId === tokenId
-      ? control.market.outcomes.no.label
-      : undefined;
-  }
-
-  marketName(tokenId: string): string | undefined {
-    return this.controlForTokenValue(tokenId)?.title;
-  }
-
-  oppositeTokenId(tokenId: string): string | undefined {
-    return (
-      this.controlForTokenValue(tokenId)?.market.outcomes.no.tokenId ??
-      undefined
-    );
-  }
-
-  pressureColorScale(tokenId: string): SignedVolumeColorScale {
-    const id = this.knownTokenId(tokenId);
-    return id
-      ? pressureScaleForToken(this.definition, id)
-      : DEFAULT_SIGNED_VOLUME_COLOR_SCALE;
-  }
-
   lifecycleFor(marketId: MarketId): MarketLifecycle {
     return this.markets.lifecycles.get(marketId)!;
   }
@@ -230,10 +191,22 @@ export class MarketGroupModel {
       control !== undefined && isActiveOrderMarket(control.market),
     );
   }
-  isTokenActive(tokenId: string): boolean {
-    const id = this.knownTokenId(tokenId);
-    return id !== null && this.activeTokens.has(id);
+  /** Age rows for the requested viewport slice whose markets are shown. */
+  pressureRows(orientation: AgeRowOrientation): PressureRow[] {
+    return this.requestedTokens.flatMap((tokenId) => {
+      const control = this.controlByTokenValue.get(tokenId);
+      if (control?.tokenId !== tokenId || !this.activeTokens.has(tokenId))
+        return [];
+      return [
+        marketPressureRow(
+          control,
+          pressureScaleForToken(this.definition, tokenId),
+          orientation,
+        ),
+      ];
+    });
   }
+
   setViewMode(mode: ViewMode): void {
     this.viewMode = mode;
     this.refreshObservations();
@@ -421,11 +394,14 @@ export class MarketGroupModel {
     if (!control) throw new Error(`observation source lost token ${tokenId}`);
 
     const opposite = control.tokenId !== tokenId;
+    const outcome = opposite
+      ? control.market.outcomes.no
+      : control.market.outcomes.yes;
     return {
-      name: this.marketTokenName(tokenId),
+      name: `${outcome.label} · ${control.title}`,
       color: signedVolumeColor(
         opposite ? 1 : -1,
-        this.pressureColorScale(control.tokenId),
+        pressureScaleForToken(this.definition, control.tokenId),
       ),
     };
   }
@@ -520,7 +496,7 @@ export class MarketGroupModel {
     winningTokenId: TokenId,
     resolvedAtMs: number | null,
   ): void {
-    const unboundedSourceTokenId = agePressureSourceTokenForSemanticToken(
+    const unboundedSourceTokenId = pressureTrackForToken(
       primaryTokenId,
       oppositeTokenId,
       winningTokenId,
