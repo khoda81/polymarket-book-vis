@@ -55,14 +55,6 @@ function measureAgeLabelTextWidth(text: string): number {
   return ctx.measureText(text).width;
 }
 
-export function sameDisplayTitle(
-  a: string,
-  b: string | null | undefined,
-): boolean {
-  if (!b) return false;
-  return normalizeDisplayTitle(a) === normalizeDisplayTitle(b);
-}
-
 export function positionRowControls(
   labels: readonly HTMLLabelElement[],
   rows: readonly RowRasterGeometry[],
@@ -153,28 +145,6 @@ export interface RowRasterGeometry {
   readonly heightCss: number;
 }
 
-/** Snap a scrolled row's edges and centerline to the same pixel grid. */
-export function rasterizeCenteredAgeRow(
-  desiredCenterCss: number,
-  canvasHeightCss: number,
-  framebufferHeight: number,
-): RowRasterGeometry {
-  const scaleY = framebufferHeight / canvasHeightCss;
-  const topDevice = Math.round(
-    (desiredCenterCss - AGE_ROW_BAND_PX / 2) * scaleY,
-  );
-  const centerDevice = Math.round(desiredCenterCss * scaleY);
-  const bottomDevice = Math.round(
-    (desiredCenterCss + AGE_ROW_BAND_PX / 2) * scaleY,
-  );
-  return {
-    topCss: topDevice / scaleY,
-    centerCss: centerDevice / scaleY,
-    bottomCss: bottomDevice / scaleY,
-    heightCss: (bottomDevice - topDevice) / scaleY,
-  };
-}
-
 /**
  * Snap every shared row edge and centerline to a single device-pixel grid.
  * Quantizing absolute boundaries (rather than each row's length) partitions
@@ -226,16 +196,6 @@ function getAgeLabelMeasureContext(): CanvasRenderingContext2D | null {
   ageLabelMeasureCtx =
     typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
   return ageLabelMeasureCtx;
-}
-
-function normalizeDisplayTitle(value: string): string {
-  return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function clamp(value: number, min: number, max: number): number {

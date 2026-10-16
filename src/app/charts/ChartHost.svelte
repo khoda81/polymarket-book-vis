@@ -14,11 +14,7 @@
   import { getVisualizationContext } from "../visualization/visualizationContext";
   import { type ChartMarketControl } from "../../chart/configuration/chartDefinition";
   import type { MarketGroupModel } from "../../chart/model/marketGroupModel.svelte";
-  import type {
-    ConnectionStatus,
-    ViewMode,
-  } from "../../domain/markets/chartState";
-  import type { EventMarketStatus } from "../../domain/markets/marketLifecycle";
+  import type { ViewMode } from "../../domain/markets/chartState";
   import {
     isMarketVisible,
     partitionMarketVisibility,
@@ -36,8 +32,6 @@
     ageRowOrientation?: AgeRowOrientation;
     onready?: () => void;
     onfailure?: (message: string) => void;
-    onconnection?: (status: ConnectionStatus) => void;
-    onmarketstatus?: (status: EventMarketStatus) => void;
     onrowflip?: () => void;
   }
 
@@ -47,8 +41,6 @@
     ageRowOrientation = DEFAULT_AGE_ROW_ORIENTATION,
     onready = () => undefined,
     onfailure = () => undefined,
-    onconnection = () => undefined,
-    onmarketstatus = () => undefined,
     onrowflip = () => undefined,
   }: Props = $props();
 
@@ -154,14 +146,6 @@
       ghostHalfLifeMs: tuning.ghostHalfLifeMs,
     };
   }
-
-  $effect(() => {
-    onconnection(model.connectionStatus);
-  });
-
-  $effect(() => {
-    onmarketstatus(model.marketStatus);
-  });
 
   $effect(() => {
     // Always read the reactive input, even before the imperative chart exists.

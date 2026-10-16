@@ -9,7 +9,7 @@ import { liveBookCoordinator } from "@/chart/live/liveBookCoordinator";
 import { startDashboardRecovery } from "./dashboardRecovery";
 import type { PublicClient } from "@polymarket/client";
 
-const VISUALIZATION_CONTEXT = Symbol("lobservatory.visualization");
+const VISUALIZATION_CONTEXT = Symbol("polymarket-book-vis.visualization");
 
 export interface VisualizationContext {
   readonly client: PublicClient;

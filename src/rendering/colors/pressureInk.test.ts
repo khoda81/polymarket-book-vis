@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  pressureInkThicknessCss,
   sharePressureAreaFraction,
   shareVolumeAtPressure,
   signedSharePressure,
@@ -47,12 +46,5 @@ describe("pressure ink", () => {
 
     expect(shareVolumeAtPressure(-1, reserve)).toBe(Number.NEGATIVE_INFINITY);
     expect(shareVolumeAtPressure(1, reserve)).toBe(Number.POSITIVE_INFINITY);
-  });
-
-  test("row thickness is the smooth share fraction times row height", () => {
-    expect(pressureInkThicknessCss(-25, 75, 36)).toBeCloseTo(
-      36 / Math.sqrt(10),
-      12,
-    );
   });
 });

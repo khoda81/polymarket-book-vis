@@ -178,21 +178,12 @@ export function fmtRelativeTimeOffset(seconds: number): string {
   return relativeTimeOffsetDisplay(seconds).text;
 }
 
-/** Human-readable elapsed duration. */
-export function fmtRelativeTime(seconds: number): string {
-  return relativeTimeDisplay(seconds, "elapsed").text;
-}
-
 export const MARKET_COLOR_LUMINANCE = 0.72;
 export const MARKET_COLOR_CHROMA = 0.16;
 const GOLDEN_ANGLE = 137.50776405003785;
 
 export function idToHue(idx: number, offset: number = 56.234): number {
   return (((idx * GOLDEN_ANGLE + offset) % 360) + 360) % 360;
-}
-
-export function idToColor(idx: number, offset: number = 56.234): string {
-  return `oklch(${MARKET_COLOR_LUMINANCE} ${MARKET_COLOR_CHROMA} ${idToHue(idx, offset)})`;
 }
 
 /**

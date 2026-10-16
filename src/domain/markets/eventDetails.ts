@@ -228,21 +228,6 @@ function artworkUrl(...candidates: readonly unknown[]): string | null {
   return null;
 }
 
-function sameArtworkUrl(a: string, b: string | null): boolean {
-  if (!b) return false;
-  if (a === b) return true;
-  return normalizeArtworkUrl(a) === normalizeArtworkUrl(b);
-}
-
-function normalizeArtworkUrl(value: string): string {
-  try {
-    const url = new URL(value, "https://polymarket.com");
-    return `${url.origin}${url.pathname}`;
-  } catch {
-    return value.split(/[?#]/, 1)[0] ?? value;
-  }
-}
-
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }

@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import {
   ObservationClock,
-  observationReference,
   observationTime,
   opacityReference,
   type ObservationDescription,
@@ -53,10 +52,6 @@ test("one canonical point stream derives both newest time and token presentation
     observationTime(1_000),
   );
   expect(frame.newestMs).toBe(observationTime(2_000));
-  expect(observationReference(frame.tokens)).toEqual({
-    kind: "observed",
-    newestMs: observationTime(2_000),
-  });
 
   unregisterSecond();
   expect(opacityReference(clock.readReference())).toBe(observationTime(2_000));

@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
   MARKET_COLOR_CHROMA,
   MARKET_COLOR_LUMINANCE,
-  fmtRelativeTime,
   fmtRelativeTimeOffset,
   fmtSI,
   marketColor,
@@ -10,7 +9,9 @@ import {
   relativeTimeDisplay,
 } from "./math";
 
-test("fmtRelativeTime uses compact significant digits", () => {
+test("elapsed relative times use compact significant digits", () => {
+  const fmtRelativeTime = (seconds: number) =>
+    relativeTimeDisplay(seconds, "elapsed").text;
   expect(fmtRelativeTime(0)).toBe("now");
   expect(fmtRelativeTime(0.053)).toBe("53ms");
   expect(fmtRelativeTime(0.53)).toBe("0.53s");
