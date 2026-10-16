@@ -37,5 +37,8 @@ jobs:
       - name: Run tests
         run: bun test
 
+      - name: Check Svelte components
+        run: bun run check
+
       - name: Typecheck and build
         run: bun run build

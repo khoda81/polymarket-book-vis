@@ -74,4 +74,4 @@ Tests live beside their modules. The recorder service lives in the separate `pol
 
 ## Validation
 
-Run `bun run format:check`, `bun run proto:check`, `bun test`, and `bun run build`. Svelte component diagnostics can additionally be checked with `bunx svelte-check --tsconfig ./tsconfig.json`; the build's TypeScript step covers `.ts` files, not component scripts.
+Run `bun run format:check`, `bun run proto:check`, `bun test`, `bun run check`, and `bun run build`. `check` runs svelte-check over component scripts and templates, which the build's TypeScript step does not cover.
