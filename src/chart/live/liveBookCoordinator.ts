@@ -3,6 +3,7 @@ import {
   bookFromSnapshot,
   type CanonicalBookChange,
 } from "@/domain/books/bookIngestion";
+import { PRESSURE_DEBUG } from "@/shared/debug";
 import type { ConnectionStatus } from "@/domain/markets/chartState";
 import type { TokenBook } from "@/domain/books/orderBook";
 import { LiveTokenState } from "./liveTokenState";
@@ -185,11 +186,7 @@ export class LiveBookCoordinator {
     this.retryDelayMs = options.retryDelayMs ?? SUBSCRIPTION_RETRY_MS;
     this.now = options.now ?? Date.now;
     this.handoffYield = options.handoffYield ?? yieldToNextTask;
-    this.debug =
-      options.debug ??
-      (typeof window !== "undefined" &&
-        new URLSearchParams(window.location.search).get("pressureDebug") ===
-          "1");
+    this.debug = options.debug ?? PRESSURE_DEBUG;
   }
 
   watch(

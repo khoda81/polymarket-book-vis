@@ -1,4 +1,5 @@
 import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
+import { clamp } from "@/shared/math";
 import type { TokenBook } from "@/domain/books/orderBook";
 
 const AGE_LABEL_MIN_GUTTER_PX = 16;
@@ -196,8 +197,4 @@ function getAgeLabelMeasureContext(): CanvasRenderingContext2D | null {
   ageLabelMeasureCtx =
     typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
   return ageLabelMeasureCtx;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
 }

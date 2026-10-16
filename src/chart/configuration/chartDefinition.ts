@@ -3,7 +3,11 @@ import {
   initialMarketLifecycle,
   type MarketLifecycle,
 } from "../../domain/markets/marketLifecycle";
-import { sameDisplayTitle } from "../../domain/markets/marketMetadata";
+import {
+  marketTitle,
+  normalizeDisplayText,
+  sameDisplayTitle,
+} from "../../domain/markets/marketMetadata";
 import { isActiveOrderMarket } from "../../domain/markets/marketTradability";
 import { buildNegRiskPalette } from "../../rendering/colors/negRiskColors";
 import {
@@ -61,7 +65,7 @@ export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
       ? signedVolumeColor(1, scale)
       : marketColor(event.id, index);
     const oppositeColor = scale ? signedVolumeColor(-1, scale) : primaryColor;
-    const title = market.groupItemTitle ?? market.question ?? "(untitled)";
+    const title = marketTitle(market) ?? "(untitled)";
     const suppressAgeIdentity =
       markets.length === 1 && sameDisplayTitle(title, event.title);
 
@@ -132,11 +136,7 @@ function hasResolvedLiveTitleCollision(event: Event): boolean {
 }
 
 function marketDisplayKey(market: Market): string {
-  return (market.groupItemTitle ?? market.question ?? "")
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
+  return normalizeDisplayText(marketTitle(market) ?? "");
 }
 
 function buildLiveThresholdPalette(

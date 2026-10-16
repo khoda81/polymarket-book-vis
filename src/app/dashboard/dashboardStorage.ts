@@ -1,4 +1,5 @@
 import type { EventId, SeriesId } from "@polymarket/client";
+import { eventItemKey, isItemKey, seriesItemKey } from "./model";
 
 export const PINNED_EVENT_IDS_STORAGE_KEY =
   "polymarket-book-vis:pinned-event-ids:v1";
@@ -109,21 +110,14 @@ export function loadLayoutOrder(
   if (Array.isArray(parsed)) {
     const seen = new Set<string>();
     return parsed.filter((value): value is string => {
-      if (
-        typeof value !== "string" ||
-        seen.has(value) ||
-        (!value.startsWith("event:") && !value.startsWith("series:"))
-      )
+      if (typeof value !== "string" || seen.has(value) || !isItemKey(value))
         return false;
       seen.add(value);
       return true;
     });
   }
 
-  return [
-    ...seriesPins.map((id) => `series:${id}`),
-    ...eventPins.map((id) => `event:${id}`),
-  ];
+  return [...seriesPins.map(seriesItemKey), ...eventPins.map(eventItemKey)];
 }
 
 export function persistIds(

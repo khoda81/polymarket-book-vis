@@ -275,3 +275,12 @@ export function fmtVol(n: number): string {
   if (Math.abs(n) >= 1_000) return (n / 1_000).toFixed(1) + "K";
   return n.toFixed(1);
 }
+
+export function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+/** Clamp to [0, 1], mapping non-finite input to 0. */
+export function clamp01(value: number): number {
+  return Number.isFinite(value) ? clamp(value, 0, 1) : 0;
+}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from "../../shared/errors";
   import CardActions from "../dashboard/CardActions.svelte";
   import { onMount } from "svelte";
   import EventContent from "./EventContent.svelte";
@@ -67,7 +68,7 @@
       },
       (error: unknown) => {
         if (!alive) return;
-        fail(error instanceof Error ? error.message : String(error));
+        fail(errorMessage(error));
       },
     );
 

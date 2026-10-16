@@ -1,4 +1,4 @@
-import type { Event, Series } from "@polymarket/client";
+import type { Event, EventId, Series, SeriesId } from "@polymarket/client";
 
 interface DashboardItemBase {
   readonly announceReady: boolean;
@@ -24,10 +24,6 @@ export function seriesLabel(series: Series): string {
   return series.title?.trim() || series.slug?.trim() || "series";
 }
 
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export function orderDashboardItems(
   items: readonly DashboardItem[],
   order: readonly string[],
@@ -44,7 +40,20 @@ export function orderDashboardItems(
   });
 }
 
+export function eventItemKey(id: EventId): string {
+  return `event:${id}`;
+}
+
+export function seriesItemKey(id: SeriesId): string {
+  return `series:${id}`;
+}
+
+export function isItemKey(value: string): boolean {
+  return value.startsWith("event:") || value.startsWith("series:");
+}
+
 export function itemKey(entry: DashboardItem): string {
-  if (entry.kind === "series") return `series:${entry.series.id}`;
-  return `event:${entry.event.id}`;
+  return entry.kind === "series"
+    ? seriesItemKey(entry.series.id)
+    : eventItemKey(entry.event.id);
 }

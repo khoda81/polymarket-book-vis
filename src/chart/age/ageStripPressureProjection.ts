@@ -1,4 +1,5 @@
 import type { PressureExtent } from "@/domain/pressure/pressureField";
+import { clamp01 } from "@/shared/math";
 import type { PressureRun } from "@/domain/pressure/pressureFrontierSnapshot";
 import { PRICE_SCALE, priceFromTicks, type Price } from "@/domain/books/price";
 import {
@@ -155,9 +156,4 @@ export function pressureVolumeAtY(
   if (!(pressure >= 0) || pressure >= 1) return null;
 
   return shareVolumeAtPressure(pressure, reserveShares);
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(1, value));
 }

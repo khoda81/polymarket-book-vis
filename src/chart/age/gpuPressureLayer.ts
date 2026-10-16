@@ -1,4 +1,5 @@
 import type { ObservationTime } from "@/domain/pressure/observationClock";
+import { PRESSURE_DEBUG } from "@/shared/debug";
 import { AGE_ROW_BAND_PX } from "./ageStripTuning";
 import {
   PRESSURE_MIN_VISIBLE_ALPHA,
@@ -52,9 +53,6 @@ export interface GpuPressureFrame {
 const INSTANCE_FLOATS = 7;
 const INSTANCE_STRIDE = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
 const MAX_TIME_ORIGIN_AGE_MS = 60 * 60 * 1_000;
-const PRESSURE_UPLOAD_DEBUG =
-  typeof window !== "undefined" &&
-  new URLSearchParams(window.location.search).get("pressureDebug") === "1";
 const PRESSURE_UPLOAD_REPORT_INTERVAL_MS = 5_000;
 const pressureUploadStats = {
   startedAtMs: 0,
@@ -556,7 +554,7 @@ export class GpuPressureLayer {
     uploadedBytes: number,
     fullUpload: boolean,
   ): void {
-    if (!PRESSURE_UPLOAD_DEBUG) return;
+    if (!PRESSURE_DEBUG) return;
 
     const nowMs = performance.now();
     if (pressureUploadStats.startedAtMs === 0)

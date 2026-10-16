@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from "../../shared/errors";
   import { onMount, tick, untrack } from "svelte";
   import type { Series } from "@polymarket/client";
   import type { ViewMode } from "../../domain/markets/chartState";
@@ -102,7 +103,7 @@
     } catch (error) {
       if (!alive) return;
       failed.add(direction);
-      message = error instanceof Error ? error.message : String(error);
+      message = errorMessage(error);
     } finally {
       pending.delete(direction);
       loading--;
@@ -163,8 +164,7 @@
       if (following) await current();
       if (failed.size === 0) message = "";
     } catch (error) {
-      if (alive)
-        message = error instanceof Error ? error.message : String(error);
+      if (alive) message = errorMessage(error);
     } finally {
       pending.delete("refresh");
       loading--;

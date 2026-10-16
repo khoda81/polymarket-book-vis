@@ -1,6 +1,6 @@
 import type { ObservationTime } from "@/domain/pressure/observationClock";
 import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
-import { relativeTimeOffsetDisplay } from "@/shared/math";
+import { clamp01, relativeTimeOffsetDisplay } from "@/shared/math";
 import type { WallClock, WallClockWatch } from "@/shared/wallClock";
 import {
   PRESSURE_MIN_VISIBLE_ALPHA,
@@ -310,9 +310,4 @@ function formatShares(value: number): string {
     notation: "compact",
     maximumFractionDigits: 2,
   }).format(value);
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(1, value));
 }

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { PRESSURE_DEBUG } from "../../shared/debug";
+  import { errorMessage } from "../../shared/errors";
   import { onMount, untrack } from "svelte";
   import {
     ChartController,
@@ -45,9 +47,6 @@
   }: Props = $props();
 
   const visualization = getVisualizationContext();
-  const pressureDebug =
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("pressureDebug") === "1";
 
   const definition = $derived(model.definition);
   let mounted = $state(false);
@@ -152,7 +151,7 @@
     // This also gives debug mode a boundary between Svelte propagation and the
     // shared presentation queue.
     const input = renderInput();
-    if (pressureDebug) lastSubmitted = input;
+    if (PRESSURE_DEBUG) lastSubmitted = input;
     chart?.update(input);
   });
 
@@ -172,9 +171,7 @@
     untrack(() => {
       void model
         .setViewport(tokens)
-        .catch((error: unknown) =>
-          onfailure(error instanceof Error ? error.message : String(error)),
-        );
+        .catch((error: unknown) => onfailure(errorMessage(error)));
     });
     if (!mounted) return;
     untrack(() => {
@@ -186,8 +183,8 @@
           visualization.wallClock,
           visualization.presentation,
           renderInput(),
-          pressureDebug ? (state) => (lastRendered = state) : undefined,
-          pressureDebug ? (state) => (pendingRender = state) : undefined,
+          PRESSURE_DEBUG ? (state) => (lastRendered = state) : undefined,
+          PRESSURE_DEBUG ? (state) => (pendingRender = state) : undefined,
         );
       } else if (!active && chart) {
         chart.destroy();
@@ -249,7 +246,7 @@
       ? `${rowWindow.start * AGE_ROW_BAND_PX}px`
       : undefined}
   >
-    {#if pressureDebug && viewMode === "age"}
+    {#if PRESSURE_DEBUG && viewMode === "age"}
       <div
         class="cpv-pressure-debug"
         class:cpv-pressure-debug--lagging={(renderedFrontierLagMs ?? 0) !== 0 ||

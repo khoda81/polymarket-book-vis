@@ -1,3 +1,4 @@
+import { clamp01 } from "../../shared/math";
 import type { Event, MarketId, TokenId } from "@polymarket/client";
 import { stableHue } from "./negRiskColors";
 import type { SignedVolumeColorScale } from "./signedVolume";
@@ -247,8 +248,4 @@ function radiansToDegrees(radians: number): number {
 
 function normalizeHue(hue: number): number {
   return ((hue % 360) + 360) % 360;
-}
-
-function clamp01(value: number): number {
-  return Math.max(0, Math.min(1, value));
 }
