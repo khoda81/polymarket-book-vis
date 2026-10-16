@@ -1,6 +1,6 @@
 import type { ObservationTime } from "@/domain/pressure/observationClock";
 import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
-import { clamp01, relativeTimeOffsetDisplay } from "@/shared/math";
+import { relativeTimeOffsetDisplay } from "@/shared/math";
 import type { WallClock, WallClockWatch } from "@/shared/wallClock";
 import {
   PRESSURE_MIN_VISIBLE_ALPHA,
@@ -10,29 +10,21 @@ import {
   type PressureVolumeUpperBound,
 } from "@/domain/pressure/pressureField";
 import type { Price } from "@/domain/books/price";
-import {
-  signedVolumeColor,
-  type SignedVolumeColorScale,
-} from "@/rendering/colors/signedVolume";
 import type { ViewMode } from "@/domain/markets/chartState";
 import {
   hideSharedTooltip,
   releaseSharedTooltip,
   showSharedTooltip,
 } from "@/rendering/sharedTooltip";
+import { ageStripRowAtY, type AgeStripGeometry } from "./ageStripLayout";
+import { pressureVolumeAtY } from "./ageStripPressureProjection";
 import {
-  ageStripRowAtY,
-  ageStripRowCenterY,
-  type AgeStripGeometry,
-} from "./ageStripLayout";
-import type { AgeRowOrientation } from "./ageStripOrientation";
-import {
-  agePressurePerspective,
-  agePressureSourceSideAtY,
-  pressurePriceAtDisplayX,
-  pressureVolumeAtY,
-  semanticPriceAtDisplayX,
-} from "./ageStripPressureProjection";
+  barYDirection,
+  sideAtY,
+  trackPriceAtDisplayX,
+  trackPriceTicks,
+  type PressureBar,
+} from "./pressureRows";
 
 export interface AgeStripTooltipHost {
   readonly wallClock: WallClock;
@@ -40,18 +32,13 @@ export interface AgeStripTooltipHost {
   readonly getOpacityTime: () => ObservationTime;
   readonly canvas: HTMLCanvasElement;
   readonly getViewMode: () => ViewMode;
-  readonly getRowOrientation: () => AgeRowOrientation;
   readonly getVolumePerCssPixel: () => number;
   readonly getGhostHalfLifeMs: () => number;
   readonly getPressureBand: (
-    tokenId: string,
+    track: string,
     price: Price,
     volume: number,
   ) => PressureFieldBand | undefined;
-  /** Must resolve labels for the actual token id passed in. */
-  readonly getTokenName: (tokenId: string) => string | undefined;
-  readonly getMarketName: (tokenId: string) => string | undefined;
-  readonly getPressureColorScale: (tokenId: string) => SignedVolumeColorScale;
 }
 
 interface HoverPointer {
@@ -140,36 +127,17 @@ export class AgeStripTooltip {
       return null;
     }
 
-    const centerCss = ageStripRowCenterY(geometry, row);
-    const rowOrientation = this.host.getRowOrientation();
-    const sourceSide = agePressureSourceSideAtY(sy, centerCss, rowOrientation);
-    const perspective = agePressurePerspective(sourceSide, rowOrientation);
-
-    const sourceTokenId =
-      sourceSide === "primary" ? row.tokenId : (row.oppositeTokenId ?? null);
-    const semanticTokenId =
-      perspective.semanticSide === "primary"
-        ? row.tokenId
-        : (row.oppositeTokenId ?? null);
-    if (!sourceTokenId || !semanticTokenId) {
+    const { centerCss, topCss, bottomCss } = row;
+    const side = sideAtY(sy, centerCss);
+    const bars = row.row.bars.filter((bar) => bar.side === side);
+    if (bars.length === 0) {
       this.hide();
       return null;
     }
 
-    const displayPrice = clamp01((sx - vp.l) / vp.width);
-    const semanticPrice = semanticPriceAtDisplayX(displayPrice, perspective);
-    const pressurePrice = pressurePriceAtDisplayX(displayPrice, perspective);
-    const tokenName = this.host.getTokenName(semanticTokenId) ?? "(unknown)";
-    const marketName = this.host.getMarketName(semanticTokenId) ?? "(unknown)";
-    const color = signedVolumeColor(
-      perspective.colorSign,
-      this.host.getPressureColorScale(row.tokenId),
-    );
-
-    const topCss = row.topY ?? centerCss - AGE_ROW_BAND_PX / 2;
-    const bottomCss = row.bottomY ?? centerCss + AGE_ROW_BAND_PX / 2;
+    const displayX = (sx - vp.l) / vp.width;
     const sideHeightCss =
-      sy < centerCss ? centerCss - topCss : bottomCss - centerCss;
+      side === "above" ? centerCss - topCss : bottomCss - centerCss;
     const volume = pressureVolumeAtY(
       sy,
       centerCss,
@@ -177,29 +145,25 @@ export class AgeStripTooltip {
       this.host.getVolumePerCssPixel() * AGE_ROW_BAND_PX,
     );
 
+    // Several bars may share a half; quote the first one with visible
+    // pressure under the pointer, else the first bar on that side.
+    let bar: PressureBar = bars[0]!;
     let hover: PressureHover | null = null;
-    if (volume !== null) {
-      const band = this.host.getPressureBand(
-        sourceTokenId,
-        pressurePrice,
-        volume,
-      );
-
-      if (band) {
-        const alpha = pressureValidityAlpha(
-          band.validity,
-          this.host.getOpacityTime(),
-          this.host.getGhostHalfLifeMs(),
-        );
-        if (alpha > PRESSURE_MIN_VISIBLE_ALPHA)
-          hover = {
-            // The hovered band supplies its own upper volume and validity.
-            // Either dimension may be unbounded/persistent.
-            volume: band.hiVolume,
-            validity: band.validity,
-          };
+    if (volume !== null)
+      for (const candidate of bars) {
+        hover = this.visibleBand(candidate, displayX, volume);
+        if (hover) {
+          bar = candidate;
+          break;
+        }
       }
-    }
+
+    const quotedPrice = bar.quote.price(
+      trackPriceAtDisplayX(displayX, bar.priceAxis),
+    );
+    const marketName = row.row.label;
+    const tokenName = bar.quote.label;
+    const color = bar.color;
 
     const displayedVolume: PressureVolumeUpperBound | null =
       hover?.volume ??
@@ -215,9 +179,9 @@ export class AgeStripTooltip {
         ? "now"
         : (ageDisplay?.text ?? (displayedVolume === null ? null : "∞"));
     const signature = [
-      semanticTokenId,
+      bar.track,
       marketName,
-      formatProbability(semanticPrice),
+      formatProbability(quotedPrice),
       displayedVolume === null ? "" : formatPressureVolume(displayedVolume),
       ageText ?? "",
     ].join("|");
@@ -230,18 +194,41 @@ export class AgeStripTooltip {
           overlay,
           marketName,
           tokenName,
-          semanticPrice,
+          quotedPrice,
           color,
           displayedVolume,
           ageText,
         ),
       pointer.canvasLeft + sx,
       pointer.canvasTop + centerCss,
-      perspective.yDirection < 0 ? "below" : "above",
+      barYDirection(bar) < 0 ? "below" : "above",
     );
 
     return ageDisplay?.nextChangeMs != null
       ? nowMs + Math.ceil(ageDisplay.nextChangeMs) + 1
+      : null;
+  }
+
+  private visibleBand(
+    bar: PressureBar,
+    displayX: number,
+    volume: number,
+  ): PressureHover | null {
+    const band = this.host.getPressureBand(
+      bar.track,
+      trackPriceTicks(trackPriceAtDisplayX(displayX, bar.priceAxis)),
+      volume,
+    );
+    if (!band) return null;
+    const alpha = pressureValidityAlpha(
+      band.validity,
+      this.host.getOpacityTime(),
+      this.host.getGhostHalfLifeMs(),
+    );
+    // The hovered band supplies its own upper volume and validity. Either
+    // dimension may be unbounded/persistent.
+    return alpha > PRESSURE_MIN_VISIBLE_ALPHA
+      ? { volume: band.hiVolume, validity: band.validity }
       : null;
   }
 

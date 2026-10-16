@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { EventMarketStatus } from "../../domain/markets/marketLifecycle";
-  import type { Event } from "@polymarket/client";
+  import type { EventInfo } from "../../domain/markets/eventDetails";
   import CopySlug from "../shared/CopySlug.svelte";
 
-  export let event: Event;
+  export let event: EventInfo;
   export let slug: string | null | undefined;
   export let iconUrl: string | null;
   export let marketStatus: EventMarketStatus;

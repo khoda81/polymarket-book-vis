@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Event, MarketId } from "@polymarket/client";
+import type { Event } from "@polymarket/client";
 import {
   buildEventDetails,
   type EventDetails,
@@ -8,6 +8,30 @@ import { buildChartDefinition, pressureScaleForToken } from "./chartDefinition";
 import { eventCardDetails } from "./subsetEventDetails";
 import { signedVolumeColor } from "../../rendering/colors/signedVolume";
 import { buildThresholdPalette } from "../../rendering/colors/thresholdColors";
+
+/** Fill SDK fields the fixtures omit; the parser reads them. */
+function withSdkDefaults(event: Event): Event {
+  // Fixtures are partial SDK objects; supply what they leave undefined.
+  return {
+    ...event,
+    display: event.display ?? { sortBy: "ascending" },
+    markets: event.markets.map((market) => ({
+      ...market,
+      sports: market.sports ?? {},
+      trading: market.trading ?? {},
+    })),
+  };
+}
+
+/** Parse, keeping the fixture's market order for tests not about ordering. */
+function details(event: Event, raw: unknown = {}): EventDetails {
+  const parsed = buildEventDetails(withSdkDefaults(event), raw);
+  const byId = new Map(parsed.markets.map((market) => [market.id, market]));
+  return {
+    ...parsed,
+    markets: event.markets.flatMap((market) => byId.get(market.id) ?? []),
+  };
+}
 
 function fakeBundle(): EventDetails {
   const event = {
@@ -67,60 +91,51 @@ function fakeBundle(): EventDetails {
     ],
   } as unknown as Event;
 
-  return {
-    event,
-    thresholdByMarketId: new Map(),
-    resolutionMsByMarketId: new Map(),
-    presentation: {
-      iconUrl: null,
-      description: null,
-      marketRules: [],
-    },
-  };
+  return details(event);
 }
 
 test("chart definition preserves closed and inactive markets for shared controls", () => {
   const definition = buildChartDefinition(fakeBundle());
 
   expect(definition.controls).toHaveLength(4);
-  expect(definition.event.markets.map((market) => String(market.id))).toEqual([
-    "m1",
-    "m2",
-    "m3",
-    "m4",
-  ]);
+  expect(
+    definition.controls.map((control) => String(control.market.id)),
+  ).toEqual(["m1", "m2", "m3", "m4"]);
   expect(definition.controls[0]).toMatchObject({
     market: {
       id: "m1",
       conditionId: null,
+      yes: { label: "Yes", tokenId: "yes-1" },
+      no: { label: "No", tokenId: "no-1" },
+      reportedLifecycle: { kind: "live" },
+      title: "First label",
+      iconUrl: "https://example.com/m1.png",
+      resolutionMs: null,
     },
-    tokenId: "yes-1",
-    lifecycle: { kind: "live" },
-    title: "First label",
-    iconUrl: "https://example.com/m1.png",
-    order: 0,
-    resolutionMs: null,
     ageLabel: "First label",
-    suppressAgeIdentity: false,
   });
 
   const control = definition.controls[0]!;
-  expect(control.dotColor).toBe(
-    signedVolumeColor(1, pressureScaleForToken(definition, control.tokenId)),
+  expect(control.primaryColor).toBe(
+    signedVolumeColor(
+      1,
+      pressureScaleForToken(definition, control.market.yes.tokenId),
+    ),
   );
-  expect(control.market.outcomes.yes.label).toBe("Yes");
-  expect(control.market.outcomes.no.label).toBe("No");
 
   expect(definition.controls[1]).toMatchObject({
-    market: { id: "m2" },
-    tokenId: "yes-2",
-    lifecycle: {
-      kind: "resolved",
-      winningTokenId: "yes-2",
-      winningOutcome: "Yes",
+    market: {
+      id: "m2",
+      reportedLifecycle: {
+        kind: "resolved",
+        winningTokenId: "yes-2",
+        winningOutcome: "Yes",
+      },
     },
   });
-  expect(definition.controls[2]!.lifecycle.kind).toBe("awaiting-resolution");
+  expect(definition.controls[2]!.market.reportedLifecycle.kind).toBe(
+    "awaiting-resolution",
+  );
 });
 
 test("standalone event cards keep only trading and resolved markets", () => {
@@ -129,7 +144,9 @@ test("standalone event cards keep only trading and resolved markets", () => {
   expect(
     definition.controls.map((control) => String(control.market.id)),
   ).toEqual(["m1", "m2"]);
-  expect(definition.controls[1]!.lifecycle.kind).toBe("resolved");
+  expect(definition.controls[1]!.market.reportedLifecycle.kind).toBe(
+    "resolved",
+  );
 });
 
 test("single-market wrapper metadata survives DOM recreation", () => {
@@ -160,26 +177,12 @@ test("single-market wrapper metadata survives DOM recreation", () => {
     ],
   } as unknown as Event;
   const endDate = "2026-12-31T23:59:00Z";
-  const bundle: EventDetails = {
-    event,
-    thresholdByMarketId: new Map(),
-    resolutionMsByMarketId: new Map([
-      [event.markets[0]!.id, Date.parse(endDate)],
-    ]),
-    presentation: {
-      iconUrl: null,
-      description: null,
-      marketRules: [],
-    },
-  };
+  const bundle = details(event, { markets: [{ id: "m1", endDate }] });
 
   const control = buildChartDefinition(bundle).controls[0];
   expect(control).toMatchObject({
-    market: { id: "m1" },
-    ageLabel: "",
-    suppressAgeIdentity: true,
-    order: 0,
-    resolutionMs: Date.parse(endDate),
+    market: { id: "m1", resolutionMs: Date.parse(endDate) },
+    ageLabel: null,
   });
 });
 
@@ -225,7 +228,7 @@ test("chart keeps explicit threshold order when Gamma deadlines disagree", () =>
       },
     })),
   } as unknown as Event;
-  const bundle = buildEventDetails(event, {
+  const bundle = buildEventDetails(withSdkDefaults(event), {
     markets: fixtures.map((market) => ({
       id: market.id,
       groupItemThreshold: market.threshold,
@@ -233,15 +236,15 @@ test("chart keeps explicit threshold order when Gamma deadlines disagree", () =>
     })),
   });
 
-  expect(bundle.event.markets.map((market) => String(market.id))).toEqual([
+  expect(bundle.markets.map((market) => String(market.id))).toEqual([
     "3128769",
     "4620250",
     "3128768",
   ]);
   expect(
-    buildChartDefinition(bundle)
-      .controls.toSorted((a, b) => a.order - b.order)
-      .map((control) => String(control.market.id)),
+    buildChartDefinition(bundle).controls.map((control) =>
+      String(control.market.id),
+    ),
   ).toEqual(["3128769", "4620250", "3128768"]);
 });
 
@@ -288,32 +291,21 @@ function gammaThresholdBundle(
     })),
   } as unknown as Event;
 
-  return {
-    event,
-    thresholdByMarketId: new Map<MarketId, number>(
-      markets.map((market) => [market.id as MarketId, market.threshold]),
-    ),
-    resolutionMsByMarketId: new Map(),
-    presentation: {
-      iconUrl: null,
-      description: null,
-      marketRules: [],
-    },
-  };
+  return details(event, {
+    markets: markets.map((market) => ({
+      id: market.id,
+      groupItemThreshold: market.threshold,
+    })),
+  });
 }
 
 function expectLiveThresholdPalette(bundle: EventDetails): void {
-  expect(
-    buildThresholdPalette(bundle.event, bundle.thresholdByMarketId),
-  ).toBeNull();
+  expect(buildThresholdPalette(bundle.event, bundle.markets)).toBeNull();
 
-  const liveEvent = {
-    ...bundle.event,
-    markets: bundle.event.markets.filter(
-      (market) => market.state.acceptingOrders === true,
-    ),
-  };
-  const expected = buildThresholdPalette(liveEvent, bundle.thresholdByMarketId);
+  const expected = buildThresholdPalette(
+    bundle.event,
+    bundle.markets.filter((market) => market.tradable),
+  );
   expect(expected).not.toBeNull();
 
   const definition = buildChartDefinition(bundle);

@@ -1,24 +1,20 @@
-import type { Event, Market, MarketId } from "@polymarket/client";
-import { finiteNumber } from "../../shared/parse";
-import { isActiveOrderMarket } from "./marketTradability";
+import type { Event } from "@polymarket/client";
+import type { EventMarket } from "./eventDetails";
 
 export function orderMarkets(
-  event: Event,
-  thresholdByMarketId: ReadonlyMap<MarketId, number>,
-  resolutionMsByMarketId: ReadonlyMap<MarketId, number> = new Map(),
-): Market[] {
-  const byPrice = event.display.sortBy === "price";
-  const descending = byPrice || event.display.sortBy === "descending";
+  markets: readonly EventMarket[],
+  sortBy: Event["display"]["sortBy"],
+): EventMarket[] {
+  const byPrice = sortBy === "price";
+  const descending = byPrice || sortBy === "descending";
 
-  return event.markets
+  return markets
     .map((market, originalIndex) => ({
       market,
       originalIndex,
-      value: byPrice
-        ? (finiteNumber(market.outcomes.yes.price) ?? undefined)
-        : thresholdByMarketId.get(market.id),
-      resolutionMs: resolutionMsByMarketId.get(market.id),
-      live: isActiveOrderMarket(market),
+      value: (byPrice ? market.yes.price : market.threshold) ?? undefined,
+      resolutionMs: market.resolutionMs ?? undefined,
+      live: market.tradable,
     }))
     .sort((a, b) => {
       if (!byPrice && a.live !== b.live) {

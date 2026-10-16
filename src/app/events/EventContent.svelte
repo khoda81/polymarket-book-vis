@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import type { Event } from "@polymarket/client";
-  import type { EventDetails } from "../../domain/markets/eventDetails";
+  import type {
+    EventDetails,
+    EventInfo,
+    EventMarket,
+  } from "../../domain/markets/eventDetails";
   import type { ViewMode } from "../../domain/markets/chartState";
   import type { EventMarketStatus } from "../../domain/markets/marketLifecycle";
   import type { AgeRowOrientation } from "../../chart/age/ageStripOrientation";
@@ -12,7 +15,7 @@
   import { eventCardDetails } from "../../chart/configuration/subsetEventDetails";
   import { getVisualizationContext } from "../visualization/visualizationContext";
 
-  export let event: Event;
+  export let event: EventInfo;
   export let bundle: EventDetails | null;
   export let standalone = false;
   export let viewMode: ViewMode;
@@ -32,6 +35,10 @@
       : displayedBundle;
   $: currentEvent = displayedBundle?.event ?? event;
   $: presentation = displayedBundle?.presentation;
+  $: ruledMarkets = (chartBundle?.markets ?? []).filter(
+    (market): market is EventMarket & { readonly rule: string } =>
+      market.rule !== null,
+  );
 
   function watchMetadata(details: EventDetails | null): void {
     unwatch?.();
@@ -55,8 +62,8 @@
 {#if presentation?.description}
   <EventDescription description={presentation.description} />
 {/if}
-{#if presentation && presentation.marketRules.length > 0}
-  <MarketRules rules={presentation.marketRules} />
+{#if ruledMarkets.length > 0}
+  <MarketRules markets={ruledMarkets} />
 {/if}
 {#if chartBundle}
   <EventCharts

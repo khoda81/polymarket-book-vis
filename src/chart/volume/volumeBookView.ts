@@ -1,6 +1,8 @@
-import type { ChartDefinition } from "@/chart/configuration/chartDefinition";
-import { marketColor } from "@/shared/math";
-import { emptyTokenBook, type BookOrder } from "@/domain/books/orderBook";
+import {
+  emptyTokenBook,
+  type BookOrder,
+  type TokenBook,
+} from "@/domain/books/orderBook";
 import { priceToNumber } from "@/domain/books/price";
 import type {
   ChartTheme,
@@ -9,8 +11,6 @@ import type {
   StackDirection,
   BoxStyle,
 } from "@/rendering/renderer";
-import { signedVolumeColor } from "@/rendering/colors/signedVolume";
-import type { TokenId } from "@polymarket/client";
 
 interface BookBoxView {
   readonly direction: StackDirection;
@@ -19,13 +19,19 @@ interface BookBoxView {
   readonly fillDepth?: number;
 }
 
+/** One book to draw: bids stack up, asks stack down. */
+export interface VolumeSeries {
+  readonly key: string;
+  /** Undefined until the book's first snapshot; drawn as empty. */
+  readonly book: TokenBook | undefined;
+  readonly bidColor: string;
+  readonly askColor: string;
+}
+
 export interface VolumeBookViewHost {
   readonly plotter: OrderBookPlotter;
-  readonly definition: ChartDefinition;
-  readonly activeTokens: ReadonlySet<TokenId>;
-  readonly getBook: (
-    tokenId: TokenId,
-  ) => ReturnType<typeof emptyTokenBook> | undefined;
+  /** Books to draw, in drawing order. */
+  readonly getSeries: () => readonly VolumeSeries[];
   readonly getTheme: () => ChartTheme;
   readonly isActive: () => boolean;
   readonly requestDraw: () => void;
@@ -60,45 +66,20 @@ export class VolumeBookView {
 
     const pointerData = this.pointer ? frame.toData(this.pointer) : null;
     const empty = emptyTokenBook();
-    const placeholderColor = marketColor("", 0);
 
-    drawBookView(frame, {
-      direction: "up",
-      orders: empty.usdToYes.asOrders(),
-      color: placeholderColor,
-    });
-    drawBookView(frame, {
-      direction: "down",
-      orders: empty.yesToUsd.asSellOrders(),
-      color: placeholderColor,
-    });
-
-    for (const [
-      index,
-      market,
-    ] of this.host.definition.event.markets.entries()) {
-      const tokenId = market.outcomes.yes.tokenId;
-      if (!tokenId || !this.host.activeTokens.has(tokenId)) continue;
-
-      const book = this.host.getBook(tokenId) ?? emptyTokenBook();
-      const semanticScale = this.host.definition.pressureScales.get(tokenId);
-      const yesColor = semanticScale
-        ? signedVolumeColor(1, semanticScale)
-        : marketColor(this.host.definition.event.id, index);
-      const noColor = semanticScale
-        ? signedVolumeColor(-1, semanticScale)
-        : yesColor;
+    for (const series of this.host.getSeries()) {
+      const book = series.book ?? empty;
 
       drawBookView(frame, {
         direction: "up",
         orders: book.usdToYes.asOrders(),
-        color: yesColor,
+        color: series.bidColor,
         fillDepth: pointerData ? Math.max(pointerData.y, 0) : undefined,
       });
       drawBookView(frame, {
         direction: "down",
         orders: book.yesToUsd.asSellOrders(),
-        color: noColor,
+        color: series.askColor,
         fillDepth: pointerData ? Math.max(-pointerData.y, 0) : undefined,
       });
     }

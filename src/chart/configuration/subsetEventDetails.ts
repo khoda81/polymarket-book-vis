@@ -1,7 +1,7 @@
-import type { EventDetails } from "../../domain/markets/eventDetails";
-import { initialMarketLifecycle } from "../../domain/markets/marketLifecycle";
-import { isActiveOrderMarket } from "../../domain/markets/marketTradability";
-import type { Market, MarketId } from "@polymarket/client";
+import type {
+  EventDetails,
+  EventMarket,
+} from "../../domain/markets/eventDetails";
 
 /**
  * Preserve the original standalone event-card rule: show trading markets and
@@ -11,26 +11,16 @@ import type { Market, MarketId } from "@polymarket/client";
 export function eventCardDetails(details: EventDetails): EventDetails {
   return subsetEventDetails(
     details,
-    details.event.markets.filter((market) => {
-      const lifecycle = initialMarketLifecycle(market);
-      return isActiveOrderMarket(market) || lifecycle.kind === "resolved";
-    }),
+    details.markets.filter(
+      (market) =>
+        market.tradable || market.reportedLifecycle.kind === "resolved",
+    ),
   );
 }
 
 export function subsetEventDetails(
   details: EventDetails,
-  markets: readonly Market[],
+  markets: readonly EventMarket[],
 ): EventDetails {
-  const marketIds = new Set<MarketId>(markets.map((market) => market.id));
-  return {
-    ...details,
-    event: { ...details.event, markets: [...markets] },
-    presentation: {
-      ...details.presentation,
-      marketRules: details.presentation.marketRules.filter((rule) =>
-        marketIds.has(rule.marketId),
-      ),
-    },
-  };
+  return { ...details, markets };
 }

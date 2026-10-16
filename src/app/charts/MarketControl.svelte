@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { ChartMarketControl } from "../../chart/configuration/chartDefinition";
-  import type { MarketLifecycle } from "../../domain/markets/marketLifecycle";
   import {
-    marketTimeMarker,
-    marketTimeTooltip,
-  } from "../../domain/markets/marketDeadline";
+    resolvedOutcome,
+    type MarketLifecycle,
+  } from "../../domain/markets/marketLifecycle";
+  import { marketTimeTooltip } from "../../domain/markets/marketDeadline";
   import MarketDeadline from "./MarketDeadline.svelte";
 
   export let control: ChartMarketControl;
@@ -15,40 +15,25 @@
 
   let iconFailed = false;
 
+  $: market = control.market;
   $: ageStatus = lifecycle.kind === "awaiting-resolution" ? "pending" : "";
-  $: resolutionSide =
-    lifecycle.kind !== "resolved"
-      ? ""
-      : lifecycle.winningTokenId === control.tokenId
-        ? "primary"
-        : control.market.outcomes.no.tokenId !== null &&
-            lifecycle.winningTokenId === control.market.outcomes.no.tokenId
-          ? "opposite"
-          : "";
-  $: resolutionOutcome =
-    lifecycle.kind !== "resolved"
-      ? ""
-      : resolutionSide === "primary"
-        ? control.market.outcomes.yes.label || lifecycle.winningOutcome
-        : resolutionSide === "opposite"
-          ? control.market.outcomes.no.label || lifecycle.winningOutcome
-          : lifecycle.winningOutcome;
+  $: resolution =
+    lifecycle.kind === "resolved" ? resolvedOutcome(market, lifecycle) : null;
+  $: resolutionOutcome = resolution?.label ?? "";
   $: resolutionColor =
-    resolutionSide === "primary"
+    resolution?.side === "yes"
       ? control.primaryColor
-      : resolutionSide === "opposite"
+      : resolution?.side === "no"
         ? control.oppositeColor
         : "";
 </script>
 
 <label
-  data-token-id={control.tokenId}
-  data-market-id={control.market.id}
-  data-market-order={control.order}
-  data-age-label={control.ageLabel}
+  data-row-key={control.market.id}
+  data-age-label={control.ageLabel ?? ""}
   data-age-status={ageStatus}
-  data-age-suppress-market-identity={control.suppressAgeIdentity}
-  title={control.title}
+  data-age-suppress-market-identity={control.ageLabel === null}
+  title={market.title}
   style={resolutionColor
     ? `--cpv-resolution-color: ${resolutionColor}`
     : undefined}
@@ -61,13 +46,13 @@
   />
   <span
     class="cpv-market-dot"
-    style:background={control.dotColor}
+    style:background={control.primaryColor}
     aria-hidden="true"
   ></span>
-  {#if control.iconUrl && !iconFailed}
+  {#if market.iconUrl && !iconFailed}
     <img
       class="cpv-market-icon"
-      src={control.iconUrl}
+      src={market.iconUrl}
       alt=""
       aria-hidden="true"
       loading="lazy"
@@ -76,22 +61,19 @@
     />
   {/if}
   <span class="cpv-market-copy">
-    <span class="cpv-market-label-text">{control.title}</span>
+    <span class="cpv-market-label-text">{market.title}</span>
     {#if showDeadline}
       <span class="cpv-market-meta">
         {#if lifecycle.kind === "resolved"}
           <span
             class="cpv-market-state"
-            title={`Resolved · ${resolutionOutcome}\n${marketTimeTooltip(marketTimeMarker(control.market))}`}
+            title={`Resolved · ${resolutionOutcome}\n${marketTimeTooltip(market.timeMarker)}`}
             >Resolved · {resolutionOutcome}</span
           >
         {:else}
-          <MarketDeadline market={control.market} />
-          {#if control.market.state.closed}<span class="cpv-market-state"
-              >closed</span
-            >{/if}
-          {#if control.market.state.archived}<span class="cpv-market-state"
-              >archived</span
+          <MarketDeadline marker={market.timeMarker} />
+          {#if market.closed}<span class="cpv-market-state">closed</span>{/if}
+          {#if market.archived}<span class="cpv-market-state">archived</span
             >{/if}
         {/if}
       </span>

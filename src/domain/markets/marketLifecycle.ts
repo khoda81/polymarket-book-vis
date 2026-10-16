@@ -42,33 +42,45 @@ export function initialMarketLifecycle(market: Market): MarketLifecycle {
   return { kind: "live" };
 }
 
+interface BinaryTokens {
+  readonly yes: { readonly label: string; readonly tokenId: TokenId };
+  readonly no: { readonly label: string; readonly tokenId: TokenId };
+}
+
 export function resolveMarketLifecycle(
   current: MarketLifecycle,
   update: MarketResolutionUpdate,
-  primaryTokenId: TokenId,
-  oppositeTokenId: TokenId | null,
-  primaryOutcome: string,
-  oppositeOutcome: string,
+  market: BinaryTokens,
 ): MarketLifecycle {
-  const winningAssetId = update.winningAssetId;
-  if (!winningAssetId) return current;
-
-  const winningTokenId =
-    winningAssetId === primaryTokenId
-      ? primaryTokenId
-      : oppositeTokenId !== null && winningAssetId === oppositeTokenId
-        ? oppositeTokenId
+  const side =
+    update.winningAssetId === market.yes.tokenId
+      ? "yes"
+      : update.winningAssetId === market.no.tokenId
+        ? "no"
         : null;
-  if (!winningTokenId) return current;
-
-  const winningOutcome =
-    update.winningOutcome ??
-    (winningTokenId === primaryTokenId ? primaryOutcome : oppositeOutcome);
+  if (!side) return current;
 
   return {
     kind: "resolved",
-    winningTokenId,
-    winningOutcome,
+    winningTokenId: market[side].tokenId,
+    winningOutcome: update.winningOutcome ?? market[side].label,
+  };
+}
+
+/** The winning side of a resolved binary market and the label to show. */
+export function resolvedOutcome(
+  market: BinaryTokens,
+  lifecycle: Extract<MarketLifecycle, { kind: "resolved" }>,
+): { readonly side: "yes" | "no" | null; readonly label: string } {
+  const side =
+    lifecycle.winningTokenId === market.yes.tokenId
+      ? "yes"
+      : lifecycle.winningTokenId === market.no.tokenId
+        ? "no"
+        : null;
+  return {
+    side,
+    label: (side && market[side].label) || lifecycle.winningOutcome,
   };
 }
 

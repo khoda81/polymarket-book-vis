@@ -101,7 +101,8 @@ export class ChartController implements PresentationTarget {
 
     this.plotter = new OrderBookPlotter(surface.canvas);
     this.ageView = new AgeStripView({
-      model,
+      pressure: model.pressure,
+      getRows: () => model.pressureRows(this.renderState.ageRowOrientation),
       tuning,
       wallClock,
       canvas: surface.canvas,
@@ -115,11 +116,7 @@ export class ChartController implements PresentationTarget {
 
     this.volumeView = new VolumeBookView({
       plotter: this.plotter,
-      get definition() {
-        return model.definition;
-      },
-      activeTokens: model.activeTokens,
-      getBook: (tokenId) => model.getBook(tokenId),
+      getSeries: () => model.volumeSeries(),
       getTheme: () => this.theme,
       isActive: () => this.renderState.viewMode === "volume",
       requestDraw: () => this.reqDraw("full"),
@@ -215,7 +212,6 @@ export class ChartController implements PresentationTarget {
   private ageRenderState(): AgeStripRenderState {
     return {
       viewMode: this.renderState.viewMode,
-      rowOrientation: this.renderState.ageRowOrientation,
       opacityTimeMs: this.renderState.opacityTimeMs,
       volumePerCssPixel: this.renderState.volumePerCssPixel,
       ghostHalfLifeMs: this.renderState.ghostHalfLifeMs,

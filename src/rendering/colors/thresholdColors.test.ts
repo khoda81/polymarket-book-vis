@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { Event, MarketId } from "@polymarket/client";
+import type { Event, MarketId, TokenId } from "@polymarket/client";
+import { eventMarket } from "../../shared/testing/eventMarkets";
 import {
   buildThresholdPalette,
   semanticYesNeutralNoScale,
@@ -45,10 +46,35 @@ function thresholdMap(
   return result;
 }
 
+/** Parse the raw fixture into markets carrying the given thresholds. */
+function thresholdPalette(
+  event: Event,
+  thresholds: ReadonlyMap<MarketId, number>,
+) {
+  return buildThresholdPalette(
+    event,
+    event.markets.map((market) =>
+      eventMarket(market.id, {
+        yes: {
+          label: "Yes",
+          tokenId: market.outcomes.yes.tokenId as TokenId,
+          price: Number(market.outcomes.yes.price),
+        },
+        no: {
+          label: "No",
+          tokenId: market.outcomes.no.tokenId as TokenId,
+          price: Number(market.outcomes.no.price),
+        },
+        threshold: thresholds.get(market.id) ?? null,
+      }),
+    ),
+  );
+}
+
 describe("nested threshold color geometry", () => {
   test("detects an increasing prefix family", () => {
     const event = thresholdEvent([0.15, 0.4, 0.82]);
-    const palette = buildThresholdPalette(event, thresholdMap(event, 3));
+    const palette = thresholdPalette(event, thresholdMap(event, 3));
     expect(palette?.direction).toBe("prefix");
     expect(palette?.outcomes).toHaveLength(3);
 
@@ -72,7 +98,7 @@ describe("nested threshold color geometry", () => {
 
   test("detects a decreasing suffix family", () => {
     const event = thresholdEvent([0.91, 0.7, 0.42]);
-    const palette = buildThresholdPalette(event, thresholdMap(event, 3));
+    const palette = thresholdPalette(event, thresholdMap(event, 3));
     expect(palette?.direction).toBe("suffix");
 
     const [first, middle, last] = palette!.outcomes;
@@ -86,7 +112,7 @@ describe("nested threshold color geometry", () => {
 
   test("uses the requested shrinking partition geometry for four thresholds", () => {
     const event = thresholdEvent([0.94, 0.83, 0.75, 0.56]);
-    const palette = buildThresholdPalette(event, thresholdMap(event, 4))!;
+    const palette = thresholdPalette(event, thresholdMap(event, 4))!;
     expect(palette.direction).toBe("suffix");
 
     const expectedYes = [[0, 1, 2, 3], [0, 1, 2], [0, 1], [0]];
@@ -111,8 +137,8 @@ describe("nested threshold color geometry", () => {
     } as Event;
 
     const thresholds = thresholdMap(event, 3);
-    const a = buildThresholdPalette(event, thresholds)!;
-    const b = buildThresholdPalette(shuffled, thresholds)!;
+    const a = thresholdPalette(event, thresholds)!;
+    const b = thresholdPalette(shuffled, thresholds)!;
 
     for (const tokenId of a.outcomes.map((outcome) => outcome.yesTokenId)) {
       expect(a.byYesTokenId.get(tokenId)?.hue).toBe(
@@ -128,14 +154,14 @@ describe("nested threshold color geometry", () => {
     expect(
       (() => {
         const event = thresholdEvent([0.5, 0.5, 0.5]);
-        return buildThresholdPalette(event, thresholdMap(event, 3));
+        return thresholdPalette(event, thresholdMap(event, 3));
       })(),
     ).toBeNull();
 
     expect(
       (() => {
         const event = thresholdEvent([0.1, 0.5, 0.9]);
-        return buildThresholdPalette(
+        return thresholdPalette(
           event,
           thresholdMap(event, 3, { 1: undefined }),
         );
@@ -145,7 +171,7 @@ describe("nested threshold color geometry", () => {
     expect(
       (() => {
         const event = thresholdEvent([0.1, 0.5, 0.9]);
-        return buildThresholdPalette(
+        return thresholdPalette(
           event,
           thresholdMap(event, 3, { 0: 2, 1: 2, 2: 9 }),
         );
@@ -161,12 +187,12 @@ describe("nested threshold color geometry", () => {
         negRiskAugmented: true,
       },
     } as Event;
-    expect(buildThresholdPalette(marked, thresholdMap(marked, 3))).toBeNull();
+    expect(thresholdPalette(marked, thresholdMap(marked, 3))).toBeNull();
   });
 
   test("uses gapped non-zero threshold values only as ordering keys", () => {
     const event = thresholdEvent([0.1, 0.5, 0.9]);
-    const palette = buildThresholdPalette(
+    const palette = thresholdPalette(
       event,
       thresholdMap(event, 3, { 0: 10, 1: 30, 2: 70 }),
     );
@@ -193,7 +219,7 @@ describe("nested threshold color geometry", () => {
       })),
     } as Event;
 
-    const palette = buildThresholdPalette(marked, thresholdMap(marked, 3));
+    const palette = thresholdPalette(marked, thresholdMap(marked, 3));
     expect(palette?.direction).toBe("suffix");
     expect(palette?.outcomes.map((outcome) => outcome.yesAtomIndices)).toEqual([
       [0, 1, 2],

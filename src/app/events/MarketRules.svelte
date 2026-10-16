@@ -1,18 +1,19 @@
 <script lang="ts">
-  import type { MarketRule } from "../../domain/markets/eventDetails";
+  import type { EventMarket } from "../../domain/markets/eventDetails";
 
-  export let rules: readonly MarketRule[];
+  /** Markets that carry rules of their own. */
+  export let markets: readonly (EventMarket & { readonly rule: string })[];
 </script>
 
 <details class="cpv-market-rules">
   <summary>
-    {rules.length === 1 ? "Market rules" : `Market rules · ${rules.length}`}
+    {markets.length === 1 ? "Market rules" : `Market rules · ${markets.length}`}
   </summary>
   <div class="cpv-market-rules-list">
-    {#each rules as rule (rule.marketId)}
+    {#each markets as market (market.id)}
       <details class="cpv-market-rule">
-        <summary>{rule.title}</summary>
-        <div class="cpv-market-rule-body">{rule.body}</div>
+        <summary>{market.title}</summary>
+        <div class="cpv-market-rule-body">{market.rule}</div>
       </details>
     {/each}
   </div>

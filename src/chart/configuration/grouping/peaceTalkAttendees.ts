@@ -2,9 +2,11 @@ import {
   inferAgeRowOrientation,
   type AgeRowOrientation,
 } from "../../age/ageStripOrientation";
-import type { EventDetails } from "../../../domain/markets/eventDetails";
+import type {
+  EventDetails,
+  EventMarket,
+} from "../../../domain/markets/eventDetails";
 import { subsetEventDetails } from "../subsetEventDetails";
-import type { Market } from "@polymarket/client";
 
 const EVENT_SLUG =
   "who-will-attend-a-round-of-us-iran-peace-talks-by-december-31-20260812153824803";
@@ -50,12 +52,12 @@ export function peaceTalkAttendeeGroups(
 ): readonly ParticipantMarketGroup[] | null {
   if (details.event.slug !== EVENT_SLUG) return null;
 
-  const marketsByGroup = new Map<string, Market[]>(
+  const marketsByGroup = new Map<string, EventMarket[]>(
     GROUPS.map((group) => [group.key, []]),
   );
-  for (const market of details.event.markets) {
-    const threshold = details.thresholdByMarketId.get(market.id);
-    if (threshold === undefined || !Number.isInteger(threshold)) return null;
+  for (const market of details.markets) {
+    const threshold = market.threshold;
+    if (threshold === null || !Number.isInteger(threshold)) return null;
     const group = GROUPS.find(
       ({ firstThreshold, lastThreshold }) =>
         threshold >= firstThreshold &&

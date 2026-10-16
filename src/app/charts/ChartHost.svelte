@@ -64,11 +64,8 @@
   let pendingRender = $state<ChartPendingState | null>(null);
   let lastRendered = $state<ChartRenderedState | null>(null);
 
-  const orderedAgeControls = $derived(
-    [...definition.controls].sort((a, b) => a.order - b.order),
-  );
   const controlPartition = $derived(
-    partitionMarketVisibility(orderedAgeControls, model.visibilityByMarketId),
+    partitionMarketVisibility(definition.controls, model.visibilityByMarketId),
   );
   const visibleControls = $derived(controlPartition.visible);
   const hiddenControls = $derived(controlPartition.hidden);
@@ -163,7 +160,7 @@
       !!pressureCanvas;
     const tokens = active
       ? (viewMode === "age" ? toggledControls : visibleControls).map(
-          (control) => control.tokenId,
+          (control) => control.market.yes.tokenId,
         )
       : [];
     const visible = viewport.visible;

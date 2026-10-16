@@ -3,7 +3,7 @@ import { AGE_ROW_BAND_PX } from "@/chart/age/ageStripTuning";
 import type { AgeStripTuningStore } from "@/chart/age/ageStripTuningStore";
 import type { WallClock } from "@/shared/wallClock";
 import type { ChartTheme, OrderBookPlotter } from "@/rendering/renderer";
-import type { MarketGroupModel } from "@/chart/model/marketGroupModel.svelte";
+import type { AgeStripPressureState } from "./ageStripPressureState";
 import {
   AGE_TIME_GUTTER_PX,
   type AgeStripGeometry,
@@ -17,21 +17,28 @@ import { drawAgeAxes } from "./ageStripRendering";
 import { GpuPressureLayer, type GpuPressureRow } from "./gpuPressureLayer";
 import { AgeStripClock } from "./ageStripClock";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
-import { agePressureSurface } from "./ageStripPressureProjection";
+import {
+  barPressureSurface,
+  type TrackRenderData,
+} from "./ageStripPressureProjection";
 import { AgeStripTooltip } from "./ageStripTooltip";
-import type { AgeRowOrientation } from "./ageStripOrientation";
-import { signedVolumeColor } from "@/rendering/colors/signedVolume";
+import type { PressureRow } from "./pressureRows";
 
 export interface AgeStripRenderState {
   readonly viewMode: "volume" | "age";
-  readonly rowOrientation: AgeRowOrientation;
   readonly opacityTimeMs: ObservationTime;
   readonly volumePerCssPixel: number;
   readonly ghostHalfLifeMs: number;
 }
 
 export interface AgeStripHost {
-  readonly model: MarketGroupModel;
+  /** Pressure histories, keyed by the tracks rows refer to. */
+  readonly pressure: AgeStripPressureState;
+  /**
+   * Rows to draw, top to bottom, read on every full draw. Each row's DOM label
+   * carries data-row-key.
+   */
+  readonly getRows: () => readonly PressureRow[];
   readonly tuning: AgeStripTuningStore;
   readonly wallClock: WallClock;
   readonly canvas: HTMLCanvasElement;
@@ -44,9 +51,10 @@ export interface AgeStripHost {
 }
 
 /**
- * Age-mode projection of live books plus the shared compressed pressure
- * history. Pressure is drawn by a WebGL2 layer on its own canvas; labels, axes,
- * clocks and tooltips stay on the Canvas2D annotation surface above it.
+ * Age-mode drawing of pressure rows: each row's bars draw half-book pressure
+ * histories around the row centerline. Pressure is drawn by a WebGL2 layer on
+ * its own canvas; labels, axes, clocks and tooltips stay on the Canvas2D
+ * annotation surface above it.
  */
 export class AgeStripView {
   private readonly host: AgeStripHost;
@@ -63,14 +71,7 @@ export class AgeStripView {
       canvasWrap: host.canvasWrap,
       getGeometry: () => this.geometry,
       getViewMode: () => host.getRenderState().viewMode,
-      getTiming: (tokenId) => host.model.pressure.timing(tokenId),
-      getRowOrientation: () => host.getRenderState().rowOrientation,
-      getTokenName: (tokenId) => host.model.marketTokenName(tokenId),
-      getTokenColor: (tokenId, opposite) =>
-        signedVolumeColor(
-          opposite ? 1 : -1,
-          host.model.pressureColorScale(tokenId),
-        ),
+      getTiming: (track) => host.pressure.timing(track),
     });
     this.tooltip = new AgeStripTooltip({
       wallClock: host.wallClock,
@@ -78,15 +79,10 @@ export class AgeStripView {
       getOpacityTime: () => host.getRenderState().opacityTimeMs,
       canvas: host.canvas,
       getViewMode: () => host.getRenderState().viewMode,
-      getRowOrientation: () => host.getRenderState().rowOrientation,
       getVolumePerCssPixel: () => host.getRenderState().volumePerCssPixel,
       getGhostHalfLifeMs: () => host.getRenderState().ghostHalfLifeMs,
-      getPressureBand: (tokenId, price, volume) =>
-        host.model.pressure.bandAtPoint(tokenId, price, volume),
-      getTokenName: (tokenId) => host.model.tokenName(tokenId),
-      getMarketName: (tokenId) => host.model.marketName(tokenId),
-      getPressureColorScale: (tokenId) =>
-        host.model.pressureColorScale(tokenId),
+      getPressureBand: (track, price, volume) =>
+        host.pressure.bandAtPoint(track, price, volume),
     });
 
     host.canvas.addEventListener("wheel", this.handleWheel, {
@@ -96,11 +92,17 @@ export class AgeStripView {
   }
 
   draw(): void {
-    const controls = this.collectControls();
-    const activeControls = controls.filter((label) => this.isActive(label));
-    const rowCount = Math.max(1, activeControls.length);
+    const rows = this.host.getRows();
+    const labelByKey = new Map(
+      this.rowLabels().map((label) => [label.dataset.rowKey, label]),
+    );
+    const labels = rows.map((row) => labelByKey.get(row.key) ?? null);
+    const rowCount = Math.max(1, rows.length);
 
-    this.installAgeLayout(rowCount, activeControls);
+    this.installAgeLayout(
+      rowCount,
+      labels.filter((label) => label !== null),
+    );
 
     const theme = this.host.getTheme();
     const frame = this.host.plotter.beginFrame(
@@ -119,7 +121,7 @@ export class AgeStripView {
       this.host.plotter.height,
       Math.max(1, frame.canvas.height),
     );
-    positionRowControls(activeControls, rasterRows);
+    positionRowControls(labels, rasterRows);
     const geometry: AgeStripGeometry = {
       viewport: {
         l: vp.l,
@@ -127,26 +129,13 @@ export class AgeStripView {
         width: vp.width,
         height: vp.height,
       },
-      rows: activeControls.map((label, index) => {
-        const tokenId = label.dataset.tokenId ?? `missing-row-${index}`;
-        const raster = rasterRows[index]!;
-
-        return {
-          tokenId,
-          oppositeTokenId: this.host.model.oppositeTokenId(tokenId),
-          centerY: raster.centerCss,
-          topY: raster.topCss,
-          bottomY: raster.bottomCss,
-        };
-      }),
+      rows: rows.map((row, index) => ({ row, ...rasterRows[index]! })),
       canvasWidth: this.host.plotter.width,
       canvasHeight: this.host.plotter.height,
     };
     this.renderPressure(geometry);
 
-    drawAgeAxes(frame, activeControls, rasterRows, (tokenId) =>
-      this.host.model.pressureColorScale(tokenId),
-    );
+    drawAgeAxes(frame, geometry.rows);
     this.setGeometry(geometry);
   }
 
@@ -182,77 +171,25 @@ export class AgeStripView {
 
   private renderPressure(geometry: AgeStripGeometry): void {
     const state = this.host.getRenderState();
-    const rowOrientation = state.rowOrientation;
     const dpr = window.devicePixelRatio || 1;
     const scaleY =
       Math.max(1, Math.floor(geometry.canvasHeight * dpr)) /
       geometry.canvasHeight;
     const gpuRows: GpuPressureRow[] = [];
 
-    for (const row of geometry.rows) {
-      const tokenId = row.tokenId;
-      const primaryMemory = this.host.model.pressure.memory(tokenId);
-      const oppositeTokenId = row.oppositeTokenId;
-      const oppositeMemory = oppositeTokenId
-        ? this.host.model.pressure.memory(oppositeTokenId)
-        : undefined;
-      if (!primaryMemory && !oppositeMemory) continue;
+    for (const drawn of geometry.rows) {
+      const surfaces = drawn.row.bars.flatMap((bar) => {
+        const track = this.trackRenderData(bar.track);
+        return track ? [barPressureSurface(bar, track)] : [];
+      });
+      if (surfaces.length === 0) continue;
 
-      const colorScale = this.host.model.pressureColorScale(tokenId);
-      const centerCss =
-        row.centerY ??
-        geometry.viewport.t +
-          ((geometry.rows.indexOf(row) + 0.5) / geometry.rows.length) *
-            geometry.viewport.height;
-      const topCss = row.topY ?? centerCss - AGE_ROW_BAND_PX / 2;
-      const bottomCss = row.bottomY ?? centerCss + AGE_ROW_BAND_PX / 2;
       gpuRows.push({
-        key: tokenId,
-        topDevice: Math.round(topCss * scaleY),
-        centerDevice: Math.round(centerCss * scaleY),
-        bottomDevice: Math.round(bottomCss * scaleY),
-        surfaces: [
-          ...(primaryMemory
-            ? [
-                agePressureSurface(
-                  tokenId,
-                  primaryMemory.renderDataRevision(),
-                  primaryMemory.renderMaxPrice(),
-                  primaryMemory.renderRuns(),
-                  primaryMemory.renderCumulativeShares(),
-                  (revision) =>
-                    primaryMemory.renderFirstChangedRunSince(revision),
-                  primaryMemory.renderCurrentValidThroughMs(),
-                  this.host.model.pressure.renderExtents(tokenId),
-                  this.host.model.pressure.renderExtentRevision(tokenId),
-                  colorScale,
-                  "primary",
-                  rowOrientation,
-                ),
-              ]
-            : []),
-          ...(oppositeMemory
-            ? [
-                agePressureSurface(
-                  oppositeTokenId!,
-                  oppositeMemory.renderDataRevision(),
-                  oppositeMemory.renderMaxPrice(),
-                  oppositeMemory.renderRuns(),
-                  oppositeMemory.renderCumulativeShares(),
-                  (revision) =>
-                    oppositeMemory.renderFirstChangedRunSince(revision),
-                  oppositeMemory.renderCurrentValidThroughMs(),
-                  this.host.model.pressure.renderExtents(oppositeTokenId!),
-                  this.host.model.pressure.renderExtentRevision(
-                    oppositeTokenId!,
-                  ),
-                  colorScale,
-                  "opposite",
-                  rowOrientation,
-                ),
-              ]
-            : []),
-        ],
+        key: drawn.row.key,
+        topDevice: Math.round(drawn.topCss * scaleY),
+        centerDevice: Math.round(drawn.centerCss * scaleY),
+        bottomDevice: Math.round(drawn.bottomCss * scaleY),
+        surfaces,
       });
     }
 
@@ -279,7 +216,7 @@ export class AgeStripView {
     this.tooltip.clear();
     if (this.layoutMode === "volume") return;
 
-    for (const label of this.collectControls())
+    for (const label of this.rowLabels())
       if (label.style.top !== "") label.style.top = "";
 
     let resize = false;
@@ -360,19 +297,27 @@ export class AgeStripView {
     this.layoutMode = "age";
   }
 
-  private collectControls(): HTMLLabelElement[] {
+  private rowLabels(): HTMLLabelElement[] {
     return Array.from(
       this.host.toggles.querySelectorAll<HTMLLabelElement>(
-        "label[data-token-id]",
+        "label[data-row-key]",
       ),
-    ).sort(
-      (a, b) =>
-        Number(a.dataset.marketOrder ?? 0) - Number(b.dataset.marketOrder ?? 0),
     );
   }
 
-  private isActive(label: HTMLLabelElement): boolean {
-    const tokenId = label.dataset.tokenId;
-    return !!tokenId && this.host.model.isTokenActive(tokenId);
+  private trackRenderData(track: string): TrackRenderData | null {
+    const memory = this.host.pressure.memory(track);
+    if (!memory) return null;
+    return {
+      dataRevision: memory.renderDataRevision(),
+      maxPrice: memory.renderMaxPrice(),
+      runs: memory.renderRuns(),
+      cumulativeShares: memory.renderCumulativeShares(),
+      firstChangedRunSince: (revision) =>
+        memory.renderFirstChangedRunSince(revision),
+      currentValidThroughMs: memory.renderCurrentValidThroughMs(),
+      extents: this.host.pressure.renderExtents(track),
+      extentRevision: this.host.pressure.renderExtentRevision(track),
+    };
   }
 }

@@ -2,14 +2,10 @@ import { relativeTimeOffsetDisplay } from "@/shared/math";
 import type { WallClock, WallClockWatch } from "@/shared/wallClock";
 import type { ViewMode } from "@/domain/markets/chartState";
 import {
-  ageRowYDirection,
-  type AgeRowOrientation,
-} from "./ageStripOrientation";
-import {
   AGE_LABEL_HORIZONTAL_INSET_PX,
-  ageStripRowCenterY,
   type AgeStripGeometry,
 } from "./ageStripLayout";
+import { barYDirection } from "./pressureRows";
 
 export interface AgeStripTiming {
   readonly recordingSinceMs: number | null;
@@ -21,10 +17,7 @@ export interface AgeStripClockHost {
   readonly wallClock: WallClock;
   readonly getGeometry: () => AgeStripGeometry | null;
   readonly getViewMode: () => ViewMode;
-  readonly getTiming: (tokenId: string) => AgeStripTiming | undefined;
-  readonly getRowOrientation: () => AgeRowOrientation;
-  readonly getTokenName: (tokenId: string) => string;
-  readonly getTokenColor: (primaryTokenId: string, opposite: boolean) => string;
+  readonly getTiming: (track: string) => AgeStripTiming | undefined;
 }
 
 interface ClockLabel {
@@ -32,7 +25,7 @@ interface ClockLabel {
   readonly text: Text;
 }
 
-/** Token-local clocks update independently of the pressure renderer. */
+/** Per-bar recorder clocks update independently of the pressure renderer. */
 export class AgeStripClock {
   private readonly layer: HTMLDivElement;
   private readonly labels = new Map<string, ClockLabel>();
@@ -71,17 +64,13 @@ export class AgeStripClock {
     const timeX = Math.max(4, vp.l - AGE_LABEL_HORIZONTAL_INSET_PX);
     let nextChangeMs = Infinity;
 
-    for (const row of geometry.rows) {
-      const center = ageStripRowCenterY(geometry, row);
+    for (const drawn of geometry.rows) {
+      const center = drawn.centerCss;
       if (center < vp.t - 24 || center > vp.t + vp.height + 24) continue;
-      for (const [opposite, tokenId] of [
-        [false, row.tokenId],
-        [true, row.oppositeTokenId],
-      ] as const) {
-        if (!tokenId) continue;
-        const timing = this.host.getTiming(tokenId);
-        const color = this.host.getTokenColor(row.tokenId, opposite);
-        const name = this.host.getTokenName(tokenId);
+      for (const bar of drawn.row.bars) {
+        const timing = this.host.getTiming(bar.track);
+        const color = bar.color;
+        const name = `${bar.trackLabel} · ${drawn.row.label}`;
         const since = timing?.recordingSinceMs;
         const age =
           since != null && Number.isFinite(since)
@@ -90,17 +79,14 @@ export class AgeStripClock {
         if (age?.nextChangeMs != null)
           nextChangeMs = Math.min(nextChangeMs, age.nextChangeMs);
 
-        const label = this.label(tokenId, retained);
+        const label = this.label(bar.track, retained);
         const element = label.element;
         if (element.className !== "cpv-token-age")
           element.className = "cpv-token-age";
         if (element.style.color !== color) element.style.color = color;
         const left = `${timeX}px`;
         if (element.style.left !== left) element.style.left = left;
-        const top = `${
-          center +
-          ageRowYDirection(opposite ? 1 : -1, this.host.getRowOrientation()) * 7
-        }px`;
+        const top = `${center + barYDirection(bar) * 7}px`;
         if (element.style.top !== top) element.style.top = top;
 
         const text = age?.text ?? "—";

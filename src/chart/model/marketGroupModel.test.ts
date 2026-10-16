@@ -40,7 +40,18 @@ function definition(
     acceptingOrders: boolean;
   }> = { active: true, acceptingOrders: true },
 ) {
-  const event = {
+  return buildChartDefinition(
+    buildEventDetails(sdkEvent(firstMarketOrderState), {}),
+  );
+}
+
+function sdkEvent(
+  firstMarketOrderState: Readonly<{
+    active: boolean;
+    acceptingOrders: boolean;
+  }> = { active: true, acceptingOrders: true },
+): Event {
+  return {
     id: "1038648",
     title: "Ceasefire",
     display: { sortBy: "ascending" },
@@ -57,6 +68,7 @@ function definition(
         endDate: index === 0 ? "2026-10-16T03:59:00Z" : "2026-10-31T23:59:00Z",
       },
       trading: { feesEnabled: false },
+      sports: {},
       resolution: { umaResolutionStatus: null },
       outcomes: {
         yes: { tokenId: `yes-${id}`, label: "Yes", price: "0.6" },
@@ -64,7 +76,6 @@ function definition(
       },
     })),
   } as unknown as Event;
-  return buildChartDefinition(buildEventDetails(event, {}));
 }
 
 function harness(
@@ -147,34 +158,36 @@ test("partial scrolling preserves hydrated history and recording age without req
   const { model, feeds, hydration, disconnectRecorder } = harness();
   const [a, b] = model.definition.controls;
   try {
-    await model.setViewport([a!.tokenId]);
+    await model.setViewport([a!.market.yes.tokenId]);
     hydration[0]!.progress(recordedHistory(hydration[0]!.ids));
-    const memory = model.pressure.memory(a!.tokenId)!;
+    const memory = model.pressure.memory(a!.market.yes.tokenId)!;
     const snapshot = memory.snapshot();
     expect(memory.renderRuns()[0]!.frozenSteps.length).toBeGreaterThan(0);
-    expect(model.pressure.memory(b!.tokenId)).toBeUndefined();
-    await model.setViewport([b!.tokenId]);
+    expect(model.pressure.memory(b!.market.yes.tokenId)).toBeUndefined();
+    await model.setViewport([b!.market.yes.tokenId]);
     hydration[1]!.progress(recordedHistory(hydration[1]!.ids));
     expect(hydration[1]!.ids).toEqual([
-      b!.tokenId,
-      b!.market.outcomes.no.tokenId!,
+      b!.market.yes.tokenId,
+      b!.market.no.tokenId,
     ]);
-    expect(model.pressure.memory(a!.tokenId)).toBe(memory);
+    expect(model.pressure.memory(a!.market.yes.tokenId)).toBe(memory);
     disconnectRecorder();
     const revision = model.visibilityRevision;
-    await model.setViewport([a!.tokenId]);
+    await model.setViewport([a!.market.yes.tokenId]);
     expect(model.visibilityRevision).toBeGreaterThan(revision);
     model.userSetMarketVisible(a!, false);
     model.userSetMarketVisible(a!, true);
     await model.setViewport([]);
     expect(model.observationPointsByToken.size).toBe(0);
-    await model.setViewport([a!.tokenId, b!.tokenId]);
+    await model.setViewport([a!.market.yes.tokenId, b!.market.yes.tokenId]);
     expect(hydration).toHaveLength(2);
     expect(feeds).toHaveLength(2);
     expect(hydration[0]!.signal.aborted).toBe(false);
-    expect(model.pressure.memory(a!.tokenId)).toBe(memory);
+    expect(model.pressure.memory(a!.market.yes.tokenId)).toBe(memory);
     expect(memory.snapshot()).toEqual(snapshot);
-    expect(model.pressure.timing(a!.tokenId)!.recordingSinceMs).toBe(500);
+    expect(model.pressure.timing(a!.market.yes.tokenId)!.recordingSinceMs).toBe(
+      500,
+    );
     expect(model.visibilityFor(a!.market.id)).toEqual({ kind: "visible" });
   } finally {
     model.destroy();
@@ -185,10 +198,10 @@ test("offscreen feeds keep accumulating observed pressure without a reconnect or
   const { model, feeds, hydration } = harness();
   const control = model.definition.controls[0]!;
   try {
-    await model.setViewport([control.tokenId]);
+    await model.setViewport([control.market.yes.tokenId]);
     const book = emptyTokenBook();
     book.yesToUsd.setLevel(parsePrice("0.6"), 100);
-    feeds[0]!.callbacks.onBookUpdated(control.tokenId, book, {
+    feeds[0]!.callbacks.onBookUpdated(control.market.yes.tokenId, book, {
       kind: "snapshot",
       validThroughMs: 1_000,
     });
@@ -196,18 +209,21 @@ test("offscreen feeds keep accumulating observed pressure without a reconnect or
     expect(feeds[0]!.closed).toBe(false);
     const fresh = emptyTokenBook();
     fresh.yesToUsd.setLevel(parsePrice("0.7"), 50);
-    feeds[0]!.callbacks.onBookUpdated(control.tokenId, fresh, {
+    feeds[0]!.callbacks.onBookUpdated(control.market.yes.tokenId, fresh, {
       kind: "snapshot",
       validThroughMs: 2_000,
     });
-    expect(model.pressure.observationTime(control.tokenId)).toBe(
+    expect(model.pressure.observationTime(control.market.yes.tokenId)).toBe(
       observationTime(2_000),
     );
-    expect(model.pressure.memory(control.tokenId)!.currentLevels()).toEqual([
-      { price: parsePrice("0.7"), shares: 50 },
-    ]);
-    await model.setViewport([control.tokenId]);
-    expect(model.getBook(control.tokenId)).toBe(fresh);
+    expect(
+      model.pressure.memory(control.market.yes.tokenId)!.currentLevels(),
+    ).toEqual([{ price: parsePrice("0.7"), shares: 50 }]);
+    await model.setViewport([control.market.yes.tokenId]);
+    expect(
+      model.volumeSeries().find((series) => series.key === control.market.id)
+        ?.book,
+    ).toBe(fresh);
     expect(hydration).toHaveLength(1);
     expect(feeds).toHaveLength(1);
   } finally {
@@ -220,14 +236,14 @@ test("history survives browsing more than eight cards with the recorder then una
   try {
     for (const card of cards) {
       await card.model.setViewport([
-        card.model.definition.controls[0]!.tokenId,
+        card.model.definition.controls[0]!.market.yes.tokenId,
       ]);
       card.hydration[0]!.progress(recordedHistory(card.hydration[0]!.ids));
       await card.model.setViewport([]);
       card.disconnectRecorder();
     }
     for (const card of cards) {
-      const token = card.model.definition.controls[0]!.tokenId;
+      const token = card.model.definition.controls[0]!.market.yes.tokenId;
       const memory = card.model.pressure.memory(token)!;
       const before = memory.snapshot();
       await card.model.setViewport([token]);
@@ -243,7 +259,7 @@ test("history survives browsing more than eight cards with the recorder then una
 
 test("hydration can finish offscreen but actual removal cancels it and rejects late results", async () => {
   const { model, hydration } = harness();
-  const token = model.definition.controls[0]!.tokenId;
+  const token = model.definition.controls[0]!.market.yes.tokenId;
   await model.setViewport([token]);
   await model.setViewport([]);
   expect(hydration[0]!.signal.aborted).toBe(false);
@@ -262,7 +278,9 @@ test("late fee preparation cannot resurrect a destroyed group", async () => {
   const { model, feeds } = harness(
     new Promise<void>((resolve) => (finish = resolve)),
   );
-  const pending = model.setViewport([model.definition.controls[0]!.tokenId]);
+  const pending = model.setViewport([
+    model.definition.controls[0]!.market.yes.tokenId,
+  ]);
   const offscreen = model.setViewport([]);
   model.destroy();
   finish();
@@ -283,14 +301,14 @@ test("markets excluded from live-order feeds default hidden without being discar
       kind: "hidden",
       reason: "unavailable-default",
     });
-    expect(model.activeTokens.has(control.tokenId)).toBe(false);
+    expect(model.visibilityFor(control.market.id).kind).toBe("hidden");
 
-    await model.setViewport([control.tokenId]);
+    await model.setViewport([control.market.yes.tokenId]);
     expect(feeds).toHaveLength(0);
 
     model.userSetMarketVisible(control, true);
     expect(model.visibilityFor(control.market.id)).toEqual({ kind: "visible" });
-    expect(model.activeTokens.has(control.tokenId)).toBe(true);
+    expect(model.visibilityFor(control.market.id).kind).toBe("visible");
     expect(feeds).toHaveLength(0);
   } finally {
     model.destroy();
@@ -301,11 +319,14 @@ test("resolution survives viewport release, stale metadata and explicit revealin
   const { model, markets, feeds } = harness();
   const control = model.definition.controls[0]!;
   try {
-    await model.setViewport([control.tokenId]);
+    await model.setViewport([control.market.yes.tokenId]);
     feeds[0]!.callbacks.onMarketResolved({
       conditionId: control.market.conditionId!,
-      assetIds: [control.tokenId, control.market.outcomes.no.tokenId!] as never,
-      winningAssetId: control.tokenId as never,
+      assetIds: [
+        control.market.yes.tokenId,
+        control.market.no.tokenId,
+      ] as never,
+      winningAssetId: control.market.yes.tokenId as never,
       winningOutcome: "Yes",
       resolvedAtMs: 2_000,
     });
@@ -315,20 +336,16 @@ test("resolution survives viewport release, stale metadata and explicit revealin
     expect(model.lifecycleFor(control.market.id).kind).toBe("resolved");
     expect(markets.resolvedAtMs.get(control.market.id)).toBe(2_000);
     model.userSetMarketVisible(control, true);
-    await model.setViewport([control.tokenId]);
+    await model.setViewport([control.market.yes.tokenId]);
     expect(
-      model.pressure
-        .memory(control.market.outcomes.no.tokenId!)!
-        .isResolvedUnbounded(),
+      model.pressure.memory(control.market.no.tokenId)!.isResolvedUnbounded(),
     ).toBe(true);
     expect(feeds).toHaveLength(1);
     expect(feeds[0]!.closed).toBe(true);
     await model.setViewport([]);
-    await model.setViewport([control.tokenId]);
+    await model.setViewport([control.market.yes.tokenId]);
     expect(
-      model.pressure
-        .memory(control.market.outcomes.no.tokenId!)!
-        .isResolvedUnbounded(),
+      model.pressure.memory(control.market.no.tokenId)!.isResolvedUnbounded(),
     ).toBe(true);
     expect(model.visibilityFor(control.market.id).kind).toBe("visible");
   } finally {
@@ -341,23 +358,27 @@ test("an explicit visible choice survives empty books and a subsequent resolutio
   const control = model.definition.controls[0]!;
   try {
     model.userSetMarketVisible(control, true);
-    await model.setViewport([control.tokenId]);
-    feeds[0]!.callbacks.onBookUpdated(control.tokenId, emptyTokenBook(), {
-      kind: "snapshot",
-      validThroughMs: 1_000,
-    });
+    await model.setViewport([control.market.yes.tokenId]);
+    feeds[0]!.callbacks.onBookUpdated(
+      control.market.yes.tokenId,
+      emptyTokenBook(),
+      {
+        kind: "snapshot",
+        validThroughMs: 1_000,
+      },
+    );
     expect(model.visibilityFor(control.market.id).kind).toBe("visible");
     feeds[0]!.callbacks.onMarketResolved({
       conditionId: control.market.conditionId!,
-      assetIds: [control.tokenId] as never,
-      winningAssetId: control.tokenId as never,
+      assetIds: [control.market.yes.tokenId] as never,
+      winningAssetId: control.market.yes.tokenId as never,
       winningOutcome: "Yes",
       resolvedAtMs: 2_000,
     });
     expect(model.visibilityFor(control.market.id).kind).toBe("visible");
-    expect(model.pressure.memory(control.tokenId)!.validThroughMs()).toBe(
-      2_000,
-    );
+    expect(
+      model.pressure.memory(control.market.yes.tokenId)!.validThroughMs(),
+    ).toBe(2_000);
   } finally {
     model.destroy();
   }
@@ -371,14 +392,15 @@ test("metadata alone recovers outcomes and automatic hiding without erasing hist
     model.userSetMarketVisible(a!, true);
     model.userSetMarketVisible(c!, false);
     await model.setViewport(
-      original.controls.map((control) => control.tokenId),
+      original.controls.map((control) => control.market.yes.tokenId),
     );
     hydration[0]!.progress(recordedHistory(hydration[0]!.ids));
-    const memory = model.pressure.memory(a!.tokenId)!;
+    const memory = model.pressure.memory(a!.market.yes.tokenId)!;
     const frontier = memory.validThroughMs();
+    const event = sdkEvent();
     const freshEvent: Event = {
-      ...original.event,
-      markets: original.event.markets.map((market) => ({
+      ...event,
+      markets: event.markets.map((market) => ({
         ...market,
         state: { ...market.state, closed: true, acceptingOrders: false },
         resolution: {
@@ -411,12 +433,10 @@ test("metadata alone recovers outcomes and automatic hiding without erasing hist
       reason: "user",
     });
     expect(feeds.every((feed) => feed.closed)).toBe(true);
-    expect(model.pressure.memory(a!.tokenId)).toBe(memory);
+    expect(model.pressure.memory(a!.market.yes.tokenId)).toBe(memory);
     expect(memory.validThroughMs()).toBe(frontier);
     expect(
-      model.pressure
-        .memory(a!.market.outcomes.no.tokenId!)!
-        .isResolvedUnbounded(),
+      model.pressure.memory(a!.market.no.tokenId)!.isResolvedUnbounded(),
     ).toBe(true);
     expect(hydration).toHaveLength(1);
     expect(markets.resolvedAtMs.has(a!.market.id)).toBe(false);
@@ -438,9 +458,9 @@ test("metadata-only tradability changes stop and restart feeds while retaining i
   const original = model.definition;
   const control = original.controls[0]!;
   try {
-    await model.setViewport([control.tokenId]);
+    await model.setViewport([control.market.yes.tokenId]);
     hydration[0]!.progress(recordedHistory(hydration[0]!.ids));
-    const memory = model.pressure.memory(control.tokenId);
+    const memory = model.pressure.memory(control.market.yes.tokenId);
     model.updateDefinition(
       definition({ active: false, acceptingOrders: false }),
     );
@@ -448,8 +468,8 @@ test("metadata-only tradability changes stop and restart feeds while retaining i
     expect(feeds[0]!.closed).toBe(true);
     model.updateDefinition(original);
     await Promise.resolve();
-    expect(feeds.at(-1)!.started).toContain(control.tokenId);
-    expect(model.pressure.memory(control.tokenId)).toBe(memory);
+    expect(feeds.at(-1)!.started).toContain(control.market.yes.tokenId);
+    expect(model.pressure.memory(control.market.yes.tokenId)).toBe(memory);
     expect(hydration).toHaveLength(1);
   } finally {
     model.destroy();
@@ -460,10 +480,10 @@ test("observation points disappear offscreen while user choices remain shared", 
   const { model, markets, feeds } = harness();
   const control = model.definition.controls[0]!;
   try {
-    await model.setViewport([control.tokenId]);
+    await model.setViewport([control.market.yes.tokenId]);
     const book = emptyTokenBook();
     book.yesToUsd.setLevel(parsePrice("0.6"), 100);
-    feeds[0]!.callbacks.onBookUpdated(control.tokenId, book, {
+    feeds[0]!.callbacks.onBookUpdated(control.market.yes.tokenId, book, {
       kind: "snapshot",
       validThroughMs: 1_000,
     });
@@ -471,7 +491,7 @@ test("observation points disappear offscreen while user choices remain shared", 
     await model.setViewport([]);
     expect(model.observationPointsByToken.size).toBe(0);
     markets.userSetVisible(control.market.id, false);
-    expect(model.activeTokens.has(control.tokenId)).toBe(false);
+    expect(model.visibilityFor(control.market.id).kind).toBe("hidden");
     model.updateDefinition(definition());
     expect(model.visibilityFor(control.market.id)).toEqual({
       kind: "hidden",
