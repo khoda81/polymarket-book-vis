@@ -1,4 +1,5 @@
-import type { Event, MarketId, TokenId } from "@polymarket/client";
+import type { MarketId, TokenId } from "@polymarket/client";
+import type { EventInfo, EventMarket } from "../../domain/markets/eventDetails";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
   type SignedVolumeColorScale,
@@ -28,35 +29,22 @@ export interface NegRiskPalette {
  * Invalid/incomplete external event data never leaks into the renderer: callers
  * either receive one coherent NegRiskPalette or null.
  */
-export function buildNegRiskPalette(event: Event): NegRiskPalette | null {
+export function buildNegRiskPalette(
+  event: Pick<EventInfo, "id" | "trading">,
+  markets: readonly EventMarket[],
+): NegRiskPalette | null {
   if (event.trading.negRisk !== true) return null;
   if (event.trading.negRiskAugmented === true) return null;
 
-  const candidates = event.markets
-    .filter((market) => market.state.negRisk === true)
-    .map((market) => {
-      const yesTokenId = market.outcomes.yes.tokenId;
-      const noTokenId = market.outcomes.no.tokenId;
-      if (!yesTokenId || !noTokenId) return null;
-      return {
-        marketId: market.id,
-        yesTokenId,
-        noTokenId,
-      };
-    });
-
-  if (
-    candidates.length < 2 ||
-    candidates.some((candidate) => candidate === null)
-  )
-    return null;
-
-  const slots = candidates
-    .filter(
-      (candidate): candidate is NonNullable<typeof candidate> =>
-        candidate !== null,
-    )
+  const slots = markets
+    .filter((market) => market.negRisk)
+    .map((market) => ({
+      marketId: market.id,
+      yesTokenId: market.yes.tokenId,
+      noTokenId: market.no.tokenId,
+    }))
     .sort((a, b) => compareStableIds(a.marketId, b.marketId));
+  if (slots.length < 2) return null;
 
   if (new Set(slots.map((slot) => slot.marketId)).size !== slots.length)
     return null;

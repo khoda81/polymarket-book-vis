@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Event, Market, PublicClient, Series } from "@polymarket/client";
+import { buildEventDetails } from "../markets/eventDetails";
 import {
   mergeSeriesEvents,
   seriesCurrentMarket,
@@ -11,6 +12,9 @@ function market(id: string, name: string, endDate?: string): Market {
     id,
     groupItemTitle: name,
     state: { endDate },
+    resolution: { umaResolutionStatus: null },
+    sports: {},
+    trading: {},
     outcomes: { yes: { tokenId: `yes-${id}` }, no: { tokenId: `no-${id}` } },
   } as unknown as Market;
 }
@@ -100,10 +104,13 @@ test("current navigation skips stale open deadlines without changing their lifec
       market("unknown", "Undated"),
     ]),
   ];
-  expect(String(seriesCurrentMarket(events, now, () => true))).toBe("next");
+  const markets = events.flatMap(
+    (value) => buildEventDetails(value, {}).markets,
+  );
+  expect(String(seriesCurrentMarket(markets, now, () => true))).toBe("next");
   expect(
     String(
-      seriesCurrentMarket(events, now, (market) => market.id === "unknown"),
+      seriesCurrentMarket(markets, now, (market) => market.id === "unknown"),
     ),
   ).toBe("unknown");
   expect(events[0]!.markets[0]!.state.closed).toBeUndefined();
@@ -126,7 +133,7 @@ test("new undated open events stay reachable after refresh", async () => {
   await pager.load("newer");
   open.push(event("new-undated", [market("undated", "Undated")]));
   const refreshed = await pager.refresh();
-  expect(refreshed[0]!.event.markets[0]!.state.endDate).toBeUndefined();
+  expect(refreshed[0]!.markets[0]!.resolutionMs).toBeNull();
 });
 
 test("failed metadata loading retries the same page before advancing its cursor", async () => {
@@ -157,7 +164,7 @@ test("failed metadata loading retries the same page before advancing its cursor"
     "Temporary metadata failure",
   );
   expect(pager.hasMore("newer")).toBe(true);
-  expect((await pager.load("newer"))[0]!.event.markets).toHaveLength(2);
+  expect((await pager.load("newer"))[0]!.markets).toHaveLength(2);
   expect(pageCalls).toBe(2);
   expect(pager.hasMore("newer")).toBe(false);
 });

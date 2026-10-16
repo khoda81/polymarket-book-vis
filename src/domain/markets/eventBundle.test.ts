@@ -18,6 +18,9 @@ function fakeEvent(): Event {
         description: "Specific first-market rule.",
         icon: "https://cdn.example/event.png?size=32",
         state: {},
+        resolution: { umaResolutionStatus: null },
+        sports: {},
+        trading: {},
         outcomes: {
           yes: { label: "Yes", tokenId: "yes-1", price: "0.7" },
           no: { label: "No", tokenId: "no-1", price: "0.3" },
@@ -30,6 +33,9 @@ function fakeEvent(): Event {
         description: "Rules",
         icon: "https://cdn.example/second.png",
         state: {},
+        resolution: { umaResolutionStatus: null },
+        sports: {},
+        trading: {},
         outcomes: {
           yes: { label: "Yes", tokenId: "yes-2", price: "0.2" },
           no: { label: "No", tokenId: "no-2", price: "0.8" },
@@ -44,11 +50,25 @@ test("presentation uses normalized SDK metadata and dedupes artwork", () => {
   const bundle = buildEventDetails(event, { markets: [] });
 
   expect(bundle.presentation.description).toBeNull();
-  expect(bundle.presentation.marketRules).toEqual([
+  expect(
+    bundle.markets.map(({ id, title, rule, iconUrl }) => ({
+      id,
+      title,
+      rule,
+      iconUrl,
+    })),
+  ).toEqual([
     {
-      marketId: event.markets[0]!.id,
+      id: event.markets[0]!.id,
       title: "First",
-      body: "Specific first-market rule.",
+      rule: "Specific first-market rule.",
+      iconUrl: null,
+    },
+    {
+      id: event.markets[1]!.id,
+      title: "Second",
+      rule: null,
+      iconUrl: "https://cdn.example/second.png",
     },
   ]);
 });
@@ -88,13 +108,11 @@ test("raw Gamma data is reduced to missing market annotations", () => {
     preview: "Official figure at the deadline",
     body: "This market resolves according to the official published figure.",
   });
-  expect(bundle.presentation.marketRules).toEqual([]);
-  expect(bundle.thresholdByMarketId.get(event.markets[0]!.id)).toBe(0);
-  expect(bundle.thresholdByMarketId.get(event.markets[1]!.id)).toBe(1);
-  expect(bundle.resolutionMsByMarketId.get(event.markets[0]!.id)).toBe(
-    Date.parse("2026-12-31T23:59:00Z"),
-  );
-  expect(bundle.resolutionMsByMarketId.get(event.markets[1]!.id)).toBe(
-    Date.parse("2027-01-02"),
-  );
+  const byId = new Map(bundle.markets.map((market) => [market.id, market]));
+  const [first, second] = event.markets.map((market) => byId.get(market.id)!);
+  expect(bundle.markets.map((market) => market.rule)).toEqual([null, null]);
+  expect(first!.threshold).toBe(0);
+  expect(second!.threshold).toBe(1);
+  expect(first!.resolutionMs).toBe(Date.parse("2026-12-31T23:59:00Z"));
+  expect(second!.resolutionMs).toBe(Date.parse("2027-01-02"));
 });

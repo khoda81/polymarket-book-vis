@@ -5,6 +5,7 @@ import {
 } from "@/chart/age/ageStripOrientation";
 import type { PressureBar, PressureRow } from "@/chart/age/pressureRows";
 import type { ChartMarketControl } from "@/chart/configuration/chartDefinition";
+import type { EventMarket, MarketToken } from "@/domain/markets/eventDetails";
 import {
   signedVolumeColor,
   type SignedVolumeColorScale,
@@ -23,28 +24,24 @@ export function marketPressureRow(
   scale: SignedVolumeColorScale,
   orientation: AgeRowOrientation,
 ): PressureRow {
-  const { yes, no } = control.market.outcomes;
+  const { market } = control;
   const bar = (
-    track: TokenId,
-    trackLabel: string,
-    quoteLabel: string,
+    track: MarketToken,
+    quoted: MarketToken,
     colorSign: -1 | 1,
   ): PressureBar => ({
-    track,
-    trackLabel,
+    track: track.tokenId,
+    trackLabel: track.label,
     color: signedVolumeColor(colorSign, scale),
     side: ageRowYDirection(colorSign, orientation) < 0 ? "above" : "below",
     priceAxis: colorSign < 0 ? "descending" : "ascending",
-    quote: { label: quoteLabel, price: complement },
+    quote: { label: quoted.label, price: complement },
   });
 
   return {
-    key: control.market.id,
-    label: control.title,
-    bars: [
-      bar(control.tokenId, yes.label, no.label, -1),
-      ...(no.tokenId ? [bar(no.tokenId, no.label, yes.label, 1)] : []),
-    ],
+    key: market.id,
+    label: market.title,
+    bars: [bar(market.yes, market.no, -1), bar(market.no, market.yes, 1)],
   };
 }
 
@@ -53,11 +50,10 @@ export function marketPressureRow(
  * Resolution makes the winner's side unbounded.
  */
 export function pressureTrackForToken(
-  primaryTokenId: TokenId,
-  oppositeTokenId: TokenId | null,
+  market: Pick<EventMarket, "yes" | "no">,
   tokenId: TokenId,
 ): TokenId | null {
-  if (tokenId === primaryTokenId) return oppositeTokenId;
-  if (oppositeTokenId && tokenId === oppositeTokenId) return primaryTokenId;
+  if (tokenId === market.yes.tokenId) return market.no.tokenId;
+  if (tokenId === market.no.tokenId) return market.yes.tokenId;
   return null;
 }

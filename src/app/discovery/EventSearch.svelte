@@ -2,15 +2,16 @@
   import { onMount } from "svelte";
   import { buildChartDefinition } from "../../chart/configuration/chartDefinition";
   import {
+    buildEventDetails,
     loadEventDetails,
     type EventDetails,
   } from "../../domain/markets/eventDetails";
   import {
     initialMarketLifecycle,
+    resolvedOutcome,
     summarizeEventMarketStatus,
   } from "../../domain/markets/marketLifecycle";
   import { eventTimingDisplay } from "../../domain/markets/eventTiming";
-  import { marketTitle } from "../../domain/markets/marketMetadata";
   import { fmtVol } from "../../shared/math";
   import { errorMessage } from "../../shared/errors";
   import {
@@ -126,22 +127,13 @@
   }
 
   function resolvedRowsFromEvent(event: Event): ResolvedRow[] {
-    return event.markets.flatMap((market) => {
-      const lifecycle = initialMarketLifecycle(market);
+    return buildEventDetails(event, {}).markets.flatMap((market) => {
+      const lifecycle = market.reportedLifecycle;
       if (lifecycle.kind !== "resolved") return [];
 
-      const primary = lifecycle.winningTokenId === market.outcomes.yes.tokenId;
-      const label = primary
-        ? market.outcomes.yes.label || lifecycle.winningOutcome
-        : market.outcomes.no.label || lifecycle.winningOutcome;
-
+      const { side, label } = resolvedOutcome(market, lifecycle);
       return [
-        {
-          title: marketTitle(market) ?? label,
-          label,
-          primary,
-          color: null,
-        },
+        { title: market.title, label, primary: side === "yes", color: null },
       ];
     });
   }
@@ -149,29 +141,21 @@
   function resolvedRowsFromDetails(details: EventDetails): ResolvedRow[] {
     const definition = buildChartDefinition(details);
     return definition.controls.flatMap((control) => {
-      const lifecycle = control.lifecycle;
+      const lifecycle = control.market.reportedLifecycle;
       if (lifecycle.kind !== "resolved") return [];
 
-      const primary = lifecycle.winningTokenId === control.tokenId;
-      const opposite =
-        control.market.outcomes.no.tokenId !== null &&
-        lifecycle.winningTokenId === control.market.outcomes.no.tokenId;
-      const label = primary
-        ? control.market.outcomes.yes.label || lifecycle.winningOutcome
-        : opposite
-          ? control.market.outcomes.no.label || lifecycle.winningOutcome
-          : lifecycle.winningOutcome;
-
+      const { side, label } = resolvedOutcome(control.market, lifecycle);
       return [
         {
-          title: control.title,
+          title: control.market.title,
           label,
-          primary,
-          color: primary
-            ? control.primaryColor
-            : opposite
-              ? control.oppositeColor
-              : null,
+          primary: side === "yes",
+          color:
+            side === "yes"
+              ? control.primaryColor
+              : side === "no"
+                ? control.oppositeColor
+                : null,
         },
       ];
     });

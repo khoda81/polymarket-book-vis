@@ -5,8 +5,11 @@ import {
   type TokenId,
 } from "@polymarket/client";
 import { MAX_TIMER_DELAY_MS } from "../../shared/timers";
-import { loadEventDetails, type EventDetails } from "./eventDetails";
-import { initialMarketLifecycle } from "./marketLifecycle";
+import {
+  loadEventDetails,
+  marketTokenIds,
+  type EventDetails,
+} from "./eventDetails";
 
 export const EVENT_METADATA_REFRESH_MS = 60_000;
 export const EVENT_METADATA_MIN_REFRESH_MS = 5_000;
@@ -179,20 +182,14 @@ export class EventMetadataCoordinator {
 }
 
 function eventTokenIds(details: EventDetails): ReadonlySet<TokenId> {
-  return new Set(
-    details.event.markets.flatMap((market) =>
-      [market.outcomes.yes.tokenId, market.outcomes.no.tokenId].filter(
-        (id): id is TokenId => id !== null,
-      ),
-    ),
-  );
+  return new Set(details.markets.flatMap(marketTokenIds));
 }
 
 function allResolved(details: EventDetails): boolean {
   return (
-    details.event.markets.length > 0 &&
-    details.event.markets.every(
-      (market) => initialMarketLifecycle(market).kind === "resolved",
+    details.markets.length > 0 &&
+    details.markets.every(
+      (market) => market.reportedLifecycle.kind === "resolved",
     )
   );
 }

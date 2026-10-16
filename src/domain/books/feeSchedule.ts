@@ -3,7 +3,7 @@ import {
   fetchMarketInfo,
   resolveConditionByToken,
 } from "@polymarket/client/actions";
-import type { Market, PublicClient, TokenId } from "@polymarket/client";
+import type { PublicClient, TokenId } from "@polymarket/client";
 
 export interface FeeSchedule {
   readonly rateNumerator: bigint;
@@ -20,6 +20,15 @@ export const NO_FEE_SCHEDULE: FeeSchedule = Object.freeze({
 export interface FeeScheduleResolver {
   prepareTokens(tokenIds: readonly TokenId[]): Promise<void>;
   scheduleForToken(tokenId: TokenId): FeeSchedule;
+}
+
+/** The market fields fee priming needs. */
+export interface FeeScheduledMarket {
+  readonly id: string;
+  readonly conditionId: string | null;
+  readonly yes: { readonly tokenId: TokenId };
+  readonly no: { readonly tokenId: TokenId };
+  readonly feeSchedule: FeeSchedule | null;
 }
 
 interface CachedMarketFee {
@@ -40,7 +49,7 @@ export class ClobFeeScheduleResolver implements FeeScheduleResolver {
 
   constructor(
     private readonly client: PublicClient,
-    markets: readonly Market[] = [],
+    markets: readonly FeeScheduledMarket[] = [],
   ) {
     this.primeMarkets(markets);
   }
@@ -50,20 +59,15 @@ export class ClobFeeScheduleResolver implements FeeScheduleResolver {
    * This is the normal path; token/condition lookups below are only a fallback
    * for callers that genuinely do not have market metadata.
    */
-  primeMarkets(markets: readonly Market[]): void {
+  primeMarkets(markets: readonly FeeScheduledMarket[]): void {
     for (const market of markets) this.primeMarket(market);
   }
 
-  primeMarket(market: Market): boolean {
-    const schedule = feeScheduleFromMarket(market);
+  primeMarket(market: FeeScheduledMarket): boolean {
+    const schedule = market.feeSchedule;
     if (!schedule) return false;
 
-    const tokenIds = [
-      market.outcomes.yes.tokenId,
-      market.outcomes.no.tokenId,
-    ].filter((tokenId): tokenId is TokenId => tokenId !== null);
-    if (tokenIds.length === 0) return false;
-
+    const tokenIds = [market.yes.tokenId, market.no.tokenId];
     const cached: CachedMarketFee = {
       conditionId: market.conditionId ?? `market:${market.id}`,
       schedule,

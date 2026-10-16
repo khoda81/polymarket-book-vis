@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
-import type { Event, Market, MarketId } from "@polymarket/client";
-import type { EventDetails } from "../../domain/markets/eventDetails";
+import type {
+  EventDetails,
+  EventInfo,
+} from "../../domain/markets/eventDetails";
+import { eventMarket } from "../../shared/testing/eventMarkets";
 import { eventMarketGroups } from "./eventMarketGroups";
 
 const ATTENDEE_ROWS = [
@@ -13,52 +16,25 @@ const ATTENDEE_ROWS = [
 ] as const;
 
 function attendeeBundle(): EventDetails {
-  const markets = ATTENDEE_ROWS.map(
-    (row, index) =>
-      ({
-        id: row.id,
-        question: `Will ${row.title} attend a US x Iran diplomatic meeting by December 31, 2026?`,
-        groupItemTitle: row.title,
-        state: { active: true, closed: false, acceptingOrders: true },
-        resolution: { umaResolutionStatus: null },
-        outcomes: {
-          yes: {
-            label: "Yes",
-            tokenId: `yes-${row.id}`,
-            price: String(0.1 + index / 20),
-          },
-          no: {
-            label: "No",
-            tokenId: `no-${row.id}`,
-            price: String(0.9 - index / 20),
-          },
-        },
-      }) as unknown as Market,
-  );
   const event = {
     id: "841086",
     slug: "who-will-attend-a-round-of-us-iran-peace-talks-by-december-31-20260812153824803",
     title: "Who will attend a round of US-Iran peace talks by December 31?",
     trading: { negRisk: false, negRiskAugmented: false },
     display: { sortBy: "price" },
-    markets,
-  } as unknown as Event;
+  } as unknown as EventInfo;
 
   return {
     event,
-    thresholdByMarketId: new Map<MarketId, number>(
-      ATTENDEE_ROWS.map((row) => [row.id as MarketId, row.threshold]),
+    presentation: { iconUrl: null, description: null },
+    markets: ATTENDEE_ROWS.map((row) =>
+      eventMarket(row.id, {
+        title: row.title,
+        groupItemTitle: row.title,
+        threshold: row.threshold,
+        rule: `Rules for ${row.title}`,
+      }),
     ),
-    resolutionMsByMarketId: new Map(),
-    presentation: {
-      iconUrl: null,
-      description: null,
-      marketRules: markets.map((market) => ({
-        marketId: market.id,
-        title: market.groupItemTitle!,
-        body: `Rules for ${market.groupItemTitle}`,
-      })),
-    },
   };
 }
 
@@ -70,10 +46,8 @@ test("uses the live peace-talk attendee ordering as three market groups", () => 
       key: group.key,
       label: group.label,
       orientation: group.defaultAgeRowOrientation,
-      marketIds: group.bundle.event.markets.map((market) => String(market.id)),
-      ruleIds: group.bundle.presentation.marketRules.map((rule) =>
-        String(rule.marketId),
-      ),
+      marketIds: group.bundle.markets.map((market) => String(market.id)),
+      rules: group.bundle.markets.map((market) => market.rule),
     })),
   ).toEqual([
     {
@@ -81,21 +55,24 @@ test("uses the live peace-talk attendee ordering as three market groups", () => 
       label: "U.S. officials",
       orientation: "positive-above",
       marketIds: ["3553880", "3553885"],
-      ruleIds: ["3553880", "3553885"],
+      rules: ["Rules for Donald Trump", "Rules for Pete Hegseth"],
     },
     {
       key: "iranian-officials",
       label: "Iranian officials",
       orientation: "positive-above",
       marketIds: ["3553886", "3553893"],
-      ruleIds: ["3553886", "3553893"],
+      rules: ["Rules for Abbas Araghchi", "Rules for Esmail Qaani"],
     },
     {
       key: "other-participants",
       label: "Other participants",
       orientation: "positive-above",
       marketIds: ["3553894", "3902310"],
-      ruleIds: ["3553894", "3902310"],
+      rules: [
+        "Rules for Badr bin Hamad Al Busaidi",
+        "Rules for Mohammed bin Salman",
+      ],
     },
   ]);
 });
@@ -109,9 +86,11 @@ test("does not apply attendee ordering to another event or incomplete metadata",
     }),
   ).toHaveLength(1);
 
-  const thresholds = new Map(bundle.thresholdByMarketId);
-  thresholds.delete(bundle.event.markets[0]!.id);
+  const [first, ...rest] = bundle.markets;
   expect(
-    eventMarketGroups({ ...bundle, thresholdByMarketId: thresholds }),
+    eventMarketGroups({
+      ...bundle,
+      markets: [{ ...first!, threshold: null }, ...rest],
+    }),
   ).toHaveLength(1);
 });

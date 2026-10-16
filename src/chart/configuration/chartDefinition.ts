@@ -1,14 +1,8 @@
 import { marketColor, marketHue } from "../../shared/math";
 import {
-  initialMarketLifecycle,
-  type MarketLifecycle,
-} from "../../domain/markets/marketLifecycle";
-import {
-  marketTitle,
   normalizeDisplayText,
   sameDisplayTitle,
 } from "../../domain/markets/marketMetadata";
-import { isActiveOrderMarket } from "../../domain/markets/marketTradability";
 import { buildNegRiskPalette } from "../../rendering/colors/negRiskColors";
 import {
   buildThresholdPalette,
@@ -19,87 +13,59 @@ import {
   signedVolumeColor,
   type SignedVolumeColorScale,
 } from "../../rendering/colors/signedVolume";
-import type { EventDetails } from "../../domain/markets/eventDetails";
-import type { Event, Market, MarketId, TokenId } from "@polymarket/client";
+import type {
+  EventDetails,
+  EventInfo,
+  EventMarket,
+} from "../../domain/markets/eventDetails";
+import type { EventId, TokenId } from "@polymarket/client";
 
 export interface ChartMarketControl {
-  readonly market: Market;
-  readonly tokenId: TokenId;
-  readonly lifecycle: MarketLifecycle;
-  readonly title: string;
-  readonly iconUrl: string | null;
-  readonly dotColor: string;
+  readonly market: EventMarket;
   readonly primaryColor: string;
   readonly oppositeColor: string;
-  readonly order: number;
-  readonly resolutionMs: number | null;
-  readonly ageLabel: string;
-  readonly suppressAgeIdentity: boolean;
+  /** Age-mode row label, or null when it would only repeat the event title. */
+  readonly ageLabel: string | null;
 }
 
 export interface ChartDefinition {
-  readonly event: Event;
+  readonly eventId: EventId;
+  /** Controls in display order. */
   readonly controls: readonly ChartMarketControl[];
   readonly pressureScales: ReadonlyMap<TokenId, SignedVolumeColorScale>;
 }
 
 export function buildChartDefinition(bundle: EventDetails): ChartDefinition {
-  const { event } = bundle;
-  const eligible = event.markets.flatMap((market) => {
-    const tokenId = market.outcomes.yes.tokenId;
-    if (!tokenId) return [];
-
-    const lifecycle = initialMarketLifecycle(market);
-    // Keep displayable metadata; trading eligibility belongs to live feeds.
-    return [{ market, tokenId, lifecycle }];
-  });
-  const markets = eligible.map(({ market }) => market);
-  const chartEvent: Event = { ...event, markets };
-  const pressureScales = buildPressureScales(
-    chartEvent,
-    bundle.thresholdByMarketId,
-  );
-  const controls = eligible.map(({ market, tokenId, lifecycle }, index) => {
-    const scale = pressureScales.get(tokenId);
+  const { event, markets } = bundle;
+  const pressureScales = buildPressureScales(event, markets);
+  const controls = markets.map((market, index): ChartMarketControl => {
+    const scale = pressureScales.get(market.yes.tokenId);
     const primaryColor = scale
       ? signedVolumeColor(1, scale)
       : marketColor(event.id, index);
     const oppositeColor = scale ? signedVolumeColor(-1, scale) : primaryColor;
-    const title = marketTitle(market) ?? "(untitled)";
-    const suppressAgeIdentity =
-      markets.length === 1 && sameDisplayTitle(title, event.title);
+    const repeatsEvent =
+      markets.length === 1 && sameDisplayTitle(market.title, event.title);
 
     return {
       market,
-      tokenId,
-      lifecycle,
-      title,
-      iconUrl: distinctMarketArtworkUrl(market, bundle.presentation.iconUrl),
-      dotColor: primaryColor,
       primaryColor,
       oppositeColor,
-      order: index,
-      resolutionMs: bundle.resolutionMsByMarketId.get(market.id) ?? null,
-      ageLabel: suppressAgeIdentity ? "" : title,
-      suppressAgeIdentity,
+      ageLabel: repeatsEvent ? null : market.title,
     };
   });
 
-  return {
-    event: chartEvent,
-    controls,
-    pressureScales,
-  };
+  return { eventId: event.id, controls, pressureScales };
 }
 
 function buildPressureScales(
-  event: Event,
-  thresholdByMarketId: ReadonlyMap<MarketId, number>,
+  event: EventInfo,
+  markets: readonly EventMarket[],
 ): ReadonlyMap<TokenId, SignedVolumeColorScale> {
-  const completeThreshold = buildThresholdPalette(event, thresholdByMarketId);
-  const liveThreshold = buildLiveThresholdPalette(event, thresholdByMarketId);
+  const completeThreshold = buildThresholdPalette(event, markets);
+  const liveThreshold = buildLiveThresholdPalette(event, markets);
   const threshold =
-    liveThreshold && hasResolvedLiveTitleCollision(event)
+    liveThreshold && hasResolvedLiveTitleCollision(markets)
       ? liveThreshold
       : (completeThreshold ?? liveThreshold);
   if (threshold) {
@@ -107,60 +73,59 @@ function buildPressureScales(
     // reused Gamma rows either make the complete family ambiguous or duplicate
     // a live semantic threshold. Keep those controls usable with ordinary
     // binary colors while preserving the coherent geometry for live markets.
-    const scales = buildDefaultPressureScales(event);
+    const scales = buildDefaultPressureScales(event, markets);
     for (const outcome of threshold.outcomes)
       scales.set(outcome.yesTokenId, outcome.scale);
     return scales;
   }
 
-  const negRisk = buildNegRiskPalette(event);
+  const negRisk = buildNegRiskPalette(event, markets);
   if (negRisk)
     return new Map(
       negRisk.outcomes.map((outcome) => [outcome.yesTokenId, outcome.scale]),
     );
 
-  return buildDefaultPressureScales(event);
+  return buildDefaultPressureScales(event, markets);
 }
 
-function hasResolvedLiveTitleCollision(event: Event): boolean {
+function hasResolvedLiveTitleCollision(
+  markets: readonly EventMarket[],
+): boolean {
   const liveTitles = new Set(
-    event.markets
-      .filter(isActiveOrderMarket)
+    markets
+      .filter((market) => market.tradable)
       .map(marketDisplayKey)
       .filter(Boolean),
   );
-  return event.markets.some(
-    (market) =>
-      !isActiveOrderMarket(market) && liveTitles.has(marketDisplayKey(market)),
+  return markets.some(
+    (market) => !market.tradable && liveTitles.has(marketDisplayKey(market)),
   );
 }
 
-function marketDisplayKey(market: Market): string {
-  return normalizeDisplayText(marketTitle(market) ?? "");
+/** Untitled markets have no display key, so they never collide. */
+function marketDisplayKey(market: EventMarket): string {
+  return normalizeDisplayText(market.groupItemTitle ?? market.question ?? "");
 }
 
 function buildLiveThresholdPalette(
-  event: Event,
-  thresholdByMarketId: ReadonlyMap<MarketId, number>,
+  event: EventInfo,
+  markets: readonly EventMarket[],
 ) {
-  const liveMarkets = event.markets.filter(isActiveOrderMarket);
-  if (liveMarkets.length === event.markets.length) return null;
-  return buildThresholdPalette(
-    { ...event, markets: liveMarkets },
-    thresholdByMarketId,
-  );
+  const liveMarkets = markets.filter((market) => market.tradable);
+  if (liveMarkets.length === markets.length) return null;
+  return buildThresholdPalette(event, liveMarkets);
 }
 
 function buildDefaultPressureScales(
-  event: Event,
+  event: EventInfo,
+  markets: readonly EventMarket[],
 ): Map<TokenId, SignedVolumeColorScale> {
-  const scales = new Map<TokenId, SignedVolumeColorScale>();
-  for (const [index, market] of event.markets.entries()) {
-    const tokenId = market.outcomes.yes.tokenId;
-    if (!tokenId) continue;
-    scales.set(tokenId, defaultPressureScaleForMarket(event, index));
-  }
-  return scales;
+  return new Map(
+    markets.map((market, index) => [
+      market.yes.tokenId,
+      semanticYesNeutralNoScale(marketHue(event.id, index)),
+    ]),
+  );
 }
 
 export function pressureScaleForToken(
@@ -170,37 +135,4 @@ export function pressureScaleForToken(
   return (
     definition.pressureScales.get(tokenId) ?? DEFAULT_SIGNED_VOLUME_COLOR_SCALE
   );
-}
-
-/**
- * Generic binary-market color rule shared by normal event cards and series
- * occurrences when no threshold/negative-risk palette applies.
- */
-export function defaultPressureScaleForMarket(
-  event: Event,
-  marketIndex: number,
-): SignedVolumeColorScale {
-  return semanticYesNeutralNoScale(marketHue(event.id, marketIndex));
-}
-
-function distinctMarketArtworkUrl(
-  market: Market,
-  eventArtworkUrl: string | null,
-): string | null {
-  const marketArtworkUrl = market.icon?.trim() || market.image?.trim() || null;
-  if (!marketArtworkUrl) return null;
-  if (!eventArtworkUrl) return marketArtworkUrl;
-  return normalizeArtworkUrl(marketArtworkUrl) ===
-    normalizeArtworkUrl(eventArtworkUrl)
-    ? null
-    : marketArtworkUrl;
-}
-
-function normalizeArtworkUrl(value: string): string {
-  try {
-    const url = new URL(value, "https://polymarket.com");
-    return `${url.origin}${url.pathname}`;
-  } catch {
-    return value.split(/[?#]/, 1)[0] ?? value;
-  }
 }

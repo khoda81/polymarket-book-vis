@@ -9,7 +9,6 @@ import type {
   StackDirection,
   BoxStyle,
 } from "@/rendering/renderer";
-import { signedVolumeColor } from "@/rendering/colors/signedVolume";
 import type { TokenId } from "@polymarket/client";
 
 interface BookBoxView {
@@ -73,21 +72,13 @@ export class VolumeBookView {
       color: placeholderColor,
     });
 
-    for (const [
-      index,
-      market,
-    ] of this.host.definition.event.markets.entries()) {
-      const tokenId = market.outcomes.yes.tokenId;
-      if (!tokenId || !this.host.activeTokens.has(tokenId)) continue;
+    for (const control of this.host.definition.controls) {
+      const tokenId = control.market.yes.tokenId;
+      if (!this.host.activeTokens.has(tokenId)) continue;
 
       const book = this.host.getBook(tokenId) ?? emptyTokenBook();
-      const semanticScale = this.host.definition.pressureScales.get(tokenId);
-      const yesColor = semanticScale
-        ? signedVolumeColor(1, semanticScale)
-        : marketColor(this.host.definition.event.id, index);
-      const noColor = semanticScale
-        ? signedVolumeColor(-1, semanticScale)
-        : yesColor;
+      const yesColor = control.primaryColor;
+      const noColor = control.oppositeColor;
 
       drawBookView(frame, {
         direction: "up",

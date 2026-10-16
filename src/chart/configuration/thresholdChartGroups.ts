@@ -3,10 +3,12 @@ import {
   type ThresholdFamilyDirection,
   type ThresholdPalette,
 } from "../../rendering/colors/thresholdColors";
-import type { EventDetails } from "../../domain/markets/eventDetails";
-import { isActiveOrderMarket } from "../../domain/markets/marketTradability";
+import type {
+  EventDetails,
+  EventInfo,
+  EventMarket,
+} from "../../domain/markets/eventDetails";
 import { subsetEventDetails } from "./subsetEventDetails";
-import type { Event, Market, MarketId } from "@polymarket/client";
 
 export type ThresholdMarketGroupKey = "high" | "low";
 
@@ -31,7 +33,7 @@ export function thresholdMarketGroups(
   if (event.trading.negRisk === true || event.trading.negRiskAugmented === true)
     return null;
 
-  const classified = event.markets.map((market) => ({
+  const classified = bundle.markets.map((market) => ({
     market,
     side: thresholdSide(market),
   }));
@@ -44,16 +46,8 @@ export function thresholdMarketGroups(
     side === "low" ? [market] : [],
   );
 
-  const highPalette = liveThresholdPalette(
-    event,
-    highMarkets,
-    bundle.thresholdByMarketId,
-  );
-  const lowPalette = liveThresholdPalette(
-    event,
-    lowMarkets,
-    bundle.thresholdByMarketId,
-  );
+  const highPalette = liveThresholdPalette(event, highMarkets);
+  const lowPalette = liveThresholdPalette(event, lowMarkets);
   if (!highPalette || !lowPalette) return null;
 
   return [
@@ -72,7 +66,7 @@ export function thresholdMarketGroups(
   ];
 }
 
-function thresholdSide(market: Market): ThresholdSide | null {
+function thresholdSide(market: EventMarket): ThresholdSide | null {
   const titleSide = arrowSide(market.groupItemTitle);
   const questionSide = parentheticalSide(market.question);
   if (titleSide && questionSide && titleSide !== questionSide) return null;
@@ -95,14 +89,10 @@ function parentheticalSide(
 }
 
 function liveThresholdPalette(
-  event: Event,
-  markets: readonly Market[],
-  thresholdByMarketId: ReadonlyMap<MarketId, number>,
+  event: EventInfo,
+  markets: readonly EventMarket[],
 ): ThresholdPalette | null {
-  const liveMarkets = markets.filter(isActiveOrderMarket);
+  const liveMarkets = markets.filter((market) => market.tradable);
   if (liveMarkets.length < 2) return null;
-  return buildThresholdPalette(
-    { ...event, markets: liveMarkets },
-    thresholdByMarketId,
-  );
+  return buildThresholdPalette(event, liveMarkets);
 }

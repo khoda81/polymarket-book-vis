@@ -4,8 +4,6 @@
   import type { Series } from "@polymarket/client";
   import type { ViewMode } from "../../domain/markets/chartState";
   import type { EventDetails } from "../../domain/markets/eventDetails";
-  import { initialMarketLifecycle } from "../../domain/markets/marketLifecycle";
-  import { isActiveOrderMarket } from "../../domain/markets/marketTradability";
   import {
     mergeSeriesEvents,
     seriesCurrentMarket,
@@ -134,18 +132,16 @@
   async function current(): Promise<void> {
     following = true;
     const marketId = seriesCurrentMarket(
-      bundles.map((bundle) => bundle.event),
+      bundles.flatMap((bundle) => bundle.markets),
       Date.now(),
       (market) =>
-        isActiveOrderMarket(market) &&
+        market.tradable &&
         (
           visualization.markets.lifecycles.get(market.id) ??
-          initialMarketLifecycle(market)
+          market.reportedLifecycle
         ).kind === "live" &&
-        visualization.markets.visibilityFor(
-          market.id,
-          isActiveOrderMarket(market),
-        ).kind === "visible",
+        visualization.markets.visibilityFor(market.id, market.tradable).kind ===
+          "visible",
     );
     await tick();
     if (!alive) return;

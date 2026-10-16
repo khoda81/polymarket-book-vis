@@ -1,40 +1,33 @@
-import type {
-  Event,
-  Market,
-  PublicClient,
-  Series,
-  MarketId,
-} from "@polymarket/client";
+import type { Event, PublicClient, Series, MarketId } from "@polymarket/client";
 import {
   buildEventDetails,
   loadEventDetails,
   type EventDetails,
+  type EventMarket,
 } from "../markets/eventDetails";
-import { marketDeadlineMs } from "../markets/marketDeadline";
 
 export const SERIES_PAGE_SIZE = 20;
 export type SeriesPageDirection = "older" | "newer";
 
 /** Navigate by each market's reported deadline, keeping parent grouping intact. */
 export function seriesCurrentMarket(
-  events: readonly Event[],
+  markets: Iterable<EventMarket>,
   nowMs: number,
-  eligible: (market: Market) => boolean,
+  eligible: (market: EventMarket) => boolean,
 ): MarketId | null {
-  let next: Market | undefined;
-  let past: Market | undefined;
-  let fallback: Market | undefined;
-  for (const event of events)
-    for (const market of event.markets) {
-      if (!market.outcomes.yes.tokenId || !eligible(market)) continue;
-      fallback ??= market;
-      const deadline = marketDeadlineMs(market);
-      if (deadline === null) continue;
-      if (deadline >= nowMs && (!next || deadline < marketDeadlineMs(next)!))
-        next = market;
-      if (deadline < nowMs && (!past || deadline > marketDeadlineMs(past)!))
-        past = market;
-    }
+  let next: EventMarket | undefined;
+  let past: EventMarket | undefined;
+  let fallback: EventMarket | undefined;
+  for (const market of markets) {
+    if (!eligible(market)) continue;
+    fallback ??= market;
+    const deadline = market.resolutionMs;
+    if (deadline === null) continue;
+    if (deadline >= nowMs && (!next || deadline < next.resolutionMs!))
+      next = market;
+    if (deadline < nowMs && (!past || deadline > past.resolutionMs!))
+      past = market;
+  }
   return (next ?? past ?? fallback)?.id ?? null;
 }
 
@@ -57,10 +50,10 @@ function pagePosition(page: EventPage): PagePosition {
 }
 
 /** Stable IDs distinguish contracts even when their names and dates coincide. */
-export function mergeSeriesEvents(
-  ...groups: readonly (readonly Event[])[]
-): Event[] {
-  const byId = new Map<Event["id"], Event>();
+export function mergeSeriesEvents<T extends Pick<Event, "id" | "schedule">>(
+  ...groups: readonly (readonly T[])[]
+): T[] {
+  const byId = new Map<Event["id"], T>();
   for (const group of groups)
     for (const event of group) byId.set(event.id, event);
 

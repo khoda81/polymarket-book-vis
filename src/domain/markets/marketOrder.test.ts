@@ -1,6 +1,35 @@
 import { expect, test } from "bun:test";
-import type { Event, MarketId } from "@polymarket/client";
-import { orderMarkets } from "./marketOrder";
+import type { Event, Market, MarketId } from "@polymarket/client";
+import { finiteNumber } from "../../shared/parse";
+import { eventMarket } from "../../shared/testing/eventMarkets";
+import type { EventMarket } from "./eventDetails";
+import { orderMarkets as orderParsedMarkets } from "./marketOrder";
+import { isActiveOrderMarket } from "./marketTradability";
+
+/** Parse the raw fixture, order it, and map the result back to raw markets. */
+function orderMarkets(
+  event: Event,
+  thresholds: ReadonlyMap<MarketId, number>,
+  resolutions: ReadonlyMap<MarketId, number> = new Map(),
+): Market[] {
+  const raw = new Map<EventMarket, Market>();
+  const parsed = event.markets.map((market) => {
+    const parsedMarket = eventMarket(market.id, {
+      yes: {
+        ...eventMarket(market.id).yes,
+        price: finiteNumber(market.outcomes.yes.price),
+      },
+      tradable: isActiveOrderMarket(market),
+      threshold: thresholds.get(market.id) ?? null,
+      resolutionMs: resolutions.get(market.id) ?? null,
+    });
+    raw.set(parsedMarket, market);
+    return parsedMarket;
+  });
+  return orderParsedMarkets(parsed, event.display.sortBy).map((market) =>
+    raw.get(market)!,
+  );
+}
 
 function eventWithPrices(sortBy: string | undefined, prices: unknown[]): Event {
   return {

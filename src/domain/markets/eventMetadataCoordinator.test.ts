@@ -17,39 +17,41 @@ import {
 } from "../../shared/testing/fakeTimers";
 
 function details(id = "1", resolved = false): EventDetails {
-  return buildEventDetails(
-    {
-      id,
-      title: `Event ${id}`,
-      display: { sortBy: "ascending" },
-      trading: { negRisk: false },
-      markets: [
-        {
-          id: `market-${id}`,
-          state: {
-            active: !resolved,
-            closed: resolved,
-            acceptingOrders: !resolved,
+  return buildEventDetails(sdkEvent(id, resolved), {});
+}
+
+function sdkEvent(id: string, resolved: boolean): Event {
+  return {
+    id,
+    title: `Event ${id}`,
+    display: { sortBy: "ascending" },
+    trading: { negRisk: false },
+    markets: [
+      {
+        id: `market-${id}`,
+        state: {
+          active: !resolved,
+          closed: resolved,
+          acceptingOrders: !resolved,
+        },
+        trading: { feesEnabled: false },
+        sports: {},
+        resolution: { umaResolutionStatus: resolved ? "resolved" : null },
+        outcomes: {
+          yes: {
+            tokenId: `yes-${id}`,
+            label: "Yes",
+            price: resolved ? "1" : "0.6",
           },
-          trading: { feesEnabled: false },
-          resolution: { umaResolutionStatus: resolved ? "resolved" : null },
-          outcomes: {
-            yes: {
-              tokenId: `yes-${id}`,
-              label: "Yes",
-              price: resolved ? "1" : "0.6",
-            },
-            no: {
-              tokenId: `no-${id}`,
-              label: "No",
-              price: resolved ? "0" : "0.4",
-            },
+          no: {
+            tokenId: `no-${id}`,
+            label: "No",
+            price: resolved ? "0" : "0.4",
           },
         },
-      ],
-    } as unknown as Event,
-    {},
-  );
+      },
+    ],
+  } as unknown as Event;
 }
 
 function fixture() {
@@ -99,7 +101,7 @@ test("wake refresh recovers missed resolution and stops polling a terminal event
     clock.runNext();
     requests[0]!.resolve(details("1", true));
     await flushMicrotasks();
-    expect(String(received[0]!.event.markets[0]!.outcomes.yes.price)).toBe("1");
+    expect(received[0]!.markets[0]!.yes.price).toBe(1);
     expect(clock.nextDelayMs).toBe(Infinity);
     coordinator.refreshAll();
     expect(clock.nextDelayMs).toBe(Infinity);
@@ -215,11 +217,11 @@ test("refresh concurrency is bounded while all due events eventually receive a s
 test("the production loader fetches a fresh normalized event before adding raw annotations", () =>
   withFakeTimers(async (clock) => {
     const fetched: string[] = [];
-    const fresh = details("1", true);
+    const fresh = sdkEvent("1", true);
     const coordinator = new EventMetadataCoordinator({
       fetchEvent: async ({ id }: { id: EventId }) => {
         fetched.push(id);
-        return fresh.event;
+        return fresh;
       },
       gamma: {
         get: async (path: string) => {
@@ -236,6 +238,6 @@ test("the production loader fetches a fresh normalized event before adding raw a
     clock.runNext();
     await flushMicrotasks();
     expect(fetched).toEqual(["1", "/events/1"]);
-    expect(received?.event.markets[0]!.state.closed).toBe(true);
+    expect(received?.markets[0]!.closed).toBe(true);
     coordinator.destroy();
   }));

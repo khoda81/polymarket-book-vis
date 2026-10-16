@@ -1,20 +1,18 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { Market } from "@polymarket/client";
   import type { WallClockWatch } from "../../shared/wallClock";
   import { getVisualizationContext } from "../visualization/visualizationContext";
   import {
     marketTimeDisplay,
-    marketTimeMarker,
     marketTimeTooltip,
+    type MarketTimeMarker,
   } from "../../domain/markets/marketDeadline";
 
-  export let market: Market;
+  export let marker: MarketTimeMarker | null;
 
   const { wallClock } = getVisualizationContext();
   let element: HTMLSpanElement;
   let watch: WallClockWatch | undefined;
-  $: marker = marketTimeMarker(market);
   $: (marker, watch?.refresh());
   $: title = marketTimeTooltip(marker);
 

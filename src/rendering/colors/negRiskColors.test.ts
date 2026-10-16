@@ -1,29 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import type { Event } from "@polymarket/client";
+import type { EventInfo, EventMarket } from "../../domain/markets/eventDetails";
+import { eventMarket } from "../../shared/testing/eventMarkets";
 import { buildNegRiskPalette, stableHue } from "./negRiskColors";
 import { DEFAULT_SIGNED_VOLUME_COLOR_SCALE } from "./signedVolume";
 
 function negRiskEvent(
   marketIds: readonly string[],
   options: { augmented?: boolean } = {},
-): Event {
-  return {
+): [EventInfo, EventMarket[]] {
+  const event = {
     id: "event-42",
     trading: {
       negRisk: true,
       negRiskMarketId: "group-7",
       negRiskAugmented: options.augmented ?? false,
     },
-    markets: marketIds.map((id, index) => ({
-      id,
-      state: { negRisk: true },
-      outcomes: {
-        yes: { tokenId: `yes-${id}` },
-        no: { tokenId: `no-${id}` },
-      },
-      question: `Outcome ${index}`,
-    })),
-  } as unknown as Event;
+  } as unknown as EventInfo;
+  return [
+    event,
+    marketIds.map((id, index) =>
+      eventMarket(id, { negRisk: true, question: `Outcome ${index}` }),
+    ),
+  ];
 }
 
 function hueDistance(a: number, b: number): number {
@@ -32,7 +30,7 @@ function hueDistance(a: number, b: number): number {
 
 describe("negative-risk color geometry", () => {
   test("places binary outcomes opposite one another with full-chroma complements", () => {
-    const palette = buildNegRiskPalette(negRiskEvent(["10", "20"]));
+    const palette = buildNegRiskPalette(...negRiskEvent(["10", "20"]));
     expect(palette).not.toBeNull();
 
     const [a, b] = palette!.outcomes;
@@ -50,7 +48,7 @@ describe("negative-risk color geometry", () => {
   });
 
   test("uses the equal-complement barycenter magnitude 1/(N-1)", () => {
-    const palette = buildNegRiskPalette(negRiskEvent(["1", "2", "3", "4"]));
+    const palette = buildNegRiskPalette(...negRiskEvent(["1", "2", "3", "4"]));
     expect(palette).not.toBeNull();
 
     const expectedNoChroma = DEFAULT_SIGNED_VOLUME_COLOR_SCALE.chroma / 3;
@@ -71,8 +69,8 @@ describe("negative-risk color geometry", () => {
   });
 
   test("slot colors are stable under event market reordering", () => {
-    const forward = buildNegRiskPalette(negRiskEvent(["100", "2", "30"]))!;
-    const shuffled = buildNegRiskPalette(negRiskEvent(["30", "100", "2"]))!;
+    const forward = buildNegRiskPalette(...negRiskEvent(["100", "2", "30"]))!;
+    const shuffled = buildNegRiskPalette(...negRiskEvent(["30", "100", "2"]))!;
 
     for (const tokenId of forward.outcomes.map(
       (outcome) => outcome.yesTokenId,
@@ -84,15 +82,15 @@ describe("negative-risk color geometry", () => {
   });
 
   test("does not invent a palette for non-neg-risk or augmented events", () => {
-    const ordinary = negRiskEvent(["1", "2"]);
+    const [event, markets] = negRiskEvent(["1", "2"]);
     const nonNegRisk = {
-      ...ordinary,
-      trading: { ...ordinary.trading, negRisk: false },
-    } as Event;
+      ...event,
+      trading: { ...event.trading, negRisk: false },
+    };
 
-    expect(buildNegRiskPalette(nonNegRisk)).toBeNull();
+    expect(buildNegRiskPalette(nonNegRisk, markets)).toBeNull();
     expect(
-      buildNegRiskPalette(negRiskEvent(["1", "2"], { augmented: true })),
+      buildNegRiskPalette(...negRiskEvent(["1", "2"], { augmented: true })),
     ).toBeNull();
   });
 

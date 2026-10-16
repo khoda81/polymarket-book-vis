@@ -1,5 +1,6 @@
 import { clamp01 } from "../../shared/math";
-import type { Event, MarketId, TokenId } from "@polymarket/client";
+import type { MarketId, TokenId } from "@polymarket/client";
+import type { EventInfo, EventMarket } from "../../domain/markets/eventDetails";
 import { stableHue } from "./negRiskColors";
 import type { SignedVolumeColorScale } from "./signedVolume";
 
@@ -41,30 +42,20 @@ const MIN_TOTAL_PRICE_TREND = 0.03;
  * ambiguous.
  */
 export function buildThresholdPalette(
-  event: Event,
-  thresholdByMarketId: ReadonlyMap<MarketId, number>,
+  event: Pick<EventInfo, "id" | "trading">,
+  markets: readonly EventMarket[],
 ): ThresholdPalette | null {
-  if (event.trading.negRiskAugmented === true || event.markets.length < 2)
+  if (event.trading.negRiskAugmented === true || markets.length < 2)
     return null;
 
-  const rows = event.markets.map((market) => {
-    const thresholdOrder = parseThresholdIndex(
-      thresholdByMarketId.get(market.id),
-    );
-    const yesTokenId = market.outcomes.yes.tokenId;
-    const noTokenId = market.outcomes.no.tokenId;
-    const yesPrice = parseProbability(market.outcomes.yes.price);
-    if (
-      thresholdOrder === null ||
-      !yesTokenId ||
-      !noTokenId ||
-      yesPrice === null
-    )
-      return null;
+  const rows = markets.map((market) => {
+    const thresholdOrder = thresholdIndex(market.threshold);
+    const yesPrice = probability(market.yes.price);
+    if (thresholdOrder === null || yesPrice === null) return null;
     return {
       marketId: market.id,
-      yesTokenId,
-      noTokenId,
+      yesTokenId: market.yes.tokenId,
+      noTokenId: market.no.tokenId,
       thresholdOrder,
       yesPrice,
     };
@@ -206,19 +197,12 @@ function monotoneDirection(
   return null;
 }
 
-function parseThresholdIndex(value: unknown): number | null {
-  const parsed =
-    typeof value === "number"
-      ? value
-      : typeof value === "string" && value.trim() !== ""
-        ? Number(value)
-        : NaN;
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+function thresholdIndex(value: number | null): number | null {
+  return value !== null && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-function parseProbability(value: unknown): number | null {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : null;
+function probability(value: number | null): number | null {
+  return value !== null && value >= 0 && value <= 1 ? value : null;
 }
 
 function meanVector(

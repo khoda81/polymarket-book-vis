@@ -6,7 +6,6 @@ import {
   type EventDetails,
 } from "../../domain/markets/eventDetails";
 import { eventMarketGroups } from "./eventMarketGroups";
-import { isActiveOrderMarket } from "../../domain/markets/marketTradability";
 import { buildThresholdPalette } from "../../rendering/colors/thresholdColors";
 
 interface WtiMarketRow {
@@ -139,6 +138,8 @@ function wtiMarket(row: WtiMarketRow): Market {
       acceptingOrders: live,
     },
     resolution: { umaResolutionStatus: live ? null : "resolved" },
+    sports: {},
+    trading: {},
     outcomes: {
       yes: {
         label: "Yes",
@@ -162,9 +163,7 @@ test("splits the live WTI HIGH and LOW ladders into independent palettes", () =>
     negRiskAugmented: false,
     negRiskMarketId: null,
   });
-  expect(
-    buildThresholdPalette(bundle.event, bundle.thresholdByMarketId),
-  ).toBeNull();
+  expect(buildThresholdPalette(bundle.event, bundle.markets)).toBeNull();
 
   const groups = eventMarketGroups(bundle);
   expect(
@@ -188,13 +187,9 @@ test("splits the live WTI HIGH and LOW ladders into independent palettes", () =>
 
   const expectedDirections = ["prefix", "suffix"] as const;
   groups.forEach((group, index) => {
-    const liveEvent = {
-      ...group.bundle.event,
-      markets: group.bundle.event.markets.filter(isActiveOrderMarket),
-    };
     const expected = buildThresholdPalette(
-      liveEvent,
-      group.bundle.thresholdByMarketId,
+      group.bundle.event,
+      group.bundle.markets.filter((market) => market.tradable),
     );
     expect(expected?.direction).toBe(expectedDirections[index]);
 
@@ -218,15 +213,12 @@ test("does not split neg-risk or ambiguously labelled events", () => {
   expect(eventMarketGroups(negRiskBundle)).toHaveLength(1);
 
   const conflictingMarket = {
-    ...bundle.event.markets[0]!,
+    ...bundle.markets[0]!,
     question: "Will WTI hit $150 (LOW) in September?",
-  } as Market;
+  };
   const ambiguousBundle: EventDetails = {
     ...bundle,
-    event: {
-      ...bundle.event,
-      markets: [conflictingMarket, ...bundle.event.markets.slice(1)],
-    },
+    markets: [conflictingMarket, ...bundle.markets.slice(1)],
   };
   expect(eventMarketGroups(ambiguousBundle)).toHaveLength(1);
 });

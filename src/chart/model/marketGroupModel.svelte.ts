@@ -15,7 +15,10 @@ import {
   type MarketResolutionUpdate,
 } from "@/domain/markets/marketLifecycle";
 import { MarketState } from "@/domain/markets/marketState";
-import { isActiveOrderMarket } from "@/domain/markets/marketTradability";
+import {
+  marketTokenIds,
+  type EventMarket,
+} from "@/domain/markets/eventDetails";
 import {
   pressureScaleForToken,
   type ChartDefinition,
@@ -52,6 +55,12 @@ const DEFAULT_SERVICES: MarketGroupServices = {
   createFees: (client) => new ClobFeeScheduleResolver(client),
   createFeed: (client, callbacks) => new LiveBookFeed(client, callbacks),
 };
+/** The market and side that own a token in this group. */
+interface TokenOwner {
+  readonly control: ChartMarketControl;
+  readonly side: "yes" | "no";
+}
+
 interface LiveActivity {
   readonly key: string;
   readonly tokens: ReadonlySet<TokenId>;
@@ -73,7 +82,8 @@ export class MarketGroupModel {
   private source: ChartDefinition;
   private readonly feeSchedules: ReturnType<MarketGroupServices["createFees"]>;
   private readonly controlByMarketId = new Map<MarketId, ChartMarketControl>();
-  private readonly controlByTokenValue = new Map<string, ChartMarketControl>();
+  /** Keyed by TokenId; plain strings from the recorder look up here too. */
+  private readonly tokenOwners = new Map<string, TokenOwner>();
   private readonly unregisterObservationSource: () => void;
   private readonly unsubscribeMarkets: () => void;
   private readonly visibilityInitialized = new Set<TokenId>();
@@ -119,33 +129,32 @@ export class MarketGroupModel {
     // Reconcile facts before publishing the new definition. Subscribers may
     // run synchronously, so they must never see half-built token lookup maps
     // or controls whose lifecycle has not been initialized yet.
-    for (const control of definition.controls)
-      this.markets.reconcile(control.market.id, control.lifecycle);
+    for (const { market } of definition.controls)
+      this.markets.reconcile(market.id, market.reportedLifecycle);
     this.source = definition;
     this.feeSchedules.primeMarkets(
       definition.controls.map((control) => control.market),
     );
     this.controlByMarketId.clear();
-    this.controlByTokenValue.clear();
+    this.tokenOwners.clear();
     for (const control of definition.controls) {
-      this.controlByMarketId.set(control.market.id, control);
-      this.controlByTokenValue.set(control.tokenId, control);
-      const opposite = control.market.outcomes.no.tokenId;
-      if (opposite) this.controlByTokenValue.set(opposite, control);
+      const { market } = control;
+      this.controlByMarketId.set(market.id, control);
       const timestamp =
-        this.markets.resolvedAtMs.get(control.market.id) ??
-        control.resolutionMs;
-      if (this.pressure.memory(control.tokenId))
-        this.pressure.ensure(control.tokenId, timestamp);
-      if (opposite && this.pressure.memory(opposite))
-        this.pressure.ensure(opposite, timestamp);
+        this.markets.resolvedAtMs.get(market.id) ?? market.resolutionMs;
+      for (const side of ["yes", "no"] as const) {
+        const tokenId = market[side].tokenId;
+        this.tokenOwners.set(tokenId, { control, side });
+        if (this.pressure.memory(tokenId))
+          this.pressure.ensure(tokenId, timestamp);
+      }
     }
     this.metadataRevision++;
     this.pressureRevision++;
     // Only removal from the group ends a token's data lifetime.
-    this.pressure.retain(new Set(this.controlByTokenValue.keys()));
+    this.pressure.retain(new Set(this.tokenOwners.keys()));
     for (const tokenId of this.books.keys())
-      if (!this.controlByTokenValue.has(tokenId)) this.books.delete(tokenId);
+      if (!this.tokenOwners.has(tokenId)) this.books.delete(tokenId);
     this.refreshActiveTokens();
     void this.syncActivity().catch((error: unknown) =>
       this.reportFailure(error),
@@ -185,21 +194,19 @@ export class MarketGroupModel {
     return this.markets.lifecycles.get(marketId)!;
   }
   visibilityFor(marketId: MarketId) {
-    const control = this.controlByMarketId.get(marketId);
     return this.markets.visibilityFor(
       marketId,
-      control !== undefined && isActiveOrderMarket(control.market),
+      this.controlByMarketId.get(marketId)?.market.tradable === true,
     );
   }
   /** Age rows for the requested viewport slice whose markets are shown. */
   pressureRows(orientation: AgeRowOrientation): PressureRow[] {
     return this.requestedTokens.flatMap((tokenId) => {
-      const control = this.controlByTokenValue.get(tokenId);
-      if (control?.tokenId !== tokenId || !this.activeTokens.has(tokenId))
-        return [];
+      const owner = this.tokenOwners.get(tokenId);
+      if (owner?.side !== "yes" || !this.activeTokens.has(tokenId)) return [];
       return [
         marketPressureRow(
-          control,
+          owner.control,
           pressureScaleForToken(this.definition, tokenId),
           orientation,
         ),
@@ -231,39 +238,25 @@ export class MarketGroupModel {
     this.activeTokens.clear();
     for (const control of this.source.controls)
       if (this.visibilityFor(control.market.id).kind === "visible")
-        this.activeTokens.add(control.tokenId);
+        this.activeTokens.add(control.market.yes.tokenId);
     this.visibilityRevision++;
   }
 
   private syncActivity(): Promise<void> {
     if (this.destroyed) return Promise.resolve();
     const controls = this.source.controls.filter((control) =>
-      this.initializedTokens.has(control.tokenId),
+      this.initializedTokens.has(control.market.yes.tokenId),
     );
-    const tokenIds = controls.flatMap((control) =>
-      control.market.outcomes.no.tokenId
-        ? [control.tokenId, control.market.outcomes.no.tokenId]
-        : [control.tokenId],
-    );
+    const tokenIds = controls.flatMap(({ market }) => marketTokenIds(market));
     const liveTokens = controls
       .filter(
-        (control) =>
-          this.lifecycleFor(control.market.id).kind === "live" &&
-          isActiveOrderMarket(control.market),
+        ({ market }) =>
+          this.lifecycleFor(market.id).kind === "live" && market.tradable,
       )
-      .flatMap((control) =>
-        control.market.outcomes.no.tokenId
-          ? [control.tokenId, control.market.outcomes.no.tokenId]
-          : [control.tokenId],
-      );
-    for (const control of controls) {
-      this.pressure.ensure(control.tokenId, control.resolutionMs);
-      if (control.market.outcomes.no.tokenId)
-        this.pressure.ensure(
-          control.market.outcomes.no.tokenId,
-          control.resolutionMs,
-        );
-    }
+      .flatMap(({ market }) => marketTokenIds(market));
+    for (const { market } of controls)
+      for (const tokenId of marketTokenIds(market))
+        this.pressure.ensure(tokenId, market.resolutionMs);
     this.applyKnownResolutions(controls);
     this.loadHistory(tokenIds);
     const key = liveTokens.toSorted().join(",");
@@ -301,9 +294,9 @@ export class MarketGroupModel {
           this.refreshObservations();
           if (this.visibilityInitialized.has(tokenId)) return;
           this.visibilityInitialized.add(tokenId);
-          const control = this.controlByTokenValue.get(tokenId)!;
+          const { control, side } = this.tokenOwners.get(tokenId)!;
           if (
-            tokenId === control.tokenId &&
+            side === "yes" &&
             !hasRealOrders(book) &&
             this.lifecycleFor(control.market.id).kind === "live"
           )
@@ -360,7 +353,7 @@ export class MarketGroupModel {
           const known = <T>(entries: Readonly<Record<string, T>>) =>
             Object.fromEntries(
               Object.entries(entries).filter(([id]) =>
-                this.controlByTokenValue.has(id),
+                this.tokenOwners.has(id),
               ),
             );
           const snapshots = known(hydration.pressureSnapshotsByToken);
@@ -390,18 +383,15 @@ export class MarketGroupModel {
   }
 
   private describeObservation(tokenId: string): ObservationDescription {
-    const control = this.controlForTokenValue(tokenId);
-    if (!control) throw new Error(`observation source lost token ${tokenId}`);
+    const owner = this.tokenOwners.get(tokenId);
+    if (!owner) throw new Error(`observation source lost token ${tokenId}`);
 
-    const opposite = control.tokenId !== tokenId;
-    const outcome = opposite
-      ? control.market.outcomes.no
-      : control.market.outcomes.yes;
+    const { market } = owner.control;
     return {
-      name: `${outcome.label} · ${control.title}`,
+      name: `${market[owner.side].label} · ${market.title}`,
       color: signedVolumeColor(
-        opposite ? 1 : -1,
-        pressureScaleForToken(this.definition, control.tokenId),
+        owner.side === "no" ? 1 : -1,
+        pressureScaleForToken(this.definition, market.yes.tokenId),
       ),
     };
   }
@@ -423,17 +413,13 @@ export class MarketGroupModel {
   private *currentObservationPoints(): Iterable<ObservationPoint> {
     if (this.viewMode !== "age") return;
 
-    for (const control of this.definition.controls) {
+    for (const { market } of this.definition.controls) {
       if (
-        !this.requestedTokens.includes(control.tokenId) ||
-        !this.activeTokens.has(control.tokenId)
+        !this.requestedTokens.includes(market.yes.tokenId) ||
+        !this.activeTokens.has(market.yes.tokenId)
       )
         continue;
-      for (const tokenId of [
-        control.tokenId,
-        control.market.outcomes.no.tokenId,
-      ]) {
-        if (!tokenId) continue;
+      for (const tokenId of marketTokenIds(market)) {
         const observedAtMs = this.pressure.observationTime(tokenId);
         if (observedAtMs !== undefined) yield { tokenId, observedAtMs };
       }
@@ -447,26 +433,24 @@ export class MarketGroupModel {
       resolution.resolvedAtMs >= 0
     )
       this.observations.advance(resolution.resolvedAtMs);
-    for (const control of this.source.controls) {
-      const opposite = control.market.outcomes.no.tokenId;
+    for (const { market } of this.source.controls) {
+      const tokens: readonly string[] = marketTokenIds(market);
       if (
-        control.market.conditionId !== resolution.conditionId &&
-        !resolution.assetIds.includes(control.tokenId) &&
-        !(opposite && resolution.assetIds.includes(opposite)) &&
-        resolution.winningAssetId !== control.tokenId &&
-        !(opposite && resolution.winningAssetId === opposite)
+        market.conditionId !== resolution.conditionId &&
+        !resolution.assetIds.some((id) => tokens.includes(id)) &&
+        !(
+          resolution.winningAssetId !== null &&
+          tokens.includes(resolution.winningAssetId)
+        )
       )
         continue;
       const next = resolveMarketLifecycle(
-        this.lifecycleFor(control.market.id),
+        this.lifecycleFor(market.id),
         resolution,
-        control.tokenId,
-        opposite,
-        control.market.outcomes.yes.label,
-        control.market.outcomes.no.label,
+        market,
       );
       if (next.kind === "resolved")
-        this.markets.resolve(control.market.id, next, resolution.resolvedAtMs);
+        this.markets.resolve(market.id, next, resolution.resolvedAtMs);
     }
     this.applyKnownResolutions(this.source.controls);
     this.pressureRevision++;
@@ -474,56 +458,38 @@ export class MarketGroupModel {
   }
 
   private applyKnownResolutions(controls: readonly ChartMarketControl[]): void {
-    for (const control of controls) {
-      const lifecycle = this.lifecycleFor(control.market.id);
+    for (const { market } of controls) {
+      const lifecycle = this.lifecycleFor(market.id);
       if (
         lifecycle.kind !== "resolved" ||
-        !this.pressure.memory(control.tokenId)
+        !this.pressure.memory(market.yes.tokenId)
       )
         continue;
       this.applyResolvedPressure(
-        control.tokenId,
-        control.market.outcomes.no.tokenId,
+        market,
         lifecycle.winningTokenId,
-        this.markets.resolvedAtMs.get(control.market.id) ?? null,
+        this.markets.resolvedAtMs.get(market.id) ?? null,
       );
     }
   }
 
+  /** The winner's side of the row becomes unbounded; the loser's freezes. */
   private applyResolvedPressure(
-    primaryTokenId: TokenId,
-    oppositeTokenId: TokenId | null,
+    market: EventMarket,
     winningTokenId: TokenId,
     resolvedAtMs: number | null,
   ): void {
-    const unboundedSourceTokenId = pressureTrackForToken(
-      primaryTokenId,
-      oppositeTokenId,
-      winningTokenId,
-    );
-
-    this.pressure.resolveSource(
-      primaryTokenId,
-      primaryTokenId === unboundedSourceTokenId,
-      resolvedAtMs,
-    );
-    if (oppositeTokenId)
+    const unboundedTrack = pressureTrackForToken(market, winningTokenId);
+    for (const tokenId of marketTokenIds(market))
       this.pressure.resolveSource(
-        oppositeTokenId,
-        oppositeTokenId === unboundedSourceTokenId,
+        tokenId,
+        tokenId === unboundedTrack,
         resolvedAtMs,
       );
   }
 
   private knownTokenId(value: string): TokenId | null {
-    const control = this.controlByTokenValue.get(value);
-    if (!control) return null;
-    if (control.tokenId === value) return control.tokenId;
-    const oppositeTokenId = control.market.outcomes.no.tokenId;
-    return oppositeTokenId === value ? oppositeTokenId : null;
-  }
-
-  private controlForTokenValue(value: string): ChartMarketControl | undefined {
-    return this.controlByTokenValue.get(value);
+    const owner = this.tokenOwners.get(value);
+    return owner ? owner.control.market[owner.side].tokenId : null;
   }
 }
