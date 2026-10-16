@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "recorder": "bun backend/recorder.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "build": "tsc && vite build",

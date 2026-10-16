@@ -53,10 +53,8 @@ The browser entry point is `src/main.ts`; `src/app/App.svelte` composes the dash
 | `src/recorder`                                              | Recorder HTTP hydration and protobuf decoding                                         |
 | `src/shared`                                                | General mathematical utilities                                                        |
 | `src/gen`                                                   | Generated protobuf bindings; regenerate with `bun run proto:generate`                 |
-| `backend/storage`, `live`                                   | Recorder persistence and subscriptions                                                |
-| `backend/legacyPressureV5`                                  | Legacy pressure implementation used by the recorder store                             |
 
-Tests live beside their modules. `backend/recorder.ts` remains the recorder entry point.
+Tests live beside their modules. The recorder service lives in the separate `polymarket-book-recorder` repository; this repository owns only its client and the protobuf schema it decodes.
 
 ## State ownership in the current modules
 
