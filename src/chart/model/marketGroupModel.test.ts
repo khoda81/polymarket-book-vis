@@ -220,7 +220,10 @@ test("offscreen feeds keep accumulating observed pressure without a reconnect or
       model.pressure.memory(control.market.yes.tokenId)!.currentLevels(),
     ).toEqual([{ price: parsePrice("0.7"), shares: 50 }]);
     await model.setViewport([control.market.yes.tokenId]);
-    expect(model.getBook(control.market.yes.tokenId)).toBe(fresh);
+    expect(
+      model.volumeSeries().find((series) => series.key === control.market.id)
+        ?.book,
+    ).toBe(fresh);
     expect(hydration).toHaveLength(1);
     expect(feeds).toHaveLength(1);
   } finally {
@@ -298,14 +301,14 @@ test("markets excluded from live-order feeds default hidden without being discar
       kind: "hidden",
       reason: "unavailable-default",
     });
-    expect(model.activeTokens.has(control.market.yes.tokenId)).toBe(false);
+    expect(model.visibilityFor(control.market.id).kind).toBe("hidden");
 
     await model.setViewport([control.market.yes.tokenId]);
     expect(feeds).toHaveLength(0);
 
     model.userSetMarketVisible(control, true);
     expect(model.visibilityFor(control.market.id)).toEqual({ kind: "visible" });
-    expect(model.activeTokens.has(control.market.yes.tokenId)).toBe(true);
+    expect(model.visibilityFor(control.market.id).kind).toBe("visible");
     expect(feeds).toHaveLength(0);
   } finally {
     model.destroy();
@@ -488,7 +491,7 @@ test("observation points disappear offscreen while user choices remain shared", 
     await model.setViewport([]);
     expect(model.observationPointsByToken.size).toBe(0);
     markets.userSetVisible(control.market.id, false);
-    expect(model.activeTokens.has(control.market.yes.tokenId)).toBe(false);
+    expect(model.visibilityFor(control.market.id).kind).toBe("hidden");
     model.updateDefinition(definition());
     expect(model.visibilityFor(control.market.id)).toEqual({
       kind: "hidden",

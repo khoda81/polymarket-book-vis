@@ -28,6 +28,7 @@ import { signedVolumeColor } from "@/rendering/colors/signedVolume";
 import { hasRealOrders } from "@/chart/age/ageStripLayout";
 import type { AgeRowOrientation } from "@/chart/age/ageStripOrientation";
 import type { PressureRow } from "@/chart/age/pressureRows";
+import type { VolumeSeries } from "@/chart/volume/volumeBookView";
 import { marketPressureRow, pressureTrackForToken } from "./marketPressureRows";
 import { AgeStripPressureState } from "@/chart/age/ageStripPressureState";
 import { LiveBookFeed } from "@/chart/live/liveBookFeed";
@@ -71,7 +72,7 @@ interface LiveActivity {
 /** A group's initialized history and feeds live until the group is removed. */
 export class MarketGroupModel {
   readonly pressure = new AgeStripPressureState();
-  readonly activeTokens = new SvelteSet<TokenId>();
+  private readonly activeTokens = new SvelteSet<TokenId>();
   readonly observationPointsByToken = new SvelteMap<string, ObservationPoint>();
   connectionStatus = $state<ConnectionStatus>("disconnected");
   bookRevision = $state(0);
@@ -177,14 +178,14 @@ export class MarketGroupModel {
     );
   }
 
-  getBook(tokenId: string): TokenBook | undefined {
+  private getBook(tokenId: string): TokenBook | undefined {
     const id = this.knownTokenId(tokenId);
     return id
       ? (this.activity?.feed.getBook(id) ?? this.books.get(id))
       : undefined;
   }
 
-  getFeeSchedule(tokenId: string): FeeSchedule {
+  private getFeeSchedule(tokenId: string): FeeSchedule {
     const id = this.knownTokenId(tokenId);
     if (!id) throw new Error(`unknown pressure token ${tokenId}`);
     return this.feeSchedules.scheduleForToken(id);
@@ -210,6 +211,22 @@ export class MarketGroupModel {
           pressureScaleForToken(this.definition, tokenId),
           orientation,
         ),
+      ];
+    });
+  }
+
+  /** Volume-mode books for shown markets, in display order. */
+  volumeSeries(): VolumeSeries[] {
+    return this.definition.controls.flatMap((control) => {
+      const tokenId = control.market.yes.tokenId;
+      if (!this.activeTokens.has(tokenId)) return [];
+      return [
+        {
+          key: control.market.id,
+          book: this.getBook(tokenId),
+          bidColor: control.primaryColor,
+          askColor: control.oppositeColor,
+        },
       ];
     });
   }

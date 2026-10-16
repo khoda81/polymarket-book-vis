@@ -116,11 +116,7 @@ export class ChartController implements PresentationTarget {
 
     this.volumeView = new VolumeBookView({
       plotter: this.plotter,
-      get definition() {
-        return model.definition;
-      },
-      activeTokens: model.activeTokens,
-      getBook: (tokenId) => model.getBook(tokenId),
+      getSeries: () => model.volumeSeries(),
       getTheme: () => this.theme,
       isActive: () => this.renderState.viewMode === "volume",
       requestDraw: () => this.reqDraw("full"),
