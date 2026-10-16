@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage } from "../../shared/errors";
   import { onDestroy } from "svelte";
   import {
     DEFAULT_MIN_VOLUME,
@@ -88,10 +89,7 @@
         ? `Added ${added} ${added === 1 ? "event" : "events"}. Pin any you want to keep.`
         : `No new matches in the first ${MAX_DISCOVERY_RESULTS} results. Try broader filters or another sort.`;
     } catch (error) {
-      if (request === run)
-        status = `Discovery failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`;
+      if (request === run) status = `Discovery failed: ${errorMessage(error)}`;
     } finally {
       if (request === run) loading = false;
     }

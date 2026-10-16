@@ -3,6 +3,7 @@ import {
   relativeTimeDisplay,
   type RelativeTimeDisplay,
 } from "../../shared/math";
+import { timestampMs } from "../../shared/parse";
 
 export type MarketTimeMarker =
   | { readonly kind: "game-start"; readonly timeMs: number }
@@ -76,15 +77,4 @@ export function marketTimeTooltip(marker: MarketTimeMarker | null): string {
     marker.kind === "game-start" ? "Reported game start" : "Reported end";
   const date = new Date(marker.timeMs);
   return `${label}: ${date.toLocaleString()} (${date.toISOString()})`;
-}
-
-function timestampMs(value: string | null | undefined): number | null {
-  if (!value) return null;
-  // Gamma sports timestamps currently use SQL-style ` ` and `+00`; normalize
-  // them to the ISO 8601 form whose parsing is portable across browsers.
-  const normalized = value
-    .replace(/^([0-9]{4}-[0-9]{2}-[0-9]{2}) /, "$1T")
-    .replace(/([+-][0-9]{2})$/, "$1:00");
-  const parsed = Date.parse(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
 }

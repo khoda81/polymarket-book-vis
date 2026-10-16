@@ -46,16 +46,6 @@ export function sharePressureAreaFraction(
   return Math.abs(signedSharePressure(volume, reserveShares));
 }
 
-/** Convert cumulative shares into sharp vertical bar thickness. */
-export function pressureInkThicknessCss(
-  volume: number,
-  reserveShares: number,
-  rowHeightCss: number,
-): number {
-  validatePositiveFinite(rowHeightCss, "row height");
-  return rowHeightCss * sharePressureAreaFraction(volume, reserveShares);
-}
-
 function validatePositiveFinite(value: number, name: string): void {
   if (!(value > 0) || !Number.isFinite(value))
     throw new RangeError(`${name} must be finite and positive`);

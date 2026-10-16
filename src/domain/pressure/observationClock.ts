@@ -45,20 +45,6 @@ export function opacityReference(frame: ObservationReference): ObservationTime {
   return frame.kind === "observed" ? frame.newestMs : observationTime(0);
 }
 
-/** Derive the causal time reference for exactly this set of observations. */
-export function observationReference(
-  points: Iterable<ObservationPoint>,
-): ObservationReference {
-  let newestMs: ObservationTime | undefined;
-  for (const point of points)
-    if (newestMs === undefined || point.observedAtMs > newestMs)
-      newestMs = point.observedAtMs;
-
-  return newestMs === undefined
-    ? { kind: "unobserved" }
-    : { kind: "observed", newestMs };
-}
-
 /**
  * One directly reactive observation source.
  *

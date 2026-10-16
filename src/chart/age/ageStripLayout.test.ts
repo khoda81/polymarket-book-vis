@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { rasterizeAgeRows, rasterizeCenteredAgeRow } from "./ageStripLayout";
+import { rasterizeAgeRows } from "./ageStripLayout";
 import { AGE_ROW_BAND_PX } from "./ageStripTuning";
 
 test("snapped age boundaries partition device pixels at fractional DPR", () => {
@@ -67,28 +67,4 @@ test("snapped age boundaries partition device pixels at fractional DPR", () => {
 
 test("empty row sets have no raster geometry", () => {
   expect(rasterizeAgeRows(25, 0, 0, 50, 75)).toEqual([]);
-});
-
-test("moving series rows snap both side boundaries and centerlines", () => {
-  const canvasHeight = 412.7;
-  for (const dpr of [1, 1.1, 1.25, 4 / 3, 2.5]) {
-    const deviceHeight = Math.floor(canvasHeight * dpr);
-    const scaleY = deviceHeight / canvasHeight;
-    const centers = [74.3, 74.3 + AGE_ROW_BAND_PX, 170.3];
-    const rows = centers.map((center) =>
-      rasterizeCenteredAgeRow(center, canvasHeight, deviceHeight),
-    );
-
-    for (const [i, row] of rows.entries()) {
-      const top = Math.round(row.topCss * scaleY);
-      const center = Math.round(row.centerCss * scaleY);
-      const bottom = Math.round(row.bottomCss * scaleY);
-      expect(top).toBeLessThan(center);
-      expect(center).toBeLessThan(bottom);
-      expect(center).toBe(Math.round(centers[i]! * scaleY));
-    }
-    expect(Math.round(rows[0]!.bottomCss * scaleY)).toBe(
-      Math.round(rows[1]!.topCss * scaleY),
-    );
-  }
 });

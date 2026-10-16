@@ -8,7 +8,9 @@
   import SeriesCard from "./series/SeriesCard.svelte";
   import { DashboardReorderController } from "./dashboard/dashboardReorderController";
   import {
+    eventItemKey,
     itemKey,
+    seriesItemKey,
     orderDashboardItems,
     eventLabel,
     seriesLabel,
@@ -209,7 +211,7 @@
     }
 
     setEventPinned(event.id, true, "start");
-    rememberLayoutKey(`event:${event.id}`, "start");
+    rememberLayoutKey(eventItemKey(event.id), "start");
     addEvent(event, true);
   }
 
@@ -217,7 +219,7 @@
     status = `Loading ${seriesLabel(series)}…`;
     const seriesId = series.id;
     setSeriesPinned(seriesId, true, "start");
-    rememberLayoutKey(`series:${seriesId}`, "start");
+    rememberLayoutKey(seriesItemKey(seriesId), "start");
     addSeries(series, true);
   }
 

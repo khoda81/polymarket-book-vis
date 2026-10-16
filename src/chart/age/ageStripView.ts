@@ -45,9 +45,8 @@ export interface AgeStripHost {
 
 /**
  * Age-mode projection of live books plus the shared compressed pressure
- * history. Rendering stays on one visible Canvas2D surface; recorder hydration,
- * live updates, ghost memory, resolution state, clocks, and tooltips all feed
- * this same projection.
+ * history. Pressure is drawn by a WebGL2 layer on its own canvas; labels, axes,
+ * clocks and tooltips stay on the Canvas2D annotation surface above it.
  */
 export class AgeStripView {
   private readonly host: AgeStripHost;

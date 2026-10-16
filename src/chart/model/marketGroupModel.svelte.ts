@@ -1,4 +1,5 @@
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
+import { errorMessage } from "@/shared/errors";
 import { fetchRecorderHydration } from "@/recorder/ageRecorderClient";
 import { ClobFeeScheduleResolver } from "@/domain/books/feeSchedule";
 import {
@@ -412,7 +413,7 @@ export class MarketGroupModel {
   }
 
   private reportFailure(error: unknown): void {
-    this.onfailure(error instanceof Error ? error.message : String(error));
+    this.onfailure(errorMessage(error));
   }
 
   private describeObservation(tokenId: string): ObservationDescription {

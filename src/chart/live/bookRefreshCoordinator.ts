@@ -3,11 +3,11 @@ import {
   type PublicClient,
   type TokenId,
 } from "@polymarket/client";
+import { MAX_TIMER_DELAY_MS } from "../../shared/timers";
 
 const BOOKS_REQUEST_LIMIT = 500;
 const BOOKS_REQUEST_WINDOW_MS = 10_000;
 const BOOKS_REQUEST_SPACING_MS = BOOKS_REQUEST_WINDOW_MS / BOOKS_REQUEST_LIMIT;
-const MAX_TIMER_DELAY_MS = 2_147_483_647;
 // Temporary watchdog for Polymarket's silently-stalled market websocket.
 // Keep this independent of ghost rendering precision: REST is evidence/liveness,
 // not a display refresh mechanism. See #13.

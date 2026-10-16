@@ -4,6 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    "noUnusedLocals": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -16,5 +17,5 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "backend"]
+  "include": ["src"]
 }

@@ -1,3 +1,5 @@
+import { finiteNumber, timestampMs } from "../../shared/parse";
+import { marketTitle, normalizeDisplayText } from "./marketMetadata";
 import { orderMarkets } from "./marketOrder";
 import type { Event, Market, MarketId, PublicClient } from "@polymarket/client";
 
@@ -103,7 +105,7 @@ export function buildEventDetails(
     return [
       {
         marketId: market.id,
-        title: market.groupItemTitle ?? market.question ?? "(untitled)",
+        title: marketTitle(market) ?? "(untitled)",
         body,
       },
     ];
@@ -147,7 +149,7 @@ function extractRawMarketAnnotations(
     const marketId = knownIds.get(rawId);
     if (!marketId) continue;
 
-    const threshold = numericValue(rawMarket.groupItemThreshold);
+    const threshold = finiteNumber(rawMarket.groupItemThreshold);
     if (threshold !== null) thresholdByMarketId.set(marketId, threshold);
 
     const rawState = asRecord(rawMarket.state);
@@ -179,21 +181,10 @@ function marketResolutionMs(market: Market): number | null {
 
 function firstTimestamp(...values: readonly unknown[]): number | null {
   for (const value of values) {
-    if (value instanceof Date) return value.getTime();
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string") {
-      const parsed = Date.parse(value);
-      if (Number.isFinite(parsed)) return parsed;
-    }
+    const parsed = timestampMs(value);
+    if (parsed !== null) return parsed;
   }
   return null;
-}
-
-function numericValue(value: unknown): number | null {
-  if (typeof value !== "number" && typeof value !== "string") return null;
-  if (typeof value === "string" && value.trim() === "") return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
 }
 
 function descriptionPreview(description: string): string {
@@ -207,17 +198,13 @@ function descriptionPreview(description: string): string {
 
 function isUsefulDescription(description: string): boolean {
   if (!description.trim()) return false;
-  const normalized = normalizeDescription(description).replace(/[.:]+$/, "");
+  const normalized = normalizeDisplayText(description).replace(/[.:]+$/, "");
   return !GENERIC_DESCRIPTION_LABELS.has(normalized);
 }
 
 function sameDescription(a: string, b: string): boolean {
   if (!a.trim() || !b.trim()) return false;
-  return normalizeDescription(a) === normalizeDescription(b);
-}
-
-function normalizeDescription(value: string): string {
-  return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+  return normalizeDisplayText(a) === normalizeDisplayText(b);
 }
 
 function artworkUrl(...candidates: readonly unknown[]): string | null {
@@ -226,21 +213,6 @@ function artworkUrl(...candidates: readonly unknown[]): string | null {
     if (value) return value;
   }
   return null;
-}
-
-function sameArtworkUrl(a: string, b: string | null): boolean {
-  if (!b) return false;
-  if (a === b) return true;
-  return normalizeArtworkUrl(a) === normalizeArtworkUrl(b);
-}
-
-function normalizeArtworkUrl(value: string): string {
-  try {
-    const url = new URL(value, "https://polymarket.com");
-    return `${url.origin}${url.pathname}`;
-  } catch {
-    return value.split(/[?#]/, 1)[0] ?? value;
-  }
 }
 
 function text(value: unknown): string {

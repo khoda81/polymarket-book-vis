@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "recorder": "bun backend/recorder.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "proto:generate": "buf generate && prettier --write src/gen",
@@ -21,7 +21,8 @@
     "prettier": "3.9.8",
     "prettier-plugin-svelte": "4.1.1",
     "svelte": "^5.57.1",
-    "typescript": "^7.0.2",
+    "svelte-check": "^4.7.6",
+    "typescript": "~6",
     "vite": "^8.3.2"
   },
   "dependencies": {

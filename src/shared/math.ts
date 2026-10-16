@@ -178,21 +178,12 @@ export function fmtRelativeTimeOffset(seconds: number): string {
   return relativeTimeOffsetDisplay(seconds).text;
 }
 
-/** Human-readable elapsed duration. */
-export function fmtRelativeTime(seconds: number): string {
-  return relativeTimeDisplay(seconds, "elapsed").text;
-}
-
 export const MARKET_COLOR_LUMINANCE = 0.72;
 export const MARKET_COLOR_CHROMA = 0.16;
 const GOLDEN_ANGLE = 137.50776405003785;
 
 export function idToHue(idx: number, offset: number = 56.234): number {
   return (((idx * GOLDEN_ANGLE + offset) % 360) + 360) % 360;
-}
-
-export function idToColor(idx: number, offset: number = 56.234): string {
-  return `oklch(${MARKET_COLOR_LUMINANCE} ${MARKET_COLOR_CHROMA} ${idToHue(idx, offset)})`;
 }
 
 /**
@@ -283,4 +274,13 @@ export function fmtVol(n: number): string {
   if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
   if (Math.abs(n) >= 1_000) return (n / 1_000).toFixed(1) + "K";
   return n.toFixed(1);
+}
+
+export function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+/** Clamp to [0, 1], mapping non-finite input to 0. */
+export function clamp01(value: number): number {
+  return Number.isFinite(value) ? clamp(value, 0, 1) : 0;
 }

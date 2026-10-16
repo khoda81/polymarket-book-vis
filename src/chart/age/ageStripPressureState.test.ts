@@ -282,10 +282,8 @@ test("observed resolution time freezes loser history through resolution", () => 
 
 test("recorder coverage remains token-local when starts differ or one token is missing", () => {
   const state = new AgeStripPressureState();
-  state.configure([
-    { tokenId: "yes", resolutionMs: 10_000 },
-    { tokenId: "no", resolutionMs: 10_000 },
-  ]);
+  state.ensure("yes", 10_000);
+  state.ensure("no", 10_000);
   state.setRecordingCoverage({ no: 2_000 });
   expect(state.timing("yes")!.recordingSinceMs).toBeNull();
   expect(state.timing("no")!.recordingSinceMs).toBe(2_000);

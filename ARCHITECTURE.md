@@ -53,10 +53,8 @@ The browser entry point is `src/main.ts`; `src/app/App.svelte` composes the dash
 | `src/recorder`                                              | Recorder HTTP hydration and protobuf decoding                                         |
 | `src/shared`                                                | General mathematical utilities                                                        |
 | `src/gen`                                                   | Generated protobuf bindings; regenerate with `bun run proto:generate`                 |
-| `backend/storage`, `live`                                   | Recorder persistence and subscriptions                                                |
-| `backend/legacyPressureV5`                                  | Legacy pressure implementation used by the recorder store                             |
 
-Tests live beside their modules. `backend/recorder.ts` remains the recorder entry point.
+Tests live beside their modules. The recorder service lives in the separate `polymarket-book-recorder` repository; this repository owns only its client and the protobuf schema it decodes.
 
 ## State ownership in the current modules
 
@@ -76,4 +74,4 @@ Tests live beside their modules. `backend/recorder.ts` remains the recorder entr
 
 ## Validation
 
-Run `bun run format:check`, `bun run proto:check`, `bun test`, and `bun run build`. Svelte component diagnostics can additionally be checked with `bunx svelte-check --tsconfig ./tsconfig.json`; the build's TypeScript step covers `.ts` files, not component scripts.
+Run `bun run format:check`, `bun run proto:check`, `bun test`, `bun run check`, and `bun run build`. `check` runs svelte-check over component scripts and templates, which the build's TypeScript step does not cover.

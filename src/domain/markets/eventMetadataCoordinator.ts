@@ -4,13 +4,13 @@ import {
   type PublicClient,
   type TokenId,
 } from "@polymarket/client";
+import { MAX_TIMER_DELAY_MS } from "../../shared/timers";
 import { loadEventDetails, type EventDetails } from "./eventDetails";
 import { initialMarketLifecycle } from "./marketLifecycle";
 
 export const EVENT_METADATA_REFRESH_MS = 60_000;
 export const EVENT_METADATA_MIN_REFRESH_MS = 5_000;
 const MAX_CONCURRENT_REFRESHES = 2;
-const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 type MetadataListener = (details: EventDetails) => void;
 type MetadataLoader = (id: EventId) => Promise<EventDetails>;

@@ -1,8 +1,5 @@
 import { fmtSIAtExponent } from "../../shared/math";
-import {
-  shareVolumeAtPressure,
-  signedSharePressure,
-} from "../colors/pressureInk";
+import { shareVolumeAtPressure } from "../colors/pressureInk";
 import { tickDensityOpacity } from "../ticks/density";
 import { placeQuantileTicks } from "../ticks/quantileTicks";
 
@@ -77,13 +74,6 @@ export function shareLegendTicks(
       };
     })
     .filter((tick) => tick.opacity > 1 / 255);
-}
-
-export function shareLegendPosition(value: number, reserve: number): number {
-  if (!(reserve > 0) || !Number.isFinite(reserve)) return 0.5;
-  if (Number.isNaN(value) || value === 0) return 0.5;
-
-  return 0.5 + 0.5 * signedSharePressure(value, reserve);
 }
 
 export function shareValueAtPosition(

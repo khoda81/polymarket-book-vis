@@ -41,15 +41,3 @@ export function priceFromLegacyNumber(value: number): Price {
 export function priceToNumber(value: Price): number {
   return value / PRICE_SCALE;
 }
-
-export function complementPrice(value: Price): Price {
-  return priceFromTicks(PRICE_SCALE - value);
-}
-
-export function formatPrice(value: Price): string {
-  const whole = Math.floor(value / PRICE_SCALE);
-  const fraction = String(value % PRICE_SCALE)
-    .padStart(4, "0")
-    .replace(/0+$/, "");
-  return fraction ? `${whole}.${fraction}` : String(whole);
-}

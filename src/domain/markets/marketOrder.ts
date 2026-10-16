@@ -1,4 +1,5 @@
 import type { Event, Market, MarketId } from "@polymarket/client";
+import { finiteNumber } from "../../shared/parse";
 import { isActiveOrderMarket } from "./marketTradability";
 
 export function orderMarkets(
@@ -14,7 +15,7 @@ export function orderMarkets(
       market,
       originalIndex,
       value: byPrice
-        ? numericValue(market.outcomes.yes.price)
+        ? (finiteNumber(market.outcomes.yes.price) ?? undefined)
         : thresholdByMarketId.get(market.id),
       resolutionMs: resolutionMsByMarketId.get(market.id),
       live: isActiveOrderMarket(market),
@@ -58,11 +59,4 @@ function compareOptionalNumbers(
   if (a === undefined) return b === undefined ? null : 1;
   if (b === undefined) return -1;
   return descending ? b - a : a - b;
-}
-
-function numericValue(value: unknown): number | undefined {
-  if (typeof value !== "number" && typeof value !== "string") return undefined;
-  if (typeof value === "string" && value.trim() === "") return undefined;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : undefined;
 }

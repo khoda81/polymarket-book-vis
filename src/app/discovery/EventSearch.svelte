@@ -10,8 +10,9 @@
     summarizeEventMarketStatus,
   } from "../../domain/markets/marketLifecycle";
   import { eventTimingDisplay } from "../../domain/markets/eventTiming";
+  import { marketTitle } from "../../domain/markets/marketMetadata";
   import { fmtVol } from "../../shared/math";
-  import { errorMessage } from "../dashboard/model";
+  import { errorMessage } from "../../shared/errors";
   import {
     type PublicClient,
     type Event,
@@ -136,7 +137,7 @@
 
       return [
         {
-          title: market.groupItemTitle ?? market.question ?? label,
+          title: marketTitle(market) ?? label,
           label,
           primary,
           color: null,

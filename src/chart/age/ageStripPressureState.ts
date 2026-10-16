@@ -74,16 +74,6 @@ export class AgeStripPressureState {
     return state;
   }
 
-  configure(
-    rows: readonly {
-      readonly tokenId: string;
-      readonly resolutionMs: number | null;
-    }[],
-  ): void {
-    this.states.clear();
-    for (const row of rows) this.ensure(row.tokenId, row.resolutionMs);
-  }
-
   retain(tokenIds: ReadonlySet<string>): void {
     for (const tokenId of this.states.keys())
       if (!tokenIds.has(tokenId)) this.states.delete(tokenId);
