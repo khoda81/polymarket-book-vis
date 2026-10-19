@@ -1,22 +1,28 @@
 name: Release
 
+# Every push to main is released and deployed.
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
 
 permissions:
   contents: write
 
-env:
-  TAG: ${{ github.event.release.tag_name }}
-  ASSET: polymarket-book-vis-${{ github.event.release.tag_name }}-dist.tar.gz
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.name.outputs.tag }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6.1.0
+
+      # Derived from the commit rather than the clock, so a re-run reuses the tag.
+      - name: Name the release
+        id: name
+        env:
+          COMMITTED_AT: ${{ github.event.head_commit.timestamp }}
+        run: echo "tag=v$(date -u -d "$COMMITTED_AT" +%Y.%m.%d)-${GITHUB_SHA::7}" >>"$GITHUB_OUTPUT"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2.2.0
@@ -33,19 +39,27 @@ jobs:
         run: bun run build
 
       - name: Package
+        env:
+          ASSET: polymarket-book-vis-${{ steps.name.outputs.tag }}-dist.tar.gz
         run: |
           tar -czf "$ASSET" -C dist .
           sha256sum "$ASSET" > "$ASSET.sha256"
 
-      - name: Attach to release
-        run: gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --clobber
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.name.outputs.tag }}
+          ASSET: polymarket-book-vis-${{ steps.name.outputs.tag }}-dist.tar.gz
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --clobber
+          else
+            gh release create "$TAG" "$ASSET" "$ASSET.sha256" --target "$GITHUB_SHA" --generate-notes
+          fi
 
   # Server setup lives in polymarket-book-recorder/deploy.
   deploy:
     needs: build
-    if: ${{ !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     environment: production
     concurrency:
@@ -54,6 +68,7 @@ jobs:
     steps:
       - name: Deploy over SSH
         env:
+          TAG: ${{ needs.build.outputs.tag }}
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
           DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
