@@ -80,4 +80,29 @@
   .copy-feedback:empty {
     display: none;
   }
+
+  @media (any-pointer: coarse), (max-width: 48rem) {
+    svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .slug-text {
+      display: none;
+    }
+
+    .copy-feedback {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      z-index: 30;
+      padding: 6px 8px;
+      border: 1px solid var(--color-border-secondary, #ccc);
+      border-radius: 4px;
+      background: var(--color-background-primary, #fff);
+      font-size: 12px;
+      line-height: 1.4;
+      pointer-events: none;
+    }
+  }
 </style>
