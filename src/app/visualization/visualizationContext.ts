@@ -7,6 +7,8 @@ import { startWallClock, WallClock } from "@/shared/wallClock";
 import { EventMetadataCoordinator } from "@/domain/markets/eventMetadataCoordinator";
 import { liveBookCoordinator } from "@/chart/live/liveBookCoordinator";
 import { startDashboardRecovery } from "./dashboardRecovery";
+import { startTouchScaleGesture } from "./touchScaleGesture";
+import { queueAgeStripTuningScale } from "@/chart/age/ageStripInteraction";
 import type { PublicClient } from "@polymarket/client";
 
 const VISUALIZATION_CONTEXT = Symbol("polymarket-book-vis.visualization");
@@ -45,6 +47,13 @@ export function provideVisualizationContext(
   };
   setContext(VISUALIZATION_CONTEXT, context);
   onMount(() => {
+    const stopTouch = startTouchScaleGesture(document, (scale) =>
+      queueAgeStripTuningScale(
+        context.tuning,
+        scale.volumeLogScale,
+        scale.ghostLogScale,
+      ),
+    );
     const stopClock = startWallClock(context.wallClock);
     const stopRecovery = startDashboardRecovery(
       context.wallClock,
@@ -52,6 +61,7 @@ export function provideVisualizationContext(
       liveBookCoordinator(client),
     );
     return () => {
+      stopTouch();
       stopRecovery();
       stopClock();
       context.metadata.destroy();

@@ -10,6 +10,11 @@ body {
   font-family: var(--font-sans, sans-serif);
 }
 
+#app {
+  /* Browser-owned single-finger scrolling; two fingers tune the visualization. */
+  touch-action: pan-x pan-y;
+}
+
 .dashboard-toolbar {
   position: sticky;
   top: 0;
