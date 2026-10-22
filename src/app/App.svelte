@@ -34,13 +34,11 @@
     MIN_COLUMNS,
     loadDismissedDiscoveryIds,
     loadStoredIds,
-    loadColumnLayout,
-    persistColumnLayout,
     loadLayoutOrder,
     persistIds,
   } from "./dashboard/dashboardStorage";
   import { masonryItem } from "./dashboard/masonryItem";
-  import { columnsForWidth, learnColumnCount } from "./dashboard/columnLayout";
+  import { ColumnLayout } from "./dashboard/columnLayout";
 
   const client = createPublicClient();
   provideVisualizationContext(client);
@@ -49,15 +47,15 @@
   let pinnedEventIds = loadStoredIds<EventId>(PINNED_EVENT_IDS_STORAGE_KEY);
   let pinnedSeriesIds = loadStoredIds<SeriesId>(PINNED_SERIES_IDS_STORAGE_KEY);
   let layoutOrder = loadLayoutOrder(pinnedEventIds, pinnedSeriesIds);
-  let viewportWidth = window.innerWidth;
-  let columnLayout = loadColumnLayout();
-  $: columnCount = columnsForWidth(columnLayout, viewportWidth);
+  const columnLayout = new ColumnLayout();
+  // Display snapshot only; the stylesheet selects the count and owns its curve.
+  let columnCount = columnLayout.count;
   let draggingKey: string | null = null;
   let status = "";
   let dismissedDiscoveryIds = loadDismissedDiscoveryIds();
   const reorder = new DashboardReorderController({
     getOrder: () => layoutOrder,
-    getColumnCount: () => columnCount,
+    getColumnCount: () => columnLayout.count,
     setOrder: (order) => (layoutOrder = order),
     setDraggingKey: (key) => (draggingKey = key),
     persistOrder: () => persistLayoutOrder(),
@@ -83,23 +81,14 @@
   }
 
   function setColumnCount(next: number): void {
-    const columns = Math.max(MIN_COLUMNS, Math.round(next));
-    if (!Number.isSafeInteger(columns)) return;
     reorder.finish();
-    viewportWidth = window.innerWidth;
-    columnLayout = learnColumnCount(columnLayout, viewportWidth, columns);
-    persistColumnLayout(columnLayout);
+    columnLayout.choose(next);
+    columnCount = columnLayout.count;
   }
 
   function commitColumnCount(input: HTMLInputElement): void {
-    const value = Number(input.value);
-    if (
-      input.value.trim() !== "" &&
-      Number.isInteger(value) &&
-      value >= MIN_COLUMNS
-    )
-      setColumnCount(value);
-    input.value = String(columnsForWidth(columnLayout, viewportWidth));
+    setColumnCount(Number(input.value));
+    input.value = String(columnLayout.count);
   }
 
   function persistLayoutOrder(): void {
@@ -267,17 +256,16 @@
   onMount(() => {
     const resized = () => {
       reorder.finish();
-      viewportWidth = window.innerWidth;
+      columnCount = columnLayout.count;
     };
     window.addEventListener("resize", resized);
-    // Persist legacy migration at the width where the preference was restored.
-    persistColumnLayout(columnLayout);
     for (const seriesId of pinnedSeriesIds) void loadPinnedSeries(seriesId);
     for (const eventId of pinnedEventIds) void loadPinnedEvent(eventId);
 
     return () => {
       window.removeEventListener("resize", resized);
       reorder.finish();
+      columnLayout.destroy();
     };
   });
 </script>
@@ -322,11 +310,7 @@
   <PressureLegend />
 </header>
 
-<div
-  class="grid"
-  class:grid--dragging={draggingKey !== null}
-  style={`--dashboard-columns: ${columnCount}`}
->
+<div class="grid" class:grid--dragging={draggingKey !== null}>
   {#each orderedEntries as entry (itemKey(entry))}
     <div
       class="grid-item"

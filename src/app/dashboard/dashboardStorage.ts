@@ -1,23 +1,12 @@
 import type { EventId, SeriesId } from "@polymarket/client";
 import { eventItemKey, isItemKey, seriesItemKey } from "./model";
-import {
-  DEFAULT_COLUMN_LAYOUT,
-  columnsForWidth,
-  learnColumnCount,
-  parseColumnLayout,
-  type ColumnLayout,
-} from "./columnLayout";
 
 export const PINNED_EVENT_IDS_STORAGE_KEY =
   "polymarket-book-vis:pinned-event-ids:v1";
 export const PINNED_SERIES_IDS_STORAGE_KEY =
   "polymarket-book-vis:pinned-series-ids:v1";
-export const COLUMN_COUNT_STORAGE_KEY =
-  "polymarket-book-vis:dashboard-columns:v1";
 export const COLUMN_LAYOUT_STORAGE_KEY =
   "polymarket-book-vis:dashboard-columns:v3";
-export const LEGACY_COLUMN_LAYOUT_STORAGE_KEY =
-  "polymarket-book-vis:dashboard-columns:v2";
 export const LAYOUT_ORDER_STORAGE_KEY =
   "polymarket-book-vis:dashboard-order:v2";
 // Keep the original storage keys so saved filters and dismissals survive
@@ -92,76 +81,6 @@ export function loadStoredIds<T extends string>(
       typeof value === "string" && value.trim().length > 0,
   );
   return [...new Set(ids)] as T[];
-}
-
-export function loadColumnCount(
-  storage: StorageReader = localStorage,
-  viewportWidth = window.innerWidth,
-): number {
-  return columnsForWidth(
-    loadColumnLayout(storage, viewportWidth),
-    viewportWidth,
-  );
-}
-
-export function loadColumnLayout(
-  storage: StorageReader = localStorage,
-  viewportWidth = window.innerWidth,
-): ColumnLayout {
-  const saved = parseColumnLayout(
-    loadStoredJson(COLUMN_LAYOUT_STORAGE_KEY, storage),
-  );
-  if (saved) return saved;
-
-  const legacy = parseLegacyColumnLayout(
-    loadStoredJson(LEGACY_COLUMN_LAYOUT_STORAGE_KEY, storage),
-  );
-  if (legacy) return legacy;
-
-  // A legacy count teaches the current width, rather than overriding every device size.
-  const raw = storage.getItem(COLUMN_COUNT_STORAGE_KEY);
-  if (raw !== null) {
-    const parsed = Number(raw);
-    if (Number.isSafeInteger(parsed) && parsed >= MIN_COLUMNS)
-      return learnColumnCount(DEFAULT_COLUMN_LAYOUT, viewportWidth, parsed);
-  }
-  return DEFAULT_COLUMN_LAYOUT;
-}
-
-/** Normalize the old breakpoint records only at the storage boundary. */
-function parseLegacyColumnLayout(value: unknown): ColumnLayout | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  let previousWidth = -1;
-  let previousColumns = 0;
-  for (const step of value) {
-    if (
-      typeof step !== "object" ||
-      step === null ||
-      !Number.isSafeInteger(step.minWidth) ||
-      step.minWidth < 0 ||
-      !Number.isSafeInteger(step.columns) ||
-      step.columns < 1 ||
-      (previousColumns === 0
-        ? step.minWidth !== 0
-        : step.minWidth <= previousWidth || step.columns < previousColumns)
-    )
-      return null;
-    previousWidth = step.minWidth;
-    previousColumns = step.columns;
-  }
-
-  const layout: [0, ...number[]] = [0];
-  for (const step of value) {
-    while (layout.length < step.columns) layout.push(step.minWidth);
-  }
-  return layout;
-}
-
-export function persistColumnLayout(
-  layout: ColumnLayout,
-  storage: StorageWriter = localStorage,
-): void {
-  storage.setItem(COLUMN_LAYOUT_STORAGE_KEY, JSON.stringify(layout));
 }
 
 export function loadLayoutOrder(
