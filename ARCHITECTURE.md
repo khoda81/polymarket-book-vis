@@ -21,6 +21,17 @@ Do not add defensive branches for internal states that the type/model can forbid
 
 Correctness by construction is preferred because it removes bug classes, makes invariants local, and reduces the amount of code future changes must reason about.
 
+## Reason about the representation before implementing
+
+This is a personal tool optimized for its owner's workflow and long-term maintainability. Conventional UX expectations and publishability do not take precedence over the owner's stated preferences.
+
+Identify the mathematical object, its invariants, the required operations and the mutation owner before choosing fields or helpers. Infer the intended invariants and flag wording that conflicts with or underspecifies them; explain the proposed interpretation before implementing it.
+
+- Represent contiguous ordinal values with indices instead of redundant fields. Use binary search for sorted data and local mutations when an operation only changes an interval.
+- Notify the owner before choosing an inefficient representation or algorithm, duplicating code, or adding a field that can be derived. Suggest a better structure or a refactor when it removes those compromises.
+- Keep mutation behind one owner or module. Give readers only the capabilities they need; copy at genuine ownership or snapshot boundaries.
+- Make invariants apparent to a fresh reader or agent without relying on earlier conversation. Tests supplement a sound representation instead of compensating for avoidable invalid states.
+
 ## Keep independent work independent
 
 A subsystem should invalidate only the state it owns.
@@ -69,8 +80,8 @@ Tests live beside their modules. The recorder service lives in the separate `pol
 - The display wall clock samples `Date.now()` once per animation frame and runs only annotations whose absolute deadlines are due. `ObservationClock` remains a separate causal clock driven by market observations. Network retry/poll timers do not depend on visible frames; the resumed display clock only supplies an additional wake signal. A recovered live subscription must establish a fresh book snapshot before applying deltas to cached geometry.
 - A valid empty order-book snapshot, an omitted token in a successful `/books` response, and a failed request are different evidence. The book watchdog delivers only actual snapshots, paces unavailable tokens with per-token backoff, and uses separate failure/rate-limit backoff for failed requests. An unavailable token can trigger metadata reconciliation but cannot clear a cached book or imply resolution.
 - Derive secondary information where possible: stable sorting preserves insertion order; chart readiness follows group readiness.
-- Keep policy constants with their owner. Discovery limits drive both queries and UI bounds/help text. Dashboard storage owns persisted keys and viewport defaults. Protocol versions come from the snapshot schema module.
-- Dashboard column preferences store one nondecreasing width threshold per column count: index `i` always means `i + 1` columns, and the first threshold is zero. Shared boundaries retain repeated thresholds instead of omitting intermediate counts. A manual count clips incompatible thresholds on either side; resizing only evaluates the function. Storage normalizes legacy breakpoint records into thresholds, and legacy single counts migrate as a constraint at the width where they were restored.
+- Keep policy constants with their owner. Discovery limits drive both queries and UI bounds/help text. Dashboard storage owns persisted keys; `ColumnLayout` owns default column thresholds. Protocol versions come from the snapshot schema module.
+- `ColumnLayout` owns one ordered CSS media rule per column count: index `i` always means `i + 1` columns, and the first threshold is zero. Thresholds are nondecreasing; shared boundaries retain repeated thresholds instead of omitting intermediate counts. CSS is the sole live authority: binary search uses native media matching, manual choices edit only conflicting rules, and the browser applies columns on resize. Numeric arrays exist only at the v3 storage boundary; older column formats are retired without migration.
 - The visualization scope owns the dashboard-wide two-finger scale gesture. Single-finger panning stays with the browser; horizontal pinching changes ghost time and vertical pinching changes shares per CSS pixel. Touch and wheel changes share one coalesced tuning update per frame. Pressure tick marks and text labels have separate density policies so narrow legends retain a signed scale.
 - Preserve compatibility at boundaries: storage keys, protobuf field numbers, recorder schema versions, exact price/pressure semantics and live REST/WebSocket ordering must not change during organizational refactors.
 
