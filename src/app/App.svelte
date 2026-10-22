@@ -29,17 +29,18 @@
   import {
     PINNED_EVENT_IDS_STORAGE_KEY,
     PINNED_SERIES_IDS_STORAGE_KEY,
-    COLUMN_COUNT_STORAGE_KEY,
     LAYOUT_ORDER_STORAGE_KEY,
     DISMISSED_DISCOVERY_STORAGE_KEY,
     MIN_COLUMNS,
     loadDismissedDiscoveryIds,
     loadStoredIds,
-    loadColumnCount,
+    loadColumnLayout,
+    persistColumnLayout,
     loadLayoutOrder,
     persistIds,
   } from "./dashboard/dashboardStorage";
   import { masonryItem } from "./dashboard/masonryItem";
+  import { columnsForWidth, learnColumnCount } from "./dashboard/columnLayout";
 
   const client = createPublicClient();
   provideVisualizationContext(client);
@@ -48,7 +49,9 @@
   let pinnedEventIds = loadStoredIds<EventId>(PINNED_EVENT_IDS_STORAGE_KEY);
   let pinnedSeriesIds = loadStoredIds<SeriesId>(PINNED_SERIES_IDS_STORAGE_KEY);
   let layoutOrder = loadLayoutOrder(pinnedEventIds, pinnedSeriesIds);
-  let columnCount = loadColumnCount();
+  let viewportWidth = window.innerWidth;
+  let columnLayout = loadColumnLayout();
+  $: columnCount = columnsForWidth(columnLayout, viewportWidth);
   let draggingKey: string | null = null;
   let status = "";
   let dismissedDiscoveryIds = loadDismissedDiscoveryIds();
@@ -80,9 +83,12 @@
   }
 
   function setColumnCount(next: number): void {
-    if (!Number.isFinite(next)) return;
-    columnCount = Math.max(MIN_COLUMNS, Math.round(next));
-    localStorage.setItem(COLUMN_COUNT_STORAGE_KEY, String(columnCount));
+    const columns = Math.max(MIN_COLUMNS, Math.round(next));
+    if (!Number.isSafeInteger(columns)) return;
+    reorder.finish();
+    viewportWidth = window.innerWidth;
+    columnLayout = learnColumnCount(columnLayout, viewportWidth, columns);
+    persistColumnLayout(columnLayout);
   }
 
   function commitColumnCount(input: HTMLInputElement): void {
@@ -93,7 +99,7 @@
       value >= MIN_COLUMNS
     )
       setColumnCount(value);
-    input.value = String(columnCount);
+    input.value = String(columnsForWidth(columnLayout, viewportWidth));
   }
 
   function persistLayoutOrder(): void {
@@ -312,10 +318,18 @@
   }
 
   onMount(() => {
+    const resized = () => {
+      reorder.finish();
+      viewportWidth = window.innerWidth;
+    };
+    window.addEventListener("resize", resized);
+    // Persist legacy migration at the width where the preference was restored.
+    persistColumnLayout(columnLayout);
     for (const seriesId of pinnedSeriesIds) void loadPinnedSeries(seriesId);
     for (const eventId of pinnedEventIds) void loadPinnedEvent(eventId);
 
     return () => {
+      window.removeEventListener("resize", resized);
       reorder.finish();
     };
   });

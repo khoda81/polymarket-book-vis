@@ -12,7 +12,10 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      "/api/recorder": "http://127.0.0.1:3001",
+      "/api/recorder": {
+        target: process.env.RECORDER_PROXY_TARGET || "http://127.0.0.1:3001",
+        changeOrigin: true,
+      },
     },
   },
 });

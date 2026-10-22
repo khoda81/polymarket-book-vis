@@ -2,14 +2,18 @@ import { expect, test } from "bun:test";
 import type { EventId, SeriesId } from "@polymarket/client";
 import {
   COLUMN_COUNT_STORAGE_KEY,
+  COLUMN_LAYOUT_STORAGE_KEY,
   LAYOUT_ORDER_STORAGE_KEY,
   PINNED_EVENT_IDS_STORAGE_KEY,
   loadColumnCount,
+  loadColumnLayout,
   loadDiscoveryNumber,
   loadLayoutOrder,
   loadStoredIds,
   persistIds,
+  persistColumnLayout,
 } from "./dashboardStorage";
+import { DEFAULT_COLUMN_LAYOUT, learnColumnCount } from "./columnLayout";
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -64,6 +68,25 @@ test("column defaults preserve viewport thresholds and honor saved counts", () =
   expect(loadColumnCount(storage, 500)).toBe(12);
   storage.setItem(COLUMN_COUNT_STORAGE_KEY, "1.5");
   expect(loadColumnCount(storage, 1200)).toBe(3);
+});
+
+test("legacy column preference migrates at its current width and persists the whole curve", () => {
+  const storage = memoryStorage();
+  storage.setItem(COLUMN_COUNT_STORAGE_KEY, "4");
+  const migrated = loadColumnLayout(storage, 1400);
+  persistColumnLayout(migrated, storage);
+  expect(loadColumnCount(storage, 390)).toBe(1);
+  expect(loadColumnCount(storage, 1000)).toBe(2);
+  expect(loadColumnCount(storage, 1400)).toBe(4);
+  expect(loadColumnCount(storage, 2000)).toBe(4);
+  const learned = learnColumnCount(migrated, 1000, 1);
+  persistColumnLayout(learned, storage);
+  expect(loadColumnLayout(storage, 390)).toEqual(learned);
+  expect(loadColumnCount(storage, 1000)).toBe(1);
+  expect(loadColumnCount(storage, 1400)).toBe(4);
+  storage.setItem(COLUMN_LAYOUT_STORAGE_KEY, '[{"minWidth":0,"columns":0}]');
+  storage.setItem(COLUMN_COUNT_STORAGE_KEY, "bad");
+  expect(loadColumnLayout(storage, 390)).toEqual(DEFAULT_COLUMN_LAYOUT);
 });
 
 test("discovery preferences validate missing and out-of-range persisted values", () => {

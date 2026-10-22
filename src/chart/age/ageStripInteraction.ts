@@ -36,10 +36,24 @@ export function handleAgeStripTuningWheel(
 ): boolean {
   if (!event.ctrlKey && !event.shiftKey) return false;
 
-  const pending = pendingScale(tuning);
   const logScale = -normalizedWheelDelta(event) * 0.002;
-  if (event.shiftKey) pending.ghostLogScale += logScale;
-  else pending.volumeLogScale += logScale;
+  queueAgeStripTuningScale(
+    tuning,
+    event.shiftKey ? 0 : logScale,
+    event.shiftKey ? logScale : 0,
+  );
+  return true;
+}
+
+/** Coalesce wheel and pinch changes in the visualization's shared frame. */
+export function queueAgeStripTuningScale(
+  tuning: AgeStripTuningStore,
+  volumeLogScale: number,
+  ghostLogScale: number,
+): void {
+  const pending = pendingScale(tuning);
+  pending.volumeLogScale += volumeLogScale;
+  pending.ghostLogScale += ghostLogScale;
 
   if (pending.raf === null)
     pending.raf = requestAnimationFrame(() => {
@@ -52,6 +66,4 @@ export function handleAgeStripTuningWheel(
 
       tuning.scale(volumeFactor, ghostFactor);
     });
-
-  return true;
 }

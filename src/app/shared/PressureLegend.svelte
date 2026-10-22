@@ -3,7 +3,7 @@
   import { AGE_ROW_BAND_PX } from "../../chart/age/ageStripTuning";
   import { GhostMemoryScale } from "../../chart/age/ghostMemoryScale";
   import { getVisualizationContext } from "../visualization/visualizationContext";
-  import { shareLegendTicks } from "../../rendering/legends/shareLegendTicks";
+  import { shareLegendLayout } from "./shareLegendLayout";
   import {
     DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
     signedVolumeColor,
@@ -11,8 +11,6 @@
 
   const visualization = getVisualizationContext();
 
-  const SHARE_TICK_MIN_SPACING_PX = 24;
-  const SHARE_TICK_FULL_OPACITY_SPACING_PX = 32;
   let shareBar: HTMLDivElement;
   let ghostCanvas: HTMLCanvasElement;
   let shareWidth = $state(0);
@@ -21,12 +19,12 @@
 
   const tuning = $derived(visualization.tuning.get());
   const observationFrame = $derived(visualization.observations.read());
-  const shareTicks = $derived(
-    shareLegendTicks(tuning.volumePerCssPixel * AGE_ROW_BAND_PX, shareWidth, {
-      minSpacingPx: SHARE_TICK_MIN_SPACING_PX,
-      fullOpacitySpacingPx: SHARE_TICK_FULL_OPACITY_SPACING_PX,
-      dpr: shareDpr,
-    }),
+  const shareLayout = $derived(
+    shareLegendLayout(
+      tuning.volumePerCssPixel * AGE_ROW_BAND_PX,
+      shareWidth,
+      shareDpr,
+    ),
   );
   const negativeColor = $derived(
     signedVolumeColor(-1, DEFAULT_SIGNED_VOLUME_COLOR_SCALE),
@@ -87,7 +85,7 @@
     >
       <span class="volume-legend-wedge volume-legend-wedge--negative"></span>
       <span class="volume-legend-wedge volume-legend-wedge--positive"></span>
-      {#each shareTicks as tick (tick.value)}
+      {#each shareLayout.ticks as tick (tick.value)}
         <span
           class="volume-legend-mark"
           style:left={`${tick.position * 100}%`}
@@ -96,7 +94,7 @@
       {/each}
     </div>
     <div class="volume-legend-ticks">
-      {#each shareTicks as tick (tick.value)}
+      {#each shareLayout.labels as tick (tick.value)}
         <span
           style:left={`${tick.position * 100}%`}
           style:opacity={tick.opacity}

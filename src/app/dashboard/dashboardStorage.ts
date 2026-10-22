@@ -1,5 +1,12 @@
 import type { EventId, SeriesId } from "@polymarket/client";
 import { eventItemKey, isItemKey, seriesItemKey } from "./model";
+import {
+  DEFAULT_COLUMN_LAYOUT,
+  columnsForWidth,
+  learnColumnCount,
+  parseColumnLayout,
+  type ColumnLayout,
+} from "./columnLayout";
 
 export const PINNED_EVENT_IDS_STORAGE_KEY =
   "polymarket-book-vis:pinned-event-ids:v1";
@@ -7,6 +14,8 @@ export const PINNED_SERIES_IDS_STORAGE_KEY =
   "polymarket-book-vis:pinned-series-ids:v1";
 export const COLUMN_COUNT_STORAGE_KEY =
   "polymarket-book-vis:dashboard-columns:v1";
+export const COLUMN_LAYOUT_STORAGE_KEY =
+  "polymarket-book-vis:dashboard-columns:v2";
 export const LAYOUT_ORDER_STORAGE_KEY =
   "polymarket-book-vis:dashboard-order:v2";
 // Keep the original storage keys so saved filters and dismissals survive
@@ -22,9 +31,6 @@ export const DISCOVERY_TOPICS_STORAGE_KEY =
 export const DISCOVERY_LIQUIDITY_STORAGE_KEY =
   "polymarket-book-vis:discovery-min-liquidity:v1";
 export const MIN_COLUMNS = 1;
-
-const SINGLE_COLUMN_BREAKPOINT_PX = 800;
-const TWO_COLUMN_BREAKPOINT_PX = 1200;
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -90,15 +96,36 @@ export function loadColumnCount(
   storage: StorageReader = localStorage,
   viewportWidth = window.innerWidth,
 ): number {
+  return columnsForWidth(
+    loadColumnLayout(storage, viewportWidth),
+    viewportWidth,
+  );
+}
+
+export function loadColumnLayout(
+  storage: StorageReader = localStorage,
+  viewportWidth = window.innerWidth,
+): ColumnLayout {
+  const saved = parseColumnLayout(
+    loadStoredJson(COLUMN_LAYOUT_STORAGE_KEY, storage),
+  );
+  if (saved) return saved;
+
+  // A legacy count teaches the current width, rather than overriding every device size.
   const raw = storage.getItem(COLUMN_COUNT_STORAGE_KEY);
   if (raw !== null) {
     const parsed = Number(raw);
-    if (Number.isInteger(parsed) && parsed >= MIN_COLUMNS) return parsed;
+    if (Number.isSafeInteger(parsed) && parsed >= MIN_COLUMNS)
+      return learnColumnCount(DEFAULT_COLUMN_LAYOUT, viewportWidth, parsed);
   }
+  return DEFAULT_COLUMN_LAYOUT;
+}
 
-  if (viewportWidth < SINGLE_COLUMN_BREAKPOINT_PX) return 1;
-  if (viewportWidth < TWO_COLUMN_BREAKPOINT_PX) return 2;
-  return 3;
+export function persistColumnLayout(
+  layout: ColumnLayout,
+  storage: StorageWriter = localStorage,
+): void {
+  storage.setItem(COLUMN_LAYOUT_STORAGE_KEY, JSON.stringify(layout));
 }
 
 export function loadLayoutOrder(
