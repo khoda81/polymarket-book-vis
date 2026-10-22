@@ -15,6 +15,8 @@ export const PINNED_SERIES_IDS_STORAGE_KEY =
 export const COLUMN_COUNT_STORAGE_KEY =
   "polymarket-book-vis:dashboard-columns:v1";
 export const COLUMN_LAYOUT_STORAGE_KEY =
+  "polymarket-book-vis:dashboard-columns:v3";
+export const LEGACY_COLUMN_LAYOUT_STORAGE_KEY =
   "polymarket-book-vis:dashboard-columns:v2";
 export const LAYOUT_ORDER_STORAGE_KEY =
   "polymarket-book-vis:dashboard-order:v2";
@@ -111,6 +113,11 @@ export function loadColumnLayout(
   );
   if (saved) return saved;
 
+  const legacy = parseLegacyColumnLayout(
+    loadStoredJson(LEGACY_COLUMN_LAYOUT_STORAGE_KEY, storage),
+  );
+  if (legacy) return legacy;
+
   // A legacy count teaches the current width, rather than overriding every device size.
   const raw = storage.getItem(COLUMN_COUNT_STORAGE_KEY);
   if (raw !== null) {
@@ -119,6 +126,35 @@ export function loadColumnLayout(
       return learnColumnCount(DEFAULT_COLUMN_LAYOUT, viewportWidth, parsed);
   }
   return DEFAULT_COLUMN_LAYOUT;
+}
+
+/** Normalize the old breakpoint records only at the storage boundary. */
+function parseLegacyColumnLayout(value: unknown): ColumnLayout | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  let previousWidth = -1;
+  let previousColumns = 0;
+  for (const step of value) {
+    if (
+      typeof step !== "object" ||
+      step === null ||
+      !Number.isSafeInteger(step.minWidth) ||
+      step.minWidth < 0 ||
+      !Number.isSafeInteger(step.columns) ||
+      step.columns < 1 ||
+      (previousColumns === 0
+        ? step.minWidth !== 0
+        : step.minWidth <= previousWidth || step.columns < previousColumns)
+    )
+      return null;
+    previousWidth = step.minWidth;
+    previousColumns = step.columns;
+  }
+
+  const layout: [0, ...number[]] = [0];
+  for (const step of value) {
+    while (layout.length < step.columns) layout.push(step.minWidth);
+  }
+  return layout;
 }
 
 export function persistColumnLayout(

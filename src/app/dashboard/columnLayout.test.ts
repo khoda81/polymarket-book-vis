@@ -7,23 +7,33 @@ import {
   type ColumnLayout,
 } from "./columnLayout";
 
-test("learning a count preserves compatible steps and clips conflicting ones", () => {
+test("every column count keeps its threshold when choices share a boundary", () => {
   let layout = learnColumnCount(DEFAULT_COLUMN_LAYOUT, 1000, 4);
-  expect(layout).toEqual([
-    { minWidth: 0, columns: 1 },
-    { minWidth: 800, columns: 2 },
-    { minWidth: 1000, columns: 4 },
-  ]);
+  expect(layout).toEqual([0, 800, 1000, 1000]);
+  expect(columnsForWidth(layout, 799)).toBe(1);
+  expect(columnsForWidth(layout, 800)).toBe(2);
+  expect(columnsForWidth(layout, 999)).toBe(2);
+  expect(columnsForWidth(layout, 1000)).toBe(4);
   layout = learnColumnCount(layout, 900, 1);
-  expect(layout).toEqual([
-    { minWidth: 0, columns: 1 },
-    { minWidth: 1000, columns: 4 },
-  ]);
+  expect(layout).toEqual([0, 1000, 1000, 1000]);
+  expect(columnsForWidth(layout, 900)).toBe(1);
+  expect(columnsForWidth(layout, 999)).toBe(1);
+  expect(columnsForWidth(layout, 1000)).toBe(4);
   layout = learnColumnCount(layout, 1000, 2);
+  expect(layout).toEqual([0, 1000]);
   expect(columnsForWidth(layout, 999)).toBe(1);
   expect(columnsForWidth(layout, 1000)).toBe(2);
   expect(columnsForWidth(layout, 2000)).toBe(2);
-  expect(DEFAULT_COLUMN_LAYOUT[1]!.columns).toBe(2);
+  expect(DEFAULT_COLUMN_LAYOUT).toEqual([0, 800, 1200]);
+});
+
+test("learning adjusts thresholds without inventing later width boundaries", () => {
+  const layout = learnColumnCount(DEFAULT_COLUMN_LAYOUT, 900, 1);
+  expect(layout).toEqual([0, 1200, 1200]);
+  expect(columnsForWidth(layout, 1199)).toBe(1);
+  expect(columnsForWidth(layout, 1200)).toBe(3);
+  expect(learnColumnCount(layout, 1400, 1)).toEqual([0]);
+  expect(learnColumnCount(DEFAULT_COLUMN_LAYOUT, 0, 2)).toEqual([0, 0, 1200]);
 });
 
 test("successive contradictory choices stay monotone and honor the latest choice", () => {
@@ -45,36 +55,44 @@ test("successive contradictory choices stay monotone and honor the latest choice
     for (let sample = 0; sample <= 4000; sample += 10) {
       const columns = columnsForWidth(layout, sample);
       expect(columns).toBeGreaterThanOrEqual(previous);
+      expect(columns).toBeGreaterThanOrEqual(1);
+      expect(columns).toBeLessThanOrEqual(layout.length);
       previous = columns;
     }
     expect(
       layout.every(
-        (step, index) =>
-          index === 0 || step.columns > layout[index - 1]!.columns,
+        (minWidth, index) => index === 0 || minWidth >= layout[index - 1]!,
       ),
     ).toBe(true);
   }
 });
 
-test("persisted step functions reject invalid widths, counts, ordering, and missing origins", () => {
+test("persisted thresholds reject invalid widths, holes, ordering, and missing origins", () => {
   for (const value of [
     null,
     [],
-    [{ minWidth: 800, columns: 2 }],
-    [{ minWidth: 0, columns: 0 }],
-    [{ minWidth: 0, columns: 1.5 }],
-    [
-      { minWidth: 0, columns: 2 },
-      { minWidth: 800, columns: 1 },
-    ],
-    [
-      { minWidth: 0, columns: 1 },
-      { minWidth: 0, columns: 2 },
-    ],
-    [
-      { minWidth: 0, columns: 1 },
-      { minWidth: Infinity, columns: 2 },
-    ],
+    [800],
+    [-1, 800],
+    [0, -1],
+    [0, 800, 799],
+    [0, 800.5],
+    [0, Infinity],
+    [0, NaN],
+    [0, "800"],
+    [0, null],
+    [0, undefined, 1200],
+    [{ minWidth: 0, columns: 1 }],
   ])
     expect(parseColumnLayout(value)).toBeNull();
+});
+
+test("parsing retains every shared threshold and owns the validated array", () => {
+  const stored = [0, 0, 800, 800];
+  const layout = parseColumnLayout(stored)!;
+  expect(layout).toEqual([0, 0, 800, 800]);
+  expect(columnsForWidth(layout, 0)).toBe(2);
+  expect(columnsForWidth(layout, 799)).toBe(2);
+  expect(columnsForWidth(layout, 800)).toBe(4);
+  stored[1] = 900;
+  expect(layout).toEqual([0, 0, 800, 800]);
 });

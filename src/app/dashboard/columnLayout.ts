@@ -1,68 +1,44 @@
-export interface ColumnStep {
-  readonly minWidth: number;
-  readonly columns: number;
-}
+/** Index i owns the minimum viewport width for i + 1 columns. */
+export type ColumnLayout = readonly [0, ...number[]];
 
-export type ColumnLayout = readonly ColumnStep[];
-
-export const DEFAULT_COLUMN_LAYOUT: ColumnLayout = [
-  { minWidth: 0, columns: 1 },
-  { minWidth: 800, columns: 2 },
-  { minWidth: 1200, columns: 3 },
-];
+export const DEFAULT_COLUMN_LAYOUT: ColumnLayout = [0, 800, 1200];
 
 export function columnsForWidth(layout: ColumnLayout, width: number): number {
-  let columns = layout[0]!.columns;
-  for (const step of layout) {
-    if (step.minWidth > width) break;
-    columns = step.columns;
+  for (let index = layout.length - 1; index > 0; index--) {
+    if (layout[index]! <= width) return index + 1;
   }
-  return columns;
+  return 1;
 }
 
-/** Learn this width's count, clipping incompatible steps on either side. */
+/** Clip thresholds around this width without removing intermediate counts. */
 export function learnColumnCount(
   layout: ColumnLayout,
   width: number,
   columns: number,
 ): ColumnLayout {
-  const steps = layout
-    .filter((step) => step.minWidth !== width)
-    .map((step) => ({
-      minWidth: step.minWidth,
-      columns:
-        step.minWidth < width
-          ? Math.min(step.columns, columns)
-          : Math.max(step.columns, columns),
-    }));
-  steps.push({ minWidth: width, columns });
-  steps.sort((a, b) => a.minWidth - b.minWidth);
-  return steps.filter(
-    (step, index) => index === 0 || step.columns !== steps[index - 1]!.columns,
-  );
+  const higher = layout.slice(columns);
+  const nextWidth = higher.find((minWidth) => minWidth > width);
+  return [
+    0,
+    ...Array.from({ length: columns - 1 }, (_, index) =>
+      Math.min(layout[index + 1] ?? width, width),
+    ),
+    ...(nextWidth === undefined
+      ? []
+      : higher.map((minWidth) => Math.max(minWidth, nextWidth))),
+  ];
 }
 
 export function parseColumnLayout(value: unknown): ColumnLayout | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const layout: ColumnStep[] = [];
-  for (const step of value) {
+  if (!Array.isArray(value) || value[0] !== 0) return null;
+  const layout: [0, ...number[]] = [0];
+  for (const minWidth of value.slice(1)) {
     if (
-      typeof step !== "object" ||
-      step === null ||
-      !Number.isSafeInteger(step.minWidth) ||
-      step.minWidth < 0 ||
-      !Number.isSafeInteger(step.columns) ||
-      step.columns < 1
+      !Number.isSafeInteger(minWidth) ||
+      minWidth < layout[layout.length - 1]!
     )
       return null;
-    const previous = layout.at(-1);
-    if (
-      previous
-        ? step.minWidth <= previous.minWidth || step.columns < previous.columns
-        : step.minWidth !== 0
-    )
-      return null;
-    layout.push({ minWidth: step.minWidth, columns: step.columns });
+    layout.push(minWidth);
   }
   return layout;
 }
