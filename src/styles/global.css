@@ -606,6 +606,16 @@ body {
   height: 28px;
 }
 
+.card-controls {
+  display: contents;
+}
+
+.card-controls :is(button, select):focus-visible,
+.chart-row-flip:focus-visible {
+  outline: 2px solid #1d9e75;
+  outline-offset: 2px;
+}
+
 .card-view,
 .chart-row-flip,
 .card-pin,
@@ -822,6 +832,132 @@ body {
 
   .dashboard-primary {
     gap: 0.75rem;
+  }
+}
+
+/* Coarse pointers also cover tablets and phones in landscape. The width
+   fallback keeps narrow windows comfortable without relying on hover. */
+@media (any-pointer: coarse), (max-width: 48rem) {
+  .dashboard-search > input,
+  .layout-columns input,
+  .layout-columns button,
+  .event-discovery input,
+  .event-discovery select,
+  .event-discovery button {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .layout-columns button {
+    width: 44px;
+  }
+
+  .dashboard-search-spinner {
+    top: 14px;
+  }
+
+  .dashboard-search-results {
+    width: calc(100vw - 2rem);
+    right: auto;
+  }
+
+  .dashboard-search-result-title {
+    white-space: normal;
+  }
+
+  .event-discovery {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .event-discovery[open] {
+    padding-bottom: 0.875rem;
+  }
+
+  .event-discovery summary {
+    min-height: 44px;
+    align-content: center;
+  }
+
+  .event-discovery button {
+    min-width: 44px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .card-controls {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 12px 12px 0;
+  }
+
+  .card-actions {
+    position: static;
+    height: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-left: auto;
+    min-width: 0;
+  }
+
+  .card-controls :is(button, select),
+  .chart-row-flip {
+    min-width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+  }
+
+  .card-view {
+    max-width: 100%;
+    font-size: 16px;
+  }
+
+  .card-drag {
+    position: static;
+    width: 44px;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+    background: var(--color-background-secondary, #f2f2f2);
+    border: 1px solid var(--color-border-secondary, #ccc);
+    border-radius: 7px;
+  }
+
+  .grid-item > .card > .cpv-wrap {
+    flex: 1;
+    height: auto;
+    min-height: 0;
+    padding-top: 8px;
+  }
+
+  .card .cpv-header {
+    padding-right: 0;
+  }
+
+  .series-scroll-tools {
+    position: static;
+    margin-top: 8px;
+    font-size: 12px;
+    pointer-events: auto;
+  }
+
+  .series-scroll-tools:not(:has(*)) {
+    display: none;
+  }
+
+  .series-scroll-tools button {
+    min-height: 44px;
+    padding-right: 12px;
+    padding-left: 12px;
   }
 }
 

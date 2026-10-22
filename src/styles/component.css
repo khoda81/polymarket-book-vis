@@ -515,6 +515,18 @@
   color: #ba7517;
 }
 
+.cpv-chart-controls {
+  position: relative;
+}
+
+.cpv-chart-controls[hidden] {
+  display: none;
+}
+
+.cpv-chart-controls > .cpv-chart-row-flip {
+  display: none;
+}
+
 .cpv-chart-row-flip {
   position: absolute;
   top: 8px;
@@ -704,4 +716,126 @@
   position: absolute;
   left: 0;
   right: 0;
+}
+
+@media (any-pointer: coarse), (max-width: 48rem) {
+  .cpv-header {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+
+  .cpv-heading {
+    flex-basis: 100%;
+    align-items: center;
+  }
+
+  .cpv-heading-copy {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    height: auto;
+    overflow: visible;
+  }
+
+  .cpv-title-line {
+    height: auto;
+    min-height: 44px;
+    flex-wrap: wrap;
+  }
+
+  .cpv-title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.4;
+  }
+
+  .cpv-title-link {
+    display: flex;
+    align-items: center;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .cpv-event-slug {
+    position: relative;
+    justify-content: center;
+    align-self: start;
+    width: 44px;
+    height: 44px;
+    overflow: visible;
+    border: 1px solid var(--color-border-secondary, #ccc);
+    border-radius: 7px;
+    opacity: 1;
+  }
+
+  .cpv-event-slug:focus-visible {
+    outline: 2px solid #1d9e75;
+    outline-offset: 2px;
+  }
+
+  .cpv-status {
+    margin-left: 36px;
+  }
+
+  .cpv-event-description,
+  .cpv-market-rules {
+    font-size: 12px;
+  }
+
+  .cpv-event-description > summary,
+  .cpv-market-rules > summary,
+  .cpv-market-rule > summary {
+    min-width: 44px;
+    min-height: 44px;
+    width: 100%;
+    padding: 8px 0;
+    align-content: center;
+  }
+
+  .cpv-toggles:not(.cpv-toggles--age-axis) label {
+    min-width: 44px;
+    min-height: 44px;
+    gap: 8px;
+    font-size: 14px;
+  }
+
+  .cpv-toggles:not(.cpv-toggles--age-axis) input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .cpv-chart-controls {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .cpv-chart-controls .cpv-hidden-markets {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: 12px;
+  }
+
+  .cpv-hidden-markets label {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px 10px;
+  }
+
+  .cpv-chart-controls .cpv-chart-row-flip {
+    display: block;
+    position: static;
+    flex: 0 0 auto;
+    margin-left: auto;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .cpv-chart-window > .cpv-chart-row-flip {
+    display: none;
+  }
 }

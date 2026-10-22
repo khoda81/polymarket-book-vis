@@ -210,23 +210,6 @@
 </script>
 
 <div class="series-scroll-view">
-  <div class="series-scroll-tools" data-masonry-layout-neutral>
-    {#if !following}<button
-        type="button"
-        onclick={() => {
-          void current();
-          void refresh();
-        }}>Jump to current</button
-      >{/if}
-    {#if message || loading > 0}
-      <span class="series-scroll-status" role="status"
-        >{message || "Loading events…"}</span
-      >
-      {#if message && loading === 0}<button type="button" onclick={retry}
-          >Retry</button
-        >{/if}
-    {/if}
-  </div>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The scroll region supports keyboard pagination and viewport activity.) -->
   <div
     class="series-market-scroll"
@@ -252,5 +235,22 @@
         </section>
       {/each}
     </div>
+  </div>
+  <div class="series-scroll-tools">
+    {#if !following}<button
+        type="button"
+        onclick={() => {
+          void current();
+          void refresh();
+        }}>Jump to current</button
+      >{/if}
+    {#if message || loading > 0}
+      <span class="series-scroll-status" role="status"
+        >{message || "Loading events…"}</span
+      >
+      {#if message && loading === 0}<button type="button" onclick={retry}
+          >Retry</button
+        >{/if}
+    {/if}
   </div>
 </div>

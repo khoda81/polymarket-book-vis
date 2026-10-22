@@ -206,19 +206,32 @@
 </script>
 
 <div
-  class="cpv-hidden-markets"
-  hidden={viewMode !== "age" || hiddenControls.length === 0}
+  class="cpv-chart-controls"
+  hidden={viewMode !== "age" || definition.controls.length === 0}
 >
-  {#if viewMode === "age"}
-    {#each displayedHiddenControls as control (control.market.id)}
-      <MarketControl
-        {control}
-        checked={false}
-        showDeadline={false}
-        lifecycle={model.lifecycleFor(control.market.id)}
-        onchange={(checked) => userSetVisible(control, checked)}
-      />
-    {/each}
+  <div
+    class="cpv-hidden-markets"
+    hidden={viewMode !== "age" || hiddenControls.length === 0}
+  >
+    {#if viewMode === "age"}
+      {#each displayedHiddenControls as control (control.market.id)}
+        <MarketControl
+          {control}
+          checked={false}
+          showDeadline={false}
+          lifecycle={model.lifecycleFor(control.market.id)}
+          onchange={(checked) => userSetVisible(control, checked)}
+        />
+      {/each}
+    {/if}
+  </div>
+
+  <!-- Touch uses a toolbar; desktop keeps its action in the virtualized window.
+       CSS exposes only one of these controls at a time. -->
+  {#if viewMode === "age" && visibleControls.length > 0}
+    <div class="cpv-chart-row-flip">
+      <AgeRowFlipButton orientation={ageRowOrientation} onflip={onrowflip} />
+    </div>
   {/if}
 </div>
 
