@@ -1,7 +1,6 @@
 import { stalenessAgeForOpacityErrorMs } from "../../domain/pressure/pressureField";
+import { MAX_TIMER_DELAY_MS } from "../../shared/timers";
 export const AGE_ROW_BAND_PX = 32;
-// Browsers clamp setTimeout to a signed 32-bit millisecond delay.
-const MAX_GHOST_REFRESH_MS = 2_147_483_647;
 export const GHOST_ALPHA_BUCKET_WIDTH = 1 / 256;
 
 /**
@@ -16,7 +15,7 @@ export function ghostOpacityBucketDelayMs(halfLifeMs: number): number {
 
 export function ghostRefreshDelayMs(halfLifeMs: number): number {
   if (!(halfLifeMs > 0) || !Number.isFinite(halfLifeMs))
-    return MAX_GHOST_REFRESH_MS;
+    return MAX_TIMER_DELAY_MS;
 
-  return Math.min(MAX_GHOST_REFRESH_MS, ghostOpacityBucketDelayMs(halfLifeMs));
+  return Math.min(MAX_TIMER_DELAY_MS, ghostOpacityBucketDelayMs(halfLifeMs));
 }

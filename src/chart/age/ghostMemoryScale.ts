@@ -7,9 +7,13 @@ import { fmtRelativeTimeOffset } from "@/shared/math";
 import {
   hideSharedTooltip,
   showSharedTooltip,
+  tooltipRow,
 } from "@/rendering/sharedTooltip";
 import type { ObservationFrame } from "@/domain/pressure/observationClock";
-import type { AgeStripTuningStore } from "@/chart/age/ageStripTuningStore";
+import {
+  DEFAULT_GHOST_HALF_LIFE_MS,
+  type AgeStripTuningStore,
+} from "@/chart/age/ageStripTuningStore";
 import { handleAgeStripTuningWheel } from "./ageStripInteraction";
 
 const HEIGHT = 28;
@@ -39,7 +43,7 @@ export class GhostMemoryScale {
   private width = 0;
   private styleDirty = true;
   private observationFrame: ObservationFrame = { kind: "unobserved" };
-  private ghostHalfLifeMs = 5_000;
+  private ghostHalfLifeMs = DEFAULT_GHOST_HALF_LIFE_MS;
   private hoverPointer: GhostHoverPointer | null = null;
   private tooltipList: HTMLDivElement | null = null;
   private tooltipAgeTexts = new Map<string, Text>();
@@ -419,19 +423,4 @@ function renderGhostTooltip(
   }
   overlay.appendChild(list);
   return { list, ageTexts };
-}
-
-function tooltipRow(name: string, value: string | Text): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "cpv-ov-row";
-
-  const key = document.createElement("span");
-  key.textContent = name;
-
-  const amount = document.createElement("b");
-  if (typeof value === "string") amount.textContent = value;
-  else amount.appendChild(value);
-
-  row.append(key, amount);
-  return row;
 }

@@ -14,6 +14,7 @@ import type { ViewMode } from "@/domain/markets/chartState";
 import {
   hideSharedTooltip,
   showSharedTooltip,
+  tooltipRow,
 } from "@/rendering/sharedTooltip";
 import { ageStripRowAtY, type AgeStripGeometry } from "./ageStripLayout";
 import { pressureVolumeAtY } from "./ageStripPressureProjection";
@@ -266,20 +267,6 @@ export function renderAgeTooltip(
 
   overlay.appendChild(tooltipRow("Shares", formatPressureVolume(volume)));
   overlay.appendChild(tooltipRow("Age", ageText ?? "∞"));
-}
-
-function tooltipRow(name: string, value: string): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "cpv-ov-row";
-
-  const key = document.createElement("span");
-  key.textContent = name;
-
-  const amount = document.createElement("b");
-  amount.textContent = value;
-
-  row.append(key, amount);
-  return row;
 }
 
 function formatProbability(value: number): string {

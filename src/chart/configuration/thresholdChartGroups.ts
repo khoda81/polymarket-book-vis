@@ -19,8 +19,6 @@ export interface ThresholdMarketGroup {
   readonly direction: ThresholdFamilyDirection;
 }
 
-type ThresholdSide = "high" | "low";
-
 /**
  * Split events that explicitly contain independent HIGH and LOW threshold
  * ladders. The text labels identify the two semantic families; a coherent
@@ -66,14 +64,16 @@ export function thresholdMarketGroups(
   ];
 }
 
-function thresholdSide(market: EventMarket): ThresholdSide | null {
+function thresholdSide(market: EventMarket): ThresholdMarketGroupKey | null {
   const titleSide = arrowSide(market.groupItemTitle);
   const questionSide = parentheticalSide(market.question);
   if (titleSide && questionSide && titleSide !== questionSide) return null;
   return titleSide ?? questionSide;
 }
 
-function arrowSide(value: string | null | undefined): ThresholdSide | null {
+function arrowSide(
+  value: string | null | undefined,
+): ThresholdMarketGroupKey | null {
   const title = value?.trimStart() ?? "";
   if (title.startsWith("↑")) return "high";
   if (title.startsWith("↓")) return "low";
@@ -82,7 +82,7 @@ function arrowSide(value: string | null | undefined): ThresholdSide | null {
 
 function parentheticalSide(
   value: string | null | undefined,
-): ThresholdSide | null {
+): ThresholdMarketGroupKey | null {
   if (/\(\s*HIGH\s*\)/iu.test(value ?? "")) return "high";
   if (/\(\s*LOW\s*\)/iu.test(value ?? "")) return "low";
   return null;
