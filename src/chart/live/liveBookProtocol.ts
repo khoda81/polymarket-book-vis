@@ -1,10 +1,10 @@
 import type { TokenBook } from "@/domain/books/orderBook";
-import type { ClobAssetId } from "@polymarket/client";
+import type { TokenId } from "@polymarket/client";
 import type { MarketEvent } from "@polymarket/client/actions";
 
-export function sameTokenKeys(
-  left: ReadonlySet<ClobAssetId> | undefined,
-  right: ReadonlySet<ClobAssetId>,
+export function sameTokenIds(
+  left: ReadonlySet<TokenId> | undefined,
+  right: ReadonlySet<TokenId>,
 ): boolean {
   if (!left) return right.size === 0;
   if (left.size !== right.size) return false;

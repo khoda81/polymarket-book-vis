@@ -42,19 +42,17 @@ export interface BookRefreshSubscriber {
 }
 
 interface TokenRefreshState {
-  readonly tokenId: TokenId;
   readonly watchers: Map<BookRefreshSubscriber, number>;
   missingCount: number;
   retryAtMs: number;
 }
 
 interface RefreshHeapNode {
-  readonly tokenKey: TokenId;
+  readonly tokenId: TokenId;
   readonly deadlineMs: number;
 }
 
 interface BatchToken {
-  readonly tokenKey: TokenId;
   readonly tokenId: TokenId;
   readonly watchers: readonly BookRefreshSubscriber[];
   readonly state: TokenRefreshState;
@@ -107,16 +105,14 @@ export class BookRefreshCoordinator {
   ): void {
     if (!Number.isFinite(validThroughMs) || validThroughMs < 0) return;
 
-    const tokenKey = tokenId;
-    let state = this.states.get(tokenKey);
+    let state = this.states.get(tokenId);
     if (!state) {
       state = {
-        tokenId,
         watchers: new Map(),
         missingCount: 0,
         retryAtMs: 0,
       };
-      this.states.set(tokenKey, state);
+      this.states.set(tokenId, state);
     }
 
     const previous = state.watchers.get(subscriber);
@@ -135,9 +131,9 @@ export class BookRefreshCoordinator {
       owned = new Set();
       this.tokensBySubscriber.set(subscriber, owned);
     }
-    owned.add(tokenKey);
+    owned.add(tokenId);
 
-    this.reschedule(state);
+    this.reschedule(tokenId, state);
     this.schedulePump();
   }
 
@@ -147,42 +143,39 @@ export class BookRefreshCoordinator {
   }
 
   unwatchAll(subscriber: BookRefreshSubscriber): void {
-    const tokenKeys = this.tokensBySubscriber.get(subscriber);
-    if (!tokenKeys) return;
+    const tokenIds = this.tokensBySubscriber.get(subscriber);
+    if (!tokenIds) return;
 
-    for (const tokenKey of [...tokenKeys])
-      this.unwatchKey(subscriber, tokenKey);
+    for (const tokenId of [...tokenIds]) this.unwatchKey(subscriber, tokenId);
     this.tokensBySubscriber.delete(subscriber);
     this.schedulePump();
   }
 
   private unwatchKey(
     subscriber: BookRefreshSubscriber,
-    tokenKey: TokenId,
+    tokenId: TokenId,
   ): void {
-    const state = this.states.get(tokenKey);
+    const state = this.states.get(tokenId);
     if (!state) return;
 
     state.watchers.delete(subscriber);
-    this.tokensBySubscriber.get(subscriber)?.delete(tokenKey);
+    this.tokensBySubscriber.get(subscriber)?.delete(tokenId);
 
     if (state.watchers.size === 0) {
-      this.states.delete(tokenKey);
-      this.heap.delete(tokenKey);
+      this.states.delete(tokenId);
+      this.heap.delete(tokenId);
     } else {
-      this.reschedule(state);
+      this.reschedule(tokenId, state);
     }
   }
 
-  private reschedule(state: TokenRefreshState): void {
-    if (state.watchers.size === 0) return;
-
+  private reschedule(tokenId: TokenId, state: TokenRefreshState): void {
     let oldestObservationMs = Number.POSITIVE_INFINITY;
     for (const observedThroughMs of state.watchers.values())
       oldestObservationMs = Math.min(oldestObservationMs, observedThroughMs);
 
     this.heap.set(
-      state.tokenId,
+      tokenId,
       Math.max(oldestObservationMs + STALE_BOOK_VERIFY_MS, state.retryAtMs),
     );
   }
@@ -251,9 +244,9 @@ export class BookRefreshCoordinator {
       );
 
       for (const token of batch) {
-        const current = this.states.get(token.tokenKey);
+        const current = this.states.get(token.tokenId);
         if (current !== token.state) continue;
-        const snapshot = snapshotByToken.get(token.tokenKey);
+        const snapshot = snapshotByToken.get(token.tokenId);
         current.missingCount = snapshot ? 0 : current.missingCount + 1;
         for (const watcher of token.watchers) {
           if (!current.watchers.has(watcher)) continue;
@@ -306,8 +299,8 @@ export class BookRefreshCoordinator {
         for (const watcher of token.watchers)
           watcher.onBookRefreshFinished(token.tokenId, requestId);
 
-        const current = this.states.get(token.tokenKey);
-        if (current) this.reschedule(current);
+        const current = this.states.get(token.tokenId);
+        if (current) this.reschedule(token.tokenId, current);
       }
 
       this.inFlight = false;
@@ -323,12 +316,10 @@ export class BookRefreshCoordinator {
       if (!next || next.deadlineMs > nowMs) break;
 
       this.heap.pop();
-      const state = this.states.get(next.tokenKey);
-      if (!state) continue;
-
+      // Unwatching removes a token from the heap and the state map together.
+      const state = this.states.get(next.tokenId)!;
       batch.push({
-        tokenKey: next.tokenKey,
-        tokenId: state.tokenId,
+        tokenId: next.tokenId,
         watchers: [...state.watchers.keys()],
         state,
       });
@@ -374,35 +365,35 @@ class IndexedDeadlineHeap {
     return this.nodes[0];
   }
 
-  set(tokenKey: TokenId, deadlineMs: number): void {
-    const existingIndex = this.indexByToken.get(tokenKey);
+  set(tokenId: TokenId, deadlineMs: number): void {
+    const existingIndex = this.indexByToken.get(tokenId);
     if (existingIndex === undefined) {
       const index = this.nodes.length;
-      this.nodes.push({ tokenKey, deadlineMs });
-      this.indexByToken.set(tokenKey, index);
+      this.nodes.push({ tokenId, deadlineMs });
+      this.indexByToken.set(tokenId, index);
       this.bubbleUp(index);
       return;
     }
 
     const previousDeadlineMs = this.nodes[existingIndex]!.deadlineMs;
-    this.nodes[existingIndex] = { tokenKey, deadlineMs };
+    this.nodes[existingIndex] = { tokenId, deadlineMs };
     if (deadlineMs < previousDeadlineMs) this.bubbleUp(existingIndex);
     else if (deadlineMs > previousDeadlineMs) this.bubbleDown(existingIndex);
   }
 
-  delete(tokenKey: TokenId): void {
-    const index = this.indexByToken.get(tokenKey);
+  delete(tokenId: TokenId): void {
+    const index = this.indexByToken.get(tokenId);
     if (index === undefined) return;
 
     const lastIndex = this.nodes.length - 1;
     const tail = this.nodes[lastIndex]!;
     this.nodes.pop();
-    this.indexByToken.delete(tokenKey);
+    this.indexByToken.delete(tokenId);
 
     if (index === lastIndex) return;
 
     this.nodes[index] = tail;
-    this.indexByToken.set(tail.tokenKey, index);
+    this.indexByToken.set(tail.tokenId, index);
     const parent = Math.floor((index - 1) / 2);
     if (
       index > 0 &&
@@ -415,7 +406,7 @@ class IndexedDeadlineHeap {
   pop(): RefreshHeapNode | undefined {
     const root = this.nodes[0];
     if (!root) return undefined;
-    this.delete(root.tokenKey);
+    this.delete(root.tokenId);
     return root;
   }
 
@@ -455,7 +446,7 @@ class IndexedDeadlineHeap {
     const b = this.nodes[right]!;
     this.nodes[left] = b;
     this.nodes[right] = a;
-    this.indexByToken.set(a.tokenKey, right);
-    this.indexByToken.set(b.tokenKey, left);
+    this.indexByToken.set(a.tokenId, right);
+    this.indexByToken.set(b.tokenId, left);
   }
 }
