@@ -171,9 +171,16 @@ export class BoxPen {
 
 export const CHART_VERTICAL_PADDING_PX = 48;
 
+export interface PlotPadding {
+  readonly l: number;
+  readonly r: number;
+  readonly t: number;
+  readonly b: number;
+}
+
 export class OrderBookPlotter {
   readonly ctx: CanvasRenderingContext2D;
-  readonly padding = {
+  readonly #padding = {
     l: 60,
     r: 16,
     t: CHART_VERTICAL_PADDING_PX / 2,
@@ -206,6 +213,19 @@ export class OrderBookPlotter {
     this.canvas.removeEventListener("mouseleave", this.handleMouseLeave);
     this.onZoom = undefined;
     this.onPointer = undefined;
+  }
+
+  /** Vertical padding is fixed; chart modes choose only the horizontal gutters. */
+  get padding(): PlotPadding {
+    return this.#padding;
+  }
+
+  /** Returns whether a gutter changed, so the caller can resize once. */
+  setHorizontalPadding(l: number, r: number): boolean {
+    if (this.#padding.l === l && this.#padding.r === r) return false;
+    this.#padding.l = l;
+    this.#padding.r = r;
+    return true;
   }
 
   /** CSS-space width captured by the most recent resize. */

@@ -138,6 +138,11 @@ function createView(flushFrame: () => void) {
     width: 400,
     height: 420,
     padding: { l: 20, r: 20, t: 16, b: 16 },
+    setHorizontalPadding(l: number, r: number) {
+      if (this.padding.l === l && this.padding.r === r) return false;
+      this.padding = { ...this.padding, l, r };
+      return true;
+    },
     resize() {
       this.height = Number.parseFloat(canvasWrap.style.height || "420");
     },
