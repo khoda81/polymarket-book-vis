@@ -19,13 +19,9 @@ import {
 } from "@/domain/pressure/pressureBookAdapter";
 import type { LiveBookUpdate } from "../live/liveBookContracts";
 
-export interface AgeStripPressureTiming {
+interface PressureState {
   readonly recordingSinceMs: number | null;
-  readonly resolutionMs: number | null;
   readonly validThroughMs: number | null;
-}
-
-interface PressureState extends AgeStripPressureTiming {
   readonly memory: PressureFrontierMemory;
   /**
    * GPU/render projection of non-finite terminal geometry. The canonical
@@ -50,25 +46,17 @@ export class AgeStripPressureState {
     this.states.clear();
   }
 
-  ensure(tokenId: string, resolutionMs: number | null = null): PressureState {
+  ensure(tokenId: string): PressureState {
     let state = this.states.get(tokenId);
     if (!state) {
       state = {
         recordingSinceMs: null,
-        resolutionMs,
         validThroughMs: null,
         memory: new PressureFrontierMemory(),
         extents: [],
         extentRevision: 0,
         liveRebaseAfterMs: null,
       };
-      this.states.set(tokenId, state);
-    } else if (
-      resolutionMs !== null &&
-      Number.isFinite(resolutionMs) &&
-      state.resolutionMs !== resolutionMs
-    ) {
-      state = { ...state, resolutionMs };
       this.states.set(tokenId, state);
     }
     return state;
@@ -272,7 +260,7 @@ export class AgeStripPressureState {
     unbounded: boolean,
     resolvedAtMs: number | null,
   ): void {
-    const state = this.ensure(tokenId, resolvedAtMs);
+    const state = this.ensure(tokenId);
     if (unbounded) {
       state.memory.resolveUnbounded();
       this.setExtents(tokenId, [FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT]);
@@ -286,8 +274,8 @@ export class AgeStripPressureState {
     return this.states.get(tokenId)?.memory;
   }
 
-  timing(tokenId: string): AgeStripPressureTiming | undefined {
-    return this.states.get(tokenId);
+  recordingSinceMs(tokenId: string): number | null | undefined {
+    return this.states.get(tokenId)?.recordingSinceMs;
   }
 
   observationTime(tokenId: string): ObservationTime | undefined {

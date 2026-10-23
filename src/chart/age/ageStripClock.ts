@@ -7,17 +7,12 @@ import {
 } from "./ageStripLayout";
 import { barYDirection } from "./pressureRows";
 
-export interface AgeStripTiming {
-  readonly recordingSinceMs: number | null;
-  readonly resolutionMs: number | null;
-}
-
 export interface AgeStripClockHost {
   readonly canvasWrap: HTMLElement;
   readonly wallClock: WallClock;
   readonly getGeometry: () => AgeStripGeometry | null;
   readonly getViewMode: () => ViewMode;
-  readonly getTiming: (track: string) => AgeStripTiming | undefined;
+  readonly getRecordingSinceMs: (track: string) => number | null | undefined;
 }
 
 interface ClockLabel {
@@ -68,10 +63,9 @@ export class AgeStripClock {
       const center = drawn.centerCss;
       if (center < vp.t - 24 || center > vp.t + vp.height + 24) continue;
       for (const bar of drawn.row.bars) {
-        const timing = this.host.getTiming(bar.track);
         const color = bar.color;
         const name = `${bar.trackLabel} · ${drawn.row.label}`;
-        const since = timing?.recordingSinceMs;
+        const since = this.host.getRecordingSinceMs(bar.track);
         const age =
           since != null && Number.isFinite(since)
             ? relativeTimeOffsetDisplay((nowMs - since) / 1_000)

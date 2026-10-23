@@ -6,7 +6,7 @@ test("a token becomes synchronized only after the stream snapshot", () => {
   const token = new LiveTokenState();
   token.beginStream(1_000);
 
-  expect(token.awaitingSnapshot).toBe(true);
+  expect(token.synchronized).toBe(false);
   expect(token.streamBook()).toBeNull();
 
   const book = emptyTokenBook();
@@ -27,7 +27,7 @@ test("disconnect preserves a cached book without allowing stream mutation", () =
   token.disconnect();
 
   expect(token.book).toBe(book);
-  expect(token.awaitingSnapshot).toBe(true);
+  expect(token.synchronized).toBe(false);
   expect(token.streamBook()).toBeNull();
 });
 

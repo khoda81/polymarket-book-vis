@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test";
 import { PressureFrontierMemory } from "./pressureFrontierMemory";
-import { priceFromLegacyNumber as p } from "../books/price";
+import { parsePrice } from "../books/price";
 import {
   PRESSURE_FRONTIER_SNAPSHOT_VERSION,
   parsePressureFrontierSnapshot,
 } from "./pressureFrontierSnapshot";
+import { bandsAtPrice } from "@/shared/testing/pressureFrontier";
+
+const p = (value: number) => parsePrice(String(value));
 
 test("failed restores preserve existing pressure", () => {
   const memory = new PressureFrontierMemory();
@@ -30,7 +33,7 @@ test("snapshot round trip preserves token-local history", () => {
   restored.restore(parsed);
 
   for (const price of [0.1, 0.35, 0.5, 0.8].map(p))
-    expect(restored.bandsAtPrice(price)).toEqual(source.bandsAtPrice(price));
+    expect(bandsAtPrice(restored, price)).toEqual(bandsAtPrice(source, price));
 });
 
 test("already validated snapshots cross the restore boundary without reparsing", () => {

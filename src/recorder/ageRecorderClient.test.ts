@@ -1,9 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import {
-  fetchRecorderHydration,
-  subscribeRecorderNetworkState,
-  type RecorderNetworkState,
-} from "./ageRecorderClient";
+import { fetchRecorderHydration } from "./ageRecorderClient";
 
 test("retiring viewport hydration cancels queued and in-flight requests and releases all slots", async () => {
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -12,8 +8,6 @@ test("retiring viewport hydration cancels queued and in-flight requests and rele
     value: { setTimeout },
   });
   const requests: string[] = [];
-  let state!: RecorderNetworkState;
-  const unsubscribe = subscribeRecorderNetworkState((next) => (state = next));
   const fetch = spyOn(globalThis, "fetch").mockImplementation(((
     input,
     init,
@@ -31,31 +25,41 @@ test("retiring viewport hydration cancels queued and in-flight requests and rele
   const runs = controllers.map((controller, index) =>
     fetchRecorderHydration([`token-${index}`], undefined, controller.signal),
   );
+  const released = Array.from({ length: 4 }, () => new AbortController());
+  const after: Promise<void>[] = [];
   try {
     await Promise.resolve();
-    expect(state.activeRequests).toBe(4);
-    expect(state.queuedRequests).toBe(2);
+    expect(requests).toHaveLength(4);
     controllers[4]!.abort();
     await runs[4];
-    expect(state.queuedRequests).toBe(1);
     controllers[0]!.abort();
     await runs[0];
     expect(requests.some((request) => request.includes("token-5"))).toBe(true);
     expect(requests.some((request) => request.includes("token-4"))).toBe(false);
-    expect(state.activeRequests).toBeLessThanOrEqual(4);
-  } finally {
+    expect(requests).toHaveLength(5);
+
     for (const controller of controllers) controller.abort();
     await Promise.all(runs);
+    // Every slot was released: four new hydrations start immediately.
+    after.push(
+      ...released.map((controller, index) =>
+        fetchRecorderHydration(
+          [`after-${index}`],
+          undefined,
+          controller.signal,
+        ),
+      ),
+    );
+    await Promise.resolve();
+    expect(
+      requests.filter((request) => request.includes("after-")),
+    ).toHaveLength(4);
+  } finally {
+    for (const controller of [...controllers, ...released]) controller.abort();
+    await Promise.all([...runs, ...after]);
     fetch.mockRestore();
-    unsubscribe();
     if (originalWindow)
       Object.defineProperty(globalThis, "window", originalWindow);
     else Reflect.deleteProperty(globalThis, "window");
   }
-  expect(state).toMatchObject({
-    activeRequests: 0,
-    queuedRequests: 0,
-    pendingTokens: 0,
-    activeHydrations: 0,
-  });
 });

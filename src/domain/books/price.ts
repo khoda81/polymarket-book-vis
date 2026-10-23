@@ -24,19 +24,6 @@ export function priceFromTicks(value: number): Price {
   return value as Price;
 }
 
-/**
- * Migrate a legacy binary float that was intended to represent an exchange
- * price. New ingestion must use parsePrice instead.
- */
-export function priceFromLegacyNumber(value: number): Price {
-  if (!Number.isFinite(value) || value < 0 || value > 1)
-    throw new RangeError("legacy price must be finite and in [0, 1]");
-  const ticks = Math.round(value * PRICE_SCALE);
-  if (Math.abs(value - ticks / PRICE_SCALE) > 1e-10)
-    throw new RangeError("legacy price is not aligned to a supported tick");
-  return priceFromTicks(ticks);
-}
-
 /** Convert only at a calculation/rendering boundary. */
 export function priceToNumber(value: Price): number {
   return value / PRICE_SCALE;

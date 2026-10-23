@@ -71,7 +71,7 @@ export class AgeStripView {
       canvasWrap: host.canvasWrap,
       getGeometry: () => this.geometry,
       getViewMode: () => host.getRenderState().viewMode,
-      getTiming: (track) => host.pressure.timing(track),
+      getRecordingSinceMs: (track) => host.pressure.recordingSinceMs(track),
     });
     this.tooltip = new AgeStripTooltip({
       wallClock: host.wallClock,
@@ -310,12 +310,11 @@ export class AgeStripView {
     if (!memory) return null;
     return {
       dataRevision: memory.renderDataRevision(),
-      maxPrice: memory.renderMaxPrice(),
       runs: memory.renderRuns(),
       cumulativeShares: memory.renderCumulativeShares(),
       firstChangedRunSince: (revision) =>
         memory.renderFirstChangedRunSince(revision),
-      currentValidThroughMs: memory.renderCurrentValidThroughMs(),
+      currentValidThroughMs: memory.validThroughMs(),
       extents: this.host.pressure.renderExtents(track),
       extentRevision: this.host.pressure.renderExtentRevision(track),
     };

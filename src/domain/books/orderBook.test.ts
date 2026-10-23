@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { HalfBook, canonicalSpread, emptyTokenBook } from "./orderBook";
-import { PRICE_ONE, PRICE_ZERO, parsePrice, type Price } from "./price";
+import { HalfBook } from "./orderBook";
+import { parsePrice, type Price } from "./price";
 
 test("setLevel removes an existing aggregate level when take becomes zero", () => {
   const book = new HalfBook();
@@ -19,18 +19,6 @@ test("canonical price keys unify equivalent decimal spellings", () => {
   expect([...book.asOrders()]).toEqual([
     { price: parsePrice("0.3"), take: 20 },
   ]);
-});
-
-test("canonicalSpread extracts bid/ask prices and their fallbacks", () => {
-  const book = emptyTokenBook();
-  expect(canonicalSpread(book)).toEqual({ bid: PRICE_ZERO, ask: PRICE_ONE });
-
-  book.usdToYes.setLevel(parsePrice("0.4"), 10);
-  book.yesToUsd.setLevel(parsePrice("0.6"), 6);
-  expect(canonicalSpread(book)).toEqual({
-    bid: parsePrice("0.4"),
-    ask: parsePrice("0.6"),
-  });
 });
 
 test("HalfBook rejects invalid values without corrupting ordering", () => {

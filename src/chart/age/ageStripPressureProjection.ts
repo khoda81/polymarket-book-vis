@@ -1,6 +1,5 @@
 import type { PressureExtent } from "@/domain/pressure/pressureField";
 import type { PressureRun } from "@/domain/pressure/pressureFrontierSnapshot";
-import type { Price } from "@/domain/books/price";
 import { shareVolumeAtPressure } from "@/rendering/colors/pressureInk";
 import type { GpuPressureSurface } from "./gpuPressureLayer";
 import { barYDirection, type PressureBar } from "./pressureRows";
@@ -8,7 +7,6 @@ import { barYDirection, type PressureBar } from "./pressureRows";
 /** Render-ready history of one track, independent of how a bar presents it. */
 export interface TrackRenderData {
   readonly dataRevision: number;
-  readonly maxPrice: Price;
   readonly runs: readonly PressureRun[];
   readonly cumulativeShares: readonly number[];
   readonly firstChangedRunSince: (revision: number) => number;

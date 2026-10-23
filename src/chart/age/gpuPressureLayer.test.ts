@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "@/domain/pressure/pressureField";
-import { priceFromLegacyNumber as p } from "@/domain/books/price";
+import { parsePrice } from "@/domain/books/price";
 import type { PressureRun } from "@/domain/pressure/pressureFrontierSnapshot";
 import { PressureResidentBuffer } from "./gpuPressureLayer";
+
+const p = (value: number) => parsePrice(String(value));
 
 test("resident pressure buffer suffix rebuild matches a fresh full rebuild", () => {
   const initial: PressureRun[] = [
@@ -14,7 +16,7 @@ test("resident pressure buffer suffix rebuild matches a fresh full rebuild", () 
     },
   ];
   const resident = new PressureResidentBuffer();
-  resident.rebuildFrom(initial, [10, 15], p(1), [], 500, 0);
+  resident.rebuildFrom(initial, [10, 15], [], 500, 0);
 
   const updated: PressureRun[] = [
     initial[0]!,
@@ -27,10 +29,10 @@ test("resident pressure buffer suffix rebuild matches a fresh full rebuild", () 
       ],
     },
   ];
-  const firstFloat = resident.rebuildFrom(updated, [10, 17], p(1), [], 500, 1);
+  const firstFloat = resident.rebuildFrom(updated, [10, 17], [], 500, 1);
 
   const fresh = new PressureResidentBuffer();
-  fresh.rebuildFrom(updated, [10, 17], p(1), [], 500, 0);
+  fresh.rebuildFrom(updated, [10, 17], [], 500, 0);
 
   expect(firstFloat).toBe(7);
   expect([...resident.usedData()]).toEqual([...fresh.usedData()]);
@@ -49,7 +51,6 @@ test("resident pressure buffer preserves instances across capacity growth", () =
       },
     ],
     [10, 15],
-    p(1),
     [],
     500,
     0,
@@ -70,7 +71,6 @@ test("resident pressure buffer represents persistent unbounded extents explicitl
   resident.rebuildFrom(
     [],
     [],
-    p(1),
     [FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT],
     500,
     0,

@@ -1,7 +1,5 @@
 import { PRICE_ONE, PRICE_ZERO, type Price } from "../books/price";
 
-export type PressureSide = -1 | 1;
-
 export const PRESSURE_MIN_VISIBLE_ALPHA = 1 / 255;
 
 export interface PressureBand {
@@ -66,20 +64,6 @@ export function pressureValidityAlpha(
   return validity.kind === "persistent"
     ? 1
     : stalenessAlpha(validity.validThroughMs, nowMs, halfLifeMs);
-}
-
-export function visibleSinceMs(
-  nowMs: number,
-  halfLifeMs: number,
-  minAlpha = 1 / 255,
-): number {
-  validateHalfLife(halfLifeMs);
-  if (!(minAlpha >= 0 && minAlpha < 1))
-    throw new RangeError("min alpha must be in [0, 1)");
-  if (minAlpha === 0) return Number.NEGATIVE_INFINITY;
-
-  const maxVisibleAgeMs = (-Math.log(minAlpha) / Math.LN2) * halfLifeMs;
-  return nowMs - maxVisibleAgeMs;
 }
 
 export function stalenessAlpha(

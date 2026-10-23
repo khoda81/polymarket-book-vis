@@ -69,7 +69,6 @@ export class DashboardReorderController {
       return [
         {
           key: itemKey,
-          height: rect.height,
           rowSpan: Math.max(
             1,
             Math.ceil((rect.height + rowGap) / (rowHeight + rowGap)),

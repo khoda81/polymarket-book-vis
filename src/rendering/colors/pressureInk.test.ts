@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  sharePressureAreaFraction,
-  shareVolumeAtPressure,
-  signedSharePressure,
-} from "./pressureInk";
+import { shareVolumeAtPressure, signedSharePressure } from "./pressureInk";
 
 describe("pressure ink", () => {
   test("uses smooth vector normalization for signed pressure", () => {
@@ -12,22 +8,13 @@ describe("pressure ink", () => {
   });
 
   test("the reserve share count maps to one over sqrt two", () => {
-    expect(sharePressureAreaFraction(100, 100)).toBeCloseTo(
-      1 / Math.sqrt(2),
-      12,
-    );
-    expect(sharePressureAreaFraction(-100, 100)).toBeCloseTo(
-      1 / Math.sqrt(2),
-      12,
-    );
+    expect(signedSharePressure(100, 100)).toBeCloseTo(1 / Math.sqrt(2), 12);
+    expect(signedSharePressure(-100, 100)).toBeCloseTo(-1 / Math.sqrt(2), 12);
   });
 
   test("approaches full pressure smoothly without a hard cap", () => {
-    expect(sharePressureAreaFraction(900, 100)).toBeCloseTo(
-      9 / Math.sqrt(82),
-      12,
-    );
-    expect(sharePressureAreaFraction(Infinity, 100)).toBe(1);
+    expect(signedSharePressure(900, 100)).toBeCloseTo(9 / Math.sqrt(82), 12);
+    expect(signedSharePressure(Infinity, 100)).toBe(1);
   });
 
   test("is odd before taking row-space magnitude", () => {

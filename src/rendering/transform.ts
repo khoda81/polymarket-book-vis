@@ -36,18 +36,6 @@ export const applyX = (t: Transform, x: number, y: number): number =>
 export const applyY = (t: Transform, x: number, y: number) =>
   t.b * x + t.d * y + t.f;
 
-/** Compose two transforms: `apply(A, apply(B, p)) === apply(compose(A, B), p)`. */
-export function compose(a: Transform, b: Transform): Transform {
-  return {
-    a: a.a * b.a + a.c * b.b,
-    b: a.b * b.a + a.d * b.b,
-    c: a.a * b.c + a.c * b.d,
-    d: a.b * b.c + a.d * b.d,
-    e: a.a * b.e + a.c * b.f + a.e,
-    f: a.b * b.e + a.d * b.f + a.f,
-  };
-}
-
 export function invert(t: Transform): Transform {
   const det = t.a * t.d - t.b * t.c;
   if (det === 0) throw new Error("Transform is not invertible (singular)");

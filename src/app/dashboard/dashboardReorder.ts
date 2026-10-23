@@ -16,7 +16,6 @@ export interface DashboardGridSnapshot {
 
 export interface DashboardDragItem {
   readonly key: string;
-  readonly height: number;
   readonly rowSpan: number;
 }
 

@@ -6,12 +6,11 @@ import {
   type PressureExtent,
 } from "@/domain/pressure/pressureField";
 import type { PressureRun } from "@/domain/pressure/pressureFrontierSnapshot";
-import { priceToNumber, type Price } from "@/domain/books/price";
+import { PRICE_ONE, priceToNumber } from "@/domain/books/price";
 
 export interface GpuPressureSurface {
   readonly key: string;
   readonly dataRevision: number;
-  readonly maxPrice: Price;
   readonly runs: readonly PressureRun[];
   readonly cumulativeShares: readonly number[];
   readonly firstChangedRunSince: (revision: number) => number;
@@ -318,14 +317,6 @@ export class GpuPressureLayer {
     this.canvas.style.display = visible ? "block" : "none";
   }
 
-  invalidate(): void {
-    this.clearSurfaceBuffers();
-    this.rasterKey = "";
-    this.referenceTimeMs = 0;
-    this.displayedOpacityTimeMs = 0;
-    this.displayStateReady = false;
-  }
-
   render(frame: GpuPressureFrame): void {
     this.setVisible(true);
     this.canvas.style.background = frame.background;
@@ -508,7 +499,6 @@ export class GpuPressureLayer {
     const firstFloat = cached.resident.rebuildFrom(
       surface.runs,
       surface.cumulativeShares,
-      surface.maxPrice,
       surface.extents,
       cached.timeOriginMs,
       firstRun,
@@ -848,7 +838,6 @@ export class PressureResidentBuffer {
   rebuildFrom(
     runs: readonly PressureRun[],
     cumulativeShares: readonly number[],
-    maxPrice: Price,
     extents: readonly PressureExtent[],
     timeOriginMs: number,
     requestedFirstRun: number,
@@ -869,7 +858,7 @@ export class PressureResidentBuffer {
       const currentVolume = cumulativeShares[index]!;
       this.runInstanceOffsets[index] = writeFloat / INSTANCE_FLOATS;
 
-      const nextPrice = runs[index + 1]?.price ?? maxPrice;
+      const nextPrice = runs[index + 1]?.price ?? PRICE_ONE;
       const priceLo = priceToNumber(run.price);
       const priceHi = priceToNumber(nextPrice);
       if (!(priceHi > priceLo)) continue;

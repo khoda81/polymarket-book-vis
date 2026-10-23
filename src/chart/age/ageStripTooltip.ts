@@ -13,7 +13,6 @@ import type { Price } from "@/domain/books/price";
 import type { ViewMode } from "@/domain/markets/chartState";
 import {
   hideSharedTooltip,
-  releaseSharedTooltip,
   showSharedTooltip,
 } from "@/rendering/sharedTooltip";
 import { ageStripRowAtY, type AgeStripGeometry } from "./ageStripLayout";
@@ -80,7 +79,7 @@ export class AgeStripTooltip {
       "pointerleave",
       this.handlePointerLeave,
     );
-    releaseSharedTooltip(this.tooltipOwner);
+    hideSharedTooltip(this.tooltipOwner);
   }
 
   private readonly handlePointerMove = (event: PointerEvent) => {

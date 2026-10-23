@@ -1,4 +1,4 @@
-import { PRICE_ONE, PRICE_ZERO, type Price, priceFromTicks } from "./price";
+import { type Price, priceFromTicks } from "./price";
 
 export interface BookOrder {
   /** Exact canonical USD/YES probability price, in ten-thousandths. */
@@ -16,22 +16,10 @@ export function emptyTokenBook(): TokenBook {
   return { usdToYes: new HalfBook(), yesToUsd: new HalfBook() };
 }
 
-export function canonicalSpread(book: TokenBook): { bid: Price; ask: Price } {
-  return {
-    bid: book.usdToYes.highestOrder()?.price ?? PRICE_ZERO,
-    ask: book.yesToUsd.lowestOrder()?.price ?? PRICE_ONE,
-  };
-}
-
 /** One sorted side of a limit order book, keyed by exact canonical price. */
 export class HalfBook {
   private prices: Price[] = [];
   private levels = new Map<Price, number>();
-
-  clear(): void {
-    this.prices = [];
-    this.levels.clear();
-  }
 
   /** Insert, replace, or remove an aggregate level. */
   setLevel(price: Price, take: number): boolean {

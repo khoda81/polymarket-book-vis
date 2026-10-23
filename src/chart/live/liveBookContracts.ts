@@ -30,9 +30,6 @@ export type LiveBookUpdate =
     };
 
 export interface LiveBookFeedCallbacks {
-  readonly onConnectionStatus: (
-    status: import("@/domain/markets/chartState").ConnectionStatus,
-  ) => void;
   readonly onBookUpdated: (
     tokenId: TokenId,
     book: TokenBook,
@@ -45,25 +42,3 @@ export interface LiveBookWatch {
   readonly ready: Promise<void>;
   close(): void;
 }
-
-export type LiveBookTransportState =
-  "idle" | "closing" | "connecting" | "handoff" | "retrying" | "streaming";
-
-export interface LiveBookNetworkState {
-  readonly transport: LiveBookTransportState;
-  readonly desiredTokens: number;
-  readonly subscribedTokens: number;
-  readonly synchronizedBooks: number;
-  readonly cachedBooks: number;
-  readonly awaitingSnapshots: number;
-  readonly refreshingTokens: number;
-  readonly watchers: number;
-  readonly coveredWatchers: number;
-  readonly activeHandles: number;
-  readonly reconciling: boolean;
-  readonly reconcileScheduled: boolean;
-  readonly revision: number;
-  readonly retryAtMs: number | null;
-}
-
-export type LiveBookNetworkSubscriber = (state: LiveBookNetworkState) => void;
