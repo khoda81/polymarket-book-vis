@@ -219,15 +219,10 @@ export class AgeStripView {
     for (const label of this.rowLabels())
       if (label.style.top !== "") label.style.top = "";
 
-    let resize = false;
-    if (this.host.plotter.padding.l !== VOLUME_LEFT_PADDING_PX) {
-      this.host.plotter.padding.l = VOLUME_LEFT_PADDING_PX;
-      resize = true;
-    }
-    if (this.host.plotter.padding.r !== VOLUME_RIGHT_PADDING_PX) {
-      this.host.plotter.padding.r = VOLUME_RIGHT_PADDING_PX;
-      resize = true;
-    }
+    let resize = this.host.plotter.setHorizontalPadding(
+      VOLUME_LEFT_PADDING_PX,
+      VOLUME_RIGHT_PADDING_PX,
+    );
     if (this.host.canvasWrap.style.height !== "") {
       this.host.canvasWrap.style.height = "";
       resize = true;
@@ -267,17 +262,11 @@ export class AgeStripView {
     rowCount: number,
     labels: readonly HTMLLabelElement[],
   ): void {
-    const leftPadding = AGE_TIME_GUTTER_PX;
     const rightPadding = ageLabelGutterWidth(labels);
-    let resize = false;
-    if (this.host.plotter.padding.l !== leftPadding) {
-      this.host.plotter.padding.l = leftPadding;
-      resize = true;
-    }
-    if (this.host.plotter.padding.r !== rightPadding) {
-      this.host.plotter.padding.r = rightPadding;
-      resize = true;
-    }
+    let resize = this.host.plotter.setHorizontalPadding(
+      AGE_TIME_GUTTER_PX,
+      rightPadding,
+    );
 
     const height =
       this.host.plotter.padding.t +
