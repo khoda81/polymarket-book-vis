@@ -236,21 +236,22 @@
     open = false;
   }
 
-  function accept(event: Event): void {
+  /** End the current search before handing a choice to the dashboard. */
+  function finishSearch(): void {
     generation++;
     if (timer !== undefined) window.clearTimeout(timer);
     searching = false;
     query = "";
     clearResults();
+  }
+
+  function accept(event: Event): void {
+    finishSearch();
     onchoose(event);
   }
 
   function acceptSeries(series: Series): void {
-    generation++;
-    if (timer !== undefined) window.clearTimeout(timer);
-    searching = false;
-    query = "";
-    clearResults();
+    finishSearch();
     onchooseseries(series);
   }
 
