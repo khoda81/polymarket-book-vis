@@ -1,7 +1,13 @@
-import type { TokenBook } from "@/domain/books/orderBook";
+import type { MutableTokenBook, TokenBook } from "@/domain/books/orderBook";
 
 export interface ObservedTokenBook {
   readonly book: TokenBook;
+  readonly validThroughMs: number;
+}
+
+/** The stream's own observation; only the live stream mutates its book. */
+interface StreamObservation {
+  readonly book: MutableTokenBook;
   readonly validThroughMs: number;
 }
 
@@ -9,13 +15,13 @@ type TokenStreamState =
   | { readonly kind: "idle" }
   | {
       readonly kind: "awaiting-snapshot";
-      readonly cached: ObservedTokenBook | null;
+      readonly cached: StreamObservation | null;
       readonly requestedAtMs: number | null;
       readonly marketKey: string | null;
     }
   | {
       readonly kind: "live";
-      readonly observed: ObservedTokenBook;
+      readonly observed: StreamObservation;
       readonly marketKey: string | null;
     };
 
@@ -28,6 +34,10 @@ export class LiveTokenState {
   private state: TokenStreamState = { kind: "idle" };
 
   get observed(): ObservedTokenBook | null {
+    return this.observation;
+  }
+
+  private get observation(): StreamObservation | null {
     switch (this.state.kind) {
       case "idle":
         return null;
@@ -53,7 +63,7 @@ export class LiveTokenState {
   beginStream(requestedAtMs: number): void {
     this.state = {
       kind: "awaiting-snapshot",
-      cached: this.observed,
+      cached: this.observation,
       requestedAtMs,
       marketKey: null,
     };
@@ -62,7 +72,7 @@ export class LiveTokenState {
   disconnect(): void {
     this.state = {
       kind: "awaiting-snapshot",
-      cached: this.observed,
+      cached: this.observation,
       requestedAtMs: null,
       marketKey: null,
     };
@@ -74,7 +84,7 @@ export class LiveTokenState {
   }
 
   acceptSnapshot(
-    book: TokenBook,
+    book: MutableTokenBook,
     marketWatermarkMs: number | undefined,
   ): AcceptedSnapshot {
     const firstOnStream = this.state.kind !== "live";
@@ -97,7 +107,7 @@ export class LiveTokenState {
     return { ...observed, firstOnStream };
   }
 
-  streamBook(): TokenBook | null {
+  streamBook(): MutableTokenBook | null {
     return this.state.kind === "live" ? this.state.observed.book : null;
   }
 
