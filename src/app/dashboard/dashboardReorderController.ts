@@ -62,30 +62,24 @@ export class DashboardReorderController {
     )
       return;
 
-    const items = nodes.flatMap((node) => {
-      const itemKey = node.dataset.layoutKey;
-      if (!itemKey) return [];
-      const rect = node.getBoundingClientRect();
-      return [
-        {
-          key: itemKey,
-          rowSpan: Math.max(
-            1,
-            Math.ceil((rect.height + rowGap) / (rowHeight + rowGap)),
+    // Every rendered card's key is in the layout order before it renders.
+    const rowSpans = new Map(
+      nodes.map((node) => [
+        node.dataset.layoutKey!,
+        Math.max(
+          1,
+          Math.ceil(
+            (node.getBoundingClientRect().height + rowGap) /
+              (rowHeight + rowGap),
           ),
-        },
-      ];
+        ),
+      ]),
+    );
+    const items = this.options.getOrder().flatMap((key) => {
+      const rowSpan = rowSpans.get(key);
+      return rowSpan === undefined ? [] : [{ key, rowSpan }];
     });
-    const order = this.options.getOrder();
-    const visibleKeys = new Set(items.map((item) => item.key));
-    const visibleOrder = [
-      ...order.filter((itemKey) => visibleKeys.has(itemKey)),
-      ...items
-        .map((item) => item.key)
-        .filter((itemKey) => !order.includes(itemKey)),
-    ];
     const snapshot: DashboardDragSnapshot = {
-      order: visibleOrder,
       items,
       viewportScrollY: window.scrollY,
       grid: {
@@ -131,15 +125,14 @@ export class DashboardReorderController {
     this.move(event);
   }
 
+  /** Swap with the visible neighbor; every visible key is in the order. */
   step(key: string, direction: -1 | 1, visibleKeys: readonly string[]): void {
-    const index = visibleKeys.indexOf(key);
-    const neighbor = visibleKeys[index + direction];
-    if (index < 0 || !neighbor) return;
+    const neighbor = visibleKeys[visibleKeys.indexOf(key) + direction];
+    if (!neighbor) return;
 
     const order = this.options.getOrder();
     const from = order.indexOf(key);
     const to = order.indexOf(neighbor);
-    if (from < 0 || to < 0) return;
 
     const next = [...order];
     [next[from], next[to]] = [next[to]!, next[from]!];
@@ -176,11 +169,11 @@ export class DashboardReorderController {
       session.pointer,
       window.scrollY,
     );
-    const visible = new Set(session.snapshot.order);
+    const visible = new Set(session.snapshot.items.map((item) => item.key));
     let nextIndex = 0;
     const current = this.options.getOrder();
     const next = current.map((itemKey) =>
-      visible.has(itemKey) ? (nextVisible[nextIndex++] ?? itemKey) : itemKey,
+      visible.has(itemKey) ? nextVisible[nextIndex++]! : itemKey,
     );
     if (next.every((itemKey, index) => itemKey === current[index])) return;
     this.options.setOrder(next);

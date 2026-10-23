@@ -20,7 +20,7 @@ export interface DashboardDragItem {
 }
 
 export interface DashboardDragSnapshot {
-  readonly order: readonly string[];
+  /** Rendered cards in dashboard order. */
   readonly items: readonly DashboardDragItem[];
   readonly grid: DashboardGridSnapshot;
   /** Window scroll position paired with the viewport-space grid snapshot. */
@@ -73,16 +73,13 @@ export function dashboardOrderForPointer(
   pointer: DashboardDragPoint,
   viewportScrollY = snapshot.viewportScrollY,
 ): string[] {
-  const originalIndex = snapshot.order.indexOf(draggedKey);
-  if (originalIndex < 0) return [...snapshot.order];
+  const originalIndex = snapshot.items.findIndex(
+    (item) => item.key === draggedKey,
+  );
+  const dragged = snapshot.items[originalIndex]!;
+  const others = snapshot.items.filter((item) => item !== dragged);
 
-  const itemByKey = new Map(snapshot.items.map((item) => [item.key, item]));
-  if (!itemByKey.has(draggedKey)) return [...snapshot.order];
-
-  const withoutDragged = snapshot.order.filter((key) => key !== draggedKey);
-  if (withoutDragged.length === 0) return [draggedKey];
-
-  let bestOrder = [...snapshot.order];
+  let bestOrder: readonly DashboardDragItem[] = snapshot.items;
   let bestColumnDistance = Number.POSITIVE_INFINITY;
   let bestVerticalDistance = Number.POSITIVE_INFINITY;
   let bestIndexDistance = Number.POSITIVE_INFINITY;
@@ -93,21 +90,15 @@ export function dashboardOrderForPointer(
 
   for (
     let insertionIndex = 0;
-    insertionIndex <= withoutDragged.length;
+    insertionIndex <= others.length;
     insertionIndex++
   ) {
     const candidate = [
-      ...withoutDragged.slice(0, insertionIndex),
-      draggedKey,
-      ...withoutDragged.slice(insertionIndex),
+      ...others.slice(0, insertionIndex),
+      dragged,
+      ...others.slice(insertionIndex),
     ];
-    const rect = simulatedRectForKey(
-      candidate,
-      draggedKey,
-      itemByKey,
-      snapshot.grid,
-    );
-    if (!rect) continue;
+    const rect = simulatedRect(candidate, insertionIndex, snapshot.grid);
 
     const columnDistance = Math.abs(rect.column - pointerColumn);
     const verticalDistance = squared(
@@ -132,7 +123,7 @@ export function dashboardOrderForPointer(
     }
   }
 
-  return bestOrder;
+  return bestOrder.map((item) => item.key);
 }
 
 interface SimulatedRect {
@@ -140,43 +131,32 @@ interface SimulatedRect {
   readonly top: number;
 }
 
-function simulatedRectForKey(
-  order: readonly string[],
-  targetKey: string,
-  itemByKey: ReadonlyMap<string, DashboardDragItem>,
+/** Shortest-column placement of `items[targetIndex]` after the cards before it. */
+function simulatedRect(
+  items: readonly DashboardDragItem[],
+  targetIndex: number,
   grid: DashboardGridSnapshot,
-): SimulatedRect | null {
-  const columnCount = Math.max(1, Math.floor(grid.columnCount));
-  const nextRow = new Array<number>(columnCount).fill(0);
-
-  for (const key of order) {
-    const item = itemByKey.get(key);
-    if (!item) continue;
-
+): SimulatedRect {
+  const nextRow = new Array<number>(grid.columnCount).fill(0);
+  for (const item of items.slice(0, targetIndex)) {
     const column = shortestColumn(nextRow);
-    const row = nextRow[column]!;
-    if (key === targetKey) {
-      return {
-        column,
-        top: grid.top + row * (grid.rowHeight + grid.rowGap),
-      };
-    }
-
-    nextRow[column] = row + Math.max(1, item.rowSpan);
+    nextRow[column] = nextRow[column]! + item.rowSpan;
   }
-
-  return null;
+  const column = shortestColumn(nextRow);
+  return {
+    column,
+    top: grid.top + nextRow[column]! * (grid.rowHeight + grid.rowGap),
+  };
 }
 
 function columnForX(x: number, grid: DashboardGridSnapshot): number {
-  const columnCount = Math.max(1, Math.floor(grid.columnCount));
   const pitch = grid.columnWidth + grid.columnGap;
   if (pitch <= 0) return 0;
 
   const firstCenter = grid.left + grid.columnWidth / 2;
   return Math.max(
     0,
-    Math.min(columnCount - 1, Math.round((x - firstCenter) / pitch)),
+    Math.min(grid.columnCount - 1, Math.round((x - firstCenter) / pitch)),
   );
 }
 

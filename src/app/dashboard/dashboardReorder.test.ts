@@ -6,7 +6,6 @@ import {
 } from "./dashboardReorder";
 
 const snapshot: DashboardDragSnapshot = {
-  order: ["a", "b", "c", "d"],
   viewportScrollY: 0,
   grid: {
     left: 0,
@@ -102,7 +101,6 @@ test("different card heights are accounted for by masonry simulation", () => {
 
 test("exact ties prefer the drag-start insertion index", () => {
   const tied: DashboardDragSnapshot = {
-    order: ["a", "b"],
     viewportScrollY: 0,
     grid: {
       left: 0,
