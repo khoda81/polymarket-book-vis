@@ -1,4 +1,4 @@
-import { type Price, priceFromTicks } from "./price";
+import type { Price } from "./price";
 
 export interface BookOrder {
   /** Exact canonical USD/YES probability price, in ten-thousandths. */
@@ -18,80 +18,48 @@ export function emptyTokenBook(): TokenBook {
 
 /** One sorted side of a limit order book, keyed by exact canonical price. */
 export class HalfBook {
-  private prices: Price[] = [];
-  private levels = new Map<Price, number>();
+  /** Ascending by price, one level per price, every take positive. */
+  private readonly levels: BookOrder[] = [];
 
-  /** Insert, replace, or remove an aggregate level. */
-  setLevel(price: Price, take: number): boolean {
-    try {
-      priceFromTicks(price);
-    } catch {
-      return false;
-    }
-    if (!Number.isFinite(take) && take !== Number.POSITIVE_INFINITY)
-      return false;
-    if (take <= 0) return this.removeLevel(price);
-
-    const existed = this.levels.has(price);
-    if (existed) {
-      this.levels.set(price, take);
-      return true;
-    }
-
-    const insertIdx = this.findInsertIndex(price);
-    this.prices.splice(insertIdx, 0, price);
-    this.levels.set(price, take);
-    return false;
-  }
-
-  removeLevel(price: Price): boolean {
-    if (!this.levels.delete(price)) return false;
-    const idx = this.prices.indexOf(price);
-    if (idx !== -1) this.prices.splice(idx, 1);
-    return true;
+  /** Insert, replace, or (when take is not positive) remove an aggregate level. */
+  setLevel(price: Price, take: number): void {
+    const index = this.findInsertIndex(price);
+    const exists = this.levels[index]?.price === price;
+    if (take <= 0) {
+      if (exists) this.levels.splice(index, 1);
+    } else if (exists) this.levels[index] = { price, take };
+    else this.levels.splice(index, 0, { price, take });
   }
 
   get size(): number {
-    return this.prices.length;
+    return this.levels.length;
   }
 
   highestOrder(): BookOrder | undefined {
-    return this.orderAt(this.prices.length - 1);
+    return this.levels.at(-1);
   }
 
   lowestOrder(): BookOrder | undefined {
-    return this.orderAt(0);
+    return this.levels[0];
   }
 
   /** Iterate high-to-low. */
   *asOrders(): Generator<BookOrder, void, undefined> {
-    for (let index = this.prices.length - 1; index >= 0; index--) {
-      const order = this.orderAt(index);
-      if (order) yield order;
-    }
+    for (let index = this.levels.length - 1; index >= 0; index--)
+      yield this.levels[index]!;
   }
 
   /** Iterate canonical YES asks low-to-high. */
   *asSellOrders(): Generator<BookOrder, void, undefined> {
-    for (let index = 0; index < this.prices.length; index++) {
-      const order = this.orderAt(index);
-      if (order) yield order;
-    }
-  }
-
-  private orderAt(index: number): BookOrder | undefined {
-    const price = this.prices[index];
-    if (price === undefined) return undefined;
-    const take = this.levels.get(price);
-    return take === undefined ? undefined : { price, take };
+    yield* this.levels;
   }
 
   private findInsertIndex(price: Price): number {
     let lo = 0;
-    let hi = this.prices.length;
+    let hi = this.levels.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
-      if (this.prices[mid]! < price) lo = mid + 1;
+      if (this.levels[mid]!.price < price) lo = mid + 1;
       else hi = mid;
     }
     return lo;
