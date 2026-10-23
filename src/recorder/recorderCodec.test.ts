@@ -52,7 +52,7 @@ test("recorder boundary decodes all pressure variants and preserves pending/empt
   expect(result.states.resolved.pressure?.state).toEqual({
     kind: "resolvedUnbounded",
   });
-  expect(result.states.observed.pressure).toEqual({
+  expect<unknown>(result.states.observed.pressure).toEqual({
     version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
     state: {
       kind: "observed",

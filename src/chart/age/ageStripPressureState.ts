@@ -135,15 +135,7 @@ export class AgeStripPressureState {
   ): void {
     for (const [tokenId, snapshot] of Object.entries(snapshotsByToken)) {
       let state = this.ensure(tokenId);
-      try {
-        state.memory.restore(snapshot);
-      } catch (error) {
-        console.warn(
-          `Ignoring invalid recorder pressure for token ${tokenId}; preserving current pressure`,
-          error,
-        );
-        continue;
-      }
+      state.memory.restore(snapshot);
 
       if (state.memory.isResolvedUnbounded()) {
         this.setExtents(tokenId, [FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT]);

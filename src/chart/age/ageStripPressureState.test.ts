@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { NO_FEE_SCHEDULE } from "../../domain/books/feeSchedule";
 import { observationTime } from "../../domain/pressure/observationClock";
 import { emptyTokenBook } from "../../domain/books/orderBook";
@@ -46,41 +46,6 @@ test("opposite-side book updates advance token pressure validity", () => {
   expect(bandsAtPrice(state.memory("token")!, p(0.7))).toEqual([
     { loVolume: 0, hiVolume: 70, validThroughMs: 2_500 },
   ]);
-});
-
-test("invalid recorder data preserves current pressure and does not abort later tokens", () => {
-  const state = new AgeStripPressureState();
-  const currentBook = emptyTokenBook();
-  currentBook.yesToUsd.setLevel(p(0.6), 40_380);
-  state.applyBookUpdate("bad-token", currentBook, NO_FEE_SCHEDULE, {
-    kind: "snapshot",
-    validThroughMs: 3_000,
-  });
-  const before = state.memory("bad-token")!.snapshot();
-
-  const recorded = new PressureFrontierMemory();
-  recorded.updateLevels([{ price: p(0.6), shares: 100 }], 1_000);
-  recorded.updateLevels([{ price: p(0.6), shares: 60 }], 2_000);
-  const valid = recorded.snapshot();
-  const invalid = { ...valid, current: [] };
-
-  const warn = spyOn(console, "warn").mockImplementation(() => {});
-  try {
-    state.hydrate(
-      { "bad-token": invalid, "good-token": valid },
-      (token) => (token === "bad-token" ? currentBook : undefined),
-      () => NO_FEE_SCHEDULE,
-    );
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]?.[0]).toContain("bad-token");
-  } finally {
-    warn.mockRestore();
-  }
-
-  expect(state.memory("bad-token")!.snapshot()).toEqual(before);
-  expect(bandsAtPrice(state.memory("good-token")!, p(0.7))).toEqual(
-    bandsAtPrice(recorded, p(0.7)),
-  );
 });
 
 test("late recorder hydration keeps websocket validity and older token history", () => {
@@ -238,7 +203,7 @@ test("unbounded terminal pressure discards dominated finite history", () => {
   state.resolveSource("token", true, 2_000);
 
   expect(state.memory("token")!.isResolvedUnbounded()).toBe(true);
-  expect(state.memory("token")!.snapshot()).toEqual({
+  expect<unknown>(state.memory("token")!.snapshot()).toEqual({
     version: 7,
     state: { kind: "resolvedUnbounded" },
   });

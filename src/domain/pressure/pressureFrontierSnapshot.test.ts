@@ -9,16 +9,14 @@ import { bandsAtPrice } from "@/shared/testing/pressureFrontier";
 
 const p = (value: number) => parsePrice(String(value));
 
-test("failed restores preserve existing pressure", () => {
+test("parsing rejects fields outside the snapshot schema", () => {
   const memory = new PressureFrontierMemory();
   memory.updateLevels([{ price: p(0.6), shares: 100 }], 1_000);
-  memory.updateLevels([{ price: p(0.6), shares: 60 }], 2_000);
-  const before = memory.snapshot();
+  const invalid = { ...memory.snapshot(), current: [] };
 
-  const invalid = { ...before, current: [] };
-
-  expect(() => memory.restore(invalid)).toThrow(/unexpected field current/);
-  expect(memory.snapshot()).toEqual(before);
+  expect(() => parsePressureFrontierSnapshot(invalid)).toThrow(
+    /unexpected field current/,
+  );
 });
 
 test("snapshot round trip preserves token-local history", () => {
@@ -34,18 +32,6 @@ test("snapshot round trip preserves token-local history", () => {
 
   for (const price of [0.1, 0.35, 0.5, 0.8].map(p))
     expect(bandsAtPrice(restored, price)).toEqual(bandsAtPrice(source, price));
-});
-
-test("already validated snapshots cross the restore boundary without reparsing", () => {
-  const source = new PressureFrontierMemory();
-  source.updateLevels([{ price: p(0.4), shares: 100 }], 1_000);
-
-  const parsed = parsePressureFrontierSnapshot(source.snapshot());
-  expect(parsePressureFrontierSnapshot(parsed)).toBe(parsed);
-
-  const restored = new PressureFrontierMemory();
-  restored.restore(parsed);
-  expect(restored.snapshot()).toEqual(source.snapshot());
 });
 
 test("snapshot persists exact token-local coordinates and shares", () => {
@@ -67,13 +53,13 @@ test("snapshot persists exact token-local coordinates and shares", () => {
 
 test("unobserved pressure is a distinct structural state", () => {
   const memory = new PressureFrontierMemory();
-  expect(memory.snapshot()).toEqual({
+  expect<unknown>(memory.snapshot()).toEqual({
     version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
     state: { kind: "unobserved" },
   });
 
   memory.observeThrough(1_000);
-  expect(memory.snapshot()).toEqual({
+  expect<unknown>(memory.snapshot()).toEqual({
     version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
     state: { kind: "observed", validThroughMs: 1_000, runs: [] },
   });
@@ -213,7 +199,7 @@ test("old v5 geometry fields are rejected instead of silently normalized", () =>
 });
 
 test("terminal unbounded pressure is a timeless v7 state", () => {
-  expect(
+  expect<unknown>(
     parsePressureFrontierSnapshot({
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
       state: { kind: "resolvedUnbounded" },

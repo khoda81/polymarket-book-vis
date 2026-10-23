@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { PressureFrontierMemory } from "./pressureFrontierMemory";
+import { parsePressureFrontierSnapshot } from "./pressureFrontierSnapshot";
 import { parsePrice } from "../books/price";
 import {
   bandsAtPrice,
@@ -190,7 +191,11 @@ test("snapshot round trip preserves exact pressure", () => {
   memory.updateLevels([{ price: p(0.6), shares: 5.5 }], 2_000);
 
   const restored = new PressureFrontierMemory();
-  restored.restore(JSON.parse(JSON.stringify(memory.snapshot())));
+  restored.restore(
+    parsePressureFrontierSnapshot(
+      JSON.parse(JSON.stringify(memory.snapshot())),
+    ),
+  );
 
   for (const price of [0.1, 0.25, 0.5, 0.8].map(p))
     expect(bandsAtPrice(restored, price)).toEqual(bandsAtPrice(memory, price));
@@ -201,7 +206,7 @@ test("snapshot stores shares and steps without redundant geometry", () => {
   memory.updateLevels([{ price: p(0.5), shares: 100 }], 1_000);
   memory.updateLevels([{ price: p(0.5), shares: 60 }], 2_000);
 
-  expect(memory.snapshot()).toEqual({
+  expect<unknown>(memory.snapshot()).toEqual({
     version: 7,
     state: {
       kind: "observed",
@@ -311,7 +316,7 @@ test("resolved unbounded pressure discards dominated finite history", () => {
   expect(memory.resolveUnbounded()).toBe(true);
   expect(memory.isResolvedUnbounded()).toBe(true);
   expect(currentLevels(memory)).toEqual([]);
-  expect(memory.snapshot()).toEqual({
+  expect<unknown>(memory.snapshot()).toEqual({
     version: 7,
     state: { kind: "resolvedUnbounded" },
   });

@@ -7,7 +7,6 @@ import {
 } from "../books/price";
 import {
   PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-  parsePressureFrontierSnapshot,
   type FrozenStep,
   type PressureFrontierSnapshot,
   type PressureRun,
@@ -173,24 +172,22 @@ export class PressureFrontierMemory {
               runs: this.state.runs.map(cloneRun),
             } as const);
 
+    // Every mutation preserves the snapshot invariants, so no reparse is needed.
     return {
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
       state,
-    };
+    } as PressureFrontierSnapshot;
   }
 
-  restore(snapshot: PressureFrontierSnapshot | unknown): void {
-    const parsed = parsePressureFrontierSnapshot(snapshot);
+  restore({ state }: PressureFrontierSnapshot): void {
     this.state =
-      parsed.state.kind === "unobserved"
-        ? { kind: "unobserved" }
-        : parsed.state.kind === "resolvedUnbounded"
-          ? { kind: "resolvedUnbounded" }
-          : {
-              kind: "observed",
-              validThroughMs: parsed.state.validThroughMs,
-              runs: parsed.state.runs.map(cloneRun),
-            };
+      state.kind === "observed"
+        ? {
+            kind: "observed",
+            validThroughMs: state.validThroughMs,
+            runs: state.runs.map(cloneRun),
+          }
+        : { kind: state.kind };
     this.cumulativeShares = null;
     this.recordRenderChange(0);
   }
