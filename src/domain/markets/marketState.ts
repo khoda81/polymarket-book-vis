@@ -11,8 +11,8 @@ import {
 
 /** Dashboard-wide facts and choices, independent of chart/viewport lifetimes. */
 export class MarketState {
-  readonly lifecycles = new SvelteMap<MarketId, MarketLifecycle>();
-  readonly resolvedAtMs = new SvelteMap<MarketId, number>();
+  readonly #lifecycles = new SvelteMap<MarketId, MarketLifecycle>();
+  readonly #resolvedAtMs = new SvelteMap<MarketId, number>();
   private readonly choices: SvelteMap<string, StoredMarketVisibility>;
   private readonly listeners = new Set<() => void>();
 
@@ -22,12 +22,21 @@ export class MarketState {
     );
   }
 
+  /** Read-only: reconcile() and resolve() keep visibility in step with lifecycle. */
+  get lifecycles(): ReadonlyMap<MarketId, MarketLifecycle> {
+    return this.#lifecycles;
+  }
+
+  get resolvedAtMs(): ReadonlyMap<MarketId, number> {
+    return this.#resolvedAtMs;
+  }
+
   reconcile(marketId: MarketId, lifecycle: MarketLifecycle): void {
-    const current = this.lifecycles.get(marketId);
+    const current = this.#lifecycles.get(marketId);
     // A stale Gamma response cannot erase a winner observed on the stream.
     if (current?.kind === "resolved" || current?.kind === lifecycle.kind)
       return;
-    this.lifecycles.set(marketId, lifecycle);
+    this.#lifecycles.set(marketId, lifecycle);
     if (lifecycle.kind === "resolved")
       this.autoHide(marketId, "hidden-resolved");
     this.notify();
@@ -36,7 +45,7 @@ export class MarketState {
   visibilityFor(marketId: MarketId, availableForLiveOrders: boolean) {
     return initialMarketVisibility(
       this.choices.get(marketId),
-      this.lifecycles.get(marketId) ?? { kind: "live" },
+      this.#lifecycles.get(marketId) ?? { kind: "live" },
       availableForLiveOrders,
     );
   }
@@ -46,8 +55,8 @@ export class MarketState {
     lifecycle: Extract<MarketLifecycle, { kind: "resolved" }>,
     timestamp: number | null,
   ): void {
-    this.lifecycles.set(marketId, lifecycle);
-    if (timestamp !== null) this.resolvedAtMs.set(marketId, timestamp);
+    this.#lifecycles.set(marketId, lifecycle);
+    if (timestamp !== null) this.#resolvedAtMs.set(marketId, timestamp);
     this.autoHide(marketId, "hidden-resolved");
     this.notify();
   }
