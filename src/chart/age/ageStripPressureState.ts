@@ -19,24 +19,37 @@ import {
 } from "@/domain/pressure/pressureBookAdapter";
 import type { LiveBookUpdate } from "../live/liveBookContracts";
 
+/** Mutated only by AgeStripPressureState, which never hands the record out. */
 interface PressureState {
-  readonly recordingSinceMs: number | null;
-  readonly validThroughMs: number | null;
+  recordingSinceMs: number | null;
+  validThroughMs: number | null;
   readonly memory: PressureFrontierMemory;
   /**
    * GPU/render projection of non-finite terminal geometry. The canonical
    * terminal state lives in PressureFrontierMemory v7.
    */
-  readonly extents: readonly PressureExtent[];
-  readonly extentRevision: number;
+  extents: readonly PressureExtent[];
+  extentRevision: number;
   /**
    * Recorder hydration can be causally ahead of the local websocket. While the
    * stream catches up, keep mutating its canonical raw book but do not replay
    * older deltas into the newer pressure frontier. The first live observation
    * at/after this barrier rebases pressure from the complete current book.
    */
-  readonly liveRebaseAfterMs: number | null;
+  liveRebaseAfterMs: number | null;
 }
+
+/** Read access to a token's frontier; only this module mutates it. */
+export type ReadonlyPressureFrontier = Omit<
+  PressureFrontierMemory,
+  | "observeLevels"
+  | "updateLevels"
+  | "replaceContinuous"
+  | "observeThrough"
+  | "resolveUnbounded"
+  | "resolveZeroFuture"
+  | "restore"
+>;
 
 /** Token-local timestamped pressure histories used by age views. */
 export class AgeStripPressureState {
@@ -46,7 +59,16 @@ export class AgeStripPressureState {
     this.states.clear();
   }
 
-  ensure(tokenId: string): PressureState {
+  /** Start a token's history if it has none. */
+  ensure(tokenId: string): void {
+    this.state(tokenId);
+  }
+
+  has(tokenId: string): boolean {
+    return this.states.has(tokenId);
+  }
+
+  private state(tokenId: string): PressureState {
     let state = this.states.get(tokenId);
     if (!state) {
       state = {
@@ -68,13 +90,10 @@ export class AgeStripPressureState {
   }
 
   setExtents(tokenId: string, extents: readonly PressureExtent[]): void {
-    const current = this.ensure(tokenId);
-    if (pressureExtentsEqual(current.extents, extents)) return;
-    this.states.set(tokenId, {
-      ...current,
-      extents: [...extents],
-      extentRevision: current.extentRevision + 1,
-    });
+    const state = this.state(tokenId);
+    if (pressureExtentsEqual(state.extents, extents)) return;
+    state.extents = [...extents];
+    state.extentRevision++;
   }
 
   renderExtents(tokenId: string): readonly PressureExtent[] {
@@ -119,13 +138,8 @@ export class AgeStripPressureState {
   setRecordingCoverage(
     recordingSinceMsByToken: Readonly<Record<string, number>>,
   ): void {
-    for (const [tokenId, since] of Object.entries(recordingSinceMsByToken)) {
-      const current = this.ensure(tokenId);
-      this.states.set(tokenId, {
-        ...current,
-        recordingSinceMs: since,
-      });
-    }
+    for (const [tokenId, since] of Object.entries(recordingSinceMsByToken))
+      this.state(tokenId).recordingSinceMs = since;
   }
 
   hydrate(
@@ -134,7 +148,7 @@ export class AgeStripPressureState {
     getFeeSchedule: (tokenId: string) => FeeSchedule,
   ): void {
     for (const [tokenId, snapshot] of Object.entries(snapshotsByToken)) {
-      let state = this.ensure(tokenId);
+      const state = this.state(tokenId);
       state.memory.restore(snapshot);
 
       if (state.memory.isResolvedUnbounded()) {
@@ -158,17 +172,13 @@ export class AgeStripPressureState {
           tokenPressureLevels(book, getFeeSchedule(tokenId)),
           state.validThroughMs,
         );
-        if (state.liveRebaseAfterMs !== null) {
-          state = { ...state, liveRebaseAfterMs: null };
-          this.states.set(tokenId, state);
-        }
+        state.liveRebaseAfterMs = null;
       } else if (
         restoredThrough !== undefined &&
         (state.validThroughMs === null ||
           state.validThroughMs < restoredThrough)
       ) {
-        state = { ...state, liveRebaseAfterMs: restoredThrough };
-        this.states.set(tokenId, state);
+        state.liveRebaseAfterMs = restoredThrough;
       }
     }
   }
@@ -179,33 +189,24 @@ export class AgeStripPressureState {
     schedule: FeeSchedule,
     update: LiveBookUpdate,
   ): void {
-    let state = this.ensure(tokenId);
+    const state = this.state(tokenId);
     if (state.memory.isResolvedUnbounded()) return;
 
     const currentThrough = state.memory.validThroughMs();
     const validThroughMs = update.validThroughMs;
 
-    if (
-      state.validThroughMs === null ||
-      validThroughMs > state.validThroughMs
-    ) {
-      state = { ...state, validThroughMs };
-      this.states.set(tokenId, state);
-    }
+    if (state.validThroughMs === null || validThroughMs > state.validThroughMs)
+      state.validThroughMs = validThroughMs;
 
     if (currentThrough !== undefined && validThroughMs < currentThrough) {
       // This commonly happens for a few milliseconds when recorder hydration
       // wins the race against the local websocket. Do not force the newer
       // pressure frontier backward. The coordinator has already applied this
       // event to the canonical raw book, so a later catch-up can rebase safely.
-      const barrier = Math.max(
+      state.liveRebaseAfterMs = Math.max(
         state.liveRebaseAfterMs ?? currentThrough,
         currentThrough,
       );
-      if (barrier !== state.liveRebaseAfterMs) {
-        state = { ...state, liveRebaseAfterMs: barrier };
-        this.states.set(tokenId, state);
-      }
       return;
     }
 
@@ -217,8 +218,7 @@ export class AgeStripPressureState {
         tokenPressureLevels(book, schedule),
         validThroughMs,
       );
-      state = { ...state, liveRebaseAfterMs: null };
-      this.states.set(tokenId, state);
+      state.liveRebaseAfterMs = null;
       return;
     }
 
@@ -252,7 +252,7 @@ export class AgeStripPressureState {
     unbounded: boolean,
     resolvedAtMs: number | null,
   ): void {
-    const state = this.ensure(tokenId);
+    const state = this.state(tokenId);
     if (unbounded) {
       state.memory.resolveUnbounded();
       this.setExtents(tokenId, [FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT]);
@@ -262,7 +262,7 @@ export class AgeStripPressureState {
     }
   }
 
-  memory(tokenId: string): PressureFrontierMemory | undefined {
+  memory(tokenId: string): ReadonlyPressureFrontier | undefined {
     return this.states.get(tokenId)?.memory;
   }
 

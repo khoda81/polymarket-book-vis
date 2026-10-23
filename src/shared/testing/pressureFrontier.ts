@@ -1,20 +1,22 @@
 import type { PressureBand } from "@/domain/pressure/pressureField";
 import type { PressureFrontierMemory } from "@/domain/pressure/pressureFrontierMemory";
+
+type Inspectable = Pick<PressureFrontierMemory, "snapshot">;
 import type { PressureRun } from "@/domain/pressure/pressureFrontierSnapshot";
 import { PRICE_ONE, PRICE_ZERO, type Price } from "@/domain/books/price";
 
 /** Test inspection of a frontier through its canonical snapshot. */
-function observedRuns(memory: PressureFrontierMemory) {
+function observedRuns(memory: Inspectable) {
   const { state } = memory.snapshot();
   return state.kind === "observed" ? state : null;
 }
 
-export function priceBoundaries(memory: PressureFrontierMemory): Price[] {
+export function priceBoundaries(memory: Inspectable): Price[] {
   return observedRuns(memory)?.runs.map((run) => run.price) ?? [];
 }
 
 export function currentLevels(
-  memory: PressureFrontierMemory,
+  memory: Inspectable,
 ): { price: Price; shares: number }[] {
   return (observedRuns(memory)?.runs ?? []).flatMap((run) =>
     run.shares > 0 ? [{ price: run.price, shares: run.shares }] : [],
@@ -23,7 +25,7 @@ export function currentLevels(
 
 /** Every band of the run owning `price`, current pressure first. */
 export function bandsAtPrice(
-  memory: PressureFrontierMemory,
+  memory: Inspectable,
   price: Price,
 ): PressureBand[] {
   const observed = observedRuns(memory);

@@ -452,7 +452,7 @@ export class MarketGroupModel {
       const lifecycle = this.lifecycleFor(market.id);
       if (
         lifecycle.kind !== "resolved" ||
-        !this.pressure.memory(market.yes.tokenId)
+        !this.pressure.has(market.yes.tokenId)
       )
         continue;
       this.applyResolvedPressure(
