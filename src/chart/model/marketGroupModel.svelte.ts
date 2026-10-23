@@ -421,11 +421,7 @@ export class MarketGroupModel {
   }
 
   private applyResolution(resolution: MarketResolutionUpdate): void {
-    if (
-      resolution.resolvedAtMs !== null &&
-      Number.isFinite(resolution.resolvedAtMs) &&
-      resolution.resolvedAtMs >= 0
-    )
+    if (resolution.resolvedAtMs !== null)
       this.observations.advance(resolution.resolvedAtMs);
     for (const { market } of this.source.controls) {
       const tokens: readonly string[] = marketTokenIds(market);

@@ -103,8 +103,6 @@ export class BookRefreshCoordinator {
     tokenId: TokenId,
     validThroughMs: number,
   ): void {
-    if (!Number.isFinite(validThroughMs) || validThroughMs < 0) return;
-
     let state = this.states.get(tokenId);
     if (!state) {
       state = {

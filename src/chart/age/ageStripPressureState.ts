@@ -123,7 +123,7 @@ export class AgeStripPressureState {
       const current = this.ensure(tokenId);
       this.states.set(tokenId, {
         ...current,
-        recordingSinceMs: Number.isFinite(since) && since >= 0 ? since : null,
+        recordingSinceMs: since,
       });
     }
   }

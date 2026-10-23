@@ -47,8 +47,7 @@ export class MarketState {
     timestamp: number | null,
   ): void {
     this.lifecycles.set(marketId, lifecycle);
-    if (timestamp !== null && Number.isFinite(timestamp) && timestamp >= 0)
-      this.resolvedAtMs.set(marketId, timestamp);
+    if (timestamp !== null) this.resolvedAtMs.set(marketId, timestamp);
     this.autoHide(marketId, "hidden-resolved");
     this.notify();
   }

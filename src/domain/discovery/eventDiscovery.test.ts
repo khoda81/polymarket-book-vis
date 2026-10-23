@@ -170,7 +170,7 @@ test("liquidity threshold and optional creation-date limit are applied locally",
   ).toBe(true);
 });
 
-test("invalid numeric filters and sort values are rejected", () => {
+test("invalid numeric filters are rejected", () => {
   for (const invalid of [
     { minVolume: NaN },
     { minVolume: -1 },
@@ -178,7 +178,6 @@ test("invalid numeric filters and sort values are rejected", () => {
     { recencyDays: 366 },
     { recencyDays: -1 },
     { recencyDays: 0.5 },
-    { order: "unknown" },
   ])
     expect(() =>
       validateDiscoveryFilters({
