@@ -1,4 +1,8 @@
-import { emptyTokenBook, type TokenBook } from "./orderBook";
+import {
+  emptyTokenBook,
+  type HalfBook,
+  type MutableTokenBook,
+} from "./orderBook";
 import { parsePrice, type Price } from "./price";
 
 export interface RawBookLevel {
@@ -19,7 +23,7 @@ export interface CanonicalBookChange {
 export function bookFromSnapshot(
   bids: readonly RawBookLevel[],
   asks: readonly RawBookLevel[],
-): TokenBook {
+): MutableTokenBook {
   const book = emptyTokenBook();
   for (const bid of bids) applyLevel(book.usdToYes, bid);
   for (const ask of asks) applyLevel(book.yesToUsd, ask);
@@ -27,7 +31,7 @@ export function bookFromSnapshot(
 }
 
 export function applyPriceChange(
-  book: TokenBook,
+  book: MutableTokenBook,
   change: RawPriceChange,
 ): CanonicalBookChange {
   const price = parsePrice(change.price);
@@ -38,7 +42,7 @@ export function applyPriceChange(
   return { side, price, shares };
 }
 
-function applyLevel(target: TokenBook["usdToYes"], level: RawBookLevel): void {
+function applyLevel(target: HalfBook, level: RawBookLevel): void {
   target.setLevel(parsePrice(level.price), parseShares(level.size));
 }
 

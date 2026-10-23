@@ -7,12 +7,21 @@ export interface BookOrder {
   readonly take: number;
 }
 
+/** Read access to one side; only book ingestion mutates levels. */
+export type ReadonlyHalfBook = Omit<HalfBook, "setLevel">;
+
+/** A token's book as every consumer outside ingestion sees it. */
 export interface TokenBook {
+  readonly usdToYes: ReadonlyHalfBook;
+  readonly yesToUsd: ReadonlyHalfBook;
+}
+
+export interface MutableTokenBook {
   readonly usdToYes: HalfBook;
   readonly yesToUsd: HalfBook;
 }
 
-export function emptyTokenBook(): TokenBook {
+export function emptyTokenBook(): MutableTokenBook {
   return { usdToYes: new HalfBook(), yesToUsd: new HalfBook() };
 }
 
