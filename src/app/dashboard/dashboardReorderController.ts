@@ -31,6 +31,7 @@ export class DashboardReorderController {
   private session: DragSession | null = null;
   private scrollFrame: number | null = null;
   private scrollFrameTime: number | null = null;
+  private readonly tooltipSuppressor = Symbol("dashboard-reorder");
 
   constructor(private readonly options: DashboardReorderControllerOptions) {}
 
@@ -109,7 +110,7 @@ export class DashboardReorderController {
       // Pointer capture may fail when the browser has already ended the input.
     }
 
-    setSharedTooltipSuppressed(true);
+    setSharedTooltipSuppressed(this.tooltipSuppressor, true);
     window.addEventListener("pointermove", this.move, {
       capture: true,
       passive: false,
@@ -148,7 +149,7 @@ export class DashboardReorderController {
     this.stopAutoScroll();
     this.session = null;
     this.options.setDraggingKey(null);
-    setSharedTooltipSuppressed(false);
+    setSharedTooltipSuppressed(this.tooltipSuppressor, false);
   };
 
   private readonly move = (event: PointerEvent): void => {

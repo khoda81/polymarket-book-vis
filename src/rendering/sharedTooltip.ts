@@ -4,7 +4,8 @@ export type TooltipVerticalPlacement = "auto" | "above" | "below";
 let overlay: HTMLDivElement | null = null;
 let activeOwner: TooltipOwner | null = null;
 let activeSignature = "";
-let suppressed = false;
+/** Every active gesture that hides tooltips; each owner clears only its own. */
+const suppressors = new Set<symbol>();
 
 export function showSharedTooltip(
   owner: TooltipOwner,
@@ -14,7 +15,7 @@ export function showSharedTooltip(
   anchorY: number,
   verticalPlacement: TooltipVerticalPlacement = "auto",
 ): void {
-  if (suppressed) return;
+  if (suppressors.size > 0) return;
 
   const element = ensureOverlay();
   if (activeOwner !== owner || activeSignature !== signature) {
@@ -52,9 +53,16 @@ export function hideSharedTooltip(owner: TooltipOwner): void {
   hideActiveTooltip();
 }
 
-export function setSharedTooltipSuppressed(next: boolean): void {
-  suppressed = next;
-  if (suppressed) hideActiveTooltip();
+export function setSharedTooltipSuppressed(
+  owner: symbol,
+  suppressed: boolean,
+): void {
+  if (!suppressed) {
+    suppressors.delete(owner);
+    return;
+  }
+  suppressors.add(owner);
+  hideActiveTooltip();
 }
 
 /** One "name: value" row; a Text value can be updated in place. */

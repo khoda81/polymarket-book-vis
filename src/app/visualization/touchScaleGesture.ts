@@ -43,6 +43,7 @@ export function startTouchScaleGesture(
   scale: (scale: PinchScale) => void,
 ): () => void {
   let gesture: Gesture = { kind: "idle" };
+  const suppressor = Symbol("touch-scale-gesture");
 
   const spanFor = (touches: TouchList): PinchSpan | null =>
     touches.length === 2 ? pinchSpan(touches[0]!, touches[1]!) : null;
@@ -51,7 +52,7 @@ export function startTouchScaleGesture(
     const event = raw as TouchEvent;
     if (event.touches.length < 2) return;
     gesture = { kind: "pinching", span: spanFor(event.touches) };
-    setSharedTooltipSuppressed(true);
+    setSharedTooltipSuppressed(suppressor, true);
     if (event.cancelable) event.preventDefault();
   };
 
@@ -75,13 +76,13 @@ export function startTouchScaleGesture(
       gesture = { kind: "pinching", span: spanFor(event.touches) };
     } else {
       gesture = { kind: "idle" };
-      setSharedTooltipSuppressed(false);
+      setSharedTooltipSuppressed(suppressor, false);
     }
   };
 
   const cancel = () => {
     gesture = { kind: "idle" };
-    setSharedTooltipSuppressed(false);
+    setSharedTooltipSuppressed(suppressor, false);
   };
 
   const options = { capture: true, passive: false };
