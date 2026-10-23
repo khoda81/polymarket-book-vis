@@ -19,10 +19,10 @@ const snapshot: DashboardDragSnapshot = {
   },
   grabOffset: { x: 80, y: 20 },
   items: [
-    { key: "a", height: 100, rowSpan: 6 },
-    { key: "b", height: 180, rowSpan: 10 },
-    { key: "c", height: 100, rowSpan: 6 },
-    { key: "d", height: 100, rowSpan: 6 },
+    { key: "a", rowSpan: 6 },
+    { key: "b", rowSpan: 10 },
+    { key: "c", rowSpan: 6 },
+    { key: "d", rowSpan: 6 },
   ],
 };
 
@@ -115,8 +115,8 @@ test("exact ties prefer the drag-start insertion index", () => {
     },
     grabOffset: { x: 50, y: 50 },
     items: [
-      { key: "a", height: 100, rowSpan: 6 },
-      { key: "b", height: 100, rowSpan: 6 },
+      { key: "a", rowSpan: 6 },
+      { key: "b", rowSpan: 6 },
     ],
   };
 

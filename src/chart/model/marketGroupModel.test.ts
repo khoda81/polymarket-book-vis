@@ -16,6 +16,7 @@ import type { LiveBookFeedCallbacks } from "../live/liveBookContracts";
 import type { RecorderHydrationProgress } from "../../recorder/ageRecorderClient";
 import type { MarketGroupServices } from "./marketGroupModel.svelte";
 import { PressureFrontierMemory } from "../../domain/pressure/pressureFrontierMemory";
+import { currentLevels } from "@/shared/testing/pressureFrontier";
 
 // Exercise the real compiled runes model; no global $state/$derived shims.
 plugin({
@@ -121,7 +122,6 @@ function harness(
     hydrate: async (ids, progress, signal) => {
       hydration.push({ ids, progress: progress!, signal: signal! });
       if (!recorderOnline) throw new Error("recorder offline");
-      return { recordingSinceMsByToken: {}, pressureSnapshotsByToken: {} };
     },
   };
   const model = new MarketGroupModel(
@@ -185,9 +185,7 @@ test("partial scrolling preserves hydrated history and recording age without req
     expect(hydration[0]!.signal.aborted).toBe(false);
     expect(model.pressure.memory(a!.market.yes.tokenId)).toBe(memory);
     expect(memory.snapshot()).toEqual(snapshot);
-    expect(model.pressure.timing(a!.market.yes.tokenId)!.recordingSinceMs).toBe(
-      500,
-    );
+    expect(model.pressure.recordingSinceMs(a!.market.yes.tokenId)).toBe(500);
     expect(model.visibilityFor(a!.market.id)).toEqual({ kind: "visible" });
   } finally {
     model.destroy();
@@ -217,7 +215,7 @@ test("offscreen feeds keep accumulating observed pressure without a reconnect or
       observationTime(2_000),
     );
     expect(
-      model.pressure.memory(control.market.yes.tokenId)!.currentLevels(),
+      currentLevels(model.pressure.memory(control.market.yes.tokenId)!),
     ).toEqual([{ price: parsePrice("0.7"), shares: 50 }]);
     await model.setViewport([control.market.yes.tokenId]);
     expect(
@@ -250,7 +248,7 @@ test("history survives browsing more than eight cards with the recorder then una
       expect(card.hydration).toHaveLength(1);
       expect(card.model.pressure.memory(token)).toBe(memory);
       expect(memory.snapshot()).toEqual(before);
-      expect(card.model.pressure.timing(token)!.recordingSinceMs).toBe(500);
+      expect(card.model.pressure.recordingSinceMs(token)).toBe(500);
     }
   } finally {
     for (const card of cards) card.model.destroy();
@@ -265,7 +263,7 @@ test("hydration can finish offscreen but actual removal cancels it and rejects l
   expect(hydration[0]!.signal.aborted).toBe(false);
   hydration[0]!.progress(recordedHistory(hydration[0]!.ids));
   await model.setViewport([token]);
-  expect(model.pressure.timing(token)!.recordingSinceMs).toBe(500);
+  expect(model.pressure.recordingSinceMs(token)).toBe(500);
   expect(hydration).toHaveLength(1);
   model.destroy();
   expect(hydration[0]!.signal.aborted).toBe(true);
@@ -419,7 +417,8 @@ test("metadata alone recovers outcomes and automatic hiding without erasing hist
       buildChartDefinition(buildEventDetails(freshEvent, {})),
     );
     await Promise.resolve();
-    expect(model.marketStatus).toEqual({ kind: "resolved" });
+    for (const control of model.definition.controls)
+      expect(model.lifecycleFor(control.market.id).kind).toBe("resolved");
     expect(model.lifecycleFor(b!.market.id)).toMatchObject({
       winningOutcome: "Yes",
     });
@@ -446,7 +445,8 @@ test("metadata alone recovers outcomes and automatic hiding without erasing hist
     });
 
     model.updateDefinition(original); // An older response cannot undo resolution.
-    expect(model.marketStatus).toEqual({ kind: "resolved" });
+    for (const control of model.definition.controls)
+      expect(model.lifecycleFor(control.market.id).kind).toBe("resolved");
     expect(feeds.every((feed) => feed.closed)).toBe(true);
   } finally {
     model.destroy();

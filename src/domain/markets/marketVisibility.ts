@@ -98,13 +98,12 @@ export function loadStoredMarketVisibility(
 
 export function persistStoredMarketVisibility(
   marketId: string,
-  visibility: StoredMarketVisibility | null,
+  visibility: StoredMarketVisibility,
   storage: KeyValueStorage = window.localStorage,
 ): void {
   try {
     const stored = loadStoredMarketVisibility(storage);
-    if (visibility === null) stored.delete(marketId);
-    else stored.set(marketId, visibility);
+    stored.set(marketId, visibility);
     storage.setItem(
       STORAGE_KEY,
       JSON.stringify(Object.fromEntries(stored.entries())),

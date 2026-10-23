@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
-import { canonicalSpread, type TokenBook } from "@/domain/books/orderBook";
-import { parsePrice } from "@/domain/books/price";
+import type { TokenBook } from "@/domain/books/orderBook";
+import { PRICE_ONE, PRICE_ZERO, parsePrice } from "@/domain/books/price";
 import { LiveBookCoordinator } from "./liveBookCoordinator";
 import type {
   LiveBookFeedCallbacks,
-  LiveBookNetworkState,
   LiveBookUpdate,
 } from "./liveBookContracts";
 import type {
@@ -27,89 +26,6 @@ const TOKEN_C = "1003" as TokenId;
 const MARKET_A = "market-a";
 const MARKET_B = "market-b";
 
-test("reports transport coverage separately from the snapshot barrier", async () => {
-  const client = new FakeClient();
-  const refresh = new FakeRefreshScheduler();
-  const coordinator = createCoordinator(client, refresh);
-  const states: LiveBookNetworkState[] = [];
-  const unsubscribe = coordinator.subscribeNetworkState((state) =>
-    states.push(state),
-  );
-
-  expect(coordinator.tokenStreamConnected(TOKEN_A)).toBe(false);
-  const initialGate = deferred<void>();
-  client.gates.push(initialGate.promise);
-  const first = coordinator.watch([TOKEN_A], callbackLog().callbacks);
-  await waitFor(() => client.subscribeAttempts === 1);
-  expect(states.at(-1)).toMatchObject({
-    transport: "connecting",
-    desiredTokens: 1,
-    subscribedTokens: 0,
-    synchronizedBooks: 0,
-    cachedBooks: 0,
-  });
-
-  initialGate.resolve();
-  await first.ready;
-  expect(states.at(-1)).toMatchObject({
-    transport: "streaming",
-    desiredTokens: 1,
-    subscribedTokens: 1,
-    synchronizedBooks: 0,
-    cachedBooks: 0,
-    awaitingSnapshots: 1,
-  });
-
-  expect(coordinator.tokenStreamConnected(TOKEN_A)).toBe(true);
-  client.latest().push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
-  await flush();
-  expect(states.at(-1)).toMatchObject({
-    transport: "streaming",
-    synchronizedBooks: 1,
-    cachedBooks: 1,
-    awaitingSnapshots: 0,
-  });
-
-  const handoffGate = deferred<void>();
-  client.gates.push(handoffGate.promise);
-  const second = coordinator.watch([TOKEN_B], callbackLog().callbacks);
-  await waitFor(() => client.subscribeAttempts === 2);
-  expect(states.at(-1)).toMatchObject({
-    transport: "handoff",
-    desiredTokens: 2,
-    subscribedTokens: 1,
-    synchronizedBooks: 1,
-    cachedBooks: 1,
-  });
-
-  expect(coordinator.tokenStreamConnected(TOKEN_A)).toBe(true);
-  expect(coordinator.tokenStreamConnected(TOKEN_B)).toBe(false);
-  handoffGate.resolve();
-  await second.ready;
-  expect(states.at(-1)).toMatchObject({
-    transport: "streaming",
-    desiredTokens: 2,
-    subscribedTokens: 2,
-    synchronizedBooks: 0,
-    cachedBooks: 1,
-    awaitingSnapshots: 2,
-  });
-
-  client.latest().push(bookEvent(TOKEN_A, 1_200, "0.42", "0.62"));
-  client.latest().push(bookEvent(TOKEN_B, 1_200, "0.30", "0.70"));
-  await flush();
-  expect(states.at(-1)).toMatchObject({
-    transport: "streaming",
-    synchronizedBooks: 2,
-    cachedBooks: 2,
-    awaitingSnapshots: 0,
-  });
-
-  first.close();
-  second.close();
-  unsubscribe();
-});
-
 test("coalesces watches into one steady subscription and replays cached books", async () => {
   const client = new FakeClient();
   const refresh = new FakeRefreshScheduler();
@@ -120,7 +36,6 @@ test("coalesces watches into one steady subscription and replays cached books", 
   const firstWatch = coordinator.watch([TOKEN_B, TOKEN_A], first.callbacks);
   await firstWatch.ready;
   expect(client.assetIds()).toEqual([[TOKEN_A, TOKEN_B]]);
-  expect(first.statuses).toEqual(["connecting", "live"]);
 
   client.latest().push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
   await flush();
@@ -326,7 +241,7 @@ test("REST responses cannot cross a replacement stream's snapshot barrier", asyn
   );
   await flush();
   expect(client.streams).toHaveLength(2);
-  expect(canonicalSpread(coordinator.getBook(TOKEN_A)!)).toEqual({
+  expect(spread(coordinator.getBook(TOKEN_A)!)).toEqual({
     bid: parsePrice("0.45"),
     ask: parsePrice("0.65"),
   });
@@ -375,7 +290,7 @@ test("differing REST snapshot forces a fresh websocket barrier", async () => {
 
   replacement.push(bookEvent(TOKEN_A, 2_200, "0.45", "0.65"));
   await flush();
-  expect(canonicalSpread(coordinator.getBook(TOKEN_A)!)).toEqual({
+  expect(spread(coordinator.getBook(TOKEN_A)!)).toEqual({
     bid: parsePrice("0.45"),
     ask: parsePrice("0.65"),
   });
@@ -458,7 +373,7 @@ test("wake recovery replaces the stream, preserves the cache and requires a fres
     kind: "snapshot",
     validThroughMs: 2_100,
   });
-  expect(canonicalSpread(coordinator.getBook(TOKEN_A)!)).toEqual({
+  expect(spread(coordinator.getBook(TOKEN_A)!)).toEqual({
     bid: parsePrice("0.45"),
     ask: parsePrice("0.65"),
   });
@@ -524,7 +439,6 @@ test("same-market timestamp regressions are max-aggregated without reconnecting"
   await flush();
 
   expect(client.streams).toHaveLength(1);
-  expect(log.statuses).toEqual(["connecting", "live"]);
   expect(
     log.updates.map(({ tokenId, kind, validThroughMs }) => [
       tokenId,
@@ -591,28 +505,20 @@ test("retries transport failures and reconnects a terminal stream", async () => 
   const watch = coordinator.watch([TOKEN_A], log.callbacks);
   await watch.ready;
   expect(client.subscribeAttempts).toBe(2);
-  expect(log.statuses).toEqual(["connecting", "live"]);
 
   client.latest().push(bookEvent(TOKEN_A, 1_100, "0.40", "0.60"));
   await flush();
   client.latest().end();
   await waitFor(() => client.streams.length === 2);
   await flush();
-  expect(log.statuses).toEqual([
-    "connecting",
-    "live",
-    "disconnected",
-    "connecting",
-    "live",
-  ]);
-  expect(canonicalSpread(coordinator.getBook(TOKEN_A)!)).toEqual({
+  expect(spread(coordinator.getBook(TOKEN_A)!)).toEqual({
     bid: parsePrice("0.40"),
     ask: parsePrice("0.60"),
   });
 
   client.latest().push(bookEvent(TOKEN_A, 1_200, "0.42", "0.62"));
   await flush();
-  expect(canonicalSpread(coordinator.getBook(TOKEN_A)!)).toEqual({
+  expect(spread(coordinator.getBook(TOKEN_A)!)).toEqual({
     bid: parsePrice("0.42"),
     ask: parsePrice("0.62"),
   });
@@ -634,7 +540,6 @@ test("closing a pending watch retires its eventual subscription", async () => {
   await waitFor(
     () => client.streams.length === 1 && client.streams[0]!.closeCount === 1,
   );
-  expect(log.statuses).toEqual(["connecting"]);
   expect(coordinator.getBook(TOKEN_A)).toBeUndefined();
 });
 
@@ -661,19 +566,15 @@ interface LoggedUpdate {
 
 function callbackLog(): {
   readonly callbacks: LiveBookFeedCallbacks;
-  readonly statuses: string[];
   readonly updates: LoggedUpdate[];
   readonly resolutions: unknown[];
 } {
-  const statuses: string[] = [];
   const updates: LoggedUpdate[] = [];
   const resolutions: unknown[] = [];
   return {
-    statuses,
     updates,
     resolutions,
     callbacks: {
-      onConnectionStatus: (status) => statuses.push(status),
       onBookUpdated: (tokenId, book, update) =>
         updates.push({
           tokenId,
@@ -915,5 +816,12 @@ function deferred<T>(): {
       resolve = done;
     }),
     resolve,
+  };
+}
+
+function spread(book: TokenBook) {
+  return {
+    bid: book.usdToYes.highestOrder()?.price ?? PRICE_ZERO,
+    ask: book.yesToUsd.lowestOrder()?.price ?? PRICE_ONE,
   };
 }

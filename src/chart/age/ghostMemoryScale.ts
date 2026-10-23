@@ -6,7 +6,6 @@ import {
 import { fmtRelativeTimeOffset } from "@/shared/math";
 import {
   hideSharedTooltip,
-  releaseSharedTooltip,
   showSharedTooltip,
 } from "@/rendering/sharedTooltip";
 import type { ObservationFrame } from "@/domain/pressure/observationClock";
@@ -82,7 +81,7 @@ export class GhostMemoryScale {
     this.canvas.removeEventListener("wheel", this.handleWheel);
     this.tooltipList = null;
     this.tooltipAgeTexts.clear();
-    releaseSharedTooltip(this.tooltipOwner);
+    hideSharedTooltip(this.tooltipOwner);
   }
 
   setInputs(frame: ObservationFrame, ghostHalfLifeMs: number): void {

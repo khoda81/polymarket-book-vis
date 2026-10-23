@@ -1,4 +1,4 @@
-import { visibleSinceMs, type PressureBand } from "./pressureField";
+import type { PressureBand } from "./pressureField";
 import {
   PRICE_ONE,
   PRICE_ZERO,
@@ -69,7 +69,7 @@ export class PressureFrontierMemory {
   ): boolean {
     this.ensureMutable();
     validThroughMs = this.requireMonotonicTime(validThroughMs);
-    const previousValidThroughMs = this.currentValidThroughMs();
+    const previousValidThroughMs = this.validThroughMs();
     const observed = this.ensureObserved(validThroughMs);
     const firstChangedRunIndex = this.applyReplacement(
       observed.runs,
@@ -94,7 +94,7 @@ export class PressureFrontierMemory {
     const normalized = normalizeChanges(changes);
     if (normalized.size === 0) return this.observeThrough(validThroughMs);
 
-    const previousValidThroughMs = this.currentValidThroughMs();
+    const previousValidThroughMs = this.validThroughMs();
     const observed = this.ensureObserved(validThroughMs);
     const firstChangedRunIndex = this.applyChanges(
       observed.runs,
@@ -123,7 +123,7 @@ export class PressureFrontierMemory {
   observeThrough(validThroughMs: number): boolean {
     if (this.state.kind === "resolvedUnbounded") return false;
     validThroughMs = this.requireMonotonicTime(validThroughMs);
-    const previous = this.currentValidThroughMs();
+    const previous = this.validThroughMs();
     const observed = this.ensureObserved(validThroughMs);
     observed.validThroughMs = validThroughMs;
     return validThroughMs !== previous;
@@ -146,7 +146,7 @@ export class PressureFrontierMemory {
         this.requireMonotonicTime(resolvedAtMs),
       );
 
-    const current = this.currentValidThroughMs();
+    const current = this.validThroughMs();
     return current === undefined ? false : this.replaceContinuous([], current);
   }
 
@@ -154,8 +154,11 @@ export class PressureFrontierMemory {
     return this.state.kind === "resolvedUnbounded";
   }
 
+  /** Latest instant through which current pressure is known; none before observation or after unbounded resolution. */
   validThroughMs(): number | undefined {
-    return this.currentValidThroughMs();
+    return this.state.kind === "observed"
+      ? this.state.validThroughMs
+      : undefined;
   }
 
   snapshot(): PressureFrontierSnapshot {
@@ -192,12 +195,6 @@ export class PressureFrontierMemory {
     this.recordRenderChange(0);
   }
 
-  priceBoundaries(): readonly Price[] {
-    return this.state.kind === "observed"
-      ? this.state.runs.map((run) => run.price)
-      : [];
-  }
-
   renderRuns(): readonly PressureRun[] {
     return this.state.kind === "observed" ? this.state.runs : EMPTY_RUNS;
   }
@@ -207,14 +204,6 @@ export class PressureFrontierMemory {
     return this.state.kind === "observed"
       ? this.ensureCumulativeShares(this.state.runs)
       : EMPTY_CUMULATIVE_SHARES;
-  }
-
-  renderCurrentValidThroughMs(): number | undefined {
-    return this.currentValidThroughMs();
-  }
-
-  renderMaxPrice(): Price {
-    return PRICE_ONE;
   }
 
   renderDataRevision(): number {
@@ -243,16 +232,6 @@ export class PressureFrontierMemory {
     return Math.min(firstRunIndex, runCount);
   }
 
-  bandsAtPrice(price: Price): readonly PressureBand[] {
-    const context = this.runContextAtPrice(price);
-    if (!context || this.state.kind !== "observed") return [];
-    return materializeBands(
-      context.run,
-      context.currentVolume,
-      this.state.validThroughMs,
-    );
-  }
-
   bandAtPoint(price: Price, volume: number): PressureBand | undefined {
     if (!Number.isFinite(volume) || volume < 0) return undefined;
 
@@ -279,32 +258,6 @@ export class PressureFrontierMemory {
       hiVolume: step.hiVolume,
       validThroughMs: step.validThroughMs,
     };
-  }
-
-  hasVisiblePressure(
-    nowMs: number,
-    halfLifeMs: number,
-    minAlpha = 1 / 255,
-  ): boolean {
-    if (this.state.kind !== "observed") return false;
-    const visibleSince = visibleSinceMs(nowMs, halfLifeMs, minAlpha);
-
-    if (
-      this.state.validThroughMs > visibleSince &&
-      this.state.runs.some((run) => run.shares > 0)
-    )
-      return true;
-
-    return this.state.runs.some((run) =>
-      run.frozenSteps.some((step) => step.validThroughMs > visibleSince),
-    );
-  }
-
-  currentLevels(): readonly PressureLevel[] {
-    if (this.state.kind !== "observed") return [];
-    return this.state.runs.flatMap((run) =>
-      run.shares > 0 ? [{ price: run.price, shares: run.shares }] : [],
-    );
   }
 
   private ensureObserved(
@@ -466,12 +419,6 @@ export class PressureFrontierMemory {
       this.renderChanges.shift();
   }
 
-  private currentValidThroughMs(): number | undefined {
-    if (this.state.kind === "observed") return this.state.validThroughMs;
-    if (this.state.kind === "resolvedUnbounded") return undefined;
-    return undefined;
-  }
-
   private ensureMutable(): void {
     if (this.state.kind === "resolvedUnbounded")
       throw new RangeError("resolved unbounded pressure is terminal");
@@ -482,7 +429,7 @@ export class PressureFrontierMemory {
       throw new RangeError(
         "pressure frontier timestamp must be finite and non-negative",
       );
-    const previous = this.currentValidThroughMs();
+    const previous = this.validThroughMs();
     if (previous !== undefined && value < previous)
       throw new RangeError(
         "pressure frontier timestamp moved backward: " +
@@ -610,58 +557,6 @@ function frozenStepIndexAt(
     else hi = mid;
   }
   return lo > 0 ? lo - 1 : undefined;
-}
-
-function materializeBands(
-  run: MutableRun,
-  currentVolume: number,
-  currentValidThroughMs: number,
-): PressureBand[] {
-  const result: Array<{
-    loVolume: number;
-    hiVolume: number;
-    validThroughMs: number;
-  }> = [];
-
-  if (currentVolume > 0)
-    appendBand(result, {
-      loVolume: 0,
-      hiVolume: currentVolume,
-      validThroughMs: currentValidThroughMs,
-    });
-
-  let lower = currentVolume;
-  for (let index = run.frozenSteps.length - 1; index >= 0; index--) {
-    const step = run.frozenSteps[index]!;
-    appendBand(result, {
-      loVolume: lower,
-      hiVolume: step.hiVolume,
-      validThroughMs: step.validThroughMs,
-    });
-    lower = step.hiVolume;
-  }
-
-  return result;
-}
-
-function appendBand(
-  bands: Array<{
-    loVolume: number;
-    hiVolume: number;
-    validThroughMs: number;
-  }>,
-  band: { loVolume: number; hiVolume: number; validThroughMs: number },
-): void {
-  const previous = bands[bands.length - 1];
-  if (
-    previous &&
-    samePressureVolume(previous.hiVolume, band.loVolume) &&
-    previous.validThroughMs === band.validThroughMs
-  ) {
-    previous.hiVolume = band.hiVolume;
-    return;
-  }
-  bands.push(band);
 }
 
 function findInsertIndex(runs: readonly MutableRun[], price: Price): number {

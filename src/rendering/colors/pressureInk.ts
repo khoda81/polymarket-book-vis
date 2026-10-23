@@ -38,14 +38,6 @@ export function shareVolumeAtPressure(
   return (reserveShares * pressure) / Math.sqrt(1 - pressure * pressure);
 }
 
-/** Unsigned row-space magnitude of cumulative share pressure. */
-export function sharePressureAreaFraction(
-  volume: number,
-  reserveShares: number,
-): number {
-  return Math.abs(signedSharePressure(volume, reserveShares));
-}
-
 function validatePositiveFinite(value: number, name: string): void {
   if (!(value > 0) || !Number.isFinite(value))
     throw new RangeError(`${name} must be finite and positive`);

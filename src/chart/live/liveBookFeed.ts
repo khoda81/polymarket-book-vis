@@ -5,8 +5,7 @@ import type { PublicClient, TokenId } from "@polymarket/client";
 
 type FeedState =
   | { readonly kind: "idle" }
-  | { readonly kind: "starting"; readonly watch: LiveBookWatch }
-  | { readonly kind: "live"; readonly watch: LiveBookWatch }
+  | { readonly kind: "watching"; readonly watch: LiveBookWatch }
   | { readonly kind: "destroyed" };
 
 /** Per-view lifecycle wrapper around the client-wide live-book coordinator. */
@@ -34,20 +33,17 @@ export class LiveBookFeed {
     this.tokenKeys.clear();
     for (const tokenId of tokenIds) this.tokenKeys.add(tokenId);
     const watch = this.coordinator.watch(tokenIds, this.callbacks);
-    this.state = { kind: "starting", watch };
+    this.state = { kind: "watching", watch };
 
     try {
       await watch.ready;
     } catch (error) {
-      if (this.state.kind === "starting" && this.state.watch === watch) {
+      if (this.state.kind === "watching" && this.state.watch === watch) {
         this.state = { kind: "idle" };
         this.tokenKeys.clear();
       }
       throw error;
     }
-
-    if (this.state.kind === "starting" && this.state.watch === watch)
-      this.state = { kind: "live", watch };
   }
 
   destroy(): void {
@@ -56,7 +52,6 @@ export class LiveBookFeed {
 
     this.state = { kind: "destroyed" };
     this.tokenKeys.clear();
-    if (previous.kind === "starting" || previous.kind === "live")
-      previous.watch.close();
+    if (previous.kind === "watching") previous.watch.close();
   }
 }

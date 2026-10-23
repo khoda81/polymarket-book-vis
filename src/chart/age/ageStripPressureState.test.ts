@@ -4,8 +4,11 @@ import { observationTime } from "../../domain/pressure/observationClock";
 import { emptyTokenBook } from "../../domain/books/orderBook";
 import { FULL_PERSISTENT_UNBOUNDED_PRESSURE_EXTENT } from "../../domain/pressure/pressureField";
 import { PressureFrontierMemory } from "../../domain/pressure/pressureFrontierMemory";
-import { priceFromLegacyNumber as p } from "../../domain/books/price";
+import { parsePrice } from "../../domain/books/price";
 import { AgeStripPressureState } from "./ageStripPressureState";
+import { bandsAtPrice, currentLevels } from "@/shared/testing/pressureFrontier";
+
+const p = (value: number) => parsePrice(String(value));
 
 test("token pressure follows only that token's asks", () => {
   const state = new AgeStripPressureState();
@@ -18,7 +21,7 @@ test("token pressure follows only that token's asks", () => {
     validThroughMs: 1_000,
   });
 
-  expect(state.memory("token")!.currentLevels()).toEqual([
+  expect(currentLevels(state.memory("token")!)).toEqual([
     { price: p(0.65), shares: 70 },
   ]);
 });
@@ -40,7 +43,7 @@ test("opposite-side book updates advance token pressure validity", () => {
     changes: [{ side: "bid", price: p(0.6), shares: 100 }],
   });
 
-  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+  expect(bandsAtPrice(state.memory("token")!, p(0.7))).toEqual([
     { loVolume: 0, hiVolume: 70, validThroughMs: 2_500 },
   ]);
 });
@@ -75,8 +78,8 @@ test("invalid recorder data preserves current pressure and does not abort later 
   }
 
   expect(state.memory("bad-token")!.snapshot()).toEqual(before);
-  expect(state.memory("good-token")!.bandsAtPrice(p(0.7))).toEqual(
-    recorded.bandsAtPrice(p(0.7)),
+  expect(bandsAtPrice(state.memory("good-token")!, p(0.7))).toEqual(
+    bandsAtPrice(recorded, p(0.7)),
   );
 });
 
@@ -98,7 +101,7 @@ test("late recorder hydration keeps websocket validity and older token history",
     () => NO_FEE_SCHEDULE,
   );
 
-  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+  expect(bandsAtPrice(state.memory("token")!, p(0.7))).toEqual([
     {
       loVolume: 0,
       hiVolume: 40_380,
@@ -140,7 +143,7 @@ test("recorder-ahead hydration waits for websocket catch-up then rebases from th
       changes: [{ side: "ask", price: p(0.6), shares: 60 }],
     }),
   ).not.toThrow();
-  expect(state.memory("token")!.currentLevels()).toEqual([
+  expect(currentLevels(state.memory("token")!)).toEqual([
     { price: p(0.6), shares: 80 },
   ]);
 
@@ -152,10 +155,10 @@ test("recorder-ahead hydration waits for websocket catch-up then rebases from th
     validThroughMs: 3_667,
   });
 
-  expect(state.memory("token")!.currentLevels()).toEqual([
+  expect(currentLevels(state.memory("token")!)).toEqual([
     { price: p(0.6), shares: 50 },
   ]);
-  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+  expect(bandsAtPrice(state.memory("token")!, p(0.7))).toEqual([
     { loVolume: 0, hiVolume: 50, validThroughMs: 3_667 },
     { loVolume: 50, hiVolume: 80, validThroughMs: 3_666 },
   ]);
@@ -218,7 +221,7 @@ test("market watermark advances unchanged token pressure", () => {
     validThroughMs: 2_500,
   });
 
-  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+  expect(bandsAtPrice(state.memory("token")!, p(0.7))).toEqual([
     { loVolume: 0, hiVolume: 70, validThroughMs: 2_500 },
   ]);
 });
@@ -257,8 +260,8 @@ test("unknown resolution time never extends loser history", () => {
   });
   state.resolveSource("token", false, null);
 
-  expect(state.memory("token")!.currentLevels()).toEqual([]);
-  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+  expect(currentLevels(state.memory("token")!)).toEqual([]);
+  expect(bandsAtPrice(state.memory("token")!, p(0.7))).toEqual([
     { loVolume: 0, hiVolume: 40, validThroughMs: 1_000 },
   ]);
 });
@@ -274,22 +277,22 @@ test("observed resolution time freezes loser history through resolution", () => 
   });
   state.resolveSource("token", false, 2_000);
 
-  expect(state.memory("token")!.currentLevels()).toEqual([]);
-  expect(state.memory("token")!.bandsAtPrice(p(0.7))).toEqual([
+  expect(currentLevels(state.memory("token")!)).toEqual([]);
+  expect(bandsAtPrice(state.memory("token")!, p(0.7))).toEqual([
     { loVolume: 0, hiVolume: 40, validThroughMs: 2_000 },
   ]);
 });
 
 test("recorder coverage remains token-local when starts differ or one token is missing", () => {
   const state = new AgeStripPressureState();
-  state.ensure("yes", 10_000);
-  state.ensure("no", 10_000);
+  state.ensure("yes");
+  state.ensure("no");
   state.setRecordingCoverage({ no: 2_000 });
-  expect(state.timing("yes")!.recordingSinceMs).toBeNull();
-  expect(state.timing("no")!.recordingSinceMs).toBe(2_000);
+  expect(state.recordingSinceMs("yes")).toBeNull();
+  expect(state.recordingSinceMs("no")).toBe(2_000);
   state.setRecordingCoverage({ yes: 1_000 });
-  expect(state.timing("yes")!.recordingSinceMs).toBe(1_000);
-  expect(state.timing("no")!.recordingSinceMs).toBe(2_000);
+  expect(state.recordingSinceMs("yes")).toBe(1_000);
+  expect(state.recordingSinceMs("no")).toBe(2_000);
 });
 
 test("frontier observation time stays token-local, including hydration", () => {

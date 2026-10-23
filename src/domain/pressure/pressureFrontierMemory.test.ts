@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { PressureFrontierMemory } from "./pressureFrontierMemory";
-import { priceFromLegacyNumber as p } from "../books/price";
+import { parsePrice } from "../books/price";
+import {
+  bandsAtPrice,
+  currentLevels,
+  priceBoundaries,
+} from "@/shared/testing/pressureFrontier";
+
+const p = (value: number) => parsePrice(String(value));
 
 test("pressure cumulative volume is derived from exact run shares", () => {
   const memory = new PressureFrontierMemory();
@@ -12,13 +19,13 @@ test("pressure cumulative volume is derived from exact run shares", () => {
     1_000,
   );
 
-  expect(memory.currentLevels()).toEqual([
+  expect(currentLevels(memory)).toEqual([
     { price: p(0.1), shares: 20 },
     { price: p(0.3), shares: 35 },
   ]);
-  expect(memory.bandsAtPrice(p(0.1)).at(-1)?.hiVolume).toBe(20);
-  expect(memory.bandsAtPrice(p(0.2)).at(-1)?.hiVolume).toBe(20);
-  expect(memory.bandsAtPrice(p(0.3)).at(-1)?.hiVolume).toBe(55);
+  expect(bandsAtPrice(memory, p(0.1)).at(-1)?.hiVolume).toBe(20);
+  expect(bandsAtPrice(memory, p(0.2)).at(-1)?.hiVolume).toBe(20);
+  expect(bandsAtPrice(memory, p(0.3)).at(-1)?.hiVolume).toBe(55);
 });
 
 test("10 -> 4 -> 8 -> 12 freezes, trims, then submerges history", () => {
@@ -31,7 +38,7 @@ test("10 -> 4 -> 8 -> 12 freezes, trims, then submerges history", () => {
     shares: 4,
     frozenSteps: [{ hiVolume: 10, validThroughMs: 2_000 }],
   });
-  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+  expect(bandsAtPrice(memory, p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 10, validThroughMs: 2_000 },
   ]);
 
@@ -39,14 +46,14 @@ test("10 -> 4 -> 8 -> 12 freezes, trims, then submerges history", () => {
   expect(memory.renderRuns()[0]?.frozenSteps).toEqual([
     { hiVolume: 10, validThroughMs: 2_000 },
   ]);
-  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+  expect(bandsAtPrice(memory, p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 8, validThroughMs: 3_000 },
     { loVolume: 8, hiVolume: 10, validThroughMs: 2_000 },
   ]);
 
   memory.updateLevels([{ price: p(0.5), shares: 12 }], 4_000);
   expect(memory.renderRuns()[0]?.frozenSteps).toEqual([]);
-  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+  expect(bandsAtPrice(memory, p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 12, validThroughMs: 4_000 },
   ]);
 });
@@ -79,7 +86,7 @@ test("unchanged observations advance validity without rewriting geometry", () =>
   expect(memory.observeThrough(2_500)).toBe(true);
   expect(memory.renderRuns()).toBe(runs);
   expect(memory.renderDataRevision()).toBe(1);
-  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+  expect(bandsAtPrice(memory, p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 100, validThroughMs: 2_500 },
   ]);
 
@@ -100,7 +107,7 @@ test("discontinuous snapshot does not bridge the missing interval", () => {
   memory.observeLevels([{ price: p(0.5), shares: 100 }], 1_000);
   memory.observeLevels([{ price: p(0.5), shares: 60 }], 5_000);
 
-  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+  expect(bandsAtPrice(memory, p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 60, validThroughMs: 5_000 },
     { loVolume: 60, hiVolume: 100, validThroughMs: 1_000 },
   ]);
@@ -124,11 +131,11 @@ test("price-boundary splitting copies the canonical history stack", () => {
       frozenSteps: [{ hiVolume: 10, validThroughMs: 2_000 }],
     },
   ]);
-  expect(memory.bandsAtPrice(p(0.3))).toEqual([
+  expect(bandsAtPrice(memory, p(0.3))).toEqual([
     { loVolume: 0, hiVolume: 5, validThroughMs: 3_000 },
     { loVolume: 5, hiVolume: 10, validThroughMs: 2_000 },
   ]);
-  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+  expect(bandsAtPrice(memory, p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 7, validThroughMs: 3_000 },
     { loVolume: 7, hiVolume: 10, validThroughMs: 2_000 },
   ]);
@@ -144,10 +151,10 @@ test("adjacent identical runs merge after history is submerged", () => {
     1_000,
   );
   memory.updateLevels([{ price: p(0.5), shares: 0 }], 2_000);
-  expect(memory.priceBoundaries()).toEqual([p(0.2), p(0.5)]);
+  expect(priceBoundaries(memory)).toEqual([p(0.2), p(0.5)]);
 
   memory.updateLevels([{ price: p(0.2), shares: 15 }], 3_000);
-  expect(memory.priceBoundaries()).toEqual([p(0.2)]);
+  expect(priceBoundaries(memory)).toEqual([p(0.2)]);
   expect(memory.renderRuns()).toEqual([
     { price: p(0.2), shares: 15, frozenSteps: [] },
   ]);
@@ -186,7 +193,7 @@ test("snapshot round trip preserves exact pressure", () => {
   restored.restore(JSON.parse(JSON.stringify(memory.snapshot())));
 
   for (const price of [0.1, 0.25, 0.5, 0.8].map(p))
-    expect(restored.bandsAtPrice(price)).toEqual(memory.bandsAtPrice(price));
+    expect(bandsAtPrice(restored, price)).toEqual(bandsAtPrice(memory, price));
 });
 
 test("snapshot stores shares and steps without redundant geometry", () => {
@@ -214,17 +221,6 @@ test("snapshot stores shares and steps without redundant geometry", () => {
   expect(serialized).not.toContain('"volume":');
   expect(serialized).not.toContain('"current":');
   expect(serialized).not.toContain("frozenBands");
-});
-
-test("visibility depends only on canonical current and step timestamps", () => {
-  const memory = new PressureFrontierMemory();
-  memory.updateLevels([{ price: p(0.5), shares: 100 }], 1_000);
-  memory.updateLevels([{ price: p(0.5), shares: 0 }], 2_000);
-
-  const history = memory.bandsAtPrice(p(0.6));
-  expect(memory.hasVisiblePressure(20_000, 1_000)).toBe(false);
-  expect(memory.hasVisiblePressure(20_000, 100_000)).toBe(true);
-  expect(memory.bandsAtPrice(p(0.6))).toEqual(history);
 });
 
 test("render revision changes only when pressure geometry changes", () => {
@@ -275,14 +271,14 @@ test("pressure boundaries exclude the implicit disposal sentinel", () => {
     1_000,
   );
 
-  expect(memory.currentLevels()).toEqual([
+  expect(currentLevels(memory)).toEqual([
     { price: p(0.2), shares: 10 },
     { price: p(0.5), shares: 20 },
     { price: p(1), shares: 30 },
   ]);
-  expect(memory.priceBoundaries()).toEqual([p(0.2), p(0.5), p(1)]);
-  expect(memory.bandsAtPrice(p(0))).toEqual([]);
-  expect(memory.bandsAtPrice(p(1)).at(-1)?.hiVolume).toBe(60);
+  expect(priceBoundaries(memory)).toEqual([p(0.2), p(0.5), p(1)]);
+  expect(bandsAtPrice(memory, p(0))).toEqual([]);
+  expect(bandsAtPrice(memory, p(1)).at(-1)?.hiVolume).toBe(60);
 });
 
 test("pressure updates report whether canonical state changed", () => {
@@ -314,7 +310,7 @@ test("resolved unbounded pressure discards dominated finite history", () => {
   memory.observeLevels([{ price: p(0.5), shares: 100 }], 1_000);
   expect(memory.resolveUnbounded()).toBe(true);
   expect(memory.isResolvedUnbounded()).toBe(true);
-  expect(memory.currentLevels()).toEqual([]);
+  expect(currentLevels(memory)).toEqual([]);
   expect(memory.snapshot()).toEqual({
     version: 7,
     state: { kind: "resolvedUnbounded" },
@@ -325,8 +321,8 @@ test("zero-future resolution keeps historical pressure forever", () => {
   const memory = new PressureFrontierMemory();
   memory.observeLevels([{ price: p(0.5), shares: 100 }], 1_000);
   memory.resolveZeroFuture(2_000);
-  expect(memory.currentLevels()).toEqual([]);
-  expect(memory.bandsAtPrice(p(0.6))).toEqual([
+  expect(currentLevels(memory)).toEqual([]);
+  expect(bandsAtPrice(memory, p(0.6))).toEqual([
     { loVolume: 0, hiVolume: 100, validThroughMs: 2_000 },
   ]);
 });

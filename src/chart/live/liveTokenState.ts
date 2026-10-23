@@ -42,10 +42,6 @@ export class LiveTokenState {
     return this.observed?.book;
   }
 
-  get awaitingSnapshot(): boolean {
-    return this.state.kind === "awaiting-snapshot";
-  }
-
   get synchronized(): boolean {
     return this.state.kind === "live";
   }

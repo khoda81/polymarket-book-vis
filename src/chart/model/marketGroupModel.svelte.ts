@@ -10,7 +10,6 @@ import {
 } from "@/domain/pressure/observationClock";
 import {
   resolveMarketLifecycle,
-  summarizeEventMarketStatus,
   type MarketLifecycle,
   type MarketResolutionUpdate,
 } from "@/domain/markets/marketLifecycle";
@@ -33,7 +32,7 @@ import { marketPressureRow, pressureTrackForToken } from "./marketPressureRows";
 import { AgeStripPressureState } from "@/chart/age/ageStripPressureState";
 import { LiveBookFeed } from "@/chart/live/liveBookFeed";
 import type { LiveBookFeedCallbacks } from "@/chart/live/liveBookContracts";
-import type { ConnectionStatus, ViewMode } from "@/domain/markets/chartState";
+import type { ViewMode } from "@/domain/markets/chartState";
 import type { TokenBook } from "@/domain/books/orderBook";
 import type {
   FeeSchedule,
@@ -64,7 +63,6 @@ interface TokenOwner {
 
 interface LiveActivity {
   readonly key: string;
-  readonly tokens: ReadonlySet<TokenId>;
   readonly feed: ReturnType<MarketGroupServices["createFeed"]>;
   ready: Promise<void>;
 }
@@ -74,7 +72,6 @@ export class MarketGroupModel {
   readonly pressure = new AgeStripPressureState();
   private readonly activeTokens = new SvelteSet<TokenId>();
   readonly observationPointsByToken = new SvelteMap<string, ObservationPoint>();
-  connectionStatus = $state<ConnectionStatus>("disconnected");
   bookRevision = $state(0);
   pressureRevision = $state(0);
   visibilityRevision = $state(0);
@@ -141,14 +138,8 @@ export class MarketGroupModel {
     for (const control of definition.controls) {
       const { market } = control;
       this.controlByMarketId.set(market.id, control);
-      const timestamp =
-        this.markets.resolvedAtMs.get(market.id) ?? market.resolutionMs;
-      for (const side of ["yes", "no"] as const) {
-        const tokenId = market[side].tokenId;
-        this.tokenOwners.set(tokenId, { control, side });
-        if (this.pressure.memory(tokenId))
-          this.pressure.ensure(tokenId, timestamp);
-      }
+      for (const side of ["yes", "no"] as const)
+        this.tokenOwners.set(market[side].tokenId, { control, side });
     }
     this.metadataRevision++;
     this.pressureRevision++;
@@ -170,14 +161,6 @@ export class MarketGroupModel {
       ]),
     );
   }
-  get marketStatus() {
-    return summarizeEventMarketStatus(
-      this.definition.controls.map((control) =>
-        this.lifecycleFor(control.market.id),
-      ),
-    );
-  }
-
   private getBook(tokenId: string): TokenBook | undefined {
     const id = this.knownTokenId(tokenId);
     return id
@@ -273,7 +256,7 @@ export class MarketGroupModel {
       .flatMap(({ market }) => marketTokenIds(market));
     for (const { market } of controls)
       for (const tokenId of marketTokenIds(market))
-        this.pressure.ensure(tokenId, market.resolutionMs);
+        this.pressure.ensure(tokenId);
     this.applyKnownResolutions(controls);
     this.loadHistory(tokenIds);
     const key = liveTokens.toSorted().join(",");
@@ -281,7 +264,6 @@ export class MarketGroupModel {
     const previous = this.activity;
     this.activity = null;
     previous?.feed.destroy();
-    this.connectionStatus = "disconnected";
     this.pressureRevision++;
     if (liveTokens.length === 0) {
       this.refreshObservations();
@@ -289,15 +271,10 @@ export class MarketGroupModel {
     }
     const activity: LiveActivity = {
       key,
-      tokens: new Set(liveTokens),
       ready: Promise.resolve(),
       feed: this.services.createFeed(this.client, {
-        onConnectionStatus: (status) => {
-          if (this.activity === activity) this.connectionStatus = status;
-        },
         onBookUpdated: (tokenId, book, update) => {
-          if (this.activity !== activity || !activity.tokens.has(tokenId))
-            return;
+          if (this.activity !== activity) return;
           this.observations.advance(update.validThroughMs);
           this.books.set(tokenId, book);
           this.pressure.applyBookUpdate(

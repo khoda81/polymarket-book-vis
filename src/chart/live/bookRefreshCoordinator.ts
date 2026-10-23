@@ -370,11 +370,6 @@ class IndexedDeadlineHeap {
   private readonly nodes: RefreshHeapNode[] = [];
   private readonly indexByToken = new Map<TokenId, number>();
 
-  clear(): void {
-    this.nodes.length = 0;
-    this.indexByToken.clear();
-  }
-
   peek(): RefreshHeapNode | undefined {
     return this.nodes[0];
   }
@@ -395,16 +390,16 @@ class IndexedDeadlineHeap {
     else if (deadlineMs > previousDeadlineMs) this.bubbleDown(existingIndex);
   }
 
-  delete(tokenKey: TokenId): boolean {
+  delete(tokenKey: TokenId): void {
     const index = this.indexByToken.get(tokenKey);
-    if (index === undefined) return false;
+    if (index === undefined) return;
 
     const lastIndex = this.nodes.length - 1;
     const tail = this.nodes[lastIndex]!;
     this.nodes.pop();
     this.indexByToken.delete(tokenKey);
 
-    if (index === lastIndex) return true;
+    if (index === lastIndex) return;
 
     this.nodes[index] = tail;
     this.indexByToken.set(tail.tokenKey, index);
@@ -415,7 +410,6 @@ class IndexedDeadlineHeap {
     )
       this.bubbleUp(index);
     else this.bubbleDown(index);
-    return true;
   }
 
   pop(): RefreshHeapNode | undefined {

@@ -52,10 +52,6 @@ export function hideSharedTooltip(owner: TooltipOwner): void {
   hideActiveTooltip();
 }
 
-export function releaseSharedTooltip(owner: TooltipOwner): void {
-  hideSharedTooltip(owner);
-}
-
 export function setSharedTooltipSuppressed(next: boolean): void {
   suppressed = next;
   if (suppressed) hideActiveTooltip();
