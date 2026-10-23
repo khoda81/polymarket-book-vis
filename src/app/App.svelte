@@ -8,12 +8,12 @@
   import SeriesCard from "./series/SeriesCard.svelte";
   import { DashboardReorderController } from "./dashboard/dashboardReorderController";
   import {
-    eventItemKey,
     itemKey,
-    seriesItemKey,
+    itemLabel,
     orderDashboardItems,
     eventLabel,
     seriesLabel,
+    withPinned,
     type EventDashboardItem,
     type DashboardItem,
     type SeriesDashboardItem,
@@ -127,12 +127,7 @@
     pinned: boolean,
     placement: "start" | "end" = "end",
   ): void {
-    const without = pinnedEventIds.filter((candidate) => candidate !== id);
-    pinnedEventIds = pinned
-      ? placement === "start"
-        ? [id, ...without]
-        : [...without, id]
-      : without;
+    pinnedEventIds = withPinned(pinnedEventIds, id, pinned, placement);
     persistIds(PINNED_EVENT_IDS_STORAGE_KEY, pinnedEventIds);
   }
 
@@ -141,68 +136,44 @@
     pinned: boolean,
     placement: "start" | "end" = "end",
   ): void {
-    const without = pinnedSeriesIds.filter((candidate) => candidate !== id);
-    pinnedSeriesIds = pinned
-      ? placement === "start"
-        ? [id, ...without]
-        : [...without, id]
-      : without;
+    pinnedSeriesIds = withPinned(pinnedSeriesIds, id, pinned, placement);
     persistIds(PINNED_SERIES_IDS_STORAGE_KEY, pinnedSeriesIds);
   }
 
-  function addEvent(
-    event: Event,
-    announceReady: boolean,
-    focusExisting = true,
+  /** Add a card unless it is present; an existing card can be scrolled into view. */
+  function addEntry(
+    entry: DashboardItem,
+    {
+      focusExisting = true,
+      placement = "end",
+    }: { focusExisting?: boolean; placement?: "start" | "end" } = {},
   ): boolean {
-    const existing = entries.find(
-      (entry) => entry.kind === "event" && entry.event.id === event.id,
-    );
-    if (existing) {
+    const key = itemKey(entry);
+    if (entries.some((candidate) => itemKey(candidate) === key)) {
       if (focusExisting) {
-        status = `${eventLabel(event)} is already on the dashboard.`;
+        status = `${itemLabel(entry)} is already on the dashboard.`;
+        const selector =
+          entry.kind === "series"
+            ? `[data-series-id="${CSS.escape(entry.series.id)}"]`
+            : `[data-event-id="${CSS.escape(entry.event.id)}"]`;
         void tick().then(() => {
           document
-            .querySelector<HTMLElement>(
-              `[data-event-id="${CSS.escape(event.id)}"]`,
-            )
+            .querySelector<HTMLElement>(selector)
             ?.scrollIntoView({ behavior: "smooth", block: "center" });
         });
       }
       return false;
     }
 
-    const entry: EventDashboardItem = { kind: "event", event, announceReady };
-    rememberLayoutKey(itemKey(entry));
+    rememberLayoutKey(key, placement);
     entries = [...entries, entry];
     return true;
   }
 
-  function addSeries(series: Series, announceReady: boolean): boolean {
-    const seriesId = series.id;
-    const existing = entries.find(
-      (entry) => entry.kind === "series" && entry.series.id === seriesId,
-    );
-    if (existing) {
-      status = `${seriesLabel(series)} is already on the dashboard.`;
-      void tick().then(() => {
-        document
-          .querySelector<HTMLElement>(
-            `[data-series-id="${CSS.escape(seriesId)}"]`,
-          )
-          ?.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
-      return false;
-    }
-
-    const entry: SeriesDashboardItem = {
-      kind: "series",
-      series,
-      announceReady,
-    };
-    rememberLayoutKey(itemKey(entry));
-    entries = [...entries, entry];
-    return true;
+  function removeEntry(entry: DashboardItem): void {
+    const key = itemKey(entry);
+    forgetLayoutKey(key);
+    entries = entries.filter((candidate) => itemKey(candidate) !== key);
   }
 
   async function addManualEvent(event: Event): Promise<void> {
@@ -217,16 +188,19 @@
     }
 
     setEventPinned(event.id, true, "start");
-    rememberLayoutKey(eventItemKey(event.id), "start");
-    addEvent(event, true);
+    addEntry(
+      { kind: "event", event, announceReady: true },
+      { placement: "start" },
+    );
   }
 
   function addManualSeries(series: Series): void {
     status = `Loading ${seriesLabel(series)}…`;
-    const seriesId = series.id;
-    setSeriesPinned(seriesId, true, "start");
-    rememberLayoutKey(seriesItemKey(seriesId), "start");
-    addSeries(series, true);
+    setSeriesPinned(series.id, true, "start");
+    addEntry(
+      { kind: "series", series, announceReady: true },
+      { placement: "start" },
+    );
   }
 
   async function recurringSeriesFor(event: Event): Promise<Series | null> {
@@ -252,57 +226,30 @@
     persistDismissedDiscoveryIds();
     if (pinnedEventIds.includes(entry.event.id))
       setEventPinned(entry.event.id, false);
-    forgetLayoutKey(itemKey(entry));
-    entries = entries.filter(
-      (candidate) =>
-        candidate.kind === "series" || candidate.event.id !== entry.event.id,
-    );
-    status = `Removed ${eventLabel(entry.event)}.`;
+    removeEntry(entry);
+    status = `Removed ${itemLabel(entry)}.`;
   }
 
   function removeSeries(entry: SeriesDashboardItem): void {
-    const seriesId = entry.series.id;
-    if (pinnedSeriesIds.includes(seriesId)) setSeriesPinned(seriesId, false);
-    forgetLayoutKey(itemKey(entry));
-    entries = entries.filter(
-      (candidate) =>
-        candidate.kind === "event" || candidate.series.id !== seriesId,
-    );
-    status = `Removed ${seriesLabel(entry.series)}.`;
+    if (pinnedSeriesIds.includes(entry.series.id))
+      setSeriesPinned(entry.series.id, false);
+    removeEntry(entry);
+    status = `Removed ${itemLabel(entry)}.`;
   }
 
   function itemReady(entry: DashboardItem): void {
-    if (!entry.announceReady) return;
-    status =
-      entry.kind === "series"
-        ? `Added ${seriesLabel(entry.series)}.`
-        : `Added ${eventLabel(entry.event)}.`;
+    if (entry.announceReady) status = `Added ${itemLabel(entry)}.`;
   }
 
   function itemFailed(entry: DashboardItem, message: string): void {
-    if (entry.kind === "series") {
-      const seriesId = entry.series.id;
-      forgetLayoutKey(itemKey(entry));
-      entries = entries.filter(
-        (candidate) =>
-          candidate.kind === "event" || candidate.series.id !== seriesId,
-      );
-      status = `Could not add ${seriesLabel(entry.series)}: ${message}`;
-      return;
-    }
-
-    forgetLayoutKey(itemKey(entry));
-    entries = entries.filter(
-      (candidate) =>
-        candidate.kind === "series" || candidate.event.id !== entry.event.id,
-    );
-    status = `Could not add ${eventLabel(entry.event)}: ${message}`;
+    removeEntry(entry);
+    status = `Could not add ${itemLabel(entry)}: ${message}`;
   }
 
   async function loadPinnedEvent(eventId: EventId): Promise<void> {
     try {
       const event = await client.fetchEvent({ id: eventId });
-      addEvent(event, false);
+      addEntry({ kind: "event", event, announceReady: false });
     } catch (error) {
       console.error(`Could not load event ${eventId}:`, error);
     }
@@ -311,7 +258,7 @@
   async function loadPinnedSeries(seriesId: SeriesId): Promise<void> {
     try {
       const series = await client.fetchSeries({ id: seriesId });
-      addSeries(series, false);
+      addEntry({ kind: "series", series, announceReady: false });
     } catch (error) {
       console.error(`Could not load series ${seriesId}:`, error);
     }
@@ -428,5 +375,9 @@
   {client}
   {pinnedSeriesIds}
   excludedEventIds={discoveryExcludedEventIds}
-  onadd={(event) => addEvent(event, false, false)}
+  onadd={(event) =>
+    addEntry(
+      { kind: "event", event, announceReady: false },
+      { focusExisting: false },
+    )}
 />

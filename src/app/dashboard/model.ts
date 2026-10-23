@@ -24,6 +24,24 @@ export function seriesLabel(series: Series): string {
   return series.title?.trim() || series.slug?.trim() || "series";
 }
 
+export function itemLabel(entry: DashboardItem): string {
+  return entry.kind === "series"
+    ? seriesLabel(entry.series)
+    : eventLabel(entry.event);
+}
+
+/** Pin or unpin `id`, keeping one occurrence at the requested edge. */
+export function withPinned<T extends string>(
+  ids: readonly T[],
+  id: T,
+  pinned: boolean,
+  placement: "start" | "end",
+): T[] {
+  const without = ids.filter((candidate) => candidate !== id);
+  if (!pinned) return without;
+  return placement === "start" ? [id, ...without] : [...without, id];
+}
+
 export function orderDashboardItems(
   items: readonly DashboardItem[],
   order: readonly string[],
