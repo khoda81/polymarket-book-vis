@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import type { Event, Series } from "@polymarket/client";
-import { itemKey, orderDashboardItems, type DashboardItem } from "./model";
+import {
+  itemKey,
+  orderDashboardItems,
+  withPinned,
+  type DashboardItem,
+} from "./model";
 
 test("saved layout ranks precede unranked entries in stable insertion order", () => {
   const items: DashboardItem[] = [
@@ -20,4 +25,14 @@ test("saved layout ranks precede unranked entries in stable insertion order", ()
     "event:b",
     "event:c",
   ]);
+});
+
+test("pinning keeps one occurrence at the requested edge", () => {
+  expect(withPinned(["a", "b", "c"], "b", true, "start")).toEqual([
+    "b",
+    "a",
+    "c",
+  ]);
+  expect(withPinned(["a", "b"], "c", true, "end")).toEqual(["a", "b", "c"]);
+  expect(withPinned(["a", "b"], "a", false, "end")).toEqual(["b"]);
 });
