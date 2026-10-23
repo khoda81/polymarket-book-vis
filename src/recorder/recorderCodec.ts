@@ -52,17 +52,11 @@ function pressureSnapshotFromProto(
   snapshot: WirePressureFrontierSnapshot,
 ): PressureFrontierSnapshot {
   const state = snapshot.state;
-  if (state.case === "unobserved")
-    return {
+  if (state.case === "unobserved" || state.case === "resolvedUnbounded")
+    return parsePressureFrontierSnapshot({
       version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-      state: { kind: "unobserved" },
-    };
-
-  if (state.case === "resolvedUnbounded")
-    return {
-      version: PRESSURE_FRONTIER_SNAPSHOT_VERSION,
-      state: { kind: "resolvedUnbounded" },
-    };
+      state: { kind: state.case },
+    });
 
   if (state.case !== "observed")
     throw new RangeError("protobuf pressure snapshot state is missing");

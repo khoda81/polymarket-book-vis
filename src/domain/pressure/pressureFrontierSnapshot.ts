@@ -34,20 +34,22 @@ export type PressureFrontierState =
       readonly kind: "resolvedUnbounded";
     };
 
-export interface PressureFrontierSnapshot {
+declare const validated: unique symbol;
+
+/**
+ * A snapshot whose invariants have been checked. Only the parser and the
+ * frontier that maintains these invariants construct one.
+ */
+export type PressureFrontierSnapshot = {
   readonly version: typeof PRESSURE_FRONTIER_SNAPSHOT_VERSION;
   readonly state: PressureFrontierState;
-}
-
-const validatedSnapshots = new WeakSet<object>();
+} & { readonly [validated]: true };
 
 export function parsePressureFrontierSnapshot(
   value: unknown,
 ): PressureFrontierSnapshot {
   if (!isRecord(value))
     throw new TypeError("pressure frontier snapshot must be an object");
-  if (validatedSnapshots.has(value))
-    return value as unknown as PressureFrontierSnapshot;
   assertOnlyKeys(value, ["version", "state"], "pressure frontier snapshot");
 
   if (value.version !== PRESSURE_FRONTIER_SNAPSHOT_VERSION)
@@ -56,13 +58,10 @@ export function parsePressureFrontierSnapshot(
         String(value.version),
     );
 
-  const version = value.version;
-  const parsed: PressureFrontierSnapshot = {
-    version,
+  return {
+    version: value.version,
     state: parseState(value.state),
-  };
-  validatedSnapshots.add(parsed);
-  return parsed;
+  } as PressureFrontierSnapshot;
 }
 
 function parseState(value: unknown): PressureFrontierState {
