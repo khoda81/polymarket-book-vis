@@ -1,10 +1,5 @@
 import type { PressureBand } from "./pressureField";
-import {
-  PRICE_ONE,
-  PRICE_ZERO,
-  type Price,
-  priceFromTicks,
-} from "../books/price";
+import { PRICE_ZERO, type Price } from "../books/price";
 import {
   PRESSURE_FRONTIER_SNAPSHOT_VERSION,
   type FrozenStep,
@@ -356,12 +351,7 @@ export class PressureFrontierMemory {
   private runContextAtPrice(
     price: Price,
   ): { run: MutableRun; currentVolume: number } | undefined {
-    if (
-      this.state.kind !== "observed" ||
-      price <= PRICE_ZERO ||
-      price > PRICE_ONE
-    )
-      return undefined;
+    if (this.state.kind !== "observed" || price <= PRICE_ZERO) return undefined;
 
     const runs = this.state.runs;
     const insertion = findInsertIndex(runs, price);
@@ -472,13 +462,9 @@ function normalizeChanges(
   return byPrice;
 }
 
-function canonicalPrice(value: Price): Price | undefined {
-  try {
-    const price = priceFromTicks(value);
-    return price > PRICE_ZERO && price <= PRICE_ONE ? price : undefined;
-  } catch {
-    return undefined;
-  }
+/** Prices are exact by construction; the zero edge carries no pressure run. */
+function canonicalPrice(price: Price): Price | undefined {
+  return price > PRICE_ZERO ? price : undefined;
 }
 
 function transitionFrozenSteps(

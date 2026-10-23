@@ -45,20 +45,17 @@ export function parseDiscoveryTopics(value: string): string[] {
   return topics;
 }
 
+/** Check the numeric form inputs; topics come from parseDiscoveryTopics. */
 export function validateDiscoveryFilters(filters: EventDiscoveryFilters): void {
-  parseDiscoveryTopics(filters.topics.join(","));
   if (
     [filters.minVolume, filters.minLiquidity].some(
       (n) => !Number.isFinite(n) || n < 0 || n > MAX_DISCOVERY_AMOUNT,
     ) ||
     !Number.isInteger(filters.recencyDays) ||
     filters.recencyDays < 0 ||
-    filters.recencyDays > MAX_DISCOVERY_RECENCY_DAYS ||
-    !["createdAt", "volume", "volume24hr", "liquidity"].includes(filters.order)
+    filters.recencyDays > MAX_DISCOVERY_RECENCY_DAYS
   )
-    throw new Error(
-      "Enter valid volume, liquidity, recency, and sorting filters.",
-    );
+    throw new Error("Enter valid volume, liquidity, and recency filters.");
 }
 
 export function matchesDiscoveryFilters(
@@ -87,7 +84,10 @@ export function matchesDiscoveryFilters(
   );
 }
 
-/** Query Gamma's topics, volume and liquidity; apply creation recency/tradability locally. */
+/**
+ * Query Gamma's topics, volume and liquidity; apply creation recency/tradability
+ * locally. Filters must already have passed validateDiscoveryFilters.
+ */
 export async function discoverEvents(
   client: PublicClient,
   filters: EventDiscoveryFilters,
@@ -95,7 +95,6 @@ export async function discoverEvents(
   nowMs = Date.now(),
   excludedSeriesIds: ReadonlySet<string> = new Set(),
 ): Promise<Event[]> {
-  validateDiscoveryFilters(filters);
   const tags = await Promise.all(
     filters.topics.map((slug) => client.fetchTag({ slug })),
   );
