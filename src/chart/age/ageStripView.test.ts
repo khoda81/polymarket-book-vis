@@ -7,6 +7,8 @@ import type { GpuPressureFrame } from "./gpuPressureLayer";
 import { observationTime } from "../../domain/pressure/observationClock";
 import type { PressureRow } from "./pressureRows";
 import { parsePrice } from "../../domain/books/price";
+import { emptyTokenBook } from "../../domain/books/orderBook";
+import { NO_FEE_SCHEDULE } from "../../domain/books/feeSchedule";
 import { WallClock } from "../../shared/wallClock";
 
 type TestNode = TestElement | { data: string };
@@ -188,12 +190,12 @@ function createView(flushFrame: () => void) {
       Object.assign(label.dataset, { rowKey: id, ageLabel: `Market ${id}` });
       for (const side of ["yes", "no"]) {
         const tokenId = `${id}-${side}`;
-        pressure
-          .ensure(tokenId)
-          .memory.observeLevels(
-            [{ price: parsePrice("0.6"), shares: 100 }],
-            state.opacityTimeMs,
-          );
+        const book = emptyTokenBook();
+        book.yesToUsd.setLevel(parsePrice("0.6"), 100);
+        pressure.applyBookUpdate(tokenId, book, NO_FEE_SCHEDULE, {
+          kind: "snapshot",
+          validThroughMs: state.opacityTimeMs,
+        });
         pressure.setRecordingCoverage({
           [tokenId]: wallClock.nowMs - 4 * 86_400_000,
         });
