@@ -1,4 +1,4 @@
-import { clamp01 } from "../../shared/math";
+import { clamp01, normalizeHue } from "../../shared/math";
 import type { MarketId, TokenId } from "@polymarket/client";
 import type { EventInfo, EventMarket } from "../../domain/markets/eventDetails";
 import { stableHue } from "./negRiskColors";
@@ -228,8 +228,4 @@ function degreesToRadians(degrees: number): number {
 
 function radiansToDegrees(radians: number): number {
   return (radians * 180) / Math.PI;
-}
-
-function normalizeHue(hue: number): number {
-  return ((hue % 360) + 360) % 360;
 }

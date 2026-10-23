@@ -57,6 +57,22 @@ export function setSharedTooltipSuppressed(next: boolean): void {
   if (suppressed) hideActiveTooltip();
 }
 
+/** One "name: value" row; a Text value can be updated in place. */
+export function tooltipRow(name: string, value: string | Text): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "cpv-ov-row";
+
+  const key = document.createElement("span");
+  key.textContent = name;
+
+  const amount = document.createElement("b");
+  if (typeof value === "string") amount.textContent = value;
+  else amount.appendChild(value);
+
+  row.append(key, amount);
+  return row;
+}
+
 function ensureOverlay(): HTMLDivElement {
   if (overlay) return overlay;
 

@@ -1,7 +1,7 @@
 import type { ViewMode } from "@/domain/markets/chartState";
 import { OrderBookPlotter, type ChartTheme } from "@/rendering/renderer";
 import { chartThemeForDarkMode } from "./chartTheme";
-import { AgeStripView, type AgeStripRenderState } from "./age/ageStripView";
+import { AgeStripView } from "./age/ageStripView";
 import type { AgeRowOrientation } from "./age/ageStripOrientation";
 import { VolumeBookView } from "./volume/volumeBookView";
 import type { MarketGroupModel } from "./model/marketGroupModel.svelte";
@@ -111,7 +111,7 @@ export class ChartController implements PresentationTarget {
       toggles: surface.toggles,
       plotter: this.plotter,
       getTheme: () => this.theme,
-      getRenderState: () => this.ageRenderState(),
+      getRenderState: () => this.renderState,
     });
 
     this.volumeView = new VolumeBookView({
@@ -208,15 +208,6 @@ export class ChartController implements PresentationTarget {
     this.theme = chartThemeForDarkMode(event.matches);
     this.reqDraw("full");
   };
-
-  private ageRenderState(): AgeStripRenderState {
-    return {
-      viewMode: this.renderState.viewMode,
-      opacityTimeMs: this.renderState.opacityTimeMs,
-      volumePerCssPixel: this.renderState.volumePerCssPixel,
-      ghostHalfLifeMs: this.renderState.ghostHalfLifeMs,
-    };
-  }
 
   private reqDraw(kind: ChartDrawKind): void {
     const nowMs = performance.now();

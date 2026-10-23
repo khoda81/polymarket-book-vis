@@ -182,8 +182,12 @@ export const MARKET_COLOR_LUMINANCE = 0.72;
 export const MARKET_COLOR_CHROMA = 0.16;
 const GOLDEN_ANGLE = 137.50776405003785;
 
+export function normalizeHue(hue: number): number {
+  return ((hue % 360) + 360) % 360;
+}
+
 export function idToHue(idx: number, offset: number = 56.234): number {
-  return (((idx * GOLDEN_ANGLE + offset) % 360) + 360) % 360;
+  return normalizeHue(idx * GOLDEN_ANGLE + offset);
 }
 
 /**

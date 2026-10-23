@@ -1,4 +1,5 @@
 import type { MarketId, TokenId } from "@polymarket/client";
+import { normalizeHue } from "../../shared/math";
 import type { EventInfo, EventMarket } from "../../domain/markets/eventDetails";
 import {
   DEFAULT_SIGNED_VOLUME_COLOR_SCALE,
@@ -100,8 +101,4 @@ export function stableHue(seed: string): number {
     hash = Math.imul(hash, 0x01000193);
   }
   return (hash >>> 0) % 360;
-}
-
-function normalizeHue(hue: number): number {
-  return ((hue % 360) + 360) % 360;
 }

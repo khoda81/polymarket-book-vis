@@ -271,13 +271,10 @@ export class PressureFrontierMemory {
     desired: ReadonlyMap<Price, number>,
     previousValidThroughMs: number | undefined,
   ): number | null {
-    const changes = new Map<Price, number>();
+    // applyChanges skips prices whose shares already match.
+    const changes = new Map(desired);
     for (const run of runs)
       if (run.shares > 0 && !desired.has(run.price)) changes.set(run.price, 0);
-    for (const [price, shares] of desired)
-      if (this.exactSharesAt(runs, price) !== shares)
-        changes.set(price, shares);
-
     return this.applyChanges(runs, changes, previousValidThroughMs);
   }
 

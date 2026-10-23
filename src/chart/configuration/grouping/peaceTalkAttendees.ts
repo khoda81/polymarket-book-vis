@@ -1,12 +1,10 @@
-import {
-  inferAgeRowOrientation,
-  type AgeRowOrientation,
-} from "../../age/ageStripOrientation";
+import { inferAgeRowOrientation } from "../../age/ageStripOrientation";
 import type {
   EventDetails,
   EventMarket,
 } from "../../../domain/markets/eventDetails";
 import { subsetEventDetails } from "../subsetEventDetails";
+import type { EventMarketGroup } from "../eventMarketGroups";
 
 const EVENT_SLUG =
   "who-will-attend-a-round-of-us-iran-peace-talks-by-december-31-20260812153824803";
@@ -16,13 +14,6 @@ interface ParticipantGroupRule {
   readonly label: string;
   readonly firstThreshold: number;
   readonly lastThreshold: number | null;
-}
-
-export interface ParticipantMarketGroup {
-  readonly key: string;
-  readonly label: string;
-  readonly bundle: EventDetails;
-  readonly defaultAgeRowOrientation: AgeRowOrientation;
 }
 
 const GROUPS: readonly ParticipantGroupRule[] = [
@@ -49,7 +40,7 @@ const GROUPS: readonly ParticipantGroupRule[] = [
 /** Gamma exposes stable threshold blocks for this event without group names. */
 export function peaceTalkAttendeeGroups(
   details: EventDetails,
-): readonly ParticipantMarketGroup[] | null {
+): readonly EventMarketGroup[] | null {
   if (details.event.slug !== EVENT_SLUG) return null;
 
   const marketsByGroup = new Map<string, EventMarket[]>(
