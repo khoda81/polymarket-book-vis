@@ -1,6 +1,7 @@
 <script lang="ts">
   import { errorMessage } from "../../shared/errors";
   import { onMount, tick, untrack } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import type { Series } from "@polymarket/client";
   import type { ViewMode } from "../../domain/markets/chartState";
   import type { EventDetails } from "../../domain/markets/eventDetails";
@@ -44,9 +45,9 @@
   let scrollContainer: HTMLDivElement;
   let scrollContent: HTMLDivElement;
   let following = $state(true);
-  let loading = $state(0);
   let message = $state("");
-  const pending = new Set<SeriesPageDirection | "refresh">();
+  const pending = new SvelteSet<SeriesPageDirection | "refresh">();
+  const loading = $derived(pending.size);
   const failed = new Set<SeriesPageDirection>();
   let alive = true;
   let previousScrollTop = 0;
@@ -85,7 +86,6 @@
     )
       return;
     pending.add(direction);
-    loading++;
     try {
       // A page can add events below the current anchor (open and closed API
       // collections overlap). Being at an edge must not drain all history.
@@ -104,7 +104,6 @@
       message = errorMessage(error);
     } finally {
       pending.delete(direction);
-      loading--;
     }
   }
   function scrolled(): void {
@@ -152,7 +151,6 @@
   async function refresh(): Promise<void> {
     if (pending.size > 0) return;
     pending.add("refresh");
-    loading++;
     try {
       const details = await pager.refresh(following ? Date.now() : undefined);
       if (!alive) return;
@@ -163,7 +161,6 @@
       if (alive) message = errorMessage(error);
     } finally {
       pending.delete("refresh");
-      loading--;
       if (alive && !following) {
         if (atEdge("older")) void load("older");
         if (atEdge("newer")) void load("newer");
