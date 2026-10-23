@@ -11,7 +11,7 @@ import {
   marketEventKey,
   marketEventPayload,
   marketEventTimeMs,
-  sameTokenKeys,
+  sameTokenIds,
 } from "./liveBookProtocol";
 import type {
   LiveBookFeedCallbacks,
@@ -68,13 +68,12 @@ interface Deferred {
 
 interface WatchState {
   readonly callbacks: LiveBookFeedCallbacks;
-  readonly tokenIds: Map<ClobAssetId, TokenId>;
+  readonly tokenIds: Set<TokenId>;
   readonly ready: Deferred;
   status: "connecting" | "live" | "failed" | "closed";
 }
 
 interface TokenState {
-  readonly tokenId: TokenId;
   readonly watchers: Set<WatchState>;
   readonly stream: LiveTokenState;
 }
@@ -87,14 +86,10 @@ interface BookRefreshContext {
 
 interface ActiveSubscription {
   readonly stream: SubscriptionHandle<MarketEvent>;
-  readonly tokenKeys: ReadonlySet<ClobAssetId>;
+  readonly tokenIds: ReadonlySet<TokenId>;
   readonly marketWatermarks: Map<string, number>;
   retired: boolean;
   closed: boolean;
-}
-
-interface TokenChanges {
-  readonly canonical: CanonicalBookChange[];
 }
 
 interface DebugStats {
@@ -124,9 +119,9 @@ export function liveBookCoordinator(client: PublicClient): LiveBookCoordinator {
  * market-local causal watermarking and current books.
  */
 export class LiveBookCoordinator {
-  private readonly tokens = new Map<ClobAssetId, TokenState>();
+  private readonly tokens = new Map<TokenId, TokenState>();
   private readonly watches = new Set<WatchState>();
-  private readonly refreshContexts = new Map<ClobAssetId, BookRefreshContext>();
+  private readonly refreshContexts = new Map<TokenId, BookRefreshContext>();
   private readonly seenEvents = new WeakSet<object>();
   private readonly refreshScheduler: RefreshScheduler | null;
   private readonly retryDelayMs: number;
@@ -187,27 +182,24 @@ export class LiveBookCoordinator {
     tokenIds: readonly TokenId[],
     callbacks: LiveBookFeedCallbacks,
   ): LiveBookWatch {
-    const unique = new Map<ClobAssetId, TokenId>();
-    for (const tokenId of tokenIds) unique.set(tokenId, tokenId);
-
     const state: WatchState = {
       callbacks,
-      tokenIds: unique,
+      tokenIds: new Set(tokenIds),
       ready: createDeferred(),
       status: "connecting",
     };
     this.watches.add(state);
 
-    for (const [tokenKey, tokenId] of unique) {
-      let token = this.tokens.get(tokenKey);
+    for (const tokenId of state.tokenIds) {
+      let token = this.tokens.get(tokenId);
       if (!token) {
-        token = { tokenId, watchers: new Set(), stream: new LiveTokenState() };
-        this.tokens.set(tokenKey, token);
+        token = { watchers: new Set(), stream: new LiveTokenState() };
+        this.tokens.set(tokenId, token);
       }
       token.watchers.add(state);
     }
 
-    if (unique.size === 0) {
+    if (state.tokenIds.size === 0) {
       state.status = "live";
       state.ready.resolve();
     } else {
@@ -248,19 +240,16 @@ export class LiveBookCoordinator {
   }
 
   private detachWatch(watch: WatchState): void {
-    for (const tokenKey of watch.tokenIds.keys()) {
-      const token = this.tokens.get(tokenKey);
-      if (!token) continue;
-
-      token.watchers.delete(watch);
-    }
+    // Resolution removes a dropped token from every watch, so each id is mapped.
+    for (const tokenId of watch.tokenIds)
+      this.tokens.get(tokenId)!.watchers.delete(watch);
     watch.tokenIds.clear();
   }
 
-  private dropToken(tokenKey: ClobAssetId, token: TokenState): void {
-    this.tokens.delete(tokenKey);
-    this.refreshContexts.delete(tokenKey);
-    this.refreshScheduler?.unwatch(this.refreshSubscriber, token.tokenId);
+  private dropToken(tokenId: TokenId): void {
+    this.tokens.delete(tokenId);
+    this.refreshContexts.delete(tokenId);
+    this.refreshScheduler?.unwatch(this.refreshSubscriber, tokenId);
   }
 
   private requestReconcile(): void {
@@ -286,9 +275,9 @@ export class LiveBookCoordinator {
       while (true) {
         const revision = this.desiredRevision;
         const desired = this.desiredTokens();
-        const desiredKeys = new Set(desired.map(([key]) => key));
+        const desiredIds = new Set(desired);
 
-        if (sameTokenKeys(this.active?.tokenKeys, desiredKeys)) {
+        if (sameTokenIds(this.active?.tokenIds, desiredIds)) {
           this.markCoveredWatchesLive();
           this.pruneUnwatchedTokens();
           if (revision === this.desiredRevision) return;
@@ -313,7 +302,7 @@ export class LiveBookCoordinator {
           stream = await this.client.subscribe([
             {
               topic: "market",
-              assetIds: desired.map(([, tokenId]) => tokenId),
+              assetIds: desired,
               customFeatureEnabled: true,
             },
           ]);
@@ -330,7 +319,7 @@ export class LiveBookCoordinator {
         this.debugStats.activeHandles++;
         const next: ActiveSubscription = {
           stream,
-          tokenKeys: desiredKeys,
+          tokenIds: desiredIds,
           marketWatermarks: new Map(),
           retired: false,
           closed: false,
@@ -359,21 +348,18 @@ export class LiveBookCoordinator {
 
         // A replacement subscription is a new causal stream. Every token must
         // bootstrap from a fresh book snapshot; no state crosses this barrier.
+        // Resolution may have dropped a desired token while subscribing.
         const reconnecting = desired.some(
-          ([tokenKey]) => this.tokens.get(tokenKey)?.stream.book !== undefined,
+          (tokenId) => this.tokens.get(tokenId)?.stream.book !== undefined,
         );
         this.refreshContexts.clear();
-        for (const [tokenKey] of desired) {
-          const token = this.tokens.get(tokenKey);
-          if (!token) continue;
-          token.stream.beginStream(requestedAtMs);
-        }
+        for (const tokenId of desired)
+          this.tokens.get(tokenId)?.stream.beginStream(requestedAtMs);
 
         this.active = next;
         void this.readEvents(next);
         this.markCoveredWatchesLive();
-        if (reconnecting)
-          this.requestMetadataRecovery(desired.map(([, tokenId]) => tokenId));
+        if (reconnecting) this.requestMetadataRecovery(desired);
         if (previous) await this.closeSubscription(previous);
         this.pruneUnwatchedTokens();
         if (revision === this.desiredRevision) return;
@@ -382,26 +368,22 @@ export class LiveBookCoordinator {
       this.reconciling = false;
       if (
         this.retryTimer === undefined &&
-        !sameTokenKeys(this.active?.tokenKeys, this.desiredTokenKeys())
+        !sameTokenIds(this.active?.tokenIds, new Set(this.desiredTokens()))
       )
         this.requestReconcile();
     }
   }
 
-  private desiredTokens(): [ClobAssetId, TokenId][] {
-    return [...this.tokens.entries()]
+  private desiredTokens(): TokenId[] {
+    return [...this.tokens]
       .filter(([, token]) => token.watchers.size > 0)
-      .map(([key, token]) => [key, token.tokenId] as [ClobAssetId, TokenId])
-      .sort(([left], [right]) => left.localeCompare(right));
-  }
-
-  private desiredTokenKeys(): ReadonlySet<ClobAssetId> {
-    return new Set(this.desiredTokens().map(([key]) => key));
+      .map(([tokenId]) => tokenId)
+      .sort((left, right) => left.localeCompare(right));
   }
 
   private pruneUnwatchedTokens(): void {
-    for (const [tokenKey, token] of this.tokens)
-      if (token.watchers.size === 0) this.dropToken(tokenKey, token);
+    for (const [tokenId, token] of this.tokens)
+      if (token.watchers.size === 0) this.dropToken(tokenId);
   }
 
   private scheduleRetry(): void {
@@ -413,10 +395,10 @@ export class LiveBookCoordinator {
   }
 
   private failUncoveredWatches(error: unknown): void {
-    const activeKeys = this.active?.tokenKeys;
+    const activeIds = this.active?.tokenIds;
     const failed = [...this.watches].filter(
       (watch) =>
-        watch.status === "connecting" && !isWatchCovered(watch, activeKeys),
+        watch.status === "connecting" && !isWatchCovered(watch, activeIds),
     );
 
     for (const watch of failed) {
@@ -429,17 +411,16 @@ export class LiveBookCoordinator {
   }
 
   private markCoveredWatchesLive(): void {
-    const activeKeys = this.active?.tokenKeys;
+    const activeIds = this.active?.tokenIds;
     for (const watch of this.watches) {
-      if (watch.status !== "connecting" || !isWatchCovered(watch, activeKeys))
+      if (watch.status !== "connecting" || !isWatchCovered(watch, activeIds))
         continue;
 
       watch.status = "live";
-      for (const tokenKey of watch.tokenIds.keys()) {
-        const token = this.tokens.get(tokenKey);
-        const observed = token?.stream.observed;
+      for (const tokenId of watch.tokenIds) {
+        const observed = this.tokens.get(tokenId)!.stream.observed;
         if (!observed) continue;
-        this.notifyBookUpdated(watch, token, {
+        this.notifyBookUpdated(watch, tokenId, observed.book, {
           kind: "snapshot",
           validThroughMs: observed.validThroughMs,
         });
@@ -527,11 +508,11 @@ export class LiveBookCoordinator {
     subscription: ActiveSubscription,
     event: Extract<MarketEvent, { type: "book" }>,
   ): void {
-    const tokenKey = event.payload.assetId;
-    const token = this.tokens.get(tokenKey);
+    const tokenId = streamTokenId(event.payload.assetId);
+    const token = this.tokens.get(tokenId);
     if (!token) return;
 
-    const refresh = this.refreshContexts.get(tokenKey);
+    const refresh = this.refreshContexts.get(tokenId);
     if (refresh) refresh.superseded = true;
 
     const marketKey = marketEventKey(event);
@@ -547,7 +528,7 @@ export class LiveBookCoordinator {
         subscription,
         marketKey,
         marketWatermark,
-        new Set([tokenKey]),
+        new Set([tokenId]),
       );
     }
 
@@ -556,11 +537,11 @@ export class LiveBookCoordinator {
       marketWatermark,
     );
     this.debugStats.routedTokenBatches++;
-    this.notifyToken(token, {
+    this.notifyToken(tokenId, token, {
       kind: firstOnStream ? "snapshot" : "replace",
       validThroughMs,
     });
-    this.observeBook(token, validThroughMs);
+    this.observeBook(tokenId, validThroughMs);
   }
 
   private routePriceChanges(
@@ -574,26 +555,27 @@ export class LiveBookCoordinator {
       marketKey,
       timestampMs,
     );
-    const changesByToken = new Map<TokenState, TokenChanges>();
-    const changedKeys = new Set<ClobAssetId>();
+    const changesByToken = new Map<TokenId, CanonicalBookChange[]>();
+    const changedIds = new Set<TokenId>();
 
     for (const change of event.payload.priceChanges) {
-      const token = this.tokens.get(change.assetId);
+      const tokenId = streamTokenId(change.assetId);
+      const token = this.tokens.get(tokenId);
       if (!token) continue;
-      changedKeys.add(change.assetId);
+      changedIds.add(tokenId);
       if (marketKey) token.stream.associateMarket(marketKey);
 
-      const refresh = this.refreshContexts.get(change.assetId);
+      const refresh = this.refreshContexts.get(tokenId);
       if (refresh) refresh.superseded = true;
       const book = token.stream.streamBook();
       if (!book) continue;
 
-      let changes = changesByToken.get(token);
+      let changes = changesByToken.get(tokenId);
       if (!changes) {
-        changes = { canonical: [] };
-        changesByToken.set(token, changes);
+        changes = [];
+        changesByToken.set(tokenId, changes);
       }
-      changes.canonical.push(
+      changes.push(
         applyPriceChange(book, {
           side: change.side,
           price: change.price,
@@ -607,18 +589,19 @@ export class LiveBookCoordinator {
         subscription,
         marketKey,
         marketWatermark,
-        changedKeys,
+        changedIds,
       );
 
-    for (const [token, changes] of changesByToken) {
+    for (const [tokenId, changes] of changesByToken) {
+      const token = this.tokens.get(tokenId)!;
       const validThroughMs = token.stream.confirmThrough(marketWatermark);
       this.debugStats.routedTokenBatches++;
-      this.notifyToken(token, {
+      this.notifyToken(tokenId, token, {
         kind: "levels",
         validThroughMs,
-        changes: changes.canonical,
+        changes,
       });
-      this.observeBook(token, validThroughMs);
+      this.observeBook(tokenId, validThroughMs);
     }
   }
 
@@ -658,16 +641,16 @@ export class LiveBookCoordinator {
 
     const affected = new Set<WatchState>();
     for (const assetId of assetIds) {
-      const tokenKey = assetId;
-      const token = this.tokens.get(tokenKey);
+      const tokenId = streamTokenId(assetId);
+      const token = this.tokens.get(tokenId);
       if (!token) continue;
 
       for (const watch of token.watchers) {
         if (watch.status === "live") affected.add(watch);
-        watch.tokenIds.delete(tokenKey);
+        watch.tokenIds.delete(tokenId);
       }
       token.watchers.clear();
-      this.dropToken(tokenKey, token);
+      this.dropToken(tokenId);
     }
 
     const resolution = {
@@ -712,10 +695,10 @@ export class LiveBookCoordinator {
   ): void {
     if (watermarkMs === undefined) return;
 
-    for (const [tokenKey, token] of this.tokens) {
+    for (const [tokenId, token] of this.tokens) {
       if (
-        excluded.has(tokenKey) ||
-        !subscription.tokenKeys.has(tokenKey) ||
+        excluded.has(tokenId) ||
+        !subscription.tokenIds.has(tokenId) ||
         token.stream.marketKey !== marketKey ||
         !token.stream.synchronized
       )
@@ -724,15 +707,15 @@ export class LiveBookCoordinator {
       const validThroughMs = token.stream.advanceThrough(watermarkMs);
       if (validThroughMs === null) continue;
       this.debugStats.routedTokenBatches++;
-      this.notifyToken(token, { kind: "watermark", validThroughMs });
-      this.observeBook(token, validThroughMs);
+      this.notifyToken(tokenId, token, { kind: "watermark", validThroughMs });
+      this.observeBook(tokenId, validThroughMs);
     }
   }
 
-  private observeBook(token: TokenState, validThroughMs: number): void {
+  private observeBook(tokenId: TokenId, validThroughMs: number): void {
     this.refreshScheduler?.observe(
       this.refreshSubscriber,
-      token.tokenId,
+      tokenId,
       validThroughMs,
     );
   }
@@ -742,11 +725,10 @@ export class LiveBookCoordinator {
     requestId: number,
     requestedAtMs: number,
   ): void {
-    const tokenKey = tokenId;
-    const token = this.tokens.get(tokenKey);
+    const token = this.tokens.get(tokenId);
     if (!token?.stream.synchronized || token.watchers.size === 0) return;
 
-    this.refreshContexts.set(tokenKey, {
+    this.refreshContexts.set(tokenId, {
       requestId,
       requestedAtMs,
       superseded: false,
@@ -759,9 +741,8 @@ export class LiveBookCoordinator {
     requestedAtMs: number,
     snapshot: BookRefreshSnapshot,
   ): void {
-    const tokenKey = tokenId;
-    const context = this.refreshContexts.get(tokenKey);
-    const token = this.tokens.get(tokenKey);
+    const context = this.refreshContexts.get(tokenId);
+    const token = this.tokens.get(tokenId);
     if (
       !context ||
       !token ||
@@ -769,8 +750,7 @@ export class LiveBookCoordinator {
       token.watchers.size === 0 ||
       context.requestId !== requestId ||
       context.requestedAtMs !== requestedAtMs ||
-      context.superseded ||
-      snapshot.assetId !== tokenKey
+      context.superseded
     )
       return;
 
@@ -779,8 +759,8 @@ export class LiveBookCoordinator {
       const validThroughMs = token.stream.confirmThrough(requestedAtMs);
       // REST equality is evidence that the existing canonical geometry is
       // still valid; it is not a new stream snapshot. Advance only causality.
-      this.notifyToken(token, { kind: "watermark", validThroughMs });
-      this.observeBook(token, validThroughMs);
+      this.notifyToken(tokenId, token, { kind: "watermark", validThroughMs });
+      this.observeBook(tokenId, validThroughMs);
       return;
     }
 
@@ -792,9 +772,8 @@ export class LiveBookCoordinator {
   }
 
   private finishBookRefresh(tokenId: TokenId, requestId: number): void {
-    const tokenKey = tokenId;
-    if (this.refreshContexts.get(tokenKey)?.requestId === requestId)
-      this.refreshContexts.delete(tokenKey);
+    if (this.refreshContexts.get(tokenId)?.requestId === requestId)
+      this.refreshContexts.delete(tokenId);
   }
 
   private requestMetadataRecovery(tokenIds: readonly TokenId[]): void {
@@ -802,25 +781,26 @@ export class LiveBookCoordinator {
       this.callSafely(() => subscriber(tokenIds));
   }
 
-  private notifyToken(token: TokenState, update: LiveBookUpdate): void {
-    if (!token.stream.book) return;
-    for (const watch of [...token.watchers]) {
-      if (watch.status !== "live") continue;
-      this.notifyBookUpdated(watch, token, update);
-    }
-  }
-
-  private notifyBookUpdated(
-    watch: WatchState,
+  private notifyToken(
+    tokenId: TokenId,
     token: TokenState,
     update: LiveBookUpdate,
   ): void {
     const book = token.stream.book;
     if (!book) return;
+    for (const watch of [...token.watchers])
+      if (watch.status === "live")
+        this.notifyBookUpdated(watch, tokenId, book, update);
+  }
+
+  private notifyBookUpdated(
+    watch: WatchState,
+    tokenId: TokenId,
+    book: TokenBook,
+    update: LiveBookUpdate,
+  ): void {
     this.debugStats.downstreamDeliveries++;
-    this.callSafely(() =>
-      watch.callbacks.onBookUpdated(token.tokenId, book, update),
-    );
+    this.callSafely(() => watch.callbacks.onBookUpdated(tokenId, book, update));
   }
 
   private callSafely(callback: () => void): void {
@@ -888,12 +868,17 @@ function createDeferred(): Deferred {
 
 function isWatchCovered(
   watch: WatchState,
-  tokenKeys: ReadonlySet<ClobAssetId> | undefined,
+  subscribed: ReadonlySet<TokenId> | undefined,
 ): boolean {
-  if (!tokenKeys) return watch.tokenIds.size === 0;
-  for (const tokenKey of watch.tokenIds.keys())
-    if (!tokenKeys.has(tokenKey)) return false;
+  if (!subscribed) return watch.tokenIds.size === 0;
+  for (const tokenId of watch.tokenIds)
+    if (!subscribed.has(tokenId)) return false;
   return true;
+}
+
+/** Stream asset ids are looked up among watched TokenIds; a miss is ignored. */
+function streamTokenId(assetId: ClobAssetId): TokenId {
+  return assetId as TokenId;
 }
 
 function debugNow(): number {
