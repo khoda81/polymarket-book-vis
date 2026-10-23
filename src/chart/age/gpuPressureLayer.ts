@@ -484,10 +484,7 @@ export class GpuPressureLayer {
     nowMs: number,
     requestedFirstRun: number,
   ): void {
-    let firstRun = Math.max(
-      0,
-      Math.min(surface.runs.length, requestedFirstRun),
-    );
+    let firstRun = requestedFirstRun;
     if (
       cached.timeOriginMs === 0 ||
       nowMs - cached.timeOriginMs > MAX_TIME_ORIGIN_AGE_MS
@@ -701,8 +698,9 @@ export class GpuPressureLayer {
 
       for (const row of frame.rows) {
         for (const surface of row.surfaces) {
-          const cached = this.surfaceBuffers.get(surface.key);
-          if (!cached || cached.instanceCount === 0) continue;
+          // syncSurfaceBuffers created a buffer for every surface in the frame.
+          const cached = this.surfaceBuffers.get(surface.key)!;
+          if (cached.instanceCount === 0) continue;
 
           uniform1f(
             gl,
@@ -840,14 +838,14 @@ export class PressureResidentBuffer {
     cumulativeShares: readonly number[],
     extents: readonly PressureExtent[],
     timeOriginMs: number,
+    /** In [0, runs.length]; cumulativeShares aligns one-to-one with runs. */
     requestedFirstRun: number,
   ): number {
-    let firstRun = Math.max(0, Math.min(runs.length, requestedFirstRun));
-    if (
-      cumulativeShares.length !== runs.length ||
-      firstRun >= this.runInstanceOffsets.length
-    )
-      firstRun = 0;
+    // Offsets from a shorter previous upload cannot locate this run.
+    const firstRun =
+      requestedFirstRun < this.runInstanceOffsets.length
+        ? requestedFirstRun
+        : 0;
 
     let writeFloat =
       firstRun === 0 ? 0 : this.runInstanceOffsets[firstRun]! * INSTANCE_FLOATS;
